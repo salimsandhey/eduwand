@@ -1,6 +1,7 @@
 // EduWand backend — Prisma schema
-// Models are added module by module, starting with platform/tenancy tables.
-// See Docs/Dev/EduWand_Database_Schema.md for the full reference schema.
+// Models are added module by module. This file currently covers only the
+// Platform and Tenancy tables (Docs/Dev/EduWand_Database_Schema.md, section 2).
+// Enrolment Growth Engine and AI Module tables are added in later steps.
 
 generator client {
   provider = "prisma-client-js"
@@ -9,4 +10,110 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+model Trust {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String
+  contactEmail String?  @map("contact_email")
+  status       String   @default("active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  createdBy    String?  @map("created_by") @db.Uuid
+  updatedBy    String?  @map("updated_by") @db.Uuid
+
+  schools School[]
+
+  @@map("trust")
+}
+
+model School {
+  id           String   @id @default(uuid()) @db.Uuid
+  trustId      String   @map("trust_id") @db.Uuid
+  trust        Trust    @relation(fields: [trustId], references: [id])
+  name         String
+  board        String
+  address      String?
+  timezone     String   @default("Asia/Kolkata")
+  incumbentErp String?  @map("incumbent_erp")
+  status       String   @default("onboarding")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  createdBy    String?  @map("created_by") @db.Uuid
+  updatedBy    String?  @map("updated_by") @db.Uuid
+
+  academicYears    AcademicYear[]
+  users            AppUser[]
+  userSchoolAccess UserSchoolAccess[]
+
+  @@map("school")
+}
+
+model AcademicYear {
+  id        String   @id @default(uuid()) @db.Uuid
+  schoolId  String   @map("school_id") @db.Uuid
+  school    School   @relation(fields: [schoolId], references: [id])
+  label     String
+  startDate DateTime @map("start_date") @db.Date
+  endDate   DateTime @map("end_date") @db.Date
+  isCurrent Boolean  @default(false) @map("is_current")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  classSections ClassSection[]
+
+  @@map("academic_year")
+}
+
+model ClassSection {
+  id             String       @id @default(uuid()) @db.Uuid
+  academicYearId String       @map("academic_year_id") @db.Uuid
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+  className      String       @map("class_name")
+  sectionName    String       @map("section_name")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  createdBy      String?      @map("created_by") @db.Uuid
+  updatedBy      String?      @map("updated_by") @db.Uuid
+
+  @@map("class_section")
+}
+
+// Role is one of: front_desk, counsellor, teacher, admin, leadership
+// (kept as free text to match the reference schema; enforce the allowed set in application code)
+model AppUser {
+  id             String   @id @default(uuid()) @db.Uuid
+  trustId        String?  @map("trust_id") @db.Uuid
+  schoolId       String?  @map("school_id") @db.Uuid
+  school         School?  @relation(fields: [schoolId], references: [id])
+  fullName       String   @map("full_name")
+  email          String   @unique
+  phone          String?
+  role           String
+  authProviderId String?  @map("auth_provider_id")
+  status         String   @default("invited")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  createdBy      String?  @map("created_by") @db.Uuid
+  updatedBy      String?  @map("updated_by") @db.Uuid
+
+  schoolAccess UserSchoolAccess[]
+
+  @@map("app_user")
+}
+
+// Maps a user to multiple schools within a trust, for staff assigned across more than one school
+model UserSchoolAccess {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  user      AppUser  @relation(fields: [userId], references: [id])
+  schoolId  String   @map("school_id") @db.Uuid
+  school    School   @relation(fields: [schoolId], references: [id])
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, schoolId])
+  @@map("user_school_access")
 }
