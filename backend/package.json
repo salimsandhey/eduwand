@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@fastify/jwt": "^10.2.1",
+    "@fastify/rate-limit": "^11.2.0",
     "@prisma/client": "^6.19.3",
     "bcryptjs": "^2.4.3",
     "fastify": "^5.11.2",

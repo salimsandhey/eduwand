@@ -1,5 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
+import { findPossibleDuplicates } from "../lib/enquiries";
 
 const VALID_STATUSES = ["new", "contacted", "visit", "application", "admitted", "enrolled", "lost"];
 const VALID_SOURCES = ["phone", "walk_in", "website", "referral", "event", "social"];
@@ -50,20 +51,6 @@ interface ConfirmAdmissionBody {
 }
 
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope];
-
-// Duplicate detection (FR-EG-7): flags other, not-already-merged enquiries in the
-// same school sharing the same contact phone number.
-async function findPossibleDuplicates(schoolId: string, contactPhone: string, excludeId?: string) {
-  return prisma.enquiry.findMany({
-    where: {
-      schoolId,
-      contactPhone,
-      duplicateOfEnquiryId: null,
-      ...(excludeId ? { id: { not: excludeId } } : {}),
-    },
-    select: { id: true, contactName: true, status: true, createdAt: true },
-  });
-}
 
 export async function enquiryRoutes(app: FastifyInstance) {
   app.get<{ Querystring: ListQuery }>(

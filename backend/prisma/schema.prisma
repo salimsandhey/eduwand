@@ -168,8 +168,8 @@ model EnquiryStageHistory {
   enquiry         Enquiry  @relation(fields: [enquiryId], references: [id])
   fromStatus      String?  @map("from_status")
   toStatus        String   @map("to_status")
-  changedByUserId String   @map("changed_by_user_id") @db.Uuid
-  changedBy       AppUser  @relation(fields: [changedByUserId], references: [id])
+  changedByUserId String?  @map("changed_by_user_id") @db.Uuid
+  changedBy       AppUser? @relation(fields: [changedByUserId], references: [id])
   changedAt       DateTime @default(now()) @map("changed_at")
 
   @@map("enquiry_stage_history")
