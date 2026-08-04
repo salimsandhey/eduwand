@@ -12,6 +12,7 @@ import { studentRoutes } from "./routes/students";
 import { exportRoutes } from "./routes/exports";
 import { analyticsRoutes } from "./routes/analytics";
 import { publicEnquiryRoutes } from "./routes/public-enquiries";
+import { classSectionRoutes } from "./routes/class-sections";
 
 const app = Fastify({ logger: true });
 
@@ -30,6 +31,7 @@ app.register(studentRoutes, { prefix: "/api/v1" });
 app.register(exportRoutes, { prefix: "/api/v1" });
 app.register(analyticsRoutes, { prefix: "/api/v1" });
 app.register(publicEnquiryRoutes, { prefix: "/api/v1" });
+app.register(classSectionRoutes, { prefix: "/api/v1" });
 
 const port = Number(process.env.PORT) || 4000;
 
