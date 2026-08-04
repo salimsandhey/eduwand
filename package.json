@@ -1,0 +1,13 @@
+{
+  "name": "eduwand",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "backend",
+    "admin-dashboard",
+    "unified-app"
+  ],
+  "scripts": {
+    "dev:backend": "npm run dev --workspace=backend"
+  }
+}

@@ -1,0 +1,12 @@
+// EduWand backend — Prisma schema
+// Models are added module by module, starting with platform/tenancy tables.
+// See Docs/Dev/EduWand_Database_Schema.md for the full reference schema.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
