@@ -1,0 +1,50 @@
+/* Product accent per Docs/Dev/EduWand_UI_Screen_Spec.md 1.1: single green accent,
+   light neutral background, card-based, rounded corners. Chart data colors below
+   are the dataviz skill's validated default palette (references/palette.md) —
+   the product spec doesn't define a chart palette of its own, so chart marks use
+   the skill's palette while buttons/nav/highlights use the product's own accent. */
+:root {
+  --accent: #1f9d55;
+  --accent-dark: #17803f;
+  --accent-wash: #e6f4ea;
+
+  --bg-page: #f5f6f8;
+  --bg-card: #ffffff;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --border: #e2e4e8;
+  --gridline: #e1e0d9;
+
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+
+  /* Categorical chart series, fixed order - validated via scripts/validate_palette.js */
+  --series-1: #2a78d6; /* blue */
+  --series-2: #eb6834; /* orange */
+  --series-3: #1baf7a; /* aqua */
+  --series-4: #eda100; /* yellow */
+  --series-5: #e87ba4; /* magenta */
+  --series-6: #008300; /* green */
+
+  /* Sequential blue, ordinal steps for ordered stages (e.g. funnel) */
+  --seq-1: #86b6ef;
+  --seq-2: #6da7ec;
+  --seq-3: #5598e7;
+  --seq-4: #3987e5;
+  --seq-5: #2a78d6;
+  --seq-6: #256abf;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--bg-page);
+  color: var(--text-primary);
+}
