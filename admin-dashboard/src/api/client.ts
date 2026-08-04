@@ -103,6 +103,38 @@ export interface AppUserSummary {
   status: string;
 }
 
+export interface InviteUserInput {
+  fullName: string;
+  email: string;
+  role: string;
+  schoolId?: string;
+  trustId?: string;
+}
+
+// ---- Onboarding: trusts & schools ----
+
+export interface TrustSummary {
+  id: string;
+  name: string;
+  status: string;
+}
+
+export interface School {
+  id: string;
+  trustId: string;
+  name: string;
+  board: string;
+  status: string;
+}
+
+export interface CreateSchoolInput {
+  trustId?: string;
+  name: string;
+  board: string;
+  address?: string;
+  timezone?: string;
+}
+
 export const api = {
   login: (email: string, password: string) =>
     request<AuthTokens>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
@@ -116,4 +148,12 @@ export const api = {
     request<CounsellorPerformanceEntry[]>(`/analytics/enrolment/counsellor-performance${toQueryString(params)}`, {}, token),
 
   listUsers: (token: string) => request<AppUserSummary[]>("/users", {}, token),
+  inviteUser: (token: string, input: InviteUserInput) =>
+    requestEnvelope<AppUserSummary>("/users", { method: "POST", body: JSON.stringify(input) }, token),
+
+  listTrusts: (token: string) => request<TrustSummary[]>("/trusts", {}, token),
+  createTrust: (token: string, name: string, contactEmail?: string) =>
+    request<TrustSummary>("/trusts", { method: "POST", body: JSON.stringify({ name, contactEmail }) }, token),
+  createSchool: (token: string, input: CreateSchoolInput) =>
+    request<School>("/schools", { method: "POST", body: JSON.stringify(input) }, token),
 };

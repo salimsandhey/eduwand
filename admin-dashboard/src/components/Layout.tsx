@@ -1,7 +1,7 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
-const NAV_ITEMS = [
+const SCHOOL_SCOPED_NAV_ITEMS = [
   { to: "/funnel", label: "Enrolment Funnel" },
   { to: "/sources", label: "Source Breakdown" },
   { to: "/counsellors", label: "Counsellor Performance" },
@@ -9,15 +9,27 @@ const NAV_ITEMS = [
   { to: "/users", label: "User & Role Management" },
 ];
 
+const ONBOARDING_NAV_ITEM = { to: "/onboarding", label: "Onboarding" };
+
 export function Layout() {
   const { user, logout } = useAuth();
+
+  // platform_admin has no school_id, so the school-scoped analytics/users screens
+  // would just show the "not built yet" trust-scope notice - only link to Onboarding.
+  // Only platform_admin and leadership can onboard schools (see backend/src/routes/schools.ts).
+  let navItems = SCHOOL_SCOPED_NAV_ITEMS;
+  if (user?.role === "platform_admin") {
+    navItems = [ONBOARDING_NAV_ITEM];
+  } else if (user?.role === "leadership") {
+    navItems = [...SCHOOL_SCOPED_NAV_ITEMS, ONBOARDING_NAV_ITEM];
+  }
 
   return (
     <div style={styles.shell}>
       <aside style={styles.sidebar}>
         <div style={styles.logo}>EduWand</div>
         <nav style={styles.nav}>
-          {NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}

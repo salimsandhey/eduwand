@@ -118,6 +118,20 @@ async function main() {
     },
   });
 
+  const platformAdmin = await prisma.appUser.upsert({
+    where: { email: "platform@eduwand.local" },
+    update: {},
+    create: {
+      trustId: null,
+      schoolId: null,
+      fullName: "EduWand Platform Admin",
+      email: "platform@eduwand.local",
+      role: "platform_admin",
+      status: "active",
+      passwordHash,
+    },
+  });
+
   console.log("Seeded:", {
     trust: trust.name,
     school: school.name,
@@ -127,7 +141,9 @@ async function main() {
     counsellor: counsellor.email,
     otherSchoolAdmin: otherSchoolAdmin.email,
     trustLeadership: trustLeadership.email,
+    platformAdmin: platformAdmin.email,
   });
+  console.log("Login with: platform@eduwand.local / password123 (platform_admin, no trust/school)");
   console.log("Login with: admin@dev.eduwand.local / password123 (Dev School)");
   console.log("Login with: counsellor@dev.eduwand.local / password123 (Dev School, counsellor role)");
   console.log("Login with: admin2@dev.eduwand.local / password123 (Dev School 2)");

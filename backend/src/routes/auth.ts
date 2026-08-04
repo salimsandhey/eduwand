@@ -24,7 +24,7 @@ export async function authRoutes(app: FastifyInstance) {
 
     const user = await prisma.appUser.findUnique({ where: { email } });
 
-    if (!user || !user.passwordHash || user.status !== "active") {
+    if (!user || !user.passwordHash || (user.status !== "active" && user.status !== "invited")) {
       return reply.code(401).send({
         data: null,
         error: { code: "invalid_credentials", message: "Incorrect email or password" },
@@ -37,6 +37,12 @@ export async function authRoutes(app: FastifyInstance) {
         data: null,
         error: { code: "invalid_credentials", message: "Incorrect email or password" },
       });
+    }
+
+    // No separate account-activation flow exists yet - a successful first login with
+    // the invite's temp password IS the activation step.
+    if (user.status === "invited") {
+      await prisma.appUser.update({ where: { id: user.id }, data: { status: "active" } });
     }
 
     const claims = {

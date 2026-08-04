@@ -5,12 +5,21 @@ import type { AppUserSummary } from "../api/client";
 import { Card } from "../components/Card";
 import { TrustScopeNotice } from "../components/TrustScopeNotice";
 
+const INVITABLE_ROLES = ["front_desk", "counsellor", "teacher", "admin"];
+
 export function UsersPage() {
   const { accessToken } = useAuth();
   const [users, setUsers] = useState<AppUserSummary[] | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [needsTrustScope, setNeedsTrustScope] = useState(false);
+
+  const [showInvite, setShowInvite] = useState(false);
+  const [inviteName, setInviteName] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState(INVITABLE_ROLES[0]);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteResult, setInviteResult] = useState<{ email: string; tempPassword: string } | null>(null);
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -35,6 +44,22 @@ export function UsersPage() {
     load();
   }, [load]);
 
+  async function inviteUser() {
+    if (!accessToken || !inviteName || !inviteEmail) return;
+    setInviteError(null);
+    setInviteResult(null);
+    try {
+      const res = await api.inviteUser(accessToken, { fullName: inviteName, email: inviteEmail, role: inviteRole });
+      const tempPassword = res.meta?.tempPassword as string | undefined;
+      setInviteResult({ email: inviteEmail, tempPassword: tempPassword ?? "(not returned)" });
+      setInviteName("");
+      setInviteEmail("");
+      load();
+    } catch (err) {
+      setInviteError(err instanceof Error ? err.message : "Failed to invite user");
+    }
+  }
+
   if (needsTrustScope) return <TrustScopeNotice />;
 
   return (
@@ -43,8 +68,8 @@ export function UsersPage() {
 
       <Card>
         <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 0 }}>
-          Invite, role-change, and disable actions aren't built yet - there's no invite flow (email delivery,
-          identity provisioning) designed on the backend. This lists existing staff accounts only.
+          Change-role and disable actions aren't built yet - only inviting new staff into this school works so
+          far.
         </p>
       </Card>
 
@@ -97,9 +122,48 @@ export function UsersPage() {
       )}
 
       <Card>
-        <button style={styles.disabledButton} disabled title="Not built yet">
-          Invite user
-        </button>
+        {!showInvite ? (
+          <button style={styles.button} onClick={() => setShowInvite(true)}>
+            Invite user
+          </button>
+        ) : (
+          <div>
+            <div style={styles.row}>
+              <input
+                style={styles.input}
+                placeholder="Full name"
+                value={inviteName}
+                onChange={(e) => setInviteName(e.target.value)}
+              />
+              <input
+                style={styles.input}
+                placeholder="Email"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+              />
+              <select style={styles.input} value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}>
+                {INVITABLE_ROLES.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+              <button style={styles.button} onClick={inviteUser} disabled={!inviteName || !inviteEmail}>
+                Send invite
+              </button>
+            </div>
+            {inviteError ? <p style={{ color: "var(--status-critical)", fontSize: 13 }}>{inviteError}</p> : null}
+            {inviteResult ? (
+              <div style={styles.tempPasswordBox}>
+                <p style={{ margin: "0 0 4px 0" }}>
+                  Share these credentials with <strong>{inviteResult.email}</strong> yourself - there's no email
+                  delivery yet:
+                </p>
+                <code style={styles.code}>{inviteResult.tempPassword}</code>
+              </div>
+            ) : null}
+          </div>
+        )}
       </Card>
     </div>
   );
@@ -126,4 +190,32 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     cursor: "not-allowed",
   },
+  button: {
+    background: "var(--accent)",
+    color: "#fff",
+    border: "none",
+    borderRadius: 8,
+    padding: "10px 16px",
+    fontWeight: 600,
+    cursor: "pointer",
+    fontSize: 14,
+  },
+  row: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" },
+  input: {
+    padding: "10px 12px",
+    borderRadius: 8,
+    border: "1px solid var(--border)",
+    fontSize: 14,
+    flex: 1,
+    minWidth: 140,
+  },
+  tempPasswordBox: {
+    marginTop: 16,
+    padding: 12,
+    background: "var(--bg-page)",
+    border: "1px solid var(--border)",
+    borderRadius: 8,
+    fontSize: 13,
+  },
+  code: { fontFamily: "monospace", fontSize: 15, fontWeight: 700, color: "var(--text-primary)" },
 };
