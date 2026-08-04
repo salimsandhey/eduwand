@@ -36,7 +36,25 @@ interface ListQuery {
   pageSize?: string;
 }
 
+interface MergeBody {
+  sourceEnquiryId: string;
+}
+
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope];
+
+// Duplicate detection (FR-EG-7): flags other, not-already-merged enquiries in the
+// same school sharing the same contact phone number.
+async function findPossibleDuplicates(schoolId: string, contactPhone: string, excludeId?: string) {
+  return prisma.enquiry.findMany({
+    where: {
+      schoolId,
+      contactPhone,
+      duplicateOfEnquiryId: null,
+      ...(excludeId ? { id: { not: excludeId } } : {}),
+    },
+    select: { id: true, contactName: true, status: true, createdAt: true },
+  });
+}
 
 export async function enquiryRoutes(app: FastifyInstance) {
   app.get<{ Querystring: ListQuery }>(
@@ -62,6 +80,7 @@ export async function enquiryRoutes(app: FastifyInstance) {
 
       const where = {
         schoolId: request.schoolId,
+        duplicateOfEnquiryId: null,
         ...(status ? { status } : {}),
         ...(source ? { source } : {}),
         ...(ownerUserId ? { ownerUserId } : {}),
@@ -128,7 +147,9 @@ export async function enquiryRoutes(app: FastifyInstance) {
         },
       });
 
-      return reply.code(201).send({ data: enquiry, meta: {} });
+      const possibleDuplicates = await findPossibleDuplicates(request.schoolId, enquiry.contactPhone, enquiry.id);
+
+      return reply.code(201).send({ data: enquiry, meta: { possibleDuplicates } });
     }
   );
 
@@ -148,7 +169,11 @@ export async function enquiryRoutes(app: FastifyInstance) {
         });
       }
 
-      return { data: enquiry, meta: {} };
+      const possibleDuplicates = enquiry.duplicateOfEnquiryId
+        ? []
+        : await findPossibleDuplicates(request.schoolId, enquiry.contactPhone, enquiry.id);
+
+      return { data: enquiry, meta: { possibleDuplicates } };
     }
   );
 
@@ -213,6 +238,61 @@ export async function enquiryRoutes(app: FastifyInstance) {
       }
 
       return { data: updated, meta: {} };
+    }
+  );
+
+  app.post<{ Params: { id: string }; Body: MergeBody }>(
+    "/enquiries/:id/merge",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const sourceEnquiryId = request.body?.sourceEnquiryId;
+
+      if (!sourceEnquiryId) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "sourceEnquiryId is required" },
+        });
+      }
+
+      if (sourceEnquiryId === request.params.id) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "An enquiry cannot be merged into itself" },
+        });
+      }
+
+      const [target, source] = await Promise.all([
+        prisma.enquiry.findFirst({ where: { id: request.params.id, schoolId: request.schoolId } }),
+        prisma.enquiry.findFirst({ where: { id: sourceEnquiryId, schoolId: request.schoolId } }),
+      ]);
+
+      if (!target || !source) {
+        return reply.code(404).send({
+          data: null,
+          error: { code: "not_found", message: "Enquiry not found" },
+        });
+      }
+
+      if (target.duplicateOfEnquiryId) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "Cannot merge into an enquiry that is itself already merged" },
+        });
+      }
+
+      if (source.duplicateOfEnquiryId) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "Source enquiry is already merged" },
+        });
+      }
+
+      const updatedSource = await prisma.enquiry.update({
+        where: { id: source.id },
+        data: { duplicateOfEnquiryId: target.id },
+      });
+
+      return { data: updatedSource, meta: {} };
     }
   );
 }
