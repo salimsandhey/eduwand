@@ -45,6 +45,7 @@ model School {
   academicYears    AcademicYear[]
   users            AppUser[]
   userSchoolAccess UserSchoolAccess[]
+  enquiries        Enquiry[]
 
   @@map("school")
 }
@@ -100,7 +101,9 @@ model AppUser {
   createdBy      String?  @map("created_by") @db.Uuid
   updatedBy      String?  @map("updated_by") @db.Uuid
 
-  schoolAccess UserSchoolAccess[]
+  schoolAccess        UserSchoolAccess[]
+  ownedEnquiries      Enquiry[]             @relation("EnquiryOwner")
+  enquiryStageChanges EnquiryStageHistory[]
 
   @@map("app_user")
 }
@@ -117,4 +120,49 @@ model UserSchoolAccess {
 
   @@unique([userId, schoolId])
   @@map("user_school_access")
+}
+
+// Status is one of: new, contacted, visit, application, admitted, enrolled, lost
+// Source is one of: phone, walk_in, website, referral, event, social
+model Enquiry {
+  id                   String    @id @default(uuid()) @db.Uuid
+  schoolId             String    @map("school_id") @db.Uuid
+  school               School    @relation(fields: [schoolId], references: [id])
+  contactName          String    @map("contact_name")
+  contactPhone         String    @map("contact_phone")
+  contactEmail         String?   @map("contact_email")
+  source               String
+  gradeInterest        String?   @map("grade_interest")
+  status               String    @default("new")
+  lostReason           String?   @map("lost_reason")
+  ownerUserId          String?   @map("owner_user_id") @db.Uuid
+  owner                AppUser?  @relation("EnquiryOwner", fields: [ownerUserId], references: [id])
+  notes                String?
+  duplicateOfEnquiryId String?   @map("duplicate_of_enquiry_id") @db.Uuid
+  duplicateOf          Enquiry?  @relation("EnquiryDuplicate", fields: [duplicateOfEnquiryId], references: [id])
+  duplicates           Enquiry[] @relation("EnquiryDuplicate")
+  consentCaptured      Boolean   @default(false) @map("consent_captured")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+  createdBy            String?   @map("created_by") @db.Uuid
+  updatedBy            String?   @map("updated_by") @db.Uuid
+
+  stageHistory EnquiryStageHistory[]
+
+  @@index([schoolId, status])
+  @@index([schoolId, contactPhone])
+  @@map("enquiry")
+}
+
+model EnquiryStageHistory {
+  id              String   @id @default(uuid()) @db.Uuid
+  enquiryId       String   @map("enquiry_id") @db.Uuid
+  enquiry         Enquiry  @relation(fields: [enquiryId], references: [id])
+  fromStatus      String?  @map("from_status")
+  toStatus        String   @map("to_status")
+  changedByUserId String   @map("changed_by_user_id") @db.Uuid
+  changedBy       AppUser  @relation(fields: [changedByUserId], references: [id])
+  changedAt       DateTime @default(now()) @map("changed_at")
+
+  @@map("enquiry_stage_history")
 }

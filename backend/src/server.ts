@@ -3,6 +3,7 @@ import { authPlugin } from "./plugins/auth";
 import { scopePlugin } from "./plugins/scope";
 import { healthRoutes } from "./routes/health";
 import { authRoutes } from "./routes/auth";
+import { enquiryRoutes } from "./routes/enquiries";
 
 const app = Fastify({ logger: true });
 
@@ -10,6 +11,7 @@ app.register(authPlugin);
 app.register(scopePlugin);
 app.register(healthRoutes, { prefix: "/api/v1" });
 app.register(authRoutes, { prefix: "/api/v1" });
+app.register(enquiryRoutes, { prefix: "/api/v1" });
 
 const port = Number(process.env.PORT) || 4000;
 
