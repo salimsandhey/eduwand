@@ -93,6 +93,7 @@ model AppUser {
   phone          String?
   role           String
   authProviderId String?  @map("auth_provider_id")
+  passwordHash   String?  @map("password_hash")
   status         String   @default("invited")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
