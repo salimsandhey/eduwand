@@ -104,6 +104,7 @@ model AppUser {
   schoolAccess        UserSchoolAccess[]
   ownedEnquiries      Enquiry[]             @relation("EnquiryOwner")
   enquiryStageChanges EnquiryStageHistory[]
+  assignedFollowUps   FollowUpTask[]
 
   @@map("app_user")
 }
@@ -147,7 +148,8 @@ model Enquiry {
   createdBy            String?   @map("created_by") @db.Uuid
   updatedBy            String?   @map("updated_by") @db.Uuid
 
-  stageHistory EnquiryStageHistory[]
+  stageHistory  EnquiryStageHistory[]
+  followUpTasks FollowUpTask[]
 
   @@index([schoolId, status])
   @@index([schoolId, contactPhone])
@@ -165,4 +167,45 @@ model EnquiryStageHistory {
   changedAt       DateTime @default(now()) @map("changed_at")
 
   @@map("enquiry_stage_history")
+}
+
+// Channel is one of: sms, email
+model MessageTemplate {
+  id        String   @id @default(uuid()) @db.Uuid
+  schoolId  String   @map("school_id") @db.Uuid
+  channel   String
+  name      String
+  body      String
+  language  String   @default("English")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  followUpTasks FollowUpTask[]
+
+  @@index([schoolId, channel])
+  @@map("message_template")
+}
+
+// Channel is one of: sms, email. Status is one of: pending, sent, failed, cancelled
+model FollowUpTask {
+  id               String          @id @default(uuid()) @db.Uuid
+  enquiryId        String          @map("enquiry_id") @db.Uuid
+  enquiry          Enquiry         @relation(fields: [enquiryId], references: [id])
+  assignedToUserId String          @map("assigned_to_user_id") @db.Uuid
+  assignedTo       AppUser         @relation(fields: [assignedToUserId], references: [id])
+  dueAt            DateTime        @map("due_at")
+  channel          String
+  templateId       String          @map("template_id") @db.Uuid
+  template         MessageTemplate @relation(fields: [templateId], references: [id])
+  status           String          @default("pending")
+  sentAt           DateTime?       @map("sent_at")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+  createdBy        String?         @map("created_by") @db.Uuid
+  updatedBy        String?         @map("updated_by") @db.Uuid
+
+  @@index([assignedToUserId, status])
+  @@map("follow_up_task")
 }
