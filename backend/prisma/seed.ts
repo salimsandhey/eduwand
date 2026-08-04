@@ -54,6 +54,34 @@ async function main() {
     },
   });
 
+  const frontDesk = await prisma.appUser.upsert({
+    where: { email: "frontdesk@dev.eduwand.local" },
+    update: {},
+    create: {
+      trustId: trust.id,
+      schoolId: school.id,
+      fullName: "Dev Front Desk",
+      email: "frontdesk@dev.eduwand.local",
+      role: "front_desk",
+      status: "active",
+      passwordHash,
+    },
+  });
+
+  const teacher = await prisma.appUser.upsert({
+    where: { email: "teacher@dev.eduwand.local" },
+    update: {},
+    create: {
+      trustId: trust.id,
+      schoolId: school.id,
+      fullName: "Dev Teacher",
+      email: "teacher@dev.eduwand.local",
+      role: "teacher",
+      status: "active",
+      passwordHash,
+    },
+  });
+
   const academicYear = await prisma.academicYear.upsert({
     where: { id: "00000000-0000-0000-0000-000000000010" },
     update: {},
@@ -139,6 +167,8 @@ async function main() {
     otherSchool: otherSchool.name,
     admin: admin.email,
     counsellor: counsellor.email,
+    frontDesk: frontDesk.email,
+    teacher: teacher.email,
     otherSchoolAdmin: otherSchoolAdmin.email,
     trustLeadership: trustLeadership.email,
     platformAdmin: platformAdmin.email,
@@ -146,6 +176,8 @@ async function main() {
   console.log("Login with: platform@eduwand.local / password123 (platform_admin, no trust/school)");
   console.log("Login with: admin@dev.eduwand.local / password123 (Dev School)");
   console.log("Login with: counsellor@dev.eduwand.local / password123 (Dev School, counsellor role)");
+  console.log("Login with: frontdesk@dev.eduwand.local / password123 (Dev School, front_desk role)");
+  console.log("Login with: teacher@dev.eduwand.local / password123 (Dev School, teacher role)");
   console.log("Login with: admin2@dev.eduwand.local / password123 (Dev School 2)");
   console.log("Login with: leadership@dev.eduwand.local / password123 (trust-scoped, no school_id)");
 }
