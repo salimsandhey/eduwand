@@ -47,6 +47,7 @@ model School {
   userSchoolAccess UserSchoolAccess[]
   enquiries        Enquiry[]
   studentStubs     StudentStub[]
+  csvExportLogs    CsvExportLog[]
 
   @@map("school")
 }
@@ -108,6 +109,7 @@ model AppUser {
   ownedEnquiries      Enquiry[]             @relation("EnquiryOwner")
   enquiryStageChanges EnquiryStageHistory[]
   assignedFollowUps   FollowUpTask[]
+  csvExportLogs       CsvExportLog[]
 
   @@map("app_user")
 }
@@ -236,4 +238,26 @@ model StudentStub {
 
   @@index([schoolId])
   @@map("student_stub")
+}
+
+// Export uses a single fixed, standard column format across all schools (FR-EG-11), no per-school mapping.
+// Status is one of: success, failed
+model CsvExportLog {
+  id                String   @id @default(uuid()) @db.Uuid
+  schoolId          String   @map("school_id") @db.Uuid
+  school            School   @relation(fields: [schoolId], references: [id])
+  requestedByUserId String   @map("requested_by_user_id") @db.Uuid
+  requestedBy       AppUser  @relation(fields: [requestedByUserId], references: [id])
+  schedule          String?
+  runAt             DateTime @default(now()) @map("run_at")
+  rowCount          Int      @map("row_count")
+  status            String
+  fileLocation      String?  @map("file_location")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  createdBy         String?  @map("created_by") @db.Uuid
+  updatedBy         String?  @map("updated_by") @db.Uuid
+
+  @@index([schoolId])
+  @@map("csv_export_log")
 }
