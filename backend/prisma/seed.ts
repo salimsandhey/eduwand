@@ -40,8 +40,23 @@ async function main() {
     },
   });
 
-  console.log("Seeded:", { trust: trust.name, school: school.name, admin: admin.email });
-  console.log("Login with: admin@dev.eduwand.local / password123");
+  const trustLeadership = await prisma.appUser.upsert({
+    where: { email: "leadership@dev.eduwand.local" },
+    update: {},
+    create: {
+      trustId: trust.id,
+      schoolId: null,
+      fullName: "Dev Trust Leadership",
+      email: "leadership@dev.eduwand.local",
+      role: "leadership",
+      status: "active",
+      passwordHash,
+    },
+  });
+
+  console.log("Seeded:", { trust: trust.name, school: school.name, admin: admin.email, trustLeadership: trustLeadership.email });
+  console.log("Login with: admin@dev.eduwand.local / password123 (school-scoped)");
+  console.log("Login with: leadership@dev.eduwand.local / password123 (trust-scoped, no school_id)");
 }
 
 main()
