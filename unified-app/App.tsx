@@ -1,13 +1,13 @@
 import { StatusBar } from "expo-status-bar";
 import { AuthProvider, useAuth } from "./src/context/AuthContext";
 import { LoginScreen } from "./src/screens/LoginScreen";
-import { HomeScreen } from "./src/screens/HomeScreen";
+import { AppNavigator } from "./src/navigation/AppNavigator";
 
 function Root() {
   const { user } = useAuth();
   return (
     <>
-      {user ? <HomeScreen /> : <LoginScreen />}
+      {user ? <AppNavigator /> : <LoginScreen />}
       <StatusBar style="auto" />
     </>
   );
