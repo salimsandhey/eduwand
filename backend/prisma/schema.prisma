@@ -46,6 +46,7 @@ model School {
   users            AppUser[]
   userSchoolAccess UserSchoolAccess[]
   enquiries        Enquiry[]
+  studentStubs     StudentStub[]
 
   @@map("school")
 }
@@ -78,6 +79,8 @@ model ClassSection {
   updatedAt      DateTime     @updatedAt @map("updated_at")
   createdBy      String?      @map("created_by") @db.Uuid
   updatedBy      String?      @map("updated_by") @db.Uuid
+
+  studentStubs StudentStub[]
 
   @@map("class_section")
 }
@@ -150,6 +153,7 @@ model Enquiry {
 
   stageHistory  EnquiryStageHistory[]
   followUpTasks FollowUpTask[]
+  studentStub   StudentStub?
 
   @@index([schoolId, status])
   @@index([schoolId, contactPhone])
@@ -208,4 +212,28 @@ model FollowUpTask {
 
   @@index([assignedToUserId, status])
   @@map("follow_up_task")
+}
+
+// fee_status is a placeholder only in this build phase (no fee module yet)
+model StudentStub {
+  id              String       @id @default(uuid()) @db.Uuid
+  schoolId        String       @map("school_id") @db.Uuid
+  school          School       @relation(fields: [schoolId], references: [id])
+  sourceEnquiryId String       @unique @map("source_enquiry_id") @db.Uuid
+  sourceEnquiry   Enquiry      @relation(fields: [sourceEnquiryId], references: [id])
+  fullName        String       @map("full_name")
+  dateOfBirth     DateTime     @map("date_of_birth") @db.Date
+  classSectionId  String       @map("class_section_id") @db.Uuid
+  classSection    ClassSection @relation(fields: [classSectionId], references: [id])
+  guardianName    String       @map("guardian_name")
+  guardianContact String       @map("guardian_contact")
+  admissionDate   DateTime     @map("admission_date") @db.Date
+  feeStatus       String       @default("pending") @map("fee_status")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+  createdBy       String?      @map("created_by") @db.Uuid
+  updatedBy       String?      @map("updated_by") @db.Uuid
+
+  @@index([schoolId])
+  @@map("student_stub")
 }

@@ -6,6 +6,7 @@ import { authRoutes } from "./routes/auth";
 import { enquiryRoutes } from "./routes/enquiries";
 import { messageTemplateRoutes } from "./routes/message-templates";
 import { followUpTaskRoutes } from "./routes/follow-up-tasks";
+import { studentRoutes } from "./routes/students";
 
 const app = Fastify({ logger: true });
 
@@ -16,6 +17,7 @@ app.register(authRoutes, { prefix: "/api/v1" });
 app.register(enquiryRoutes, { prefix: "/api/v1" });
 app.register(messageTemplateRoutes, { prefix: "/api/v1" });
 app.register(followUpTaskRoutes, { prefix: "/api/v1" });
+app.register(studentRoutes, { prefix: "/api/v1" });
 
 const port = Number(process.env.PORT) || 4000;
 

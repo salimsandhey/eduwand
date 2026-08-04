@@ -40,6 +40,15 @@ interface MergeBody {
   sourceEnquiryId: string;
 }
 
+interface ConfirmAdmissionBody {
+  fullName?: string;
+  dateOfBirth: string;
+  classSectionId: string;
+  guardianName?: string;
+  guardianContact?: string;
+  admissionDate: string;
+}
+
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope];
 
 // Duplicate detection (FR-EG-7): flags other, not-already-merged enquiries in the
@@ -293,6 +302,78 @@ export async function enquiryRoutes(app: FastifyInstance) {
       });
 
       return { data: updatedSource, meta: {} };
+    }
+  );
+
+  app.post<{ Params: { id: string }; Body: ConfirmAdmissionBody }>(
+    "/enquiries/:id/confirm-admission",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const body = request.body ?? ({} as ConfirmAdmissionBody);
+
+      if (!body.dateOfBirth || !body.classSectionId || !body.admissionDate) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "dateOfBirth, classSectionId, and admissionDate are required" },
+        });
+      }
+
+      const enquiry = await prisma.enquiry.findFirst({
+        where: { id: request.params.id, schoolId: request.schoolId },
+        include: { studentStub: true },
+      });
+
+      if (!enquiry) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Enquiry not found" } });
+      }
+
+      if (enquiry.duplicateOfEnquiryId) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "Cannot confirm admission for a merged/duplicate enquiry" },
+        });
+      }
+
+      if (enquiry.studentStub) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "This enquiry has already been admitted" },
+        });
+      }
+
+      const classSection = await prisma.classSection.findFirst({
+        where: { id: body.classSectionId, academicYear: { schoolId: request.schoolId } },
+      });
+
+      if (!classSection) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Class section not found" } });
+      }
+
+      const [studentStub] = await prisma.$transaction([
+        prisma.studentStub.create({
+          data: {
+            schoolId: request.schoolId,
+            sourceEnquiryId: enquiry.id,
+            fullName: body.fullName ?? enquiry.contactName,
+            dateOfBirth: new Date(body.dateOfBirth),
+            classSectionId: classSection.id,
+            guardianName: body.guardianName ?? enquiry.contactName,
+            guardianContact: body.guardianContact ?? enquiry.contactPhone,
+            admissionDate: new Date(body.admissionDate),
+          },
+        }),
+        prisma.enquiry.update({ where: { id: enquiry.id }, data: { status: "admitted" } }),
+        prisma.enquiryStageHistory.create({
+          data: {
+            enquiryId: enquiry.id,
+            fromStatus: enquiry.status,
+            toStatus: "admitted",
+            changedByUserId: request.user.sub,
+          },
+        }),
+      ]);
+
+      return reply.code(201).send({ data: studentStub, meta: {} });
     }
   );
 }

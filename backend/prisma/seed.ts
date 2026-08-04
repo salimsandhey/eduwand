@@ -40,6 +40,30 @@ async function main() {
     },
   });
 
+  const academicYear = await prisma.academicYear.upsert({
+    where: { id: "00000000-0000-0000-0000-000000000010" },
+    update: {},
+    create: {
+      id: "00000000-0000-0000-0000-000000000010",
+      schoolId: school.id,
+      label: "2026-2027",
+      startDate: new Date("2026-06-01"),
+      endDate: new Date("2027-04-30"),
+      isCurrent: true,
+    },
+  });
+
+  const classSection = await prisma.classSection.upsert({
+    where: { id: "00000000-0000-0000-0000-000000000011" },
+    update: {},
+    create: {
+      id: "00000000-0000-0000-0000-000000000011",
+      academicYearId: academicYear.id,
+      className: "Grade 5",
+      sectionName: "A",
+    },
+  });
+
   const otherSchool = await prisma.school.upsert({
     where: { id: "00000000-0000-0000-0000-000000000003" },
     update: {},
@@ -83,6 +107,7 @@ async function main() {
   console.log("Seeded:", {
     trust: trust.name,
     school: school.name,
+    classSection: `${classSection.className} ${classSection.sectionName}`,
     otherSchool: otherSchool.name,
     admin: admin.email,
     otherSchoolAdmin: otherSchoolAdmin.email,
