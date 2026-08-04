@@ -40,6 +40,20 @@ async function main() {
     },
   });
 
+  const counsellor = await prisma.appUser.upsert({
+    where: { email: "counsellor@dev.eduwand.local" },
+    update: {},
+    create: {
+      trustId: trust.id,
+      schoolId: school.id,
+      fullName: "Dev Counsellor",
+      email: "counsellor@dev.eduwand.local",
+      role: "counsellor",
+      status: "active",
+      passwordHash,
+    },
+  });
+
   const academicYear = await prisma.academicYear.upsert({
     where: { id: "00000000-0000-0000-0000-000000000010" },
     update: {},
@@ -110,10 +124,12 @@ async function main() {
     classSection: `${classSection.className} ${classSection.sectionName}`,
     otherSchool: otherSchool.name,
     admin: admin.email,
+    counsellor: counsellor.email,
     otherSchoolAdmin: otherSchoolAdmin.email,
     trustLeadership: trustLeadership.email,
   });
   console.log("Login with: admin@dev.eduwand.local / password123 (Dev School)");
+  console.log("Login with: counsellor@dev.eduwand.local / password123 (Dev School, counsellor role)");
   console.log("Login with: admin2@dev.eduwand.local / password123 (Dev School 2)");
   console.log("Login with: leadership@dev.eduwand.local / password123 (trust-scoped, no school_id)");
 }
