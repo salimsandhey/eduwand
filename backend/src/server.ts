@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import rateLimit from "@fastify/rate-limit";
+import cors from "@fastify/cors";
 import { authPlugin } from "./plugins/auth";
 import { scopePlugin } from "./plugins/scope";
 import { healthRoutes } from "./routes/health";
@@ -14,6 +15,9 @@ import { publicEnquiryRoutes } from "./routes/public-enquiries";
 
 const app = Fastify({ logger: true });
 
+// Dev-only: reflects any origin so the local Expo web/admin dashboard dev servers can
+// call the API regardless of port. Lock this down to real origins before production.
+app.register(cors, { origin: true });
 app.register(rateLimit, { global: true, max: 1000, timeWindow: "1 minute" });
 app.register(authPlugin);
 app.register(scopePlugin);
