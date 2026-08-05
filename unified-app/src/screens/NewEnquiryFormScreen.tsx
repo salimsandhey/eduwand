@@ -3,8 +3,8 @@ import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndic
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/types";
 import { useAuth } from "../context/AuthContext";
+import { useTheme } from "../theme/ThemeContext";
 import { api, EnquirySource, PossibleDuplicate } from "../api/client";
-import { theme } from "../theme";
 
 const SOURCES: EnquirySource[] = ["phone", "walk_in", "website", "referral", "event", "social"];
 
@@ -12,6 +12,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "NewEnquiryForm">;
 
 export function NewEnquiryFormScreen({ navigation }: Props) {
   const { accessToken } = useAuth();
+  const { colors } = useTheme();
   const [contactName, setContactName] = useState("");
   const [contactPhone, setContactPhone] = useState("");
   const [contactEmail, setContactEmail] = useState("");
@@ -56,99 +57,135 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.label}>Contact name</Text>
-      <TextInput style={styles.input} value={contactName} onChangeText={setContactName} />
+    <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={styles.content}>
+      <Text style={[styles.label, { color: colors.textSecondary }]}>Contact name</Text>
+      <TextInput
+        style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
+        placeholderTextColor={colors.textMuted}
+        value={contactName}
+        onChangeText={setContactName}
+      />
 
-      <Text style={styles.label}>Phone</Text>
-      <TextInput style={styles.input} value={contactPhone} onChangeText={setContactPhone} keyboardType="phone-pad" />
+      <Text style={[styles.label, { color: colors.textSecondary }]}>Phone</Text>
+      <TextInput
+        style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
+        placeholderTextColor={colors.textMuted}
+        value={contactPhone}
+        onChangeText={setContactPhone}
+        keyboardType="phone-pad"
+      />
 
-      <Text style={styles.label}>Email (optional)</Text>
-      <TextInput style={styles.input} value={contactEmail} onChangeText={setContactEmail} keyboardType="email-address" autoCapitalize="none" />
+      <Text style={[styles.label, { color: colors.textSecondary }]}>Email (optional)</Text>
+      <TextInput
+        style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
+        placeholderTextColor={colors.textMuted}
+        value={contactEmail}
+        onChangeText={setContactEmail}
+        keyboardType="email-address"
+        autoCapitalize="none"
+      />
 
-      <Text style={styles.label}>Source</Text>
+      <Text style={[styles.label, { color: colors.textSecondary }]}>Source</Text>
       <View style={styles.chipRow}>
-        {SOURCES.map((s) => (
-          <Pressable key={s} style={[styles.chip, source === s && styles.chipActive]} onPress={() => setSource(s)}>
-            <Text style={[styles.chipText, source === s && styles.chipTextActive]}>{s}</Text>
-          </Pressable>
-        ))}
+        {SOURCES.map((s) => {
+          const active = source === s;
+          return (
+            <Pressable
+              key={s}
+              style={[styles.chip, { backgroundColor: active ? colors.accent : colors.surface, borderColor: active ? colors.accent : colors.border }]}
+              onPress={() => setSource(s)}
+            >
+              <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{s}</Text>
+            </Pressable>
+          );
+        })}
       </View>
 
-      <Text style={styles.label}>Grade / board interest (optional)</Text>
-      <TextInput style={styles.input} value={gradeInterest} onChangeText={setGradeInterest} />
+      <Text style={[styles.label, { color: colors.textSecondary }]}>Grade / board interest (optional)</Text>
+      <TextInput
+        style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
+        placeholderTextColor={colors.textMuted}
+        value={gradeInterest}
+        onChangeText={setGradeInterest}
+      />
 
-      <Text style={styles.label}>Notes (optional)</Text>
-      <TextInput style={[styles.input, styles.notesInput]} value={notes} onChangeText={setNotes} multiline />
+      <Text style={[styles.label, { color: colors.textSecondary }]}>Notes (optional)</Text>
+      <TextInput
+        style={[styles.input, styles.notesInput, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
+        placeholderTextColor={colors.textMuted}
+        value={notes}
+        onChangeText={setNotes}
+        multiline
+      />
 
       <Pressable style={styles.consentRow} onPress={() => setConsentCaptured((v) => !v)}>
-        <View style={[styles.checkbox, consentCaptured && styles.checkboxChecked]} />
-        <Text style={styles.consentLabel}>Consent to be contacted has been given</Text>
+        <View
+          style={[
+            styles.checkbox,
+            { borderColor: colors.border, backgroundColor: consentCaptured ? colors.accent : "transparent" },
+          ]}
+        />
+        <Text style={[styles.consentLabel, { color: colors.textPrimary }]}>Consent to be contacted has been given</Text>
       </Pressable>
 
       {duplicates.length > 0 ? (
-        <View style={styles.duplicateBanner}>
-          <Text style={styles.duplicateTitle}>Possible duplicate</Text>
+        <View style={[styles.duplicateBanner, { backgroundColor: colors.surfaceRaised, borderColor: colors.warning }]}>
+          <Text style={[styles.duplicateTitle, { color: colors.warning }]}>Possible duplicate</Text>
           {duplicates.map((d) => (
-            <Text key={d.id} style={styles.duplicateItem}>
+            <Text key={d.id} style={[styles.duplicateItem, { color: colors.textPrimary }]}>
               {d.contactName} · {d.status}
             </Text>
           ))}
         </View>
       ) : null}
 
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
-      <Pressable style={[styles.saveButton, isSaving && styles.saveButtonDisabled]} onPress={save} disabled={isSaving}>
-        {isSaving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveButtonText}>Save and assign to self</Text>}
+      <Pressable
+        style={[styles.saveButton, { backgroundColor: colors.accent }, isSaving && styles.saveButtonDisabled]}
+        onPress={save}
+        disabled={isSaving}
+      >
+        {isSaving ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.saveButtonText, { color: colors.accentOn }]}>Save and assign to self</Text>}
       </Pressable>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.background },
+  container: { flex: 1 },
   content: { padding: 16 },
-  label: { color: theme.textMuted, marginTop: 14, marginBottom: 6, fontSize: 13 },
+  label: { marginTop: 14, marginBottom: 6, fontSize: 13, fontWeight: "600" },
   input: {
-    backgroundColor: theme.card,
     borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 12,
-    fontSize: 16,
+    fontSize: 15,
   },
   notesInput: { minHeight: 80, textAlignVertical: "top" },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: {
     borderWidth: 1,
-    borderColor: theme.border,
     borderRadius: 16,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    backgroundColor: theme.card,
     marginRight: 8,
     marginBottom: 8,
   },
-  chipActive: { backgroundColor: theme.accent, borderColor: theme.accent },
-  chipText: { color: theme.textMuted, textTransform: "capitalize" },
-  chipTextActive: { color: "#fff" },
+  chipText: { textTransform: "capitalize", fontSize: 12, fontWeight: "600" },
   consentRow: { flexDirection: "row", alignItems: "center", marginTop: 18 },
-  checkbox: { width: 20, height: 20, borderWidth: 1, borderColor: theme.border, borderRadius: 4, marginRight: 10 },
-  checkboxChecked: { backgroundColor: theme.accent, borderColor: theme.accent },
-  consentLabel: { color: theme.text, flexShrink: 1 },
+  checkbox: { width: 20, height: 20, borderWidth: 1, borderRadius: 4, marginRight: 10 },
+  consentLabel: { flexShrink: 1, fontSize: 14 },
   duplicateBanner: {
-    backgroundColor: "#fff8e6",
-    borderColor: theme.warning,
     borderWidth: 1,
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 12,
     marginTop: 16,
   },
-  duplicateTitle: { fontWeight: "700", color: theme.warning, marginBottom: 4 },
-  duplicateItem: { color: theme.text },
-  error: { color: theme.danger, textAlign: "center", marginTop: 12 },
-  saveButton: { backgroundColor: theme.accent, borderRadius: 8, padding: 14, alignItems: "center", marginTop: 24, marginBottom: 40 },
+  duplicateTitle: { fontWeight: "700", marginBottom: 4 },
+  duplicateItem: {},
+  error: { textAlign: "center", marginTop: 12 },
+  saveButton: { borderRadius: 10, padding: 14, alignItems: "center", marginTop: 24, marginBottom: 40 },
   saveButtonDisabled: { opacity: 0.6 },
-  saveButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  saveButtonText: { fontSize: 16, fontWeight: "700" },
 });

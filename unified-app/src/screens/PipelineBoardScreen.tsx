@@ -1,21 +1,27 @@
 import { useCallback, useState } from "react";
 import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
-import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { RootStackParamList } from "../navigation/types";
+import type { CompositeScreenProps } from "@react-navigation/native";
+import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
+import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { EnrolmentTabParamList, RootStackParamList } from "../navigation/types";
 import { useAuth } from "../context/AuthContext";
+import { useTheme } from "../theme/ThemeContext";
 import { api, Enquiry, EnquiryStatus } from "../api/client";
-import { theme } from "../theme";
 
 const STAGES: EnquiryStatus[] = ["new", "contacted", "visit", "application", "admitted", "enrolled", "lost"];
 
-type Props = NativeStackScreenProps<RootStackParamList, "PipelineBoard">;
+type Props = CompositeScreenProps<
+  BottomTabScreenProps<EnrolmentTabParamList, "Pipeline">,
+  NativeStackScreenProps<RootStackParamList>
+>;
 
 // Columns per stage, tap a card to open it. True drag-and-drop between columns would need
 // an extra gesture library - out of scope for this pass, so moving stage happens from the
 // Enquiry Detail screen's stage tracker instead.
 export function PipelineBoardScreen({ navigation }: Props) {
   const { accessToken } = useAuth();
+  const { colors } = useTheme();
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -42,30 +48,30 @@ export function PipelineBoardScreen({ navigation }: Props) {
 
   if (isLoading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator />
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+        <ActivityIndicator color={colors.accent} />
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
       <ScrollView horizontal contentContainerStyle={styles.board}>
         {STAGES.map((stage) => {
           const items = enquiries.filter((e) => e.status === stage);
           return (
             <View key={stage} style={styles.column}>
-              <Text style={styles.columnTitle}>{stage} ({items.length})</Text>
+              <Text style={[styles.columnTitle, { color: colors.textPrimary }]}>{stage} ({items.length})</Text>
               <ScrollView style={styles.columnList}>
                 {items.map((e) => (
                   <Pressable
                     key={e.id}
-                    style={styles.card}
+                    style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
                     onPress={() => navigation.navigate("EnquiryDetail", { enquiryId: e.id })}
                   >
-                    <Text style={styles.cardName}>{e.contactName}</Text>
-                    <Text style={styles.cardMeta}>{e.contactPhone}</Text>
+                    <Text style={[styles.cardName, { color: colors.textPrimary }]}>{e.contactName}</Text>
+                    <Text style={[styles.cardMeta, { color: colors.textMuted }]}>{e.contactPhone}</Text>
                   </Pressable>
                 ))}
               </ScrollView>
@@ -78,21 +84,19 @@ export function PipelineBoardScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.background },
-  centered: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: theme.background },
+  container: { flex: 1 },
+  centered: { flex: 1, justifyContent: "center", alignItems: "center" },
   board: { padding: 12 },
   column: { width: 220, marginRight: 12 },
-  columnTitle: { fontWeight: "700", color: theme.text, textTransform: "capitalize", marginBottom: 8 },
+  columnTitle: { fontWeight: "700", textTransform: "capitalize", marginBottom: 8 },
   columnList: { maxHeight: 600 },
   card: {
-    backgroundColor: theme.card,
     borderWidth: 1,
-    borderColor: theme.border,
     borderRadius: 10,
     padding: 10,
     marginBottom: 8,
   },
-  cardName: { fontWeight: "600", color: theme.text },
-  cardMeta: { color: theme.textMuted, marginTop: 2, fontSize: 12 },
-  error: { color: theme.danger, textAlign: "center", padding: 8 },
+  cardName: { fontWeight: "700" },
+  cardMeta: { marginTop: 2, fontSize: 12 },
+  error: { textAlign: "center", padding: 8 },
 });

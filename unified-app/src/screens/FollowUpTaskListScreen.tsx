@@ -2,8 +2,9 @@ import { useCallback, useMemo, useState } from "react";
 import { View, Text, Pressable, TextInput, StyleSheet, ActivityIndicator, ScrollView } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "../context/AuthContext";
+import { useTheme } from "../theme/ThemeContext";
+import { ThemeColors } from "../theme/tokens";
 import { api, FollowUpTask } from "../api/client";
-import { theme } from "../theme";
 
 function groupTasks(tasks: FollowUpTask[]) {
   const now = new Date();
@@ -23,11 +24,13 @@ function groupTasks(tasks: FollowUpTask[]) {
 
 function TaskRow({
   task,
+  colors,
   onSend,
   onComplete,
   onReschedule,
 }: {
   task: FollowUpTask;
+  colors: ThemeColors;
   onSend: (id: string) => void;
   onComplete: (id: string) => void;
   onReschedule: (id: string, dueAt: string) => void;
@@ -36,41 +39,42 @@ function TaskRow({
   const [newDate, setNewDate] = useState("");
 
   return (
-    <View style={styles.taskCard}>
-      <Text style={styles.taskEnquiry}>{task.enquiry?.contactName ?? "Enquiry"}</Text>
-      <Text style={styles.taskMeta}>
+    <View style={[styles.taskCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <Text style={[styles.taskEnquiry, { color: colors.textPrimary }]}>{task.enquiry?.contactName ?? "Enquiry"}</Text>
+      <Text style={[styles.taskMeta, { color: colors.textMuted }]}>
         {task.channel} · due {new Date(task.dueAt).toLocaleDateString()}
       </Text>
 
       {rescheduling ? (
         <View style={styles.rescheduleRow}>
           <TextInput
-            style={styles.rescheduleInput}
+            style={[styles.rescheduleInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
             placeholder="YYYY-MM-DD"
+            placeholderTextColor={colors.textMuted}
             value={newDate}
             onChangeText={setNewDate}
           />
           <Pressable
-            style={styles.smallButton}
+            style={[styles.smallButton, { backgroundColor: colors.accent }]}
             onPress={() => {
               if (newDate) onReschedule(task.id, newDate);
               setRescheduling(false);
               setNewDate("");
             }}
           >
-            <Text style={styles.smallButtonText}>Save</Text>
+            <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Save</Text>
           </Pressable>
         </View>
       ) : (
         <View style={styles.actionsRow}>
-          <Pressable style={styles.smallButton} onPress={() => onSend(task.id)}>
-            <Text style={styles.smallButtonText}>Send now</Text>
+          <Pressable style={[styles.smallButton, { backgroundColor: colors.accent }]} onPress={() => onSend(task.id)}>
+            <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Send now</Text>
           </Pressable>
-          <Pressable style={styles.smallButtonOutline} onPress={() => setRescheduling(true)}>
-            <Text style={styles.smallButtonOutlineText}>Reschedule</Text>
+          <Pressable style={[styles.smallButtonOutline, { borderColor: colors.border }]} onPress={() => setRescheduling(true)}>
+            <Text style={[styles.smallButtonOutlineText, { color: colors.textPrimary }]}>Reschedule</Text>
           </Pressable>
-          <Pressable style={styles.smallButtonOutline} onPress={() => onComplete(task.id)}>
-            <Text style={styles.smallButtonOutlineText}>Mark complete</Text>
+          <Pressable style={[styles.smallButtonOutline, { borderColor: colors.border }]} onPress={() => onComplete(task.id)}>
+            <Text style={[styles.smallButtonOutlineText, { color: colors.textPrimary }]}>Mark complete</Text>
           </Pressable>
         </View>
       )}
@@ -80,6 +84,7 @@ function TaskRow({
 
 export function FollowUpTaskListScreen() {
   const { accessToken } = useAuth();
+  const { colors } = useTheme();
   const [tasks, setTasks] = useState<FollowUpTask[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -138,26 +143,26 @@ export function FollowUpTaskListScreen() {
 
   if (isLoading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator />
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+        <ActivityIndicator color={colors.accent} />
       </View>
     );
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+    <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={styles.content}>
+      {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
       {(["Overdue", "Due today", "Upcoming"] as const).map((label, idx) => {
         const group = [groups.overdue, groups.dueToday, groups.upcoming][idx];
         return (
           <View key={label}>
-            <Text style={styles.sectionTitle}>{label} ({group.length})</Text>
+            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>{label} ({group.length})</Text>
             {group.length === 0 ? (
-              <Text style={styles.empty}>Nothing here</Text>
+              <Text style={[styles.empty, { color: colors.textMuted }]}>Nothing here</Text>
             ) : (
               group.map((t) => (
-                <TaskRow key={t.id} task={t} onSend={send} onComplete={complete} onReschedule={reschedule} />
+                <TaskRow key={t.id} task={t} colors={colors} onSend={send} onComplete={complete} onReschedule={reschedule} />
               ))
             )}
           </View>
@@ -168,27 +173,25 @@ export function FollowUpTaskListScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.background },
+  container: { flex: 1 },
   content: { padding: 16, paddingBottom: 60 },
-  centered: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: theme.background },
-  sectionTitle: { fontSize: 15, fontWeight: "700", color: theme.text, marginTop: 20, marginBottom: 8 },
-  empty: { color: theme.textMuted },
+  centered: { flex: 1, justifyContent: "center", alignItems: "center" },
+  sectionTitle: { fontSize: 15, fontWeight: "700", marginTop: 20, marginBottom: 8 },
+  empty: {},
   taskCard: {
-    backgroundColor: theme.card,
     borderWidth: 1,
-    borderColor: theme.border,
     borderRadius: 10,
     padding: 12,
     marginBottom: 8,
   },
-  taskEnquiry: { fontWeight: "600", color: theme.text },
-  taskMeta: { color: theme.textMuted, marginTop: 2, textTransform: "capitalize" },
+  taskEnquiry: { fontWeight: "700" },
+  taskMeta: { marginTop: 2, textTransform: "capitalize", fontSize: 13 },
   actionsRow: { flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap" },
   rescheduleRow: { flexDirection: "row", gap: 8, marginTop: 10, alignItems: "center" },
-  rescheduleInput: { borderWidth: 1, borderColor: theme.border, borderRadius: 6, padding: 8, flex: 1, backgroundColor: "#fff" },
-  smallButton: { backgroundColor: theme.accent, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6, marginRight: 8 },
-  smallButtonText: { color: "#fff", fontWeight: "600", fontSize: 13 },
-  smallButtonOutline: { borderWidth: 1, borderColor: theme.border, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6, marginRight: 8 },
-  smallButtonOutlineText: { color: theme.text, fontWeight: "600", fontSize: 13 },
-  error: { color: theme.danger, textAlign: "center", marginBottom: 8 },
+  rescheduleInput: { borderWidth: 1, borderRadius: 6, padding: 8, flex: 1 },
+  smallButton: { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6, marginRight: 8 },
+  smallButtonText: { fontWeight: "700", fontSize: 13 },
+  smallButtonOutline: { borderWidth: 1, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6, marginRight: 8 },
+  smallButtonOutlineText: { fontWeight: "700", fontSize: 13 },
+  error: { textAlign: "center", marginBottom: 8 },
 });

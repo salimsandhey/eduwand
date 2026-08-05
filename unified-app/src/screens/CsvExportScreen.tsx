@@ -2,11 +2,12 @@ import { useCallback, useState } from "react";
 import { View, Text, Pressable, StyleSheet, ActivityIndicator, ScrollView, Platform } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "../context/AuthContext";
+import { useTheme } from "../theme/ThemeContext";
 import { api, CsvExportLog } from "../api/client";
-import { theme } from "../theme";
 
 export function CsvExportScreen() {
   const { accessToken } = useAuth();
+  const { colors } = useTheme();
   const [log, setLog] = useState<CsvExportLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRunning, setIsRunning] = useState(false);
@@ -70,31 +71,35 @@ export function CsvExportScreen() {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Pressable style={[styles.runButton, isRunning && styles.runButtonDisabled]} onPress={runExport} disabled={isRunning}>
-        {isRunning ? <ActivityIndicator color="#fff" /> : <Text style={styles.runButtonText}>Run export now</Text>}
+    <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={styles.content}>
+      <Pressable
+        style={[styles.runButton, { backgroundColor: colors.accent }, isRunning && styles.runButtonDisabled]}
+        onPress={runExport}
+        disabled={isRunning}
+      >
+        {isRunning ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.runButtonText, { color: colors.accentOn }]}>Run export now</Text>}
       </Pressable>
 
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
-      <Text style={styles.sectionTitle}>Export history</Text>
+      <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Export history</Text>
 
       {isLoading ? (
-        <ActivityIndicator />
+        <ActivityIndicator color={colors.accent} />
       ) : log.length === 0 ? (
-        <Text style={styles.meta}>No exports run yet</Text>
+        <Text style={[styles.meta, { color: colors.textMuted }]}>No exports run yet</Text>
       ) : (
         log.map((entry) => (
-          <View key={entry.id} style={styles.row}>
+          <View key={entry.id} style={[styles.row, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={styles.rowInfo}>
-              <Text style={styles.rowDate}>{new Date(entry.runAt).toLocaleString()}</Text>
-              <Text style={styles.meta}>
+              <Text style={[styles.rowDate, { color: colors.textPrimary }]}>{new Date(entry.runAt).toLocaleString()}</Text>
+              <Text style={[styles.meta, { color: colors.textMuted }]}>
                 {entry.status} · {entry.rowCount} row{entry.rowCount === 1 ? "" : "s"}
               </Text>
             </View>
             {entry.status === "success" ? (
-              <Pressable style={styles.smallButton} onPress={() => download(entry.id)}>
-                <Text style={styles.smallButtonText}>Download</Text>
+              <Pressable style={[styles.smallButton, { backgroundColor: colors.accent }]} onPress={() => download(entry.id)}>
+                <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Download</Text>
               </Pressable>
             ) : null}
           </View>
@@ -102,9 +107,9 @@ export function CsvExportScreen() {
       )}
 
       {preview ? (
-        <View style={styles.previewBox}>
-          <Text style={styles.sectionTitle}>Export {preview.id}</Text>
-          <Text selectable style={styles.previewText}>{preview.content}</Text>
+        <View style={[styles.previewBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Export {preview.id}</Text>
+          <Text selectable style={[styles.previewText, { color: colors.textPrimary }]}>{preview.content}</Text>
         </View>
       ) : null}
     </ScrollView>
@@ -112,29 +117,27 @@ export function CsvExportScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.background },
+  container: { flex: 1 },
   content: { padding: 16, paddingBottom: 60 },
-  runButton: { backgroundColor: theme.accent, borderRadius: 8, padding: 14, alignItems: "center" },
+  runButton: { borderRadius: 10, padding: 14, alignItems: "center" },
   runButtonDisabled: { opacity: 0.6 },
-  runButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  sectionTitle: { fontSize: 15, fontWeight: "700", color: theme.text, marginTop: 24, marginBottom: 8 },
-  meta: { color: theme.textMuted },
+  runButtonText: { fontSize: 16, fontWeight: "700" },
+  sectionTitle: { fontSize: 15, fontWeight: "700", marginTop: 24, marginBottom: 8 },
+  meta: {},
   row: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    backgroundColor: theme.card,
     borderWidth: 1,
-    borderColor: theme.border,
     borderRadius: 10,
     padding: 12,
     marginBottom: 8,
   },
   rowInfo: { flexShrink: 1 },
-  rowDate: { fontWeight: "600", color: theme.text },
-  smallButton: { backgroundColor: theme.accent, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
-  smallButtonText: { color: "#fff", fontWeight: "600", fontSize: 13 },
-  error: { color: theme.danger, textAlign: "center", marginTop: 12 },
-  previewBox: { backgroundColor: theme.card, borderWidth: 1, borderColor: theme.border, borderRadius: 8, padding: 12, marginTop: 12 },
-  previewText: { fontFamily: Platform.OS === "web" ? "monospace" : undefined, fontSize: 12, color: theme.text },
+  rowDate: { fontWeight: "700" },
+  smallButton: { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
+  smallButtonText: { fontWeight: "700", fontSize: 13 },
+  error: { textAlign: "center", marginTop: 12 },
+  previewBox: { borderWidth: 1, borderRadius: 10, padding: 12, marginTop: 12 },
+  previewText: { fontFamily: Platform.OS === "web" ? "monospace" : undefined, fontSize: 12 },
 });
