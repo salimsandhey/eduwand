@@ -5,15 +5,22 @@ import { useTheme } from "../theme/ThemeContext";
 import { useAuth } from "../context/AuthContext";
 import { EnrolmentTabNavigator } from "./EnrolmentTabNavigator";
 import { TeacherTabNavigator } from "./TeacherTabNavigator";
+import { NoAccessScreen } from "../screens/NoAccessScreen";
 import { EnquiryDetailScreen } from "../screens/EnquiryDetailScreen";
 import { NewEnquiryFormScreen } from "../screens/NewEnquiryFormScreen";
 import { AdmissionConfirmationScreen } from "../screens/AdmissionConfirmationScreen";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
+const ENROLMENT_MOBILE_ROLES = ["front_desk", "counsellor"];
+
+// admin/leadership/platform_admin belong on the web Admin Dashboard, not this app -
+// see the "Use the Admin Dashboard" screen. student/parent have no screens yet.
 function MainTabs() {
   const { user } = useAuth();
-  return user?.role === "teacher" ? <TeacherTabNavigator /> : <EnrolmentTabNavigator />;
+  if (user?.role === "teacher") return <TeacherTabNavigator />;
+  if (user && ENROLMENT_MOBILE_ROLES.includes(user.role)) return <EnrolmentTabNavigator />;
+  return <NoAccessScreen />;
 }
 
 export function AppNavigator() {

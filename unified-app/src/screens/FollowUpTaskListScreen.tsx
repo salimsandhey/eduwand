@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { View, Text, Pressable, TextInput, StyleSheet, ActivityIndicator, ScrollView, ViewStyle } from "react-native";
+import { View, Text, Pressable, TextInput, StyleSheet, ActivityIndicator, ScrollView, ViewStyle, LayoutAnimation, Platform, UIManager } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../context/AuthContext";
@@ -7,6 +7,12 @@ import { useTheme } from "../theme/ThemeContext";
 import { Screen } from "../components/Screen";
 import { ThemeColors } from "../theme/tokens";
 import { api, FollowUpTask } from "../api/client";
+
+if (Platform.OS === "android") {
+  if (UIManager.setLayoutAnimationEnabledExperimental) {
+    UIManager.setLayoutAnimationEnabledExperimental(true);
+  }
+}
 
 function groupTasks(tasks: FollowUpTask[]) {
   const now = new Date();
@@ -35,6 +41,7 @@ function TaskRow({
   colors,
   shadow,
   pressedOpacity,
+  leftColor,
   onSend,
   onComplete,
   onReschedule,
@@ -43,33 +50,56 @@ function TaskRow({
   colors: ThemeColors;
   shadow: ViewStyle;
   pressedOpacity: number;
+  leftColor: string;
   onSend: (id: string) => void;
   onComplete: (id: string) => void;
   onReschedule: (id: string, dueAt: string) => void;
 }) {
   const [rescheduling, setRescheduling] = useState(false);
   const [newDate, setNewDate] = useState("");
+  const [inputFocused, setInputFocused] = useState(false);
   const channelIcon = task.channel === "sms" ? "chatbox-outline" : "mail-outline";
 
+  const initials = task.enquiry?.contactName
+    ? task.enquiry.contactName
+        .split(" ")
+        .map((n) => n[0])
+        .join("")
+        .toUpperCase()
+        .slice(0, 2)
+    : "?";
+
   return (
-    <View style={[styles.taskCard, { backgroundColor: colors.surface, borderColor: colors.border }, shadow]}>
-      <Text style={[styles.taskEnquiry, { color: colors.textPrimary }]}>{task.enquiry?.contactName ?? "Enquiry"}</Text>
-      <View style={styles.taskMetaRow}>
-        <Ionicons name={channelIcon} size={13} color={colors.textMuted} />
-        <Text style={[styles.taskMeta, { color: colors.textMuted }]}>
-          {task.channel} · due {new Date(task.dueAt).toLocaleDateString()}
-        </Text>
+    <View style={[styles.taskCard, { backgroundColor: colors.surface, borderColor: colors.border, borderLeftColor: leftColor }, shadow]}>
+      <View style={styles.taskCardHeader}>
+        <View style={[styles.avatarCircle, { backgroundColor: colors.accent + "12", borderColor: colors.border }]}>
+          <Text style={[styles.avatarText, { color: colors.accent }]}>{initials}</Text>
+        </View>
+        <View style={styles.taskTitleSection}>
+          <Text style={[styles.taskEnquiry, { color: colors.textPrimary }]}>{task.enquiry?.contactName ?? "Enquiry"}</Text>
+          <View style={styles.taskMetaRow}>
+            <Ionicons name={channelIcon} size={12} color={colors.textMuted} style={{ marginRight: 2 }} />
+            <Text style={[styles.taskMeta, { color: colors.textMuted }]}>
+              {task.channel} · due {new Date(task.dueAt).toLocaleDateString()}
+            </Text>
+          </View>
+        </View>
       </View>
 
       {rescheduling ? (
         <View style={styles.rescheduleRow}>
-          <TextInput
-            style={[styles.rescheduleInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
-            placeholder="YYYY-MM-DD"
-            placeholderTextColor={colors.textMuted}
-            value={newDate}
-            onChangeText={setNewDate}
-          />
+          <View style={[styles.rescheduleInputContainer, { borderColor: inputFocused ? colors.accent : colors.border, backgroundColor: colors.surfaceRaised }]}>
+            <Ionicons name="calendar-outline" size={14} color={colors.textMuted} style={{ marginRight: 6 }} />
+            <TextInput
+              style={[styles.rescheduleInput, { color: colors.textPrimary }]}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={colors.textMuted}
+              value={newDate}
+              onChangeText={setNewDate}
+              onFocus={() => setInputFocused(true)}
+              onBlur={() => setInputFocused(false)}
+            />
+          </View>
           <Pressable
             style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]}
             onPress={() => {
@@ -80,6 +110,16 @@ function TaskRow({
             accessibilityRole="button"
           >
             <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Save</Text>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.smallButtonOutline, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+            onPress={() => {
+              setRescheduling(false);
+              setNewDate("");
+            }}
+            accessibilityRole="button"
+          >
+            <Text style={[styles.smallButtonOutlineText, { color: colors.textPrimary }]}>Cancel</Text>
           </Pressable>
         </View>
       ) : (
@@ -103,7 +143,7 @@ function TaskRow({
             onPress={() => onComplete(task.id)}
             accessibilityRole="button"
           >
-            <Text style={[styles.smallButtonOutlineText, { color: colors.textPrimary }]}>Mark complete</Text>
+            <Text style={[styles.smallButtonOutlineText, { color: colors.textPrimary }]}>Complete</Text>
           </Pressable>
         </View>
       )}
@@ -117,6 +157,13 @@ export function FollowUpTaskListScreen() {
   const [tasks, setTasks] = useState<FollowUpTask[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Accordion collapsed state
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({
+    Overdue: false,
+    "Due today": false,
+    Upcoming: false,
+  });
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -139,6 +186,14 @@ export function FollowUpTaskListScreen() {
   );
 
   const groups = useMemo(() => groupTasks(tasks), [tasks]);
+
+  const toggleGroup = (groupLabel: string) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setCollapsedGroups((prev) => ({
+      ...prev,
+      [groupLabel]: !prev[groupLabel],
+    }));
+  };
 
   async function send(id: string) {
     if (!accessToken) return;
@@ -178,34 +233,75 @@ export function FollowUpTaskListScreen() {
     );
   }
 
+  const groupColors: Record<string, string> = {
+    Overdue: colors.danger,
+    "Due today": colors.warning,
+    Upcoming: colors.accent,
+  };
+
+  const totalPending = groups.overdue.length + groups.dueToday.length + groups.upcoming.length;
+
   return (
     <Screen>
+      {/* Title Header Block */}
+      <View style={styles.titleSection}>
+        <Text style={[styles.title, { color: colors.textPrimary }]}>Follow Up Tasks</Text>
+        <Text style={[styles.subtitle, { color: colors.textMuted }]}>
+          {totalPending} pending task{totalPending === 1 ? "" : "s"} remaining
+        </Text>
+      </View>
+
       <ScrollView contentContainerStyle={styles.content}>
         {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
         {(["Overdue", "Due today", "Upcoming"] as const).map((label, idx) => {
           const group = [groups.overdue, groups.dueToday, groups.upcoming][idx];
+          const isCollapsed = collapsedGroups[label];
           return (
-            <View key={label}>
-              <View style={styles.sectionTitleRow}>
-                <Ionicons name={GROUP_ICONS[label]} size={16} color={colors.textPrimary} />
-                <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>{label} ({group.length})</Text>
-              </View>
-              {group.length === 0 ? (
-                <Text style={[styles.empty, { color: colors.textMuted }]}>Nothing here</Text>
-              ) : (
-                group.map((t) => (
-                  <TaskRow
-                    key={t.id}
-                    task={t}
-                    colors={colors}
-                    shadow={cardShadow}
-                    pressedOpacity={pressedOpacity}
-                    onSend={send}
-                    onComplete={complete}
-                    onReschedule={reschedule}
-                  />
-                ))
+            <View key={label} style={styles.sectionContainer}>
+              <Pressable
+                onPress={() => toggleGroup(label)}
+                style={({ pressed }) => [
+                  styles.sectionTitleRow,
+                  { backgroundColor: colors.surfaceRaised, borderColor: colors.border },
+                  pressed && { opacity: pressedOpacity },
+                ]}
+              >
+                <View style={styles.sectionHeaderLeft}>
+                  <Ionicons name={GROUP_ICONS[label]} size={16} color={groupColors[label]} />
+                  <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+                    {label} ({group.length})
+                  </Text>
+                </View>
+                <Ionicons
+                  name={isCollapsed ? "chevron-down-outline" : "chevron-up-outline"}
+                  size={16}
+                  color={colors.textSecondary}
+                />
+              </Pressable>
+
+              {!isCollapsed && (
+                <View style={styles.groupContent}>
+                  {group.length === 0 ? (
+                    <View style={[styles.emptyContainer, { borderColor: colors.border }]}>
+                      <Text style={[styles.empty, { color: colors.textMuted }]}>Nothing here</Text>
+                    </View>
+                  ) : (
+                    group.map((t) => (
+                      <TaskRow
+                        key={t.id}
+                        task={t}
+                        colors={colors}
+                        shadow={cardShadow}
+                        pressedOpacity={pressedOpacity}
+                        leftColor={groupColors[label]}
+                        onSend={send}
+                        onComplete={complete}
+                        onReschedule={reschedule}
+                      />
+                    ))
+                  )}
+                </View>
               )}
             </View>
           );
@@ -217,25 +313,68 @@ export function FollowUpTaskListScreen() {
 
 const styles = StyleSheet.create({
   centered: { justifyContent: "center", alignItems: "center" },
+  titleSection: { paddingHorizontal: 16, paddingTop: 16 },
+  title: { fontSize: 24, fontWeight: "800", letterSpacing: -0.5 },
+  subtitle: { fontSize: 13, marginTop: 2, fontWeight: "500" },
   content: { padding: 16, paddingBottom: 40 },
-  sectionTitleRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 20, marginBottom: 8 },
-  sectionTitle: { fontSize: 15, fontWeight: "700" },
-  empty: {},
+  sectionContainer: { marginBottom: 16 },
+  sectionTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  sectionHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 8 },
+  sectionTitle: { fontSize: 13, fontWeight: "800", letterSpacing: 0.2, textTransform: "uppercase" },
+  groupContent: { marginTop: 8 },
+  emptyContainer: {
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderRadius: 12,
+    padding: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  empty: { fontSize: 13, fontWeight: "500" },
   taskCard: {
     borderWidth: 1,
-    borderRadius: 14,
+    borderLeftWidth: 4,
+    borderRadius: 12,
     padding: 12,
     marginBottom: 8,
   },
-  taskEnquiry: { fontWeight: "700" },
-  taskMetaRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 },
-  taskMeta: { textTransform: "capitalize", fontSize: 13 },
-  actionsRow: { flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap" },
-  rescheduleRow: { flexDirection: "row", gap: 8, marginTop: 10, alignItems: "center" },
-  rescheduleInput: { borderWidth: 1, borderRadius: 8, padding: 8, flex: 1, minHeight: 40 },
-  smallButton: { borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, marginRight: 8, minHeight: 36, justifyContent: "center" },
-  smallButtonText: { fontWeight: "700", fontSize: 13 },
-  smallButtonOutline: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, marginRight: 8, minHeight: 36, justifyContent: "center" },
-  smallButtonOutlineText: { fontWeight: "700", fontSize: 13 },
+  taskCardHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
+  avatarCircle: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 0.5,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: { fontSize: 12, fontWeight: "800" },
+  taskTitleSection: { flex: 1 },
+  taskEnquiry: { fontSize: 14, fontWeight: "700" },
+  taskMetaRow: { flexDirection: "row", alignItems: "center", marginTop: 4 },
+  taskMeta: { textTransform: "capitalize", fontSize: 11 },
+  actionsRow: { flexDirection: "row", gap: 6, marginTop: 12, flexWrap: "wrap" },
+  rescheduleRow: { flexDirection: "row", gap: 6, marginTop: 12, alignItems: "center" },
+  rescheduleInputContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    flex: 1,
+    height: 36,
+  },
+  rescheduleInput: { flex: 1, height: "100%", fontSize: 13, paddingVertical: 0 },
+  smallButton: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, minHeight: 34, justifyContent: "center", alignItems: "center" },
+  smallButtonText: { fontWeight: "700", fontSize: 11 },
+  smallButtonOutline: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, minHeight: 34, justifyContent: "center", alignItems: "center" },
+  smallButtonOutlineText: { fontWeight: "700", fontSize: 11 },
   error: { textAlign: "center", marginBottom: 8 },
 });

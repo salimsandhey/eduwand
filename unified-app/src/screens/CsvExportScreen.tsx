@@ -1,10 +1,11 @@
-import { useCallback, useState } from "react";
-import { View, Text, Pressable, StyleSheet, ActivityIndicator, ScrollView, Platform } from "react-native";
+import { useCallback, useState, useRef } from "react";
+import { View, Text, Pressable, StyleSheet, ActivityIndicator, ScrollView, Platform, Animated } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { api, CsvExportLog } from "../api/client";
+import { Screen } from "../components/Screen";
 
 export function CsvExportScreen() {
   const { accessToken } = useAuth();
@@ -14,6 +15,23 @@ export function CsvExportScreen() {
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ id: string; content: string } | null>(null);
+
+  // Button Scale Animation
+  const buttonScale = useRef(new Animated.Value(1)).current;
+
+  const handlePressIn = () => {
+    Animated.spring(buttonScale, {
+      toValue: 0.96,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handlePressOut = () => {
+    Animated.spring(buttonScale, {
+      toValue: 1,
+      useNativeDriver: true,
+    }).start();
+  };
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -72,84 +90,158 @@ export function CsvExportScreen() {
   }
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={styles.content}>
-      <Pressable
-        style={({ pressed }) => [
-          styles.runButton,
-          { backgroundColor: colors.accent },
-          cardShadow,
-          (isRunning || pressed) && styles.runButtonDisabled,
-        ]}
-        onPress={runExport}
-        disabled={isRunning}
-        accessibilityRole="button"
-      >
-        {isRunning ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.runButtonText, { color: colors.accentOn }]}>Run export now</Text>}
-      </Pressable>
-
-      {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
-
-      <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Export history</Text>
-
-      {isLoading ? (
-        <ActivityIndicator color={colors.accent} />
-      ) : log.length === 0 ? (
-        <Text style={[styles.meta, { color: colors.textMuted }]}>No exports run yet</Text>
-      ) : (
-        log.map((entry) => (
-          <View key={entry.id} style={[styles.row, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
-            <View style={styles.rowInfo}>
-              <Text style={[styles.rowDate, { color: colors.textPrimary }]}>{new Date(entry.runAt).toLocaleString()}</Text>
-              <Text style={[styles.meta, { color: entry.status === "success" ? colors.textMuted : colors.danger }]}>
-                {entry.status} · {entry.rowCount} row{entry.rowCount === 1 ? "" : "s"}
-              </Text>
-            </View>
-            {entry.status === "success" ? (
-              <Pressable
-                style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]}
-                onPress={() => download(entry.id)}
-                accessibilityRole="button"
-              >
-                <Ionicons name="download-outline" size={14} color={colors.accentOn} />
-                <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Download</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        ))
-      )}
-
-      {preview ? (
-        <View style={[styles.previewBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Export {preview.id}</Text>
-          <Text selectable style={[styles.previewText, { color: colors.textPrimary }]}>{preview.content}</Text>
+    <Screen edges={["bottom"]}>
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        {/* Title Block */}
+        <View style={styles.titleSection}>
+          <Text style={[styles.title, { color: colors.textPrimary }]}>CSV Export</Text>
+          <Text style={[styles.subtitle, { color: colors.textMuted }]}>
+            Export active admissions and contacts database
+          </Text>
         </View>
-      ) : null}
-    </ScrollView>
+
+        {/* Animated Button */}
+        <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
+          <Pressable
+            onPressIn={handlePressIn}
+            onPressOut={handlePressOut}
+            style={({ pressed }) => [
+              styles.runButton,
+              { backgroundColor: colors.accent },
+              cardShadow,
+              (isRunning || pressed) && styles.runButtonDisabled,
+            ]}
+            onPress={runExport}
+            disabled={isRunning}
+            accessibilityRole="button"
+          >
+            {isRunning ? (
+              <ActivityIndicator color={colors.accentOn} />
+            ) : (
+              <View style={styles.buttonInner}>
+                <Ionicons name="cloud-upload-outline" size={18} color={colors.accentOn} />
+                <Text style={[styles.runButtonText, { color: colors.accentOn }]}>Run export now</Text>
+              </View>
+            )}
+          </Pressable>
+        </Animated.View>
+
+        {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
+
+        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Export history</Text>
+
+        {isLoading ? (
+          <ActivityIndicator color={colors.accent} style={{ marginVertical: 20 }} />
+        ) : log.length === 0 ? (
+          <View style={[styles.emptyContainer, { borderColor: colors.border }]}>
+            <Text style={[styles.meta, { color: colors.textMuted }]}>No exports run yet</Text>
+          </View>
+        ) : (
+          log.map((entry) => {
+            const isSuccess = entry.status === "success";
+            return (
+              <View
+                key={entry.id}
+                style={[
+                  styles.row,
+                  {
+                    backgroundColor: colors.surface,
+                    borderColor: colors.border,
+                    borderLeftColor: isSuccess ? colors.accent : colors.danger,
+                  },
+                  cardShadow,
+                ]}
+              >
+                <View style={styles.rowInfo}>
+                  <Text style={[styles.rowDate, { color: colors.textPrimary }]}>
+                    {new Date(entry.runAt).toLocaleString()}
+                  </Text>
+                  <Text style={[styles.metaText, { color: isSuccess ? colors.textMuted : colors.danger }]}>
+                    {entry.status} · {entry.rowCount} row{entry.rowCount === 1 ? "" : "s"}
+                  </Text>
+                </View>
+                {isSuccess ? (
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.smallButton,
+                      { backgroundColor: colors.accent },
+                      pressed && { opacity: pressedOpacity },
+                    ]}
+                    onPress={() => download(entry.id)}
+                    accessibilityRole="button"
+                  >
+                    <Ionicons name="download-outline" size={13} color={colors.accentOn} />
+                    <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Download</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            );
+          })
+        )}
+
+        {preview ? (
+          <View style={[styles.previewBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={styles.previewHeader}>
+              <Text style={[styles.previewTitle, { color: colors.textPrimary }]}>Export Preview ({preview.id.slice(0, 8)})</Text>
+              <Pressable onPress={() => setPreview(null)} hitSlop={8}>
+                <Ionicons name="close-outline" size={20} color={colors.textMuted} />
+              </Pressable>
+            </View>
+            <ScrollView horizontal style={styles.previewScroll} showsHorizontalScrollIndicator={false}>
+              <Text selectable style={[styles.previewText, { color: colors.textPrimary }]}>
+                {preview.content}
+              </Text>
+            </ScrollView>
+          </View>
+        ) : null}
+      </ScrollView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
   content: { padding: 16, paddingBottom: 40 },
-  runButton: { borderRadius: 10, padding: 14, alignItems: "center", minHeight: 48, justifyContent: "center" },
+  titleSection: { marginBottom: 20 },
+  title: { fontSize: 24, fontWeight: "800", letterSpacing: -0.5 },
+  subtitle: { fontSize: 13, marginTop: 2, fontWeight: "500" },
+  runButton: { borderRadius: 10, height: 48, alignItems: "center", justifyContent: "center" },
   runButtonDisabled: { opacity: 0.6 },
-  runButtonText: { fontSize: 16, fontWeight: "700" },
-  sectionTitle: { fontSize: 15, fontWeight: "700", marginTop: 24, marginBottom: 8 },
-  meta: { textTransform: "capitalize" },
+  buttonInner: { flexDirection: "row", alignItems: "center", gap: 8 },
+  runButtonText: { fontSize: 15, fontWeight: "700" },
+  sectionTitle: { fontSize: 14, fontWeight: "800", marginTop: 24, marginBottom: 10, letterSpacing: 0.2, textTransform: "uppercase" },
+  emptyContainer: {
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderRadius: 12,
+    padding: 24,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  meta: { fontSize: 13, fontWeight: "500" },
   row: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     borderWidth: 1,
-    borderRadius: 14,
+    borderLeftWidth: 4,
+    borderRadius: 12,
     padding: 12,
     marginBottom: 8,
   },
   rowInfo: { flexShrink: 1 },
-  rowDate: { fontWeight: "700" },
-  smallButton: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, minHeight: 36 },
-  smallButtonText: { fontWeight: "700", fontSize: 13 },
+  rowDate: { fontSize: 14, fontWeight: "700" },
+  metaText: { fontSize: 12, marginTop: 4, textTransform: "capitalize", fontWeight: "600" },
+  smallButton: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 8, paddingHorizontal: 12, height: 34, justifyContent: "center" },
+  smallButtonText: { fontWeight: "700", fontSize: 12 },
   error: { textAlign: "center", marginTop: 12 },
-  previewBox: { borderWidth: 1, borderRadius: 10, padding: 12, marginTop: 12 },
-  previewText: { fontFamily: Platform.OS === "web" ? "monospace" : undefined, fontSize: 12 },
+  previewBox: { borderWidth: 1, borderRadius: 12, padding: 14, marginTop: 20 },
+  previewHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
+  previewTitle: { fontSize: 13, fontWeight: "700" },
+  previewScroll: { marginTop: 6 },
+  previewText: {
+    fontFamily: Platform.OS === "web" ? "monospace" : undefined,
+    fontSize: 11,
+    lineHeight: 16,
+  },
 });

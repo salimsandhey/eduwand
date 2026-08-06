@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator } from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Share } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
@@ -36,11 +36,13 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
 
   const [lostReasonInput, setLostReasonInput] = useState("");
   const [showLostReasonFor, setShowLostReasonFor] = useState(false);
+  const [lostReasonFocused, setLostReasonFocused] = useState(false);
 
   const [showAddTask, setShowAddTask] = useState(false);
   const [taskChannel, setTaskChannel] = useState<MessageChannel>("sms");
   const [taskTemplateId, setTaskTemplateId] = useState<string | null>(null);
   const [taskDueAt, setTaskDueAt] = useState("");
+  const [taskDueAtFocused, setTaskDueAtFocused] = useState(false);
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -133,6 +135,17 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
     }
   }
 
+  const handleShare = async () => {
+    if (!enquiry) return;
+    try {
+      await Share.share({
+        message: `Lead Details:\nName: ${enquiry.contactName}\nPhone: ${enquiry.contactPhone}\nEmail: ${enquiry.contactEmail || "N/A"}\nSource: ${enquiry.source}\nStatus: ${enquiry.status}`,
+      });
+    } catch (err) {
+      // Ignored
+    }
+  };
+
   if (isLoading && !enquiry) {
     return (
       <Screen edges={["bottom"]} style={styles.centered}>
@@ -151,22 +164,65 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
 
   const channelTemplates = templates.filter((t) => t.channel === taskChannel);
 
+  // Initials
+  const initials = enquiry.contactName
+    ? enquiry.contactName
+        .split(" ")
+        .map((n) => n[0])
+        .join("")
+        .toUpperCase()
+        .slice(0, 2)
+    : "?";
+
   return (
     <Screen edges={["bottom"]}>
       <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        {/* Profile Card Redesign */}
         <View style={[styles.headerCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
-          <Text style={[styles.name, { color: colors.textPrimary }]}>{enquiry.contactName}</Text>
-          <View style={styles.metaRow}>
-            <Ionicons name="call-outline" size={13} color={colors.textMuted} />
-            <Text style={[styles.meta, { color: colors.textMuted }]}>
-              {enquiry.contactPhone}{enquiry.contactEmail ? ` · ${enquiry.contactEmail}` : ""}
-            </Text>
+          <View style={styles.profileSection}>
+            <View style={[styles.avatarCircle, { backgroundColor: colors.accent + "15", borderColor: colors.accent }]}>
+              <Text style={[styles.avatarText, { color: colors.accent }]}>{initials}</Text>
+            </View>
+            <View style={styles.headerDetails}>
+              <Text style={[styles.name, { color: colors.textPrimary }]}>{enquiry.contactName}</Text>
+              <Text style={[styles.sourceTag, { color: colors.textSecondary, backgroundColor: colors.surfaceRaised }]}>
+                Source: {enquiry.source}
+              </Text>
+            </View>
           </View>
-          <View style={styles.metaRow}>
-            <Ionicons name="information-circle-outline" size={13} color={colors.textMuted} />
-            <Text style={[styles.meta, { color: colors.textMuted }]}>
-              {enquiry.source}{enquiry.gradeInterest ? ` · ${enquiry.gradeInterest}` : ""}
-            </Text>
+
+          {/* Quick Action Buttons Row */}
+          <View style={[styles.actionsRow, { borderTopColor: colors.border }]}>
+            <Pressable
+              style={({ pressed }) => [styles.actionButton, pressed && { opacity: pressedOpacity }]}
+              accessibilityRole="button"
+            >
+              <View style={[styles.actionIconContainer, { backgroundColor: colors.surfaceRaised }]}>
+                <Ionicons name="call-outline" size={18} color={colors.accent} />
+              </View>
+              <Text style={[styles.actionText, { color: colors.textSecondary }]}>Call</Text>
+            </Pressable>
+
+            <Pressable
+              style={({ pressed }) => [styles.actionButton, pressed && { opacity: pressedOpacity }]}
+              accessibilityRole="button"
+            >
+              <View style={[styles.actionIconContainer, { backgroundColor: colors.surfaceRaised }]}>
+                <Ionicons name="mail-outline" size={18} color={colors.accent} />
+              </View>
+              <Text style={[styles.actionText, { color: colors.textSecondary }]}>Email</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={handleShare}
+              style={({ pressed }) => [styles.actionButton, pressed && { opacity: pressedOpacity }]}
+              accessibilityRole="button"
+            >
+              <View style={[styles.actionIconContainer, { backgroundColor: colors.surfaceRaised }]}>
+                <Ionicons name="share-outline" size={18} color={colors.accent} />
+              </View>
+              <Text style={[styles.actionText, { color: colors.textSecondary }]}>Share</Text>
+            </Pressable>
           </View>
         </View>
 
@@ -191,8 +247,9 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
           </View>
         ) : null}
 
-        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Stage</Text>
-        <View style={styles.chipRow}>
+        {/* Horizontal Stage Selector Redesign */}
+        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Lead Stage</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.stageScroll}>
           {STATUSES.map((s) => {
             const active = enquiry.status === s;
             const statusColor = getStatusColor(s, mode);
@@ -200,7 +257,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
               <Pressable
                 key={s}
                 style={({ pressed }) => [
-                  styles.chip,
+                  styles.stageChip,
                   active
                     ? { backgroundColor: statusColor.bg, borderColor: statusColor.text }
                     : { backgroundColor: colors.surface, borderColor: colors.border },
@@ -209,20 +266,23 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
                 onPress={() => changeStatus(s)}
                 accessibilityRole="button"
               >
-                <Text style={[styles.chipText, { color: active ? statusColor.text : colors.textSecondary }]}>{s}</Text>
+                {active && <Ionicons name="checkmark-circle" size={14} color={statusColor.text} style={{ marginRight: 4 }} />}
+                <Text style={[styles.stageChipText, { color: active ? statusColor.text : colors.textSecondary }]}>{s}</Text>
               </Pressable>
             );
           })}
-        </View>
+        </ScrollView>
 
         {showLostReasonFor ? (
-          <View style={[styles.inlineForm, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View style={[styles.inlineForm, { backgroundColor: colors.surface, borderColor: lostReasonFocused ? colors.accent : colors.border }]}>
             <Text style={[styles.label, { color: colors.textSecondary }]}>Reason for lost</Text>
             <TextInput
               style={[styles.input, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
               value={lostReasonInput}
               onChangeText={setLostReasonInput}
               placeholderTextColor={colors.textMuted}
+              onFocus={() => setLostReasonFocused(true)}
+              onBlur={() => setLostReasonFocused(false)}
             />
             <Pressable
               style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]}
@@ -245,21 +305,57 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
           </Pressable>
         ) : null}
 
-        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Stage history</Text>
-        {enquiry.stageHistory.map((h) => (
-          <View key={h.id} style={styles.historyRow}>
-            <View style={[styles.historyDot, { backgroundColor: colors.accent }]} />
-            <Text style={[styles.historyItem, { color: colors.textMuted }]}>
-              {h.fromStatus ?? "—"} → {h.toStatus} · {new Date(h.changedAt).toLocaleString()}
-            </Text>
+        {/* Lead Details Info Panel */}
+        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Details</Text>
+        <View style={[styles.detailsCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View style={styles.detailRowItem}>
+            <Text style={[styles.detailLabel, { color: colors.textMuted }]}>Phone Number</Text>
+            <Text style={[styles.detailValue, { color: colors.textPrimary }]}>{enquiry.contactPhone}</Text>
           </View>
-        ))}
+          {enquiry.contactEmail ? (
+            <View style={[styles.detailRowItem, { borderTopWidth: 1, borderTopColor: colors.border }]}>
+              <Text style={[styles.detailLabel, { color: colors.textMuted }]}>Email Address</Text>
+              <Text style={[styles.detailValue, { color: colors.textPrimary }]}>{enquiry.contactEmail}</Text>
+            </View>
+          ) : null}
+          {enquiry.gradeInterest ? (
+            <View style={[styles.detailRowItem, { borderTopWidth: 1, borderTopColor: colors.border }]}>
+              <Text style={[styles.detailLabel, { color: colors.textMuted }]}>Grade of Interest</Text>
+              <Text style={[styles.detailValue, { color: colors.textPrimary }]}>{enquiry.gradeInterest}</Text>
+            </View>
+          ) : null}
+        </View>
 
+        {/* Timeline Style Activity History */}
+        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Activity Timeline</Text>
+        <View style={styles.timelineContainer}>
+          <View style={[styles.timelineVerticalLine, { backgroundColor: colors.border }]} />
+          {enquiry.stageHistory.map((h, i) => (
+            <View key={h.id} style={styles.timelineRow}>
+              <View style={[styles.timelineDot, { backgroundColor: colors.accent }]} />
+              <View style={styles.timelineContentBlock}>
+                <Text style={[styles.timelineStatusText, { color: colors.textPrimary }]}>
+                  Moved to {h.toStatus}
+                </Text>
+                <Text style={[styles.timelineTimeText, { color: colors.textMuted }]}>
+                  {new Date(h.changedAt).toLocaleString()}
+                </Text>
+              </View>
+            </View>
+          ))}
+        </View>
+
+        {/* Notes Container */}
         <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Notes</Text>
-        <Text style={[styles.notes, { color: colors.textPrimary }]}>{enquiry.notes || "No notes"}</Text>
+        <View style={[styles.notesCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Text style={[styles.notesText, { color: colors.textPrimary }]}>
+            {enquiry.notes || "No notes available for this lead."}
+          </Text>
+        </View>
 
+        {/* Follow up tasks section */}
         <View style={styles.followUpHeader}>
-          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Follow up tasks</Text>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginTop: 0 }]}>Follow Up Tasks</Text>
           <Pressable
             style={({ pressed }) => [pressed && { opacity: pressedOpacity }]}
             onPress={() => setShowAddTask((v) => !v)}
@@ -271,7 +367,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
         </View>
 
         {showAddTask ? (
-          <View style={[styles.inlineForm, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View style={[styles.inlineForm, { backgroundColor: colors.surface, borderColor: taskDueAtFocused ? colors.accent : colors.border }]}>
             <View style={styles.chipRow}>
               {(["sms", "email"] as MessageChannel[]).map((c) => {
                 const active = taskChannel === c;
@@ -279,7 +375,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
                   <Pressable
                     key={c}
                     style={({ pressed }) => [
-                      styles.chip,
+                      styles.stageChip,
                       { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border },
                       pressed && { opacity: pressedOpacity },
                     ]}
@@ -290,7 +386,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
                     }}
                     accessibilityRole="button"
                   >
-                    <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{c}</Text>
+                    <Text style={[styles.stageChipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{c}</Text>
                   </Pressable>
                 );
               })}
@@ -305,14 +401,14 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
                     <Pressable
                       key={t.id}
                       style={({ pressed }) => [
-                        styles.chip,
+                        styles.stageChip,
                         { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border },
                         pressed && { opacity: pressedOpacity },
                       ]}
                       onPress={() => setTaskTemplateId(t.id)}
                       accessibilityRole="button"
                     >
-                      <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{t.name}</Text>
+                      <Text style={[styles.stageChipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{t.name}</Text>
                     </Pressable>
                   );
                 })}
@@ -325,6 +421,8 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
               onChangeText={setTaskDueAt}
               placeholder="2026-08-10"
               placeholderTextColor={colors.textMuted}
+              onFocus={() => setTaskDueAtFocused(true)}
+              onBlur={() => setTaskDueAtFocused(false)}
             />
             <Pressable
               style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]}
@@ -337,13 +435,16 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
         ) : null}
 
         {tasks.length === 0 ? (
-          <Text style={[styles.meta, { color: colors.textMuted }]}>No follow up tasks</Text>
+          <Text style={[styles.meta, { color: colors.textMuted }]}>No follow up tasks scheduled</Text>
         ) : (
           tasks.map((t) => (
             <View key={t.id} style={[styles.taskRow, { borderBottomColor: colors.border }]}>
-              <Text style={[styles.meta, { color: colors.textMuted }]}>
-                {t.channel} · due {new Date(t.dueAt).toLocaleDateString()} · {t.status}
-              </Text>
+              <View style={styles.taskInfoContainer}>
+                <Ionicons name={t.channel === "sms" ? "chatbox-outline" : "mail-outline"} size={14} color={colors.textMuted} style={{ marginRight: 6 }} />
+                <Text style={[styles.taskMetaText, { color: colors.textPrimary }]}>
+                  {t.channel} · due {new Date(t.dueAt).toLocaleDateString()}
+                </Text>
+              </View>
               {t.status === "pending" ? (
                 <Pressable
                   style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]}
@@ -352,7 +453,9 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
                 >
                   <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Send now</Text>
                 </Pressable>
-              ) : null}
+              ) : (
+                <Text style={[styles.taskStatusTag, { color: colors.textMuted }]}>{t.status}</Text>
+              )}
             </View>
           ))
         )}
@@ -367,46 +470,83 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   content: { padding: 16, paddingBottom: 40 },
   centered: { justifyContent: "center", alignItems: "center" },
-  headerCard: { borderWidth: 1, borderRadius: 16, padding: 16 },
-  name: { fontSize: 22, fontWeight: "700" },
-  metaRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 },
+  headerCard: { borderWidth: 1, borderRadius: 16, padding: 16, marginBottom: 16 },
+  profileSection: { flexDirection: "row", gap: 16, alignItems: "center" },
+  avatarCircle: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    borderWidth: 1.5,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: { fontSize: 20, fontWeight: "800" },
+  headerDetails: { flex: 1 },
+  name: { fontSize: 22, fontWeight: "800", letterSpacing: -0.5 },
+  sourceTag: {
+    alignSelf: "flex-start",
+    fontSize: 11,
+    fontWeight: "700",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginTop: 6,
+  },
+  metaRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 },
   meta: { fontSize: 13 },
-  sectionTitle: { fontSize: 15, fontWeight: "700", marginTop: 20, marginBottom: 8 },
-  chipRow: { flexDirection: "row", flexWrap: "wrap" },
-  chip: {
+  actionsRow: { flexDirection: "row", justifyContent: "space-around", marginTop: 14, paddingTop: 14, borderTopWidth: 1 },
+  actionButton: { alignItems: "center", gap: 4 },
+  actionIconContainer: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
+  actionText: { fontSize: 12, fontWeight: "600" },
+  sectionTitle: { fontSize: 14, fontWeight: "800", marginTop: 22, marginBottom: 10, letterSpacing: 0.3, textTransform: "uppercase" },
+  stageScroll: { paddingBottom: 6 },
+  stageChip: {
+    flexDirection: "row",
+    alignItems: "center",
     borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: 20,
     paddingHorizontal: 12,
     paddingVertical: 6,
     marginRight: 8,
-    marginBottom: 8,
-    minHeight: 32,
-    justifyContent: "center",
+    height: 32,
   },
-  chipText: { textTransform: "capitalize", fontSize: 12, fontWeight: "600" },
-  historyRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 },
-  historyDot: { width: 6, height: 6, borderRadius: 3 },
-  historyItem: { fontSize: 13 },
-  notes: { fontSize: 14, lineHeight: 20 },
+  stageChipText: { textTransform: "capitalize", fontSize: 12, fontWeight: "700" },
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 },
+  detailsCard: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 14 },
+  detailRowItem: { paddingVertical: 12 },
+  detailLabel: { fontSize: 11, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.2 },
+  detailValue: { fontSize: 14, fontWeight: "700", marginTop: 4 },
+  timelineContainer: { position: "relative", paddingLeft: 20, marginVertical: 6 },
+  timelineVerticalLine: { position: "absolute", left: 3, top: 8, bottom: 8, width: 2 },
+  timelineRow: { flexDirection: "row", gap: 12, marginBottom: 16, alignItems: "flex-start" },
+  timelineDot: { width: 8, height: 8, borderRadius: 4, marginTop: 5 },
+  timelineContentBlock: { flex: 1 },
+  timelineStatusText: { fontSize: 13, fontWeight: "700" },
+  timelineTimeText: { fontSize: 11, marginTop: 2 },
+  notesCard: { borderWidth: 1, borderRadius: 12, padding: 14 },
+  notesText: { fontSize: 14, lineHeight: 20 },
   duplicateBanner: {
     borderWidth: 1,
     borderRadius: 12,
     padding: 12,
-    marginTop: 16,
+    marginBottom: 16,
   },
   duplicateTitleRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
   duplicateTitle: { fontWeight: "700" },
   duplicateRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 },
   duplicateItem: {},
-  admissionButton: { flexDirection: "row", gap: 8, borderRadius: 12, padding: 14, alignItems: "center", justifyContent: "center", marginTop: 16, minHeight: 48 },
+  admissionButton: { flexDirection: "row", gap: 8, borderRadius: 10, padding: 14, alignItems: "center", justifyContent: "center", marginTop: 16, minHeight: 48 },
   admissionButtonText: { fontWeight: "700", fontSize: 15 },
-  inlineForm: { borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 12 },
-  label: { marginTop: 8, marginBottom: 6, fontSize: 13, fontWeight: "600" },
-  input: { borderWidth: 1, borderRadius: 8, padding: 10 },
-  smallButton: { borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, marginTop: 8, alignSelf: "flex-start", minHeight: 36, justifyContent: "center" },
-  smallButtonText: { fontWeight: "700", fontSize: 13 },
-  followUpHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 20 },
+  inlineForm: { borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 12, marginTop: 8 },
+  label: { marginTop: 4, marginBottom: 6, fontSize: 12, fontWeight: "700" },
+  input: { borderWidth: 1, borderRadius: 8, padding: 10, height: 44 },
+  smallButton: { borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, minHeight: 36, justifyContent: "center", alignItems: "center" },
+  smallButtonText: { fontWeight: "700", fontSize: 12 },
+  followUpHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 22 },
   link: { fontWeight: "700" },
   taskRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 10, borderBottomWidth: 1 },
+  taskInfoContainer: { flexDirection: "row", alignItems: "center", flex: 1 },
+  taskMetaText: { fontSize: 13, fontWeight: "600" },
+  taskStatusTag: { fontSize: 12, fontWeight: "600", textTransform: "capitalize" },
   error: { marginTop: 12, textAlign: "center" },
 });
