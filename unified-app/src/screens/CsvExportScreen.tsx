@@ -1,13 +1,14 @@
 import { useCallback, useState } from "react";
 import { View, Text, Pressable, StyleSheet, ActivityIndicator, ScrollView, Platform } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
+import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { api, CsvExportLog } from "../api/client";
 
 export function CsvExportScreen() {
   const { accessToken } = useAuth();
-  const { colors } = useTheme();
+  const { colors, cardShadow, pressedOpacity } = useTheme();
   const [log, setLog] = useState<CsvExportLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRunning, setIsRunning] = useState(false);
@@ -73,9 +74,15 @@ export function CsvExportScreen() {
   return (
     <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={styles.content}>
       <Pressable
-        style={[styles.runButton, { backgroundColor: colors.accent }, isRunning && styles.runButtonDisabled]}
+        style={({ pressed }) => [
+          styles.runButton,
+          { backgroundColor: colors.accent },
+          cardShadow,
+          (isRunning || pressed) && styles.runButtonDisabled,
+        ]}
         onPress={runExport}
         disabled={isRunning}
+        accessibilityRole="button"
       >
         {isRunning ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.runButtonText, { color: colors.accentOn }]}>Run export now</Text>}
       </Pressable>
@@ -90,15 +97,20 @@ export function CsvExportScreen() {
         <Text style={[styles.meta, { color: colors.textMuted }]}>No exports run yet</Text>
       ) : (
         log.map((entry) => (
-          <View key={entry.id} style={[styles.row, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View key={entry.id} style={[styles.row, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
             <View style={styles.rowInfo}>
               <Text style={[styles.rowDate, { color: colors.textPrimary }]}>{new Date(entry.runAt).toLocaleString()}</Text>
-              <Text style={[styles.meta, { color: colors.textMuted }]}>
+              <Text style={[styles.meta, { color: entry.status === "success" ? colors.textMuted : colors.danger }]}>
                 {entry.status} · {entry.rowCount} row{entry.rowCount === 1 ? "" : "s"}
               </Text>
             </View>
             {entry.status === "success" ? (
-              <Pressable style={[styles.smallButton, { backgroundColor: colors.accent }]} onPress={() => download(entry.id)}>
+              <Pressable
+                style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]}
+                onPress={() => download(entry.id)}
+                accessibilityRole="button"
+              >
+                <Ionicons name="download-outline" size={14} color={colors.accentOn} />
                 <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Download</Text>
               </Pressable>
             ) : null}
@@ -118,24 +130,24 @@ export function CsvExportScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  content: { padding: 16, paddingBottom: 60 },
-  runButton: { borderRadius: 10, padding: 14, alignItems: "center" },
+  content: { padding: 16, paddingBottom: 40 },
+  runButton: { borderRadius: 10, padding: 14, alignItems: "center", minHeight: 48, justifyContent: "center" },
   runButtonDisabled: { opacity: 0.6 },
   runButtonText: { fontSize: 16, fontWeight: "700" },
   sectionTitle: { fontSize: 15, fontWeight: "700", marginTop: 24, marginBottom: 8 },
-  meta: {},
+  meta: { textTransform: "capitalize" },
   row: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 14,
     padding: 12,
     marginBottom: 8,
   },
   rowInfo: { flexShrink: 1 },
   rowDate: { fontWeight: "700" },
-  smallButton: { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
+  smallButton: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, minHeight: 36 },
   smallButtonText: { fontWeight: "700", fontSize: 13 },
   error: { textAlign: "center", marginTop: 12 },
   previewBox: { borderWidth: 1, borderRadius: 10, padding: 12, marginTop: 12 },

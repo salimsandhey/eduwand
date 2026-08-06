@@ -1,6 +1,7 @@
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme/ThemeContext";
+import { Screen } from "./Screen";
 
 interface Props {
   icon: keyof typeof Ionicons.glyphMap;
@@ -12,11 +13,11 @@ interface Props {
 // Module 2 (AI Module) has no backend yet - these screens are honest placeholders,
 // not stubs pretending to work. See Docs/Dev/EduWand_Engineering_PRD.md section 6.
 export function ComingSoonScreen({ icon, title, description, features }: Props) {
-  const { colors } = useTheme();
+  const { colors, cardShadow } = useTheme();
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.iconCircle, { backgroundColor: colors.surfaceRaised }]}>
+    <Screen style={styles.container}>
+      <View style={[styles.iconCircle, { backgroundColor: colors.surfaceRaised }, cardShadow]}>
         <Ionicons name={icon} size={36} color={colors.accent} />
       </View>
       <Text style={[styles.title, { color: colors.textPrimary }]}>{title}</Text>
@@ -31,15 +32,15 @@ export function ComingSoonScreen({ icon, title, description, features }: Props) 
         ))}
       </View>
 
-      <Pressable style={[styles.button, { borderColor: colors.border }]} disabled>
+      <Pressable style={[styles.button, { borderColor: colors.border }]} disabled accessibilityRole="button" accessibilityState={{ disabled: true }}>
         <Text style={[styles.buttonText, { color: colors.textMuted }]}>Notify Me</Text>
       </Pressable>
-    </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32 },
+  container: { alignItems: "center", justifyContent: "center", padding: 32 },
   iconCircle: {
     width: 88,
     height: 88,
@@ -53,6 +54,6 @@ const styles = StyleSheet.create({
   featureList: { alignSelf: "stretch", gap: 10, marginBottom: 32 },
   featureRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   featureText: { fontSize: 14 },
-  button: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 24, paddingVertical: 12 },
+  button: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 24, paddingVertical: 12, minHeight: 44, justifyContent: "center" },
   buttonText: { fontSize: 14, fontWeight: "600" },
 });

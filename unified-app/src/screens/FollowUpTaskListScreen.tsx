@@ -1,8 +1,10 @@
 import { useCallback, useMemo, useState } from "react";
-import { View, Text, Pressable, TextInput, StyleSheet, ActivityIndicator, ScrollView } from "react-native";
+import { View, Text, Pressable, TextInput, StyleSheet, ActivityIndicator, ScrollView, ViewStyle } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
+import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
+import { Screen } from "../components/Screen";
 import { ThemeColors } from "../theme/tokens";
 import { api, FollowUpTask } from "../api/client";
 
@@ -22,28 +24,42 @@ function groupTasks(tasks: FollowUpTask[]) {
   return { overdue, dueToday, upcoming };
 }
 
+const GROUP_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
+  Overdue: "alert-circle-outline",
+  "Due today": "today-outline",
+  Upcoming: "time-outline",
+};
+
 function TaskRow({
   task,
   colors,
+  shadow,
+  pressedOpacity,
   onSend,
   onComplete,
   onReschedule,
 }: {
   task: FollowUpTask;
   colors: ThemeColors;
+  shadow: ViewStyle;
+  pressedOpacity: number;
   onSend: (id: string) => void;
   onComplete: (id: string) => void;
   onReschedule: (id: string, dueAt: string) => void;
 }) {
   const [rescheduling, setRescheduling] = useState(false);
   const [newDate, setNewDate] = useState("");
+  const channelIcon = task.channel === "sms" ? "chatbox-outline" : "mail-outline";
 
   return (
-    <View style={[styles.taskCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+    <View style={[styles.taskCard, { backgroundColor: colors.surface, borderColor: colors.border }, shadow]}>
       <Text style={[styles.taskEnquiry, { color: colors.textPrimary }]}>{task.enquiry?.contactName ?? "Enquiry"}</Text>
-      <Text style={[styles.taskMeta, { color: colors.textMuted }]}>
-        {task.channel} · due {new Date(task.dueAt).toLocaleDateString()}
-      </Text>
+      <View style={styles.taskMetaRow}>
+        <Ionicons name={channelIcon} size={13} color={colors.textMuted} />
+        <Text style={[styles.taskMeta, { color: colors.textMuted }]}>
+          {task.channel} · due {new Date(task.dueAt).toLocaleDateString()}
+        </Text>
+      </View>
 
       {rescheduling ? (
         <View style={styles.rescheduleRow}>
@@ -55,25 +71,38 @@ function TaskRow({
             onChangeText={setNewDate}
           />
           <Pressable
-            style={[styles.smallButton, { backgroundColor: colors.accent }]}
+            style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]}
             onPress={() => {
               if (newDate) onReschedule(task.id, newDate);
               setRescheduling(false);
               setNewDate("");
             }}
+            accessibilityRole="button"
           >
             <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Save</Text>
           </Pressable>
         </View>
       ) : (
         <View style={styles.actionsRow}>
-          <Pressable style={[styles.smallButton, { backgroundColor: colors.accent }]} onPress={() => onSend(task.id)}>
+          <Pressable
+            style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]}
+            onPress={() => onSend(task.id)}
+            accessibilityRole="button"
+          >
             <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Send now</Text>
           </Pressable>
-          <Pressable style={[styles.smallButtonOutline, { borderColor: colors.border }]} onPress={() => setRescheduling(true)}>
+          <Pressable
+            style={({ pressed }) => [styles.smallButtonOutline, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+            onPress={() => setRescheduling(true)}
+            accessibilityRole="button"
+          >
             <Text style={[styles.smallButtonOutlineText, { color: colors.textPrimary }]}>Reschedule</Text>
           </Pressable>
-          <Pressable style={[styles.smallButtonOutline, { borderColor: colors.border }]} onPress={() => onComplete(task.id)}>
+          <Pressable
+            style={({ pressed }) => [styles.smallButtonOutline, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+            onPress={() => onComplete(task.id)}
+            accessibilityRole="button"
+          >
             <Text style={[styles.smallButtonOutlineText, { color: colors.textPrimary }]}>Mark complete</Text>
           </Pressable>
         </View>
@@ -84,7 +113,7 @@ function TaskRow({
 
 export function FollowUpTaskListScreen() {
   const { accessToken } = useAuth();
-  const { colors } = useTheme();
+  const { colors, cardShadow, pressedOpacity } = useTheme();
   const [tasks, setTasks] = useState<FollowUpTask[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -143,55 +172,70 @@ export function FollowUpTaskListScreen() {
 
   if (isLoading) {
     return (
-      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+      <Screen style={styles.centered}>
         <ActivityIndicator color={colors.accent} />
-      </View>
+      </Screen>
     );
   }
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={styles.content}>
-      {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
+    <Screen>
+      <ScrollView contentContainerStyle={styles.content}>
+        {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
-      {(["Overdue", "Due today", "Upcoming"] as const).map((label, idx) => {
-        const group = [groups.overdue, groups.dueToday, groups.upcoming][idx];
-        return (
-          <View key={label}>
-            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>{label} ({group.length})</Text>
-            {group.length === 0 ? (
-              <Text style={[styles.empty, { color: colors.textMuted }]}>Nothing here</Text>
-            ) : (
-              group.map((t) => (
-                <TaskRow key={t.id} task={t} colors={colors} onSend={send} onComplete={complete} onReschedule={reschedule} />
-              ))
-            )}
-          </View>
-        );
-      })}
-    </ScrollView>
+        {(["Overdue", "Due today", "Upcoming"] as const).map((label, idx) => {
+          const group = [groups.overdue, groups.dueToday, groups.upcoming][idx];
+          return (
+            <View key={label}>
+              <View style={styles.sectionTitleRow}>
+                <Ionicons name={GROUP_ICONS[label]} size={16} color={colors.textPrimary} />
+                <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>{label} ({group.length})</Text>
+              </View>
+              {group.length === 0 ? (
+                <Text style={[styles.empty, { color: colors.textMuted }]}>Nothing here</Text>
+              ) : (
+                group.map((t) => (
+                  <TaskRow
+                    key={t.id}
+                    task={t}
+                    colors={colors}
+                    shadow={cardShadow}
+                    pressedOpacity={pressedOpacity}
+                    onSend={send}
+                    onComplete={complete}
+                    onReschedule={reschedule}
+                  />
+                ))
+              )}
+            </View>
+          );
+        })}
+      </ScrollView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  content: { padding: 16, paddingBottom: 60 },
-  centered: { flex: 1, justifyContent: "center", alignItems: "center" },
-  sectionTitle: { fontSize: 15, fontWeight: "700", marginTop: 20, marginBottom: 8 },
+  centered: { justifyContent: "center", alignItems: "center" },
+  content: { padding: 16, paddingBottom: 40 },
+  sectionTitleRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 20, marginBottom: 8 },
+  sectionTitle: { fontSize: 15, fontWeight: "700" },
   empty: {},
   taskCard: {
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 14,
     padding: 12,
     marginBottom: 8,
   },
   taskEnquiry: { fontWeight: "700" },
-  taskMeta: { marginTop: 2, textTransform: "capitalize", fontSize: 13 },
+  taskMetaRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 },
+  taskMeta: { textTransform: "capitalize", fontSize: 13 },
   actionsRow: { flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap" },
   rescheduleRow: { flexDirection: "row", gap: 8, marginTop: 10, alignItems: "center" },
-  rescheduleInput: { borderWidth: 1, borderRadius: 6, padding: 8, flex: 1 },
-  smallButton: { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6, marginRight: 8 },
+  rescheduleInput: { borderWidth: 1, borderRadius: 8, padding: 8, flex: 1, minHeight: 40 },
+  smallButton: { borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, marginRight: 8, minHeight: 36, justifyContent: "center" },
   smallButtonText: { fontWeight: "700", fontSize: 13 },
-  smallButtonOutline: { borderWidth: 1, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6, marginRight: 8 },
+  smallButtonOutline: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, marginRight: 8, minHeight: 36, justifyContent: "center" },
   smallButtonOutlineText: { fontWeight: "700", fontSize: 13 },
   error: { textAlign: "center", marginBottom: 8 },
 });

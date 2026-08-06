@@ -37,7 +37,17 @@ export function TeacherTabNavigator() {
       <Tab.Screen name="Studio" component={StudioScreen} />
       <Tab.Screen name="Assignment" component={AssignmentScreen} />
       <Tab.Screen name="Analytics" component={TeacherAnalyticsScreen} />
-      <Tab.Screen name="More" component={MoreMenuScreen} />
+      <Tab.Screen
+        name="More"
+        component={MoreMenuScreen}
+        options={{
+          headerShown: true,
+          title: "More",
+          headerStyle: { backgroundColor: colors.surface },
+          headerTintColor: colors.textPrimary,
+          headerTitleStyle: { fontWeight: "700" },
+        }}
+      />
     </Tab.Navigator>
   );
 }

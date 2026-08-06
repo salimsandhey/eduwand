@@ -8,9 +8,9 @@ const ENROLMENT_ROLES = ["front_desk", "counsellor", "admin", "leadership"];
 
 export function MoreMenuScreen() {
   const { user, logout } = useAuth();
-  const { colors } = useTheme();
+  const { colors, cardShadow, pressedOpacity } = useTheme();
   // Loosely typed: this screen is shared between the enrolment More stack (which has
-  // a CsvExport route) and the teacher More stack (which doesn't).
+  // a CsvExport route) and the teacher More tab (which doesn't).
   const navigation = useNavigation<any>();
 
   const showCsvExport = user ? ENROLMENT_ROLES.includes(user.role) : false;
@@ -19,17 +19,36 @@ export function MoreMenuScreen() {
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {showCsvExport ? (
         <Pressable
-          style={[styles.row, { backgroundColor: colors.surface, borderColor: colors.border }]}
+          style={({ pressed }) => [
+            styles.row,
+            { backgroundColor: colors.surface, borderColor: colors.border },
+            cardShadow,
+            pressed && { opacity: pressedOpacity },
+          ]}
           onPress={() => navigation.navigate("CsvExport")}
+          accessibilityRole="button"
         >
-          <Ionicons name="download-outline" size={20} color={colors.accent} />
+          <View style={[styles.rowIcon, { backgroundColor: colors.surfaceRaised }]}>
+            <Ionicons name="download-outline" size={18} color={colors.accent} />
+          </View>
           <Text style={[styles.rowText, { color: colors.textPrimary }]}>CSV Export</Text>
           <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
         </Pressable>
       ) : null}
 
-      <Pressable style={[styles.row, { backgroundColor: colors.surface, borderColor: colors.border }]} onPress={logout}>
-        <Ionicons name="log-out-outline" size={20} color={colors.danger} />
+      <Pressable
+        style={({ pressed }) => [
+          styles.row,
+          { backgroundColor: colors.surface, borderColor: colors.border },
+          cardShadow,
+          pressed && { opacity: pressedOpacity },
+        ]}
+        onPress={logout}
+        accessibilityRole="button"
+      >
+        <View style={[styles.rowIcon, { backgroundColor: colors.surfaceRaised }]}>
+          <Ionicons name="log-out-outline" size={18} color={colors.danger} />
+        </View>
         <Text style={[styles.rowText, { color: colors.danger }]}>Log out</Text>
       </Pressable>
     </View>
@@ -43,8 +62,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 16,
+    borderRadius: 14,
+    padding: 14,
+    minHeight: 56,
   },
+  rowIcon: { width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center" },
   rowText: { flex: 1, fontSize: 15, fontWeight: "600" },
 });

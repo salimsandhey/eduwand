@@ -28,6 +28,30 @@ export const darkColors: ThemeColors = {
   warning: "#F5A524",
 };
 
+// Cards read as flat/pasted-on without some depth cue. Dark surfaces barely show a
+// black shadow, so dark mode leans on a faint light-colored glow instead; light mode
+// uses a conventional soft drop shadow. Both keep elevation for Android parity.
+export function getCardShadow(mode: "light" | "dark") {
+  if (mode === "dark") {
+    return {
+      shadowColor: "#000000",
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.4,
+      shadowRadius: 3,
+      elevation: 2,
+    };
+  }
+  return {
+    shadowColor: "#0B1F14",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.07,
+    shadowRadius: 8,
+    elevation: 2,
+  };
+}
+
+export const PRESSED_OPACITY = 0.65;
+
 export const lightColors: ThemeColors = {
   background: "#F5F7F4",
   surface: "#FFFFFF",

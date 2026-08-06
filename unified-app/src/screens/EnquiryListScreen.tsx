@@ -8,6 +8,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { EnrolmentTabParamList, RootStackParamList } from "../navigation/types";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
+import { Screen } from "../components/Screen";
+import { getStatusColor } from "../theme/statusColors";
 import { api, Enquiry, EnquiryStatus } from "../api/client";
 
 const STATUS_FILTERS: (EnquiryStatus | "all")[] = [
@@ -28,7 +30,7 @@ type Props = CompositeScreenProps<
 
 export function EnquiryListScreen({ navigation }: Props) {
   const { accessToken } = useAuth();
-  const { colors } = useTheme();
+  const { colors, mode, cardShadow, pressedOpacity } = useTheme();
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<EnquiryStatus | "all">("all");
@@ -66,7 +68,7 @@ export function EnquiryListScreen({ navigation }: Props) {
   }, [enquiries, search]);
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
+    <Screen>
       <View style={styles.header}>
         <View style={[styles.search, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <Ionicons name="search-outline" size={16} color={colors.textMuted} />
@@ -78,7 +80,11 @@ export function EnquiryListScreen({ navigation }: Props) {
             onChangeText={setSearch}
           />
         </View>
-        <Pressable style={[styles.addButton, { backgroundColor: colors.accent }]} onPress={() => navigation.navigate("NewEnquiryForm")}>
+        <Pressable
+          style={({ pressed }) => [styles.addButton, { backgroundColor: colors.accent }, cardShadow, pressed && { opacity: pressedOpacity }]}
+          onPress={() => navigation.navigate("NewEnquiryForm")}
+          accessibilityRole="button"
+        >
           <Text style={[styles.addButtonText, { color: colors.accentOn }]}>+ New</Text>
         </Pressable>
       </View>
@@ -93,11 +99,13 @@ export function EnquiryListScreen({ navigation }: Props) {
           const active = statusFilter === item;
           return (
             <Pressable
-              style={[
+              style={({ pressed }) => [
                 styles.chip,
                 { backgroundColor: active ? colors.accent : colors.surface, borderColor: active ? colors.accent : colors.border },
+                pressed && { opacity: pressedOpacity },
               ]}
               onPress={() => setStatusFilter(item)}
+              accessibilityRole="button"
             >
               <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{item}</Text>
             </Pressable>
@@ -112,27 +120,50 @@ export function EnquiryListScreen({ navigation }: Props) {
         keyExtractor={(e) => e.id}
         refreshControl={<RefreshControl refreshing={isLoading} onRefresh={load} tintColor={colors.accent} />}
         contentContainerStyle={styles.list}
-        ListEmptyComponent={!isLoading ? <Text style={[styles.empty, { color: colors.textMuted }]}>No enquiries found</Text> : null}
-        renderItem={({ item }) => (
-          <Pressable
-            style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
-            onPress={() => navigation.navigate("EnquiryDetail", { enquiryId: item.id })}
-          >
-            <View style={styles.cardHeader}>
-              <Text style={[styles.cardName, { color: colors.textPrimary }]}>{item.contactName}</Text>
-              <Text style={[styles.statusBadge, { color: colors.accent, backgroundColor: colors.surfaceRaised }]}>{item.status}</Text>
+        ListEmptyComponent={
+          !isLoading ? (
+            <View style={styles.emptyState}>
+              <Ionicons name="mail-open-outline" size={32} color={colors.textMuted} />
+              <Text style={[styles.empty, { color: colors.textMuted }]}>No enquiries found</Text>
             </View>
-            <Text style={[styles.cardMeta, { color: colors.textMuted }]}>{item.contactPhone} · {item.source}</Text>
-            {item.gradeInterest ? <Text style={[styles.cardMeta, { color: colors.textMuted }]}>{item.gradeInterest}</Text> : null}
-          </Pressable>
-        )}
+          ) : null
+        }
+        renderItem={({ item }) => {
+          const statusColor = getStatusColor(item.status, mode);
+          return (
+            <Pressable
+              style={({ pressed }) => [
+                styles.card,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+                cardShadow,
+                pressed && { opacity: pressedOpacity },
+              ]}
+              onPress={() => navigation.navigate("EnquiryDetail", { enquiryId: item.id })}
+              accessibilityRole="button"
+            >
+              <View style={styles.cardHeader}>
+                <Text style={[styles.cardName, { color: colors.textPrimary }]}>{item.contactName}</Text>
+                <Text style={[styles.statusBadge, { color: statusColor.text, backgroundColor: statusColor.bg }]}>{item.status}</Text>
+              </View>
+              <View style={styles.cardMetaRow}>
+                <Ionicons name="call-outline" size={12} color={colors.textMuted} />
+                <Text style={[styles.cardMeta, { color: colors.textMuted }]}>{item.contactPhone} · {item.source}</Text>
+              </View>
+              {item.gradeInterest ? (
+                <View style={styles.cardMetaRow}>
+                  <Ionicons name="school-outline" size={12} color={colors.textMuted} />
+                  <Text style={[styles.cardMeta, { color: colors.textMuted }]}>{item.gradeInterest}</Text>
+                </View>
+              ) : null}
+            </Pressable>
+          );
+        }}
       />
-    </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
   header: { flexDirection: "row", padding: 12, gap: 8 },
   search: {
     flex: 1,
@@ -144,7 +175,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   searchInput: { flex: 1, paddingVertical: 10, fontSize: 14 },
-  addButton: { borderRadius: 10, paddingHorizontal: 16, justifyContent: "center" },
+  addButton: { borderRadius: 10, paddingHorizontal: 16, justifyContent: "center", minHeight: 44 },
   addButtonText: { fontWeight: "700" },
   filterRow: { paddingHorizontal: 12, paddingBottom: 8, gap: 8 },
   chip: {
@@ -153,11 +184,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     marginRight: 8,
+    minHeight: 32,
+    justifyContent: "center",
   },
   chipText: { textTransform: "capitalize", fontSize: 12, fontWeight: "600" },
-  list: { padding: 12, gap: 10 },
+  list: { padding: 12, gap: 10, flexGrow: 1 },
   card: {
-    borderRadius: 14,
+    borderRadius: 16,
     padding: 14,
     borderWidth: 1,
     marginBottom: 10,
@@ -172,7 +205,9 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 10,
   },
-  cardMeta: { marginTop: 4, fontSize: 13 },
-  empty: { textAlign: "center", marginTop: 40 },
+  cardMetaRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 },
+  cardMeta: { fontSize: 13 },
+  emptyState: { alignItems: "center", marginTop: 60, gap: 10 },
+  empty: { textAlign: "center" },
   error: { textAlign: "center", marginBottom: 8 },
 });
