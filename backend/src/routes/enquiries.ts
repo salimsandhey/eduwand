@@ -1,6 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
-import { findPossibleDuplicates } from "../lib/enquiries";
+import { findPossibleDuplicates, buildActivityFeed } from "../lib/enquiries";
 
 const VALID_STATUSES = ["new", "contacted", "visit", "application", "admitted", "enrolled", "lost"];
 const VALID_SOURCES = ["phone", "walk_in", "website", "referral", "event", "social"];
@@ -11,7 +11,6 @@ interface CreateEnquiryBody {
   contactEmail?: string;
   source: string;
   gradeInterest?: string;
-  notes?: string;
   ownerUserId?: string;
   consentCaptured?: boolean;
 }
@@ -22,11 +21,14 @@ interface UpdateEnquiryBody {
   contactEmail?: string;
   source?: string;
   gradeInterest?: string;
-  notes?: string;
   ownerUserId?: string;
   consentCaptured?: boolean;
   status?: string;
   lostReason?: string;
+}
+
+interface CreateNoteBody {
+  body: string;
 }
 
 interface ListQuery {
@@ -127,7 +129,6 @@ export async function enquiryRoutes(app: FastifyInstance) {
           contactEmail: body.contactEmail,
           source: body.source,
           gradeInterest: body.gradeInterest,
-          notes: body.notes,
           ownerUserId: body.ownerUserId ?? request.user.sub,
           consentCaptured: body.consentCaptured ?? false,
           status: "new",
@@ -155,7 +156,11 @@ export async function enquiryRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const enquiry = await prisma.enquiry.findFirst({
         where: { id: request.params.id, schoolId: request.schoolId },
-        include: { stageHistory: { orderBy: { changedAt: "asc" } } },
+        include: {
+          stageHistory: { orderBy: { changedAt: "asc" }, include: { changedBy: { select: { fullName: true } } } },
+          notes: { orderBy: { createdAt: "desc" }, include: { author: { select: { fullName: true } } } },
+          followUpTasks: { orderBy: { createdAt: "asc" }, include: { assignedTo: { select: { fullName: true } } } },
+        },
       });
 
       if (!enquiry) {
@@ -169,7 +174,9 @@ export async function enquiryRoutes(app: FastifyInstance) {
         ? []
         : await findPossibleDuplicates(request.schoolId, enquiry.contactPhone, enquiry.id);
 
-      return { data: enquiry, meta: { possibleDuplicates } };
+      const activity = buildActivityFeed(enquiry);
+
+      return { data: { ...enquiry, activity }, meta: { possibleDuplicates } };
     }
   );
 
@@ -214,7 +221,6 @@ export async function enquiryRoutes(app: FastifyInstance) {
           contactEmail: body.contactEmail,
           source: body.source,
           gradeInterest: body.gradeInterest,
-          notes: body.notes,
           ownerUserId: body.ownerUserId,
           consentCaptured: body.consentCaptured,
           status: body.status,
@@ -234,6 +240,43 @@ export async function enquiryRoutes(app: FastifyInstance) {
       }
 
       return { data: updated, meta: {} };
+    }
+  );
+
+  app.post<{ Params: { id: string }; Body: CreateNoteBody }>(
+    "/enquiries/:id/notes",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const body = request.body?.body?.trim();
+
+      if (!body) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "body is required" },
+        });
+      }
+
+      const enquiry = await prisma.enquiry.findFirst({
+        where: { id: request.params.id, schoolId: request.schoolId },
+      });
+
+      if (!enquiry) {
+        return reply.code(404).send({
+          data: null,
+          error: { code: "not_found", message: "Enquiry not found" },
+        });
+      }
+
+      const note = await prisma.enquiryNote.create({
+        data: {
+          enquiryId: enquiry.id,
+          authorUserId: request.user.sub,
+          body,
+        },
+        include: { author: { select: { fullName: true } } },
+      });
+
+      return reply.code(201).send({ data: note, meta: {} });
     }
   );
 

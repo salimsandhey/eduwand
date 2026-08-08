@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { api, ApiError } from "../api/client";
 import type { TrustSummary, School } from "../api/client";
@@ -135,9 +136,20 @@ export function OnboardingPage() {
               Create trust
             </button>
           </div>
-          {trustMessage ? <p style={styles.success}>{trustMessage}</p> : null}
+          {trustMessage ? (
+            <p style={styles.success}>
+              {trustMessage} - <Link to={`/trusts/${selectedTrustId}`}>view it</Link>
+            </p>
+          ) : null}
           {trustError ? <p style={styles.error}>{trustError}</p> : null}
         </Card>
+      ) : null}
+
+      {isPlatformAdmin && trusts.length > 0 ? (
+        <p style={{ fontSize: 13, color: "var(--text-muted)", margin: "-8px 0 16px 0" }}>
+          Onboarding a school for an existing client instead? Browse <Link to="/trusts">all trusts</Link> to find
+          theirs.
+        </p>
       ) : null}
 
       <Card title={isPlatformAdmin ? "2. Add a school" : "Add a school to your trust"}>
@@ -173,7 +185,8 @@ export function OnboardingPage() {
         {schoolError ? <p style={styles.error}>{schoolError}</p> : null}
         {createdSchool ? (
           <p style={styles.success}>
-            Created "{createdSchool.name}" (status: {createdSchool.status}) - now invite its first admin below.
+            Created "{createdSchool.name}" (status: {createdSchool.status}) - now invite its first admin below, or{" "}
+            <Link to={`/schools/${createdSchool.id}`}>view the school</Link>.
           </p>
         ) : null}
       </Card>

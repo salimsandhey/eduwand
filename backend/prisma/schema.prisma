@@ -108,6 +108,7 @@ model AppUser {
   schoolAccess        UserSchoolAccess[]
   ownedEnquiries      Enquiry[]             @relation("EnquiryOwner")
   enquiryStageChanges EnquiryStageHistory[]
+  enquiryNotes        EnquiryNote[]
   assignedFollowUps   FollowUpTask[]
   csvExportLogs       CsvExportLog[]
 
@@ -143,7 +144,6 @@ model Enquiry {
   lostReason           String?   @map("lost_reason")
   ownerUserId          String?   @map("owner_user_id") @db.Uuid
   owner                AppUser?  @relation("EnquiryOwner", fields: [ownerUserId], references: [id])
-  notes                String?
   duplicateOfEnquiryId String?   @map("duplicate_of_enquiry_id") @db.Uuid
   duplicateOf          Enquiry?  @relation("EnquiryDuplicate", fields: [duplicateOfEnquiryId], references: [id])
   duplicates           Enquiry[] @relation("EnquiryDuplicate")
@@ -154,6 +154,7 @@ model Enquiry {
   updatedBy            String?   @map("updated_by") @db.Uuid
 
   stageHistory  EnquiryStageHistory[]
+  notes         EnquiryNote[]
   followUpTasks FollowUpTask[]
   studentStub   StudentStub?
 
@@ -173,6 +174,19 @@ model EnquiryStageHistory {
   changedAt       DateTime @default(now()) @map("changed_at")
 
   @@map("enquiry_stage_history")
+}
+
+model EnquiryNote {
+  id             String   @id @default(uuid()) @db.Uuid
+  enquiryId      String   @map("enquiry_id") @db.Uuid
+  enquiry        Enquiry  @relation(fields: [enquiryId], references: [id])
+  authorUserId   String?  @map("author_user_id") @db.Uuid
+  author         AppUser? @relation(fields: [authorUserId], references: [id])
+  body           String
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([enquiryId, createdAt])
+  @@map("enquiry_note")
 }
 
 // Channel is one of: sms, email

@@ -14,23 +14,22 @@ import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { Screen } from "../components/Screen";
 
-// Matches backend/prisma/seed.ts. Dev-only - stripped from production builds by __DEV__.
-// admin/leadership/platform_admin are deliberately not listed here - they belong on
-// the web Admin Dashboard, not this app (see AppNavigator's NoAccessScreen routing).
+// Matches backend/prisma/seed.ts. Only roles that can actually sign into this
+// mobile app (see AppNavigator's role routing) belong here - admin/leadership
+// hit NoAccessScreen. Dev-only - stripped from production builds by __DEV__.
 const DEV_ACCOUNTS = [
-  { label: "Front desk", email: "frontdesk@dev.eduwand.local", icon: "people-outline" as const },
-  { label: "Counsellor", email: "counsellor@dev.eduwand.local", icon: "chatbubbles-outline" as const },
-  { label: "Teacher", email: "teacher@dev.eduwand.local", icon: "school-outline" as const },
+  { label: "Front desk", email: "frontdesk@dev.eduwand.local", initials: "FD" },
+  { label: "Counsellor", email: "counsellor@dev.eduwand.local", initials: "CO" },
+  { label: "Teacher", email: "teacher@dev.eduwand.local", initials: "TE" },
 ];
 const DEV_PASSWORD = "password123";
 
 export function LoginScreen() {
   const { login, isLoading, error } = useAuth();
-  const { colors, cardShadow, pressedOpacity } = useTheme();
+  const { colors, pressedOpacity } = useTheme();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(false);
 
   // Focus states
   const [emailFocused, setEmailFocused] = useState(false);
@@ -57,48 +56,45 @@ export function LoginScreen() {
     }).start();
   };
 
-  // Logic to determine if fields are invalid (for red highlight borders)
-  const hasError = !!error;
-
   return (
-    <Screen edges={["top", "bottom"]}>
-      {/* Background Decorative Glows */}
-      <View style={[styles.glowLeft, { backgroundColor: colors.accent, opacity: 0.1 }]} />
-      <View style={[styles.glowRight, { backgroundColor: colors.accent, opacity: 0.08 }]} />
+    <Screen edges={["top", "bottom"]} style={{ backgroundColor: "#F9FAF9" }}>
+      {/* Decorative Blobs */}
+      <View style={[styles.topCurve, { backgroundColor: colors.accent }]} />
+      <View style={[styles.bottomCurve, { backgroundColor: colors.accent }]} />
 
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-        {/* Header Section */}
-        <View style={styles.header}>
-          <View style={[styles.logoOuterRing, { borderColor: colors.border }]}>
-            <View style={[styles.logoInnerRing, { borderColor: colors.accent + "30" }]}>
-              <View style={[styles.logoCircle, { backgroundColor: colors.accent }, cardShadow]}>
-                <Ionicons name="school" size={26} color={colors.accentOn} />
-              </View>
+        {/* Header Block */}
+        <View style={styles.headerBlock}>
+          <View style={styles.headerLeft}>
+            <Text style={[styles.stepNum, { color: colors.accent }]}>01</Text>
+            <Text style={[styles.mainTitle, { color: colors.textPrimary }]}>Login</Text>
+            <Text style={[styles.subTitle, { color: colors.textSecondary }]}>
+              Welcome back! Please login to continue your learning journey.
+            </Text>
+          </View>
+          <View style={[styles.lockIllustrationContainer, { backgroundColor: colors.accent + "12" }]}>
+            <View style={[styles.lockOuterRing, { borderColor: colors.accent + "20" }]}>
+              <Ionicons name="lock-closed" size={32} color={colors.accent} />
             </View>
           </View>
-          <Text style={[styles.title, { color: colors.textPrimary }]}>EduWand</Text>
-          <Text style={[styles.tagline, { color: colors.textMuted }]}>Sign in to continue your journey</Text>
         </View>
 
-        {/* Card Form */}
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
-          <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Welcome back!</Text>
-          
-          {/* Email / Phone Input */}
-          <Text style={[styles.label, { color: colors.textSecondary }]}>Email or phone</Text>
+        {/* Inputs section */}
+        <View style={styles.formContainer}>
+          <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Email</Text>
           <View
             style={[
               styles.inputRow,
               {
-                backgroundColor: colors.surfaceRaised,
-                borderColor: hasError ? colors.danger : (emailFocused ? colors.accent : colors.border),
+                backgroundColor: colors.surface,
+                borderColor: emailFocused ? colors.accent : colors.border,
               },
             ]}
           >
-            <Ionicons name="mail-outline" size={20} color={hasError ? colors.danger : (emailFocused ? colors.accent : colors.textMuted)} style={styles.inputIcon} />
+            <Ionicons name="mail-outline" size={20} color={colors.accent} style={styles.inputIcon} />
             <TextInput
               style={[styles.input, { color: colors.textPrimary }]}
-              placeholder="Enter email or phone"
+              placeholder="Enter your email"
               placeholderTextColor={colors.textMuted}
               autoCapitalize="none"
               keyboardType="email-address"
@@ -114,18 +110,17 @@ export function LoginScreen() {
             )}
           </View>
 
-          {/* Password Input */}
-          <Text style={[styles.label, { color: colors.textSecondary }]}>Password</Text>
+          <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Password</Text>
           <View
             style={[
               styles.inputRow,
               {
-                backgroundColor: colors.surfaceRaised,
-                borderColor: hasError ? colors.danger : (passwordFocused ? colors.accent : colors.border),
+                backgroundColor: colors.surface,
+                borderColor: passwordFocused ? colors.accent : colors.border,
               },
             ]}
           >
-            <Ionicons name="lock-closed-outline" size={20} color={hasError ? colors.danger : (passwordFocused ? colors.accent : colors.textMuted)} style={styles.inputIcon} />
+            <Ionicons name="lock-closed-outline" size={20} color={colors.accent} style={styles.inputIcon} />
             <TextInput
               style={[styles.input, { color: colors.textPrimary }]}
               placeholder="Enter your password"
@@ -147,36 +142,15 @@ export function LoginScreen() {
             </Pressable>
           </View>
 
-          {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
+          {/* Validation Error Message Row */}
+          {error ? (
+            <View style={styles.errorRow}>
+              <Ionicons name="alert-circle" size={16} color={colors.danger} />
+              <Text style={[styles.errorText, { color: colors.danger }]}>{error}</Text>
+            </View>
+          ) : null}
 
-          {/* Options Row: Remember Me & Forgot Password */}
-          <View style={styles.optionsRow}>
-            <Pressable
-              style={styles.rememberMeContainer}
-              onPress={() => setRememberMe((prev) => !prev)}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: rememberMe }}
-            >
-              <View
-                style={[
-                  styles.checkbox,
-                  {
-                    borderColor: rememberMe ? colors.accent : colors.border,
-                    backgroundColor: rememberMe ? colors.accent : "transparent",
-                  },
-                ]}
-              >
-                {rememberMe && <Ionicons name="checkmark" size={10} color={colors.accentOn} />}
-              </View>
-              <Text style={[styles.rememberMeText, { color: colors.textSecondary }]}>Remember me</Text>
-            </Pressable>
-            
-            <Pressable hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Text style={[styles.forgotPasswordText, { color: colors.accent }]}>Forgot password?</Text>
-            </Pressable>
-          </View>
-
-          {/* Animated Button */}
+          {/* Animated Log in button */}
           <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
             <Pressable
               onPressIn={handlePressIn}
@@ -185,7 +159,7 @@ export function LoginScreen() {
               disabled={isLoading}
               accessibilityRole="button"
               style={[
-                styles.button,
+                styles.saveButton,
                 { backgroundColor: colors.accent },
                 (isLoading) && styles.buttonDisabled,
               ]}
@@ -193,23 +167,31 @@ export function LoginScreen() {
               {isLoading ? (
                 <ActivityIndicator color={colors.accentOn} />
               ) : (
-                <Text style={[styles.buttonText, { color: colors.accentOn }]}>Log in</Text>
+                <Text style={[styles.saveButtonText, { color: colors.accentOn }]}>Log in</Text>
               )}
             </Pressable>
           </Animated.View>
 
+          <Pressable hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Text style={[styles.forgotPasswordText, { color: colors.accent }]}>Forgot Password?</Text>
+          </Pressable>
         </View>
 
         {/* Quick login section (DEV ONLY) */}
         {__DEV__ ? (
-          <View style={[styles.devSection, { borderTopColor: colors.border }]}>
-            <Text style={[styles.devLabel, { color: colors.textMuted }]}>Quick login (dev only)</Text>
-            <View style={styles.devButtonGrid}>
+          <View style={styles.devSection}>
+            <View style={styles.devDividerRow}>
+              <View style={[styles.devDividerLine, { backgroundColor: colors.border }]} />
+              <Text style={[styles.devDividerText, { color: colors.textMuted }]}>DEV ONLY - QUICK FILL</Text>
+              <View style={[styles.devDividerLine, { backgroundColor: colors.border }]} />
+            </View>
+
+            <View style={styles.devList}>
               {DEV_ACCOUNTS.map((acct) => (
                 <Pressable
                   key={acct.email}
                   style={({ pressed }) => [
-                    styles.devChip,
+                    styles.devRow,
                     { borderColor: colors.border, backgroundColor: colors.surface },
                     pressed && { opacity: pressedOpacity },
                   ]}
@@ -220,165 +202,195 @@ export function LoginScreen() {
                   accessibilityRole="button"
                   accessibilityLabel={`Fill credentials for ${acct.label}`}
                 >
-                  <View style={[styles.devChipIconContainer, { backgroundColor: colors.surfaceRaised }]}>
-                    <Ionicons name={acct.icon} size={14} color={colors.accent} />
+                  <View style={[styles.devAvatar, { backgroundColor: colors.accent + "15" }]}>
+                    <Text style={[styles.devAvatarText, { color: colors.accent }]}>{acct.initials}</Text>
                   </View>
-                  <Text style={[styles.devChipText, { color: colors.textPrimary }]} numberOfLines={1}>
-                    {acct.label}
-                  </Text>
+                  <View style={styles.devRowDetails}>
+                    <Text style={[styles.devRoleTitle, { color: colors.textPrimary }]}>{acct.label}</Text>
+                    <Text style={[styles.devRoleEmail, { color: colors.textMuted }]}>{acct.email}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
                 </Pressable>
               ))}
             </View>
           </View>
         ) : null}
-
-        <View style={styles.footer}>
-          <Ionicons name="lock-closed-outline" size={13} color={colors.textMuted} />
-          <Text style={[styles.footerText, { color: colors.textMuted }]}>Secure login · Your data is protected</Text>
-        </View>
       </ScrollView>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flexGrow: 1, justifyContent: "center", padding: 20, paddingBottom: 40 },
-  glowLeft: {
-    position: "absolute",
-    width: 250,
-    height: 250,
-    borderRadius: 125,
-    top: -80,
-    left: -80,
-  },
-  glowRight: {
+  container: { flexGrow: 1, padding: 24, paddingBottom: 40, position: "relative" },
+  topCurve: {
     position: "absolute",
     width: 200,
-    height: 200,
-    borderRadius: 100,
-    top: -50,
-    right: -70,
+    height: 100,
+    borderBottomLeftRadius: 100,
+    top: 0,
+    right: 0,
   },
-  header: {
+  bottomCurve: {
+    position: "absolute",
+    width: 120,
+    height: 90,
+    borderTopRightRadius: 90,
+    bottom: 0,
+    left: 0,
+  },
+  headerBlock: {
+    flexDirection: "row",
     alignItems: "center",
-    marginBottom: 24,
-    marginTop: 16,
+    justifyContent: "space-between",
+    marginBottom: 28,
   },
-  logoOuterRing: {
-    padding: 6,
-    borderRadius: 42,
-    borderWidth: 1,
-    marginBottom: 12,
+  headerLeft: {
+    flex: 1,
+    paddingRight: 12,
   },
-  logoInnerRing: {
-    padding: 4,
+  stepNum: {
+    fontSize: 22,
+    fontWeight: "800",
+  },
+  mainTitle: {
+    fontSize: 32,
+    fontWeight: "800",
+    marginTop: 2,
+    letterSpacing: -0.5,
+  },
+  subTitle: {
+    fontSize: 13,
+    marginTop: 6,
+    lineHeight: 18,
+  },
+  lockIllustrationContainer: {
+    width: 72,
+    height: 72,
     borderRadius: 36,
-    borderWidth: 1.5,
-  },
-  logoCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
     alignItems: "center",
     justifyContent: "center",
   },
-  title: { fontSize: 28, fontWeight: "800", textAlign: "center", letterSpacing: -0.5 },
-  tagline: { fontSize: 13, textAlign: "center", marginTop: 4 },
-  card: {
-    borderRadius: 16,
+  lockOuterRing: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
     borderWidth: 1,
-    padding: 24,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  formContainer: {
     marginBottom: 20,
   },
-  cardTitle: {
-    fontSize: 18,
+  inputLabel: {
+    fontSize: 13,
     fontWeight: "700",
-    marginBottom: 16,
+    marginBottom: 8,
+    marginTop: 14,
   },
-  label: { fontSize: 12, fontWeight: "700", marginBottom: 6, marginTop: 12 },
   inputRow: {
     flexDirection: "row",
     alignItems: "center",
     borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
+    borderRadius: 24,
+    paddingHorizontal: 16,
     height: 48,
   },
-  inputIcon: { marginRight: 8 },
+  inputIcon: {
+    marginRight: 10,
+  },
   input: {
     flex: 1,
-    fontSize: 15,
+    fontSize: 14,
     height: "100%",
     paddingVertical: 0,
   },
-  clearButton: { padding: 4 },
-  eyeButton: { padding: 4 },
-  optionsRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 14,
-    marginBottom: 4,
+  clearButton: {
+    padding: 4,
   },
-  rememberMeContainer: {
+  eyeButton: {
+    padding: 4,
+  },
+  errorRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 6,
+    marginTop: 10,
   },
-  checkbox: {
-    width: 16,
-    height: 16,
-    borderRadius: 4,
-    borderWidth: 1.5,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  rememberMeText: {
-    fontSize: 13,
+  errorText: {
+    fontSize: 12,
     fontWeight: "600",
   },
-  forgotPasswordText: {
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  button: {
-    borderRadius: 10,
+  saveButton: {
+    borderRadius: 24,
     height: 48,
     alignItems: "center",
     justifyContent: "center",
+    marginTop: 24,
+  },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  saveButtonText: {
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  forgotPasswordText: {
+    fontSize: 13,
+    fontWeight: "700",
+    textAlign: "center",
+    marginTop: 18,
+    textDecorationLine: "underline",
+  },
+  devSection: {
     marginTop: 20,
   },
-  buttonDisabled: { opacity: 0.6 },
-  buttonText: { fontSize: 15, fontWeight: "700" },
-  error: { fontSize: 13, marginTop: 10, textAlign: "center" },
-
-  devSection: { marginTop: 24, borderTopWidth: 1, paddingTop: 20 },
-  devLabel: { fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.5, textAlign: "center", marginBottom: 12 },
-  devButtonGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    justifyContent: "space-between",
-  },
-  devChip: {
+  devDividerRow: {
     flexDirection: "row",
     alignItems: "center",
-    width: "48%",
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    minHeight: 38,
+    gap: 8,
+    marginBottom: 16,
+  },
+  devDividerLine: {
+    flex: 1,
+    height: 1,
+  },
+  devDividerText: {
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+  },
+  devList: {
     gap: 8,
   },
-  devChipIconContainer: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+  devRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 10,
+    minHeight: 52,
+  },
+  devAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
+    marginRight: 12,
   },
-  devChipText: { fontSize: 11, fontWeight: "600", flex: 1 },
-  footer: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 28 },
-  footerText: { fontSize: 11 },
+  devAvatarText: {
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  devRowDetails: {
+    flex: 1,
+  },
+  devRoleTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  devRoleEmail: {
+    fontSize: 11,
+    marginTop: 1,
+  },
 });

@@ -10,16 +10,19 @@ const SCHOOL_SCOPED_NAV_ITEMS = [
 ];
 
 const ONBOARDING_NAV_ITEM = { to: "/onboarding", label: "Onboarding" };
+const TRUSTS_NAV_ITEM = { to: "/trusts", label: "Trusts" };
 
 export function Layout() {
   const { user, logout } = useAuth();
 
   // platform_admin has no school_id, so the school-scoped analytics/users screens
-  // would just show the "not built yet" trust-scope notice - only link to Onboarding.
-  // Only platform_admin and leadership can onboard schools (see backend/src/routes/schools.ts).
+  // would just show the "not built yet" trust-scope notice - only link to Onboarding
+  // and Trusts (GET /trusts is platform_admin-only, see backend/src/routes/trusts.ts).
+  // leadership can onboard schools into their own trust and view (read-only) that
+  // trust's detail page, but can't browse the full trusts list.
   let navItems = SCHOOL_SCOPED_NAV_ITEMS;
   if (user?.role === "platform_admin") {
-    navItems = [ONBOARDING_NAV_ITEM];
+    navItems = [TRUSTS_NAV_ITEM, ONBOARDING_NAV_ITEM];
   } else if (user?.role === "leadership") {
     navItems = [...SCHOOL_SCOPED_NAV_ITEMS, ONBOARDING_NAV_ITEM];
   }

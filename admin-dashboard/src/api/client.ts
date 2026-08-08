@@ -119,6 +119,12 @@ export interface TrustSummary {
   status: string;
 }
 
+export interface TrustDetail extends TrustSummary {
+  contactEmail: string | null;
+  createdAt: string;
+  schools: { id: string; name: string; board: string; status: string }[];
+}
+
 export interface School {
   id: string;
   trustId: string;
@@ -127,12 +133,37 @@ export interface School {
   status: string;
 }
 
+export interface SchoolDetail extends School {
+  address: string | null;
+  timezone: string;
+  createdAt: string;
+}
+
 export interface CreateSchoolInput {
   trustId?: string;
   name: string;
   board: string;
   address?: string;
   timezone?: string;
+}
+
+export interface UpdateTrustInput {
+  name?: string;
+  contactEmail?: string;
+  status?: string;
+}
+
+export interface UpdateSchoolInput {
+  name?: string;
+  board?: string;
+  address?: string;
+  timezone?: string;
+  status?: string;
+}
+
+export interface UpdateUserInput {
+  role?: string;
+  status?: string;
 }
 
 export const api = {
@@ -150,10 +181,21 @@ export const api = {
   listUsers: (token: string) => request<AppUserSummary[]>("/users", {}, token),
   inviteUser: (token: string, input: InviteUserInput) =>
     requestEnvelope<AppUserSummary>("/users", { method: "POST", body: JSON.stringify(input) }, token),
+  updateUser: (token: string, id: string, input: UpdateUserInput) =>
+    request<AppUserSummary>(`/users/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
 
   listTrusts: (token: string) => request<TrustSummary[]>("/trusts", {}, token),
+  getTrust: (token: string, id: string) => request<TrustDetail>(`/trusts/${id}`, {}, token),
   createTrust: (token: string, name: string, contactEmail?: string) =>
     request<TrustSummary>("/trusts", { method: "POST", body: JSON.stringify({ name, contactEmail }) }, token),
+  updateTrust: (token: string, id: string, input: UpdateTrustInput) =>
+    request<TrustSummary>(`/trusts/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
+
+  listSchools: (token: string, trustId?: string) =>
+    request<School[]>(`/schools${toQueryString({ trustId })}`, {}, token),
+  getSchool: (token: string, id: string) => request<SchoolDetail>(`/schools/${id}`, {}, token),
   createSchool: (token: string, input: CreateSchoolInput) =>
     request<School>("/schools", { method: "POST", body: JSON.stringify(input) }, token),
+  updateSchool: (token: string, id: string, input: UpdateSchoolInput) =>
+    request<SchoolDetail>(`/schools/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
 };

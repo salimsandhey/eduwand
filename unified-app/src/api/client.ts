@@ -85,7 +85,6 @@ export interface Enquiry {
   status: EnquiryStatus;
   lostReason: string | null;
   ownerUserId: string | null;
-  notes: string | null;
   duplicateOfEnquiryId: string | null;
   consentCaptured: boolean;
   createdAt: string;
@@ -100,8 +99,29 @@ export interface EnquiryStageHistoryEntry {
   changedAt: string;
 }
 
+export interface EnquiryNote {
+  id: string;
+  enquiryId: string;
+  authorUserId: string | null;
+  author: { fullName: string } | null;
+  body: string;
+  createdAt: string;
+}
+
+export type ActivityType = "stage_change" | "note_added" | "task_created" | "task_sent";
+
+export interface ActivityItem {
+  id: string;
+  type: ActivityType;
+  occurredAt: string;
+  actorName: string | null;
+  payload: Record<string, unknown>;
+}
+
 export interface EnquiryDetail extends Enquiry {
   stageHistory: EnquiryStageHistoryEntry[];
+  notes: EnquiryNote[];
+  activity: ActivityItem[];
 }
 
 export interface PossibleDuplicate {
@@ -117,7 +137,6 @@ export interface CreateEnquiryInput {
   contactEmail?: string;
   source: EnquirySource;
   gradeInterest?: string;
-  notes?: string;
   ownerUserId?: string;
   consentCaptured?: boolean;
 }
@@ -128,7 +147,6 @@ export interface UpdateEnquiryInput {
   contactEmail?: string;
   source?: EnquirySource;
   gradeInterest?: string;
-  notes?: string;
   ownerUserId?: string;
   consentCaptured?: boolean;
   status?: EnquiryStatus;
@@ -208,6 +226,8 @@ export const api = {
     request<Enquiry>(`/enquiries/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
   mergeEnquiry: (token: string, id: string, sourceEnquiryId: string) =>
     request<Enquiry>(`/enquiries/${id}/merge`, { method: "POST", body: JSON.stringify({ sourceEnquiryId }) }, token),
+  addEnquiryNote: (token: string, id: string, body: string) =>
+    request<EnquiryNote>(`/enquiries/${id}/notes`, { method: "POST", body: JSON.stringify({ body }) }, token),
   confirmAdmission: (
     token: string,
     id: string,

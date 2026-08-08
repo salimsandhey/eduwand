@@ -53,7 +53,6 @@ export async function publicEnquiryRoutes(app: FastifyInstance) {
           contactEmail: body.contactEmail,
           source: "website",
           gradeInterest: body.gradeInterest,
-          notes: body.notes,
           consentCaptured: true,
           status: "new",
         },
@@ -68,6 +67,16 @@ export async function publicEnquiryRoutes(app: FastifyInstance) {
           changedByUserId: null,
         },
       });
+
+      if (body.notes && body.notes.trim()) {
+        await prisma.enquiryNote.create({
+          data: {
+            enquiryId: enquiry.id,
+            authorUserId: null,
+            body: body.notes.trim(),
+          },
+        });
+      }
 
       return reply.code(201).send({ data: { id: enquiry.id, status: enquiry.status }, meta: {} });
     }

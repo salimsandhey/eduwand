@@ -8,6 +8,9 @@ import { CounsellorsPage } from "./pages/CounsellorsPage";
 import { AiUsagePage } from "./pages/AiUsagePage";
 import { UsersPage } from "./pages/UsersPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
+import { TrustsPage } from "./pages/TrustsPage";
+import { TrustDetailPage } from "./pages/TrustDetailPage";
+import { SchoolDetailPage } from "./pages/SchoolDetailPage";
 
 function Root() {
   const { user, isLoading } = useAuth();
@@ -22,7 +25,7 @@ function Root() {
     );
   }
 
-  const defaultPath = user.role === "platform_admin" ? "/onboarding" : "/funnel";
+  const defaultPath = user.role === "platform_admin" ? "/trusts" : "/funnel";
 
   return (
     <Routes>
@@ -34,6 +37,9 @@ function Root() {
         <Route path="/ai-usage" element={<AiUsagePage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="/onboarding" element={<OnboardingPage />} />
+        <Route path="/trusts" element={<TrustsPage />} />
+        <Route path="/trusts/:id" element={<TrustDetailPage />} />
+        <Route path="/schools/:id" element={<SchoolDetailPage />} />
         <Route path="*" element={<Navigate to={defaultPath} replace />} />
       </Route>
     </Routes>

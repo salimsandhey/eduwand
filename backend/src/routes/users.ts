@@ -13,6 +13,13 @@ interface InviteUserBody {
   trustId?: string;
 }
 
+interface UpdateUserBody {
+  role?: string;
+  status?: string;
+}
+
+const USER_STATUSES = ["active", "invited", "disabled"];
+
 function generateTempPassword(): string {
   return crypto.randomBytes(9).toString("base64url"); // 12 chars, url-safe
 }
@@ -146,4 +153,66 @@ export async function userRoutes(app: FastifyInstance) {
 
     return reply.code(201).send({ data: user, meta: { tempPassword } });
   });
+
+  // Change role / disable-enable, from the User & Role Management screen. Same scope
+  // rules as invite: platform_admin anyone, admin only within own school (and can't
+  // touch leadership), leadership only within own trust.
+  app.patch<{ Params: { id: string }; Body: UpdateUserBody }>(
+    "/users/:id",
+    { onRequest: [app.authenticate] },
+    async (request, reply) => {
+      const caller = request.user;
+      const body = request.body ?? ({} as UpdateUserBody);
+
+      if (body.role && !INVITABLE_ROLES.includes(body.role)) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: `role must be one of ${INVITABLE_ROLES.join(", ")}` },
+        });
+      }
+      if (body.status && !USER_STATUSES.includes(body.status)) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: `status must be one of ${USER_STATUSES.join(", ")}` },
+        });
+      }
+
+      const target = await prisma.appUser.findUnique({ where: { id: request.params.id } });
+      if (!target) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "User not found" } });
+      }
+
+      if (target.id === caller.sub) {
+        return reply.code(403).send({ data: null, error: { code: "forbidden", message: "Cannot change your own role or status" } });
+      }
+
+      if (caller.role === PLATFORM_ADMIN_ROLE) {
+        // no additional scope check
+      } else if (caller.role === "admin") {
+        if (target.schoolId !== caller.schoolId) {
+          return reply.code(403).send({ data: null, error: { code: "forbidden", message: "User not in your school" } });
+        }
+        if (target.role === "leadership" || body.role === "leadership") {
+          return reply.code(403).send({ data: null, error: { code: "forbidden", message: "admin cannot manage leadership users" } });
+        }
+      } else if (caller.role === "leadership") {
+        if (target.trustId !== caller.trustId) {
+          return reply.code(403).send({ data: null, error: { code: "forbidden", message: "User not in your trust" } });
+        }
+      } else {
+        return reply.code(403).send({
+          data: null,
+          error: { code: "forbidden", message: "Requires role: platform_admin, admin, or leadership" },
+        });
+      }
+
+      const user = await prisma.appUser.update({
+        where: { id: target.id },
+        data: { role: body.role ?? undefined, status: body.status ?? undefined },
+        select: { id: true, fullName: true, email: true, role: true, status: true },
+      });
+
+      return { data: user, meta: {} };
+    }
+  );
 }

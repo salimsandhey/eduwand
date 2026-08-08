@@ -8,7 +8,7 @@ import { TrustScopeNotice } from "../components/TrustScopeNotice";
 const INVITABLE_ROLES = ["front_desk", "counsellor", "teacher", "admin"];
 
 export function UsersPage() {
-  const { accessToken } = useAuth();
+  const { accessToken, user: currentUser } = useAuth();
   const [users, setUsers] = useState<AppUserSummary[] | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -20,6 +20,10 @@ export function UsersPage() {
   const [inviteRole, setInviteRole] = useState(INVITABLE_ROLES[0]);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteResult, setInviteResult] = useState<{ email: string; tempPassword: string } | null>(null);
+
+  const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
+  const [rowError, setRowError] = useState<Record<string, string>>({});
+  const [savingRowId, setSavingRowId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -60,18 +64,41 @@ export function UsersPage() {
     }
   }
 
+  async function changeRole(id: string, role: string) {
+    if (!accessToken) return;
+    setSavingRowId(id);
+    setRowError((prev) => ({ ...prev, [id]: "" }));
+    try {
+      const updated = await api.updateUser(accessToken, id, { role });
+      setUsers((prev) => prev?.map((u) => (u.id === id ? updated : u)) ?? prev);
+      setEditingRoleId(null);
+    } catch (err) {
+      setRowError((prev) => ({ ...prev, [id]: err instanceof Error ? err.message : "Failed to change role" }));
+    } finally {
+      setSavingRowId(null);
+    }
+  }
+
+  async function toggleUserStatus(u: AppUserSummary) {
+    if (!accessToken) return;
+    const nextStatus = u.status === "disabled" ? "active" : "disabled";
+    setSavingRowId(u.id);
+    setRowError((prev) => ({ ...prev, [u.id]: "" }));
+    try {
+      const updated = await api.updateUser(accessToken, u.id, { status: nextStatus });
+      setUsers((prev) => prev?.map((x) => (x.id === u.id ? updated : x)) ?? prev);
+    } catch (err) {
+      setRowError((prev) => ({ ...prev, [u.id]: err instanceof Error ? err.message : "Failed to update status" }));
+    } finally {
+      setSavingRowId(null);
+    }
+  }
+
   if (needsTrustScope) return <TrustScopeNotice />;
 
   return (
     <div>
       <h1 style={{ marginTop: 0 }}>User & Role Management</h1>
-
-      <Card>
-        <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 0 }}>
-          Change-role and disable actions aren't built yet - only inviting new staff into this school works so
-          far.
-        </p>
-      </Card>
 
       {error ? <p style={{ color: "var(--status-critical)" }}>{error}</p> : null}
 
@@ -93,28 +120,78 @@ export function UsersPage() {
                 </tr>
               </thead>
               <tbody>
-                {users.map((u) => (
-                  <tr key={u.id}>
-                    <td style={styles.td}>{u.fullName}</td>
-                    <td style={styles.td}>{u.email}</td>
-                    <td style={{ ...styles.td, textTransform: "capitalize" }}>{u.role}</td>
-                    <td style={styles.td}>
-                      <span
-                        style={{
-                          ...styles.statusBadge,
-                          color: u.status === "active" ? "var(--status-good)" : "var(--text-muted)",
-                        }}
-                      >
-                        {u.status}
-                      </span>
-                    </td>
-                    <td style={styles.td}>
-                      <button style={styles.disabledButton} disabled title="Not built yet">
-                        Change role
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {users.map((u) => {
+                  const isSelf = u.id === currentUser?.id;
+                  const isSaving = savingRowId === u.id;
+                  return (
+                    <tr key={u.id}>
+                      <td style={styles.td}>{u.fullName}</td>
+                      <td style={styles.td}>{u.email}</td>
+                      <td style={{ ...styles.td, textTransform: "capitalize" }}>
+                        {editingRoleId === u.id ? (
+                          <select
+                            style={styles.roleSelect}
+                            defaultValue={u.role}
+                            autoFocus
+                            disabled={isSaving}
+                            onChange={(e) => changeRole(u.id, e.target.value)}
+                            onBlur={() => setEditingRoleId(null)}
+                          >
+                            {INVITABLE_ROLES.map((r) => (
+                              <option key={r} value={r}>
+                                {r}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          u.role
+                        )}
+                      </td>
+                      <td style={styles.td}>
+                        <span
+                          style={{
+                            ...styles.statusBadge,
+                            color:
+                              u.status === "active"
+                                ? "var(--status-good)"
+                                : u.status === "disabled"
+                                ? "var(--status-critical)"
+                                : "var(--text-muted)",
+                          }}
+                        >
+                          {u.status}
+                        </span>
+                      </td>
+                      <td style={styles.td}>
+                        {isSelf ? (
+                          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>You</span>
+                        ) : (
+                          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                            <button
+                              style={styles.smallButton}
+                              disabled={isSaving}
+                              onClick={() => setEditingRoleId(editingRoleId === u.id ? null : u.id)}
+                            >
+                              Change role
+                            </button>
+                            <button
+                              style={u.status === "disabled" ? styles.smallButton : styles.smallDangerButton}
+                              disabled={isSaving}
+                              onClick={() => toggleUserStatus(u)}
+                            >
+                              {u.status === "disabled" ? "Enable" : "Disable"}
+                            </button>
+                          </div>
+                        )}
+                        {rowError[u.id] ? (
+                          <p style={{ color: "var(--status-critical)", fontSize: 12, margin: "4px 0 0 0" }}>
+                            {rowError[u.id]}
+                          </p>
+                        ) : null}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -181,14 +258,32 @@ const styles: Record<string, React.CSSProperties> = {
   },
   td: { padding: "12px 12px 12px 0", borderBottom: "1px solid var(--border)", fontSize: 14 },
   statusBadge: { fontSize: 12, fontWeight: 600, textTransform: "capitalize" },
-  disabledButton: {
+  roleSelect: {
+    padding: "4px 8px",
+    borderRadius: 6,
+    border: "1px solid var(--border)",
+    fontSize: 13,
+    textTransform: "capitalize",
+  },
+  smallButton: {
     padding: "6px 12px",
     borderRadius: 6,
     border: "1px solid var(--border)",
     background: "var(--bg-page)",
-    color: "var(--text-muted)",
+    color: "var(--text-primary)",
     fontSize: 13,
-    cursor: "not-allowed",
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  smallDangerButton: {
+    padding: "6px 12px",
+    borderRadius: 6,
+    border: "1px solid var(--border)",
+    background: "var(--bg-page)",
+    color: "var(--status-critical)",
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: "pointer",
   },
   button: {
     background: "var(--accent)",

@@ -7,6 +7,8 @@ import { RootStackParamList } from "../navigation/types";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { Screen } from "../components/Screen";
+import { DatePicker } from "../components/DatePicker";
+import { ConfirmModal } from "../components/ConfirmModal";
 import { getStatusColor } from "../theme/statusColors";
 import {
   api,
@@ -16,9 +18,33 @@ import {
   MessageTemplate,
   MessageChannel,
   FollowUpTask,
+  ActivityItem,
+  ActivityType,
 } from "../api/client";
 
 const STATUSES: EnquiryStatus[] = ["new", "contacted", "visit", "application", "admitted", "enrolled", "lost"];
+
+const ACTIVITY_ICON: Record<ActivityType, keyof typeof Ionicons.glyphMap> = {
+  stage_change: "swap-horizontal-outline",
+  note_added: "document-text-outline",
+  task_created: "alarm-outline",
+  task_sent: "paper-plane-outline",
+};
+
+function activityLabel(item: ActivityItem): string {
+  switch (item.type) {
+    case "stage_change":
+      return `Moved to ${item.payload.toStatus}`;
+    case "note_added":
+      return `Note added${item.actorName ? ` by ${item.actorName}` : ""}`;
+    case "task_created":
+      return `Follow-up task created (${item.payload.channel})${item.actorName ? ` · ${item.actorName}` : ""}`;
+    case "task_sent":
+      return `Follow-up sent via ${item.payload.channel}`;
+    default:
+      return "Activity";
+  }
+}
 
 type Props = NativeStackScreenProps<RootStackParamList, "EnquiryDetail">;
 
@@ -38,11 +64,16 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
   const [showLostReasonFor, setShowLostReasonFor] = useState(false);
   const [lostReasonFocused, setLostReasonFocused] = useState(false);
 
+  const [pendingStageChange, setPendingStageChange] = useState<EnquiryStatus | null>(null);
+
+  const [noteBody, setNoteBody] = useState("");
+  const [noteFocused, setNoteFocused] = useState(false);
+  const [isAddingNote, setIsAddingNote] = useState(false);
+
   const [showAddTask, setShowAddTask] = useState(false);
   const [taskChannel, setTaskChannel] = useState<MessageChannel>("sms");
   const [taskTemplateId, setTaskTemplateId] = useState<string | null>(null);
   const [taskDueAt, setTaskDueAt] = useState("");
-  const [taskDueAtFocused, setTaskDueAtFocused] = useState(false);
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -72,17 +103,45 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
     }, [load])
   );
 
-  async function changeStatus(status: EnquiryStatus) {
-    if (!accessToken || !enquiry) return;
-    if (status === "lost" && !enquiry.lostReason) {
-      setShowLostReasonFor(true);
-      return;
-    }
+  async function applyStatusChange(status: EnquiryStatus) {
+    if (!accessToken) return;
     try {
       await api.updateEnquiry(accessToken, enquiryId, { status });
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to change status");
+    }
+  }
+
+  function changeStatus(status: EnquiryStatus) {
+    if (!enquiry || status === enquiry.status) return;
+    if (status === "lost") {
+      if (!enquiry.lostReason) {
+        setShowLostReasonFor(true);
+      } else {
+        applyStatusChange(status);
+      }
+      return;
+    }
+    const isOneStepForward = STATUSES.indexOf(status) === STATUSES.indexOf(enquiry.status) + 1;
+    if (isOneStepForward) {
+      applyStatusChange(status);
+    } else {
+      setPendingStageChange(status);
+    }
+  }
+
+  async function addNote() {
+    if (!accessToken || !noteBody.trim()) return;
+    setIsAddingNote(true);
+    try {
+      await api.addEnquiryNote(accessToken, enquiryId, noteBody.trim());
+      setNoteBody("");
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to add note");
+    } finally {
+      setIsAddingNote(false);
     }
   }
 
@@ -115,7 +174,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
         enquiryId,
         channel: taskChannel,
         templateId: taskTemplateId,
-        dueAt: new Date(taskDueAt).toISOString(),
+        dueAt: new Date(`${taskDueAt}T00:00:00`).toISOString(),
       });
       setShowAddTask(false);
       setTaskDueAt("");
@@ -330,28 +389,65 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
         <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Activity Timeline</Text>
         <View style={styles.timelineContainer}>
           <View style={[styles.timelineVerticalLine, { backgroundColor: colors.border }]} />
-          {enquiry.stageHistory.map((h, i) => (
-            <View key={h.id} style={styles.timelineRow}>
-              <View style={[styles.timelineDot, { backgroundColor: colors.accent }]} />
-              <View style={styles.timelineContentBlock}>
-                <Text style={[styles.timelineStatusText, { color: colors.textPrimary }]}>
-                  Moved to {h.toStatus}
-                </Text>
-                <Text style={[styles.timelineTimeText, { color: colors.textMuted }]}>
-                  {new Date(h.changedAt).toLocaleString()}
-                </Text>
+          {enquiry.activity.length === 0 ? (
+            <Text style={[styles.meta, { color: colors.textMuted }]}>No activity yet</Text>
+          ) : (
+            enquiry.activity.map((item) => (
+              <View key={item.id} style={styles.timelineRow}>
+                <View style={[styles.timelineDot, { backgroundColor: colors.accent }]}>
+                  <Ionicons name={ACTIVITY_ICON[item.type]} size={9} color={colors.accentOn} />
+                </View>
+                <View style={styles.timelineContentBlock}>
+                  <Text style={[styles.timelineStatusText, { color: colors.textPrimary }]}>{activityLabel(item)}</Text>
+                  <Text style={[styles.timelineTimeText, { color: colors.textMuted }]}>
+                    {new Date(item.occurredAt).toLocaleString()}
+                  </Text>
+                </View>
               </View>
-            </View>
-          ))}
+            ))
+          )}
         </View>
 
         {/* Notes Container */}
         <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Notes</Text>
-        <View style={[styles.notesCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <Text style={[styles.notesText, { color: colors.textPrimary }]}>
-            {enquiry.notes || "No notes available for this lead."}
-          </Text>
+        <View style={[styles.inlineForm, { backgroundColor: colors.surface, borderColor: noteFocused ? colors.accent : colors.border }]}>
+          <TextInput
+            style={[styles.input, styles.notesInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
+            value={noteBody}
+            onChangeText={setNoteBody}
+            placeholder="Add a note about this lead..."
+            placeholderTextColor={colors.textMuted}
+            multiline
+            onFocus={() => setNoteFocused(true)}
+            onBlur={() => setNoteFocused(false)}
+          />
+          <Pressable
+            style={({ pressed }) => [
+              styles.smallButton,
+              { backgroundColor: colors.accent, alignSelf: "flex-end", marginTop: 8 },
+              (pressed || isAddingNote || !noteBody.trim()) && { opacity: pressedOpacity },
+            ]}
+            onPress={addNote}
+            disabled={isAddingNote || !noteBody.trim()}
+            accessibilityRole="button"
+          >
+            <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>{isAddingNote ? "Adding..." : "Add note"}</Text>
+          </Pressable>
         </View>
+
+        {enquiry.notes.length === 0 ? (
+          <Text style={[styles.meta, { color: colors.textMuted }]}>No notes yet</Text>
+        ) : (
+          enquiry.notes.map((n) => (
+            <View key={n.id} style={[styles.notesCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <View style={styles.noteHeaderRow}>
+                <Text style={[styles.noteAuthor, { color: colors.textPrimary }]}>{n.author?.fullName ?? "System"}</Text>
+                <Text style={[styles.timelineTimeText, { color: colors.textMuted }]}>{new Date(n.createdAt).toLocaleString()}</Text>
+              </View>
+              <Text style={[styles.notesText, { color: colors.textPrimary }]}>{n.body}</Text>
+            </View>
+          ))
+        )}
 
         {/* Follow up tasks section */}
         <View style={styles.followUpHeader}>
@@ -367,7 +463,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
         </View>
 
         {showAddTask ? (
-          <View style={[styles.inlineForm, { backgroundColor: colors.surface, borderColor: taskDueAtFocused ? colors.accent : colors.border }]}>
+          <View style={[styles.inlineForm, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={styles.chipRow}>
               {(["sms", "email"] as MessageChannel[]).map((c) => {
                 const active = taskChannel === c;
@@ -414,16 +510,8 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
                 })}
               </View>
             )}
-            <Text style={[styles.label, { color: colors.textSecondary }]}>Due date (YYYY-MM-DD)</Text>
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
-              value={taskDueAt}
-              onChangeText={setTaskDueAt}
-              placeholder="2026-08-10"
-              placeholderTextColor={colors.textMuted}
-              onFocus={() => setTaskDueAtFocused(true)}
-              onBlur={() => setTaskDueAtFocused(false)}
-            />
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Due date</Text>
+            <DatePicker value={taskDueAt} onChange={setTaskDueAt} placeholder="Select due date" minimumDate={new Date()} />
             <Pressable
               style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]}
               onPress={addFollowUpTask}
@@ -462,6 +550,24 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
 
         {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
       </ScrollView>
+
+      <ConfirmModal
+        visible={pendingStageChange !== null}
+        title="Change lead stage"
+        message={
+          pendingStageChange
+            ? `This moves the lead ${
+                STATUSES.indexOf(pendingStageChange) < STATUSES.indexOf(enquiry.status) ? "backward" : "forward, skipping a stage"
+              }, from "${enquiry.status}" to "${pendingStageChange}". Continue?`
+            : ""
+        }
+        confirmLabel="Change stage"
+        onConfirm={() => {
+          if (pendingStageChange) applyStatusChange(pendingStageChange);
+          setPendingStageChange(null);
+        }}
+        onCancel={() => setPendingStageChange(null)}
+      />
     </Screen>
   );
 }
@@ -517,13 +623,15 @@ const styles = StyleSheet.create({
   detailLabel: { fontSize: 11, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.2 },
   detailValue: { fontSize: 14, fontWeight: "700", marginTop: 4 },
   timelineContainer: { position: "relative", paddingLeft: 20, marginVertical: 6 },
-  timelineVerticalLine: { position: "absolute", left: 3, top: 8, bottom: 8, width: 2 },
+  timelineVerticalLine: { position: "absolute", left: 8, top: 8, bottom: 8, width: 2 },
   timelineRow: { flexDirection: "row", gap: 12, marginBottom: 16, alignItems: "flex-start" },
-  timelineDot: { width: 8, height: 8, borderRadius: 4, marginTop: 5 },
+  timelineDot: { width: 18, height: 18, borderRadius: 9, alignItems: "center", justifyContent: "center" },
+  noteHeaderRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 },
+  noteAuthor: { fontSize: 13, fontWeight: "700" },
   timelineContentBlock: { flex: 1 },
   timelineStatusText: { fontSize: 13, fontWeight: "700" },
   timelineTimeText: { fontSize: 11, marginTop: 2 },
-  notesCard: { borderWidth: 1, borderRadius: 12, padding: 14 },
+  notesCard: { borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 10 },
   notesText: { fontSize: 14, lineHeight: 20 },
   duplicateBanner: {
     borderWidth: 1,
@@ -540,6 +648,7 @@ const styles = StyleSheet.create({
   inlineForm: { borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 12, marginTop: 8 },
   label: { marginTop: 4, marginBottom: 6, fontSize: 12, fontWeight: "700" },
   input: { borderWidth: 1, borderRadius: 8, padding: 10, height: 44 },
+  notesInput: { height: 80, textAlignVertical: "top" },
   smallButton: { borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, minHeight: 36, justifyContent: "center", alignItems: "center" },
   smallButtonText: { fontWeight: "700", fontSize: 12 },
   followUpHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 22 },

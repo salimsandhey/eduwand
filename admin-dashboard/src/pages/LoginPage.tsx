@@ -16,40 +16,71 @@ export function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
+  const [emailFocused, setEmailFocused] = useState(false);
+  const [passwordFocused, setPasswordFocused] = useState(false);
+
   return (
     <div style={styles.page}>
       <form
-        style={styles.card}
+        style={{ ...styles.card, boxShadow: "0 10px 30px rgba(0,0,0,0.03)" }}
         onSubmit={(e) => {
           e.preventDefault();
           login(email, password);
         }}
       >
-        <h1 style={styles.title}>EduWand Admin</h1>
-        <label style={styles.label}>Email</label>
+        <div style={styles.logoBlock}>
+          <div style={styles.logoOuter}>
+            <div style={styles.logoInner}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--accent)" }}>
+                <path d="M22 10v6M2 10l10-5 10 5-10 5z"/>
+                <path d="M6 12v5c0 2 2 3 6 3s6-1 6-3v-5"/>
+              </svg>
+            </div>
+          </div>
+          <h1 style={styles.title}>EduWand Admin</h1>
+        </div>
+
+        <label style={styles.label}>Email Address</label>
         <input
-          style={styles.input}
+          style={{
+            ...styles.input,
+            borderColor: emailFocused ? "var(--accent)" : "var(--border)",
+            boxShadow: emailFocused ? "0 0 0 3px var(--accent-wash)" : "none",
+          }}
           type="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
+          onFocus={() => setEmailFocused(true)}
+          onBlur={() => setEmailFocused(false)}
           autoComplete="username"
+          placeholder="Enter your email"
         />
+
         <label style={styles.label}>Password</label>
         <input
-          style={styles.input}
+          style={{
+            ...styles.input,
+            borderColor: passwordFocused ? "var(--accent)" : "var(--border)",
+            boxShadow: passwordFocused ? "0 0 0 3px var(--accent-wash)" : "none",
+          }}
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+          onFocus={() => setPasswordFocused(true)}
+          onBlur={() => setPasswordFocused(false)}
           autoComplete="current-password"
+          placeholder="Enter password"
         />
+
         {error ? <p style={styles.error}>{error}</p> : null}
+
         <button type="submit" style={styles.button} disabled={isLoading}>
           {isLoading ? "Logging in…" : "Log in"}
         </button>
 
         {import.meta.env.DEV ? (
           <div style={styles.devSection}>
-            <p style={styles.devLabel}>Dev quick-fill (fills the fields above, then press Log in)</p>
+            <p style={styles.devLabel}>DEV QUICK-FILL</p>
             <div style={styles.devButtonRow}>
               {DEV_ACCOUNTS.map((acct) => (
                 <button
@@ -73,24 +104,53 @@ export function LoginPage() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  page: { minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" },
+  page: {
+    minHeight: "100vh",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "radial-gradient(circle at 50% 50%, #FCFDFC 0%, #EFF1EF 100%)",
+  },
   card: {
     background: "var(--bg-card)",
     border: "1px solid var(--border)",
-    borderRadius: 12,
-    padding: 32,
-    width: 340,
+    borderRadius: 16,
+    padding: "36px 32px",
+    width: 360,
   },
-  title: { fontSize: 20, marginBottom: 24, textAlign: "center" },
-  label: { display: "block", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6, marginTop: 12 },
+  logoBlock: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    marginBottom: 28,
+  },
+  logoOuter: {
+    padding: 6,
+    borderRadius: "50%",
+    border: "1px solid var(--border)",
+    marginBottom: 12,
+  },
+  logoInner: {
+    width: 48,
+    height: 48,
+    borderRadius: "50%",
+    backgroundColor: "var(--accent-wash)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  title: { fontSize: 22, fontWeight: 800, margin: 0, color: "var(--text-primary)", letterSpacing: "-0.5px" },
+  label: { display: "block", fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", marginBottom: 6, marginTop: 14 },
   input: {
     width: "100%",
-    padding: "10px 12px",
+    padding: "10px 14px",
     borderRadius: 8,
     border: "1px solid var(--border)",
     fontSize: 14,
+    outline: "none",
+    transition: "all 0.2s ease-in-out",
   },
-  error: { color: "var(--status-critical)", fontSize: 13, marginTop: 12, textAlign: "center" },
+  error: { color: "var(--status-critical)", fontSize: 13, marginTop: 12, textAlign: "center", fontWeight: 600 },
   button: {
     width: "100%",
     marginTop: 24,
@@ -99,20 +159,23 @@ const styles: Record<string, React.CSSProperties> = {
     border: "none",
     background: "var(--accent)",
     color: "#fff",
-    fontWeight: 600,
+    fontWeight: 700,
     cursor: "pointer",
+    fontSize: 14,
+    transition: "opacity 0.2s",
   },
   devSection: { marginTop: 24, borderTop: "1px solid var(--border)", paddingTop: 16 },
-  devLabel: { fontSize: 12, color: "var(--text-muted)", textAlign: "center", marginBottom: 10 },
+  devLabel: { fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textAlign: "center", marginBottom: 12, letterSpacing: "0.5px" },
   devButtonRow: { display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" },
   devButton: {
-    border: "1px solid var(--accent)",
-    color: "var(--accent-dark)",
-    background: "var(--accent-wash)",
+    border: "1px solid var(--border)",
+    color: "var(--text-secondary)",
+    background: "var(--bg-card)",
     borderRadius: 16,
     padding: "6px 12px",
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 600,
     cursor: "pointer",
+    transition: "all 0.15s",
   },
 };
