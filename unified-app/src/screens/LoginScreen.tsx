@@ -66,7 +66,6 @@ export function LoginScreen() {
         {/* Header Block */}
         <View style={styles.headerBlock}>
           <View style={styles.headerLeft}>
-            <Text style={[styles.stepNum, { color: colors.accent }]}>01</Text>
             <Text style={[styles.mainTitle, { color: colors.textPrimary }]}>Login</Text>
             <Text style={[styles.subTitle, { color: colors.textSecondary }]}>
               Welcome back! Please login to continue your learning journey.
@@ -247,10 +246,6 @@ const styles = StyleSheet.create({
   headerLeft: {
     flex: 1,
     paddingRight: 12,
-  },
-  stepNum: {
-    fontSize: 22,
-    fontWeight: "800",
   },
   mainTitle: {
     fontSize: 32,

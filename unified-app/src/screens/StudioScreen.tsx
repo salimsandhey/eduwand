@@ -108,7 +108,7 @@ export function StudioScreen() {
   }
 
   return (
-    <Screen edges={["bottom"]}>
+    <Screen>
       <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.titleSection}>
           <Text style={[styles.title, { color: colors.textPrimary }]}>Lesson Studio</Text>

@@ -59,7 +59,7 @@ export function TeacherAnalyticsScreen() {
   }
 
   return (
-    <Screen edges={["bottom"]}>
+    <Screen>
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
         <View style={styles.titleSection}>
           <Text style={[styles.title, { color: colors.textPrimary }]}>Analytics</Text>
