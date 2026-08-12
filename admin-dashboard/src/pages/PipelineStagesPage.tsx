@@ -10,7 +10,7 @@ import { SelectSchoolPrompt } from "../components/SelectSchoolPrompt";
 export function PipelineStagesPage() {
   const { accessToken, user } = useAuth();
   const { selectedSchoolId, isLoading: schoolsLoading } = useSchoolContext();
-  const isLeadership = user?.role === "leadership";
+  const needsSchoolPicker = user?.role === "leadership" || user?.role === "platform_admin";
 
   const [stages, setStages] = useState<PipelineStage[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -20,11 +20,11 @@ export function PipelineStagesPage() {
   const [newLabel, setNewLabel] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
 
-  const schoolId = isLeadership ? selectedSchoolId ?? undefined : undefined;
+  const schoolId = needsSchoolPicker ? selectedSchoolId ?? undefined : undefined;
 
   const load = useCallback(async () => {
     if (!accessToken) return;
-    if (isLeadership && !selectedSchoolId) return;
+    if (needsSchoolPicker && !selectedSchoolId) return;
     setError(null);
     try {
       const res = await api.listPipelineStages(accessToken, { schoolId });
@@ -32,7 +32,7 @@ export function PipelineStagesPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load pipeline stages");
     }
-  }, [accessToken, isLeadership, selectedSchoolId, schoolId]);
+  }, [accessToken, needsSchoolPicker, selectedSchoolId, schoolId]);
 
   useEffect(() => {
     load();
@@ -98,7 +98,7 @@ export function PipelineStagesPage() {
     }
   }
 
-  if (isLeadership && !selectedSchoolId) {
+  if (needsSchoolPicker && !selectedSchoolId) {
     return schoolsLoading ? <p style={{ color: "var(--text-muted)" }}>Loading…</p> : <SelectSchoolPrompt />;
   }
 

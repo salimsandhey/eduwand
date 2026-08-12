@@ -109,6 +109,35 @@ async function main() {
     },
   });
 
+  const studentEnquiry = await prisma.enquiry.upsert({
+    where: { id: "00000000-0000-0000-0000-000000000012" },
+    update: {},
+    create: {
+      id: "00000000-0000-0000-0000-000000000012",
+      schoolId: school.id,
+      contactName: "Dev Guardian",
+      contactPhone: "+911234567890",
+      source: "walk_in",
+      status: "enrolled",
+      consentCaptured: true,
+    },
+  });
+
+  const student = await prisma.studentStub.upsert({
+    where: { sourceEnquiryId: studentEnquiry.id },
+    update: {},
+    create: {
+      schoolId: school.id,
+      sourceEnquiryId: studentEnquiry.id,
+      fullName: "Dev Student",
+      dateOfBirth: new Date("2016-04-10"),
+      classSectionId: classSection.id,
+      guardianName: "Dev Guardian",
+      guardianContact: "+911234567890",
+      admissionDate: new Date("2026-06-01"),
+    },
+  });
+
   const otherSchool = await prisma.school.upsert({
     where: { id: "00000000-0000-0000-0000-000000000003" },
     update: {},
@@ -169,6 +198,7 @@ async function main() {
     trust: trust.name,
     school: school.name,
     classSection: `${classSection.className} ${classSection.sectionName}`,
+    student: student.fullName,
     otherSchool: otherSchool.name,
     admin: admin.email,
     counsellor: counsellor.email,
@@ -185,6 +215,7 @@ async function main() {
   console.log("Login with: teacher@dev.eduwand.local / password123 (Dev School, teacher role)");
   console.log("Login with: admin2@dev.eduwand.local / password123 (Dev School 2)");
   console.log("Login with: leadership@dev.eduwand.local / password123 (trust-scoped, no school_id)");
+  console.log("Student login: phone +911234567890 (Dev Student, Grade 5 A) via /auth/student/request-otp");
 }
 
 main()

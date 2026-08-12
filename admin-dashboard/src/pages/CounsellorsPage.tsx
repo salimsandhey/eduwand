@@ -13,7 +13,7 @@ import { SelectSchoolPrompt } from "../components/SelectSchoolPrompt";
 export function CounsellorsPage() {
   const { accessToken, user } = useAuth();
   const { selectedSchoolId, isLoading: schoolsLoading } = useSchoolContext();
-  const isLeadership = user?.role === "leadership";
+  const needsSchoolPicker = user?.role === "leadership" || user?.role === "platform_admin";
 
   const [data, setData] = useState<CounsellorPerformanceEntry[] | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -21,12 +21,12 @@ export function CounsellorsPage() {
 
   const load = useCallback(async () => {
     if (!accessToken) return;
-    if (isLeadership && !selectedSchoolId) return;
+    if (needsSchoolPicker && !selectedSchoolId) return;
     setIsLoading(true);
     setError(null);
     try {
       const res = await api.getCounsellorPerformance(accessToken, {
-        schoolId: isLeadership ? selectedSchoolId ?? undefined : undefined,
+        schoolId: needsSchoolPicker ? selectedSchoolId ?? undefined : undefined,
       });
       setData(res);
     } catch (err) {
@@ -34,13 +34,13 @@ export function CounsellorsPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [accessToken, isLeadership, selectedSchoolId]);
+  }, [accessToken, needsSchoolPicker, selectedSchoolId]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  if (isLeadership && !selectedSchoolId) {
+  if (needsSchoolPicker && !selectedSchoolId) {
     return schoolsLoading ? <p style={{ color: "var(--text-muted)" }}>Loading…</p> : <SelectSchoolPrompt />;
   }
 

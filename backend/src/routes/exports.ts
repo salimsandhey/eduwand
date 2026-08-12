@@ -32,7 +32,7 @@ export async function exportRoutes(app: FastifyInstance) {
   // checks lastRunAt against frequency each tick and calls runCsvExport itself.
   app.get(
     "/exports/schedule",
-    { onRequest: [...scoped(app), requireRoles("admin", "leadership")] },
+    { onRequest: [...scoped(app), requireRoles("admin", "leadership", "platform_admin")] },
     async (request) => {
       const schedule = await prisma.csvExportSchedule.findUnique({ where: { schoolId: request.schoolId } });
       return { data: schedule, meta: {} };
@@ -41,7 +41,7 @@ export async function exportRoutes(app: FastifyInstance) {
 
   app.put<{ Body: ScheduleBody }>(
     "/exports/schedule",
-    { onRequest: [...scoped(app), requireRoles("admin", "leadership")] },
+    { onRequest: [...scoped(app), requireRoles("admin", "leadership", "platform_admin")] },
     async (request, reply) => {
       const body = request.body ?? {};
       if (body.frequency && !["daily", "weekly"].includes(body.frequency)) {

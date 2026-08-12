@@ -88,22 +88,22 @@ const SCHOOL_SCOPED_NAV_ITEMS: NavItem[] = [
   { to: "/counsellors", label: "Counsellor Performance", icon: "users" },
   { to: "/users", label: "User & Role Management", icon: "users" },
   { to: "/pipeline-stages", label: "Pipeline Stages", icon: "layers" },
+  { to: "/message-templates", label: "Message Templates", icon: "layers" },
+  { to: "/exports", label: "CSV Exports", icon: "chart" },
+  { to: "/audit-log", label: "Audit Log", icon: "filter" },
   AI_USAGE_NAV_ITEM,
 ];
 
 export function Layout() {
   const { user, logout } = useAuth();
 
-  // platform_admin has no school_id, so the school-scoped analytics/users screens
-  // don't apply to it at all - only Trusts and Onboarding. leadership can onboard
-  // schools into their own trust and now views school-scoped screens too, via the
-  // "Viewing" school switcher in the topbar (backend/src/plugins/scope.ts).
-  // Onboarding (creating a trust / adding a school) now lives inline on the
-  // Trusts and Trust Detail pages instead of a separate nav item - platform_admin
-  // reaches it via Trusts, leadership can no longer create schools at all.
+  // platform_admin has no school_id, but requireSchoolScope now accepts a
+  // ?schoolId= query param for it too (backend/src/plugins/scope.ts), same as
+  // leadership - so it gets the same school-scoped nav plus the "Viewing"
+  // school switcher, instead of being limited to Trusts only.
   let navItems: NavItem[] = [OVERVIEW_NAV_ITEM, ...SCHOOL_SCOPED_NAV_ITEMS];
   if (user?.role === "platform_admin") {
-    navItems = [OVERVIEW_NAV_ITEM, TRUSTS_NAV_ITEM];
+    navItems = [OVERVIEW_NAV_ITEM, TRUSTS_NAV_ITEM, ...SCHOOL_SCOPED_NAV_ITEMS];
   } else if (user?.role === "leadership") {
     navItems = [OVERVIEW_NAV_ITEM, ...SCHOOL_SCOPED_NAV_ITEMS];
   }
@@ -141,7 +141,7 @@ export function Layout() {
 
       <div style={styles.main}>
         <header style={styles.topbar}>
-          <div>{user?.role === "leadership" ? <SchoolPicker /> : null}</div>
+          <div>{user?.role === "leadership" || user?.role === "platform_admin" ? <SchoolPicker /> : null}</div>
           <div style={styles.profile}>
             <span style={styles.avatar}>{initials}</span>
             <div style={styles.profileText}>

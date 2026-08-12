@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { PLATFORM_ADMIN_ROLE } from "../lib/roles";
+import { recordAuditEvent } from "../lib/audit";
 
 interface CreateTrustBody {
   name: string;
@@ -103,7 +104,61 @@ export async function trustRoutes(app: FastifyInstance) {
         },
       });
 
+      if (body.status && body.status !== existing.status) {
+        const actor = await prisma.appUser.findUnique({ where: { id: request.user.sub }, select: { email: true } });
+        await recordAuditEvent({
+          actorUserId: request.user.sub,
+          actorEmail: actor?.email ?? "unknown",
+          action: "trust.status_change",
+          targetType: "Trust",
+          targetId: trust.id,
+          targetLabel: trust.name,
+          trustId: trust.id,
+          metadata: { from: existing.status, to: trust.status },
+        });
+      }
+
       return { data: trust, meta: {} };
+    }
+  );
+
+  // Hard delete - only safe while the trust has no schools (school.trust_id is
+  // ON DELETE RESTRICT). Checked explicitly here for a friendly error instead
+  // of surfacing a raw Postgres foreign-key violation to the admin.
+  app.delete<{ Params: { id: string } }>(
+    "/trusts/:id",
+    { onRequest: [app.authenticate, requireRoles(PLATFORM_ADMIN_ROLE)] },
+    async (request, reply) => {
+      const existing = await prisma.trust.findUnique({
+        where: { id: request.params.id },
+        include: { _count: { select: { schools: true } } },
+      });
+      if (!existing) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Trust not found" } });
+      }
+      if (existing._count.schools > 0) {
+        return reply.code(409).send({
+          data: null,
+          error: {
+            code: "has_dependents",
+            message: `This trust still has ${existing._count.schools} school(s). Delete or move them first.`,
+          },
+        });
+      }
+
+      await prisma.trust.delete({ where: { id: request.params.id } });
+
+      const actor = await prisma.appUser.findUnique({ where: { id: request.user.sub }, select: { email: true } });
+      await recordAuditEvent({
+        actorUserId: request.user.sub,
+        actorEmail: actor?.email ?? "unknown",
+        action: "trust.delete",
+        targetType: "Trust",
+        targetId: existing.id,
+        targetLabel: existing.name,
+      });
+
+      return { data: { deleted: true }, meta: {} };
     }
   );
 }

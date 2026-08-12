@@ -21,7 +21,7 @@ const FEATURE_LABELS: Record<string, string> = {
 export function AiUsagePage() {
   const { accessToken, user } = useAuth();
   const { selectedSchoolId, isLoading: schoolsLoading } = useSchoolContext();
-  const isLeadership = user?.role === "leadership";
+  const needsSchoolPicker = user?.role === "leadership" || user?.role === "platform_admin";
 
   const [data, setData] = useState<AiUsageResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -29,12 +29,12 @@ export function AiUsagePage() {
 
   const load = useCallback(async () => {
     if (!accessToken) return;
-    if (isLeadership && !selectedSchoolId) return;
+    if (needsSchoolPicker && !selectedSchoolId) return;
     setIsLoading(true);
     setError(null);
     try {
       const res = await api.getAiUsage(accessToken, {
-        schoolId: isLeadership ? selectedSchoolId ?? undefined : undefined,
+        schoolId: needsSchoolPicker ? selectedSchoolId ?? undefined : undefined,
       });
       setData(res);
     } catch (err) {
@@ -42,13 +42,13 @@ export function AiUsagePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [accessToken, isLeadership, selectedSchoolId]);
+  }, [accessToken, needsSchoolPicker, selectedSchoolId]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  if (isLeadership && !selectedSchoolId) {
+  if (needsSchoolPicker && !selectedSchoolId) {
     return schoolsLoading ? <p style={{ color: "var(--text-muted)" }}>Loading…</p> : <SelectSchoolPrompt />;
   }
 

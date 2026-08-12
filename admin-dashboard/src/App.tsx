@@ -10,6 +10,9 @@ import { CounsellorsPage } from "./pages/CounsellorsPage";
 import { AiUsagePage } from "./pages/AiUsagePage";
 import { UsersPage } from "./pages/UsersPage";
 import { PipelineStagesPage } from "./pages/PipelineStagesPage";
+import { MessageTemplatesPage } from "./pages/MessageTemplatesPage";
+import { ExportsPage } from "./pages/ExportsPage";
+import { AuditLogPage } from "./pages/AuditLogPage";
 import { TrustsPage } from "./pages/TrustsPage";
 import { TrustDetailPage } from "./pages/TrustDetailPage";
 import { SchoolDetailPage } from "./pages/SchoolDetailPage";
@@ -38,6 +41,9 @@ function Root() {
         <Route path="/ai-usage" element={<AiUsagePage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="/pipeline-stages" element={<PipelineStagesPage />} />
+        <Route path="/message-templates" element={<MessageTemplatesPage />} />
+        <Route path="/exports" element={<ExportsPage />} />
+        <Route path="/audit-log" element={<AuditLogPage />} />
         <Route path="/trusts" element={<TrustsPage />} />
         <Route path="/trusts/:id" element={<TrustDetailPage />} />
         <Route path="/schools/:id" element={<SchoolDetailPage />} />

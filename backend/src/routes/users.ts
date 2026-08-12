@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { PLATFORM_ADMIN_ROLE, INVITABLE_ROLES } from "../lib/roles";
+import { recordAuditEvent } from "../lib/audit";
 
 interface InviteUserBody {
   fullName: string;
@@ -16,6 +17,7 @@ interface InviteUserBody {
 interface UpdateUserBody {
   role?: string;
   status?: string;
+  schoolId?: string;
 }
 
 const USER_STATUSES = ["active", "invited", "disabled"];
@@ -24,16 +26,20 @@ function generateTempPassword(): string {
   return crypto.randomBytes(9).toString("base64url"); // 12 chars, url-safe
 }
 
-// Read-only list for the Admin Dashboard's User and Role Management screen
-// (Docs/Dev/EduWand_UI_Screen_Spec.md section 5).
+// List for the Admin Dashboard's User and Role Management screen
+// (Docs/Dev/EduWand_UI_Screen_Spec.md section 5). requireSchoolScope now
+// understands platform_admin too (see plugins/scope.ts) - it previously only
+// resolved a school from a JWT schoolId or a leadership + validated query
+// param, so platform_admin always 403'd here even though it's the role most
+// likely to need to browse users across schools.
 export async function userRoutes(app: FastifyInstance) {
-  app.get<{ Querystring: { schoolId?: string } }>(
+  app.get(
     "/users",
-    { onRequest: [app.authenticate, app.requireSchoolScope, requireRoles("admin", "leadership")] },
+    { onRequest: [app.authenticate, app.requireSchoolScope, requireRoles("admin", "leadership", PLATFORM_ADMIN_ROLE)] },
     async (request) => {
       const users = await prisma.appUser.findMany({
         where: { schoolId: request.schoolId },
-        select: { id: true, fullName: true, email: true, role: true, status: true },
+        select: { id: true, fullName: true, email: true, role: true, status: true, schoolId: true },
         orderBy: { fullName: "asc" },
       });
 
@@ -48,7 +54,10 @@ export async function userRoutes(app: FastifyInstance) {
   //   - admin: can only invite into their own school, and only into non-leadership roles
   //   - leadership: can invite into any school within their own trust (or another
   //     trust-level user), never into a different trust
-  app.post<{ Body: InviteUserBody }>("/users", { onRequest: [app.authenticate] }, async (request, reply) => {
+  app.post<{ Body: InviteUserBody }>(
+    "/users",
+    { onRequest: [app.authenticate], config: { rateLimit: { max: 20, timeWindow: "1 minute" } } },
+    async (request, reply) => {
     const body = request.body ?? ({} as InviteUserBody);
     const caller = request.user;
 
@@ -151,15 +160,28 @@ export async function userRoutes(app: FastifyInstance) {
       select: { id: true, fullName: true, email: true, role: true, status: true },
     });
 
+    await recordAuditEvent({
+      actorUserId: caller.sub,
+      actorEmail: (await prisma.appUser.findUnique({ where: { id: caller.sub }, select: { email: true } }))?.email ?? "unknown",
+      action: "user.invite",
+      targetType: "AppUser",
+      targetId: user.id,
+      targetLabel: user.email,
+      schoolId,
+      trustId,
+      metadata: { role: user.role },
+    });
+
     return reply.code(201).send({ data: user, meta: { tempPassword } });
-  });
+    }
+  );
 
   // Change role / disable-enable, from the User & Role Management screen. Same scope
   // rules as invite: platform_admin anyone, admin only within own school (and can't
   // touch leadership), leadership only within own trust.
   app.patch<{ Params: { id: string }; Body: UpdateUserBody }>(
     "/users/:id",
-    { onRequest: [app.authenticate] },
+    { onRequest: [app.authenticate], config: { rateLimit: { max: 40, timeWindow: "1 minute" } } },
     async (request, reply) => {
       const caller = request.user;
       const body = request.body ?? ({} as UpdateUserBody);
@@ -186,6 +208,32 @@ export async function userRoutes(app: FastifyInstance) {
         return reply.code(403).send({ data: null, error: { code: "forbidden", message: "Cannot change your own role or status" } });
       }
 
+      // schoolId reassignment: only platform_admin (anywhere) or leadership
+      // (within their own trust, moving to another school in that same trust).
+      // admin can't reassign - they're single-school scoped, so there's no
+      // destination school they'd have authority over anyway.
+      let newSchoolId: string | undefined;
+      if (body.schoolId !== undefined) {
+        if (caller.role === PLATFORM_ADMIN_ROLE) {
+          const destSchool = await prisma.school.findUnique({ where: { id: body.schoolId } });
+          if (!destSchool) {
+            return reply.code(404).send({ data: null, error: { code: "not_found", message: "Destination school not found" } });
+          }
+          newSchoolId = destSchool.id;
+        } else if (caller.role === "leadership") {
+          if (!caller.trustId || target.trustId !== caller.trustId) {
+            return reply.code(403).send({ data: null, error: { code: "forbidden", message: "User not in your trust" } });
+          }
+          const destSchool = await prisma.school.findFirst({ where: { id: body.schoolId, trustId: caller.trustId } });
+          if (!destSchool) {
+            return reply.code(404).send({ data: null, error: { code: "not_found", message: "Destination school not found in your trust" } });
+          }
+          newSchoolId = destSchool.id;
+        } else {
+          return reply.code(403).send({ data: null, error: { code: "forbidden", message: "Only platform_admin or leadership can reassign a user's school" } });
+        }
+      }
+
       if (caller.role === PLATFORM_ADMIN_ROLE) {
         // no additional scope check
       } else if (caller.role === "admin") {
@@ -208,11 +256,88 @@ export async function userRoutes(app: FastifyInstance) {
 
       const user = await prisma.appUser.update({
         where: { id: target.id },
-        data: { role: body.role ?? undefined, status: body.status ?? undefined },
-        select: { id: true, fullName: true, email: true, role: true, status: true },
+        data: { role: body.role ?? undefined, status: body.status ?? undefined, schoolId: newSchoolId },
+        select: { id: true, fullName: true, email: true, role: true, status: true, schoolId: true },
+      });
+
+      const actor = await prisma.appUser.findUnique({ where: { id: caller.sub }, select: { email: true } });
+      const changes: Record<string, unknown> = {};
+      if (body.role) changes.role = { from: target.role, to: body.role };
+      if (body.status) changes.status = { from: target.status, to: body.status };
+      if (newSchoolId) changes.schoolId = { from: target.schoolId, to: newSchoolId };
+
+      await recordAuditEvent({
+        actorUserId: caller.sub,
+        actorEmail: actor?.email ?? "unknown",
+        action: "user.update",
+        targetType: "AppUser",
+        targetId: user.id,
+        targetLabel: user.email,
+        schoolId: user.schoolId,
+        trustId: target.trustId,
+        metadata: changes,
       });
 
       return { data: user, meta: {} };
+    }
+  );
+
+  // Admin-triggered reset: an invited user who lost their temp password had no
+  // recovery path before this - disable+re-invite doesn't work (POST /users
+  // rejects an email that already exists). Same scope rules as PATCH /users/:id.
+  app.post<{ Params: { id: string } }>(
+    "/users/:id/reset-password",
+    { onRequest: [app.authenticate], config: { rateLimit: { max: 20, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      const caller = request.user;
+
+      const target = await prisma.appUser.findUnique({ where: { id: request.params.id } });
+      if (!target) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "User not found" } });
+      }
+      if (target.id === caller.sub) {
+        return reply.code(403).send({ data: null, error: { code: "forbidden", message: "Use the self-service Forgot Password flow for your own account" } });
+      }
+
+      if (caller.role === PLATFORM_ADMIN_ROLE) {
+        // no additional scope check
+      } else if (caller.role === "admin") {
+        if (target.schoolId !== caller.schoolId || target.role === "leadership") {
+          return reply.code(403).send({ data: null, error: { code: "forbidden", message: "Not authorized for this user" } });
+        }
+      } else if (caller.role === "leadership") {
+        if (target.trustId !== caller.trustId) {
+          return reply.code(403).send({ data: null, error: { code: "forbidden", message: "User not in your trust" } });
+        }
+      } else {
+        return reply.code(403).send({
+          data: null,
+          error: { code: "forbidden", message: "Requires role: platform_admin, admin, or leadership" },
+        });
+      }
+
+      const tempPassword = generateTempPassword();
+      const passwordHash = await bcrypt.hash(tempPassword, 10);
+
+      const user = await prisma.appUser.update({
+        where: { id: target.id },
+        data: { passwordHash, status: "invited" },
+        select: { id: true, fullName: true, email: true, role: true, status: true },
+      });
+
+      const actor = await prisma.appUser.findUnique({ where: { id: caller.sub }, select: { email: true } });
+      await recordAuditEvent({
+        actorUserId: caller.sub,
+        actorEmail: actor?.email ?? "unknown",
+        action: "user.admin_password_reset",
+        targetType: "AppUser",
+        targetId: user.id,
+        targetLabel: user.email,
+        schoolId: target.schoolId,
+        trustId: target.trustId,
+      });
+
+      return { data: user, meta: { tempPassword } };
     }
   );
 }

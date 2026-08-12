@@ -13,6 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { Screen } from "../components/Screen";
+import { api } from "../api/client";
 
 // Matches backend/prisma/seed.ts. Only roles that can actually sign into this
 // mobile app (see AppNavigator's role routing) belong here - admin/leadership
@@ -24,7 +25,11 @@ const DEV_ACCOUNTS = [
 ];
 const DEV_PASSWORD = "password123";
 
-export function LoginScreen() {
+interface Props {
+  onStudentLogin: () => void;
+}
+
+export function LoginScreen({ onStudentLogin }: Props) {
   const { login, isLoading, error } = useAuth();
   const { colors, pressedOpacity } = useTheme();
   const [email, setEmail] = useState("");
@@ -34,6 +39,54 @@ export function LoginScreen() {
   // Focus states
   const [emailFocused, setEmailFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
+
+  // Forgot password flow: request -> enter code + new password -> back to login
+  const [mode, setMode] = useState<"login" | "forgot-request" | "forgot-reset">("login");
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetCode, setResetCode] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [isResetLoading, setIsResetLoading] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
+  const [devResetOtp, setDevResetOtp] = useState<string | null>(null);
+
+  async function handleRequestReset() {
+    setIsResetLoading(true);
+    setResetError(null);
+    try {
+      const result = await api.requestPasswordReset(resetEmail);
+      setDevResetOtp(result.devOtp ?? null);
+      setMode("forgot-reset");
+    } catch (err) {
+      setResetError(err instanceof Error ? err.message : "Could not send reset code");
+    } finally {
+      setIsResetLoading(false);
+    }
+  }
+
+  async function handleResetPassword() {
+    setIsResetLoading(true);
+    setResetError(null);
+    try {
+      await api.resetPassword(resetEmail, resetCode, newPassword);
+      setResetMessage("Password updated. You can log in now.");
+      setMode("login");
+      setPassword("");
+      setEmail(resetEmail);
+      setResetCode("");
+      setNewPassword("");
+      setDevResetOtp(null);
+    } catch (err) {
+      setResetError(err instanceof Error ? err.message : "Could not reset password");
+    } finally {
+      setIsResetLoading(false);
+    }
+  }
+
+  function backToLogin() {
+    setMode("login");
+    setResetError(null);
+  }
 
   // Button Scale Animation
   const buttonScale = useRef(new Animated.Value(1)).current;
@@ -66,19 +119,36 @@ export function LoginScreen() {
         {/* Header Block */}
         <View style={styles.headerBlock}>
           <View style={styles.headerLeft}>
-            <Text style={[styles.mainTitle, { color: colors.textPrimary }]}>Login</Text>
+            {mode !== "login" ? (
+              <Pressable onPress={backToLogin} hitSlop={10} style={styles.backButton} accessibilityRole="button" accessibilityLabel="Back to login">
+                <Ionicons name="arrow-back" size={20} color={colors.textPrimary} />
+              </Pressable>
+            ) : null}
+            <Text style={[styles.mainTitle, { color: colors.textPrimary }]}>
+              {mode === "login" ? "Login" : "Reset Password"}
+            </Text>
             <Text style={[styles.subTitle, { color: colors.textSecondary }]}>
-              Welcome back! Please login to continue your learning journey.
+              {mode === "login" && "Welcome back! Please login to continue your learning journey."}
+              {mode === "forgot-request" && "Enter your account email and we'll send you a reset code."}
+              {mode === "forgot-reset" && `Enter the code sent to ${resetEmail} and choose a new password.`}
             </Text>
           </View>
           <View style={[styles.lockIllustrationContainer, { backgroundColor: colors.accent + "12" }]}>
             <View style={[styles.lockOuterRing, { borderColor: colors.accent + "20" }]}>
-              <Ionicons name="lock-closed" size={32} color={colors.accent} />
+              <Ionicons name={mode === "login" ? "lock-closed" : "key"} size={32} color={colors.accent} />
             </View>
           </View>
         </View>
 
+        {resetMessage && mode === "login" ? (
+          <View style={styles.successRow}>
+            <Ionicons name="checkmark-circle" size={16} color={colors.accent} />
+            <Text style={[styles.successText, { color: colors.accent }]}>{resetMessage}</Text>
+          </View>
+        ) : null}
+
         {/* Inputs section */}
+        {mode === "login" ? (
         <View style={styles.formContainer}>
           <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Email</Text>
           <View
@@ -171,13 +241,115 @@ export function LoginScreen() {
             </Pressable>
           </Animated.View>
 
-          <Pressable hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Pressable hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} onPress={() => setMode("forgot-request")}>
             <Text style={[styles.forgotPasswordText, { color: colors.accent }]}>Forgot Password?</Text>
           </Pressable>
+
+          <Pressable hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} onPress={onStudentLogin}>
+            <Text style={[styles.forgotPasswordText, { color: colors.textMuted, marginTop: 8 }]}>
+              Are you a student? Login here
+            </Text>
+          </Pressable>
         </View>
+        ) : null}
+
+        {mode === "forgot-request" ? (
+          <View style={styles.formContainer}>
+            <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Email</Text>
+            <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Ionicons name="mail-outline" size={20} color={colors.accent} style={styles.inputIcon} />
+              <TextInput
+                style={[styles.input, { color: colors.textPrimary }]}
+                placeholder="Enter your account email"
+                placeholderTextColor={colors.textMuted}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                value={resetEmail}
+                onChangeText={setResetEmail}
+              />
+            </View>
+
+            {resetError ? (
+              <View style={styles.errorRow}>
+                <Ionicons name="alert-circle" size={16} color={colors.danger} />
+                <Text style={[styles.errorText, { color: colors.danger }]}>{resetError}</Text>
+              </View>
+            ) : null}
+
+            <Pressable
+              onPress={handleRequestReset}
+              disabled={isResetLoading || !resetEmail}
+              accessibilityRole="button"
+              style={[styles.saveButton, { backgroundColor: colors.accent }, isResetLoading && styles.buttonDisabled]}
+            >
+              {isResetLoading ? (
+                <ActivityIndicator color={colors.accentOn} />
+              ) : (
+                <Text style={[styles.saveButtonText, { color: colors.accentOn }]}>Send reset code</Text>
+              )}
+            </Pressable>
+          </View>
+        ) : null}
+
+        {mode === "forgot-reset" ? (
+          <View style={styles.formContainer}>
+            <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Reset code</Text>
+            <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Ionicons name="key-outline" size={20} color={colors.accent} style={styles.inputIcon} />
+              <TextInput
+                style={[styles.input, { color: colors.textPrimary }]}
+                placeholder="6-digit code"
+                placeholderTextColor={colors.textMuted}
+                keyboardType="number-pad"
+                maxLength={6}
+                value={resetCode}
+                onChangeText={setResetCode}
+              />
+            </View>
+
+            <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>New password</Text>
+            <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Ionicons name="lock-closed-outline" size={20} color={colors.accent} style={styles.inputIcon} />
+              <TextInput
+                style={[styles.input, { color: colors.textPrimary }]}
+                placeholder="At least 8 characters"
+                placeholderTextColor={colors.textMuted}
+                secureTextEntry
+                value={newPassword}
+                onChangeText={setNewPassword}
+              />
+            </View>
+
+            {resetError ? (
+              <View style={styles.errorRow}>
+                <Ionicons name="alert-circle" size={16} color={colors.danger} />
+                <Text style={[styles.errorText, { color: colors.danger }]}>{resetError}</Text>
+              </View>
+            ) : null}
+
+            <Pressable
+              onPress={handleResetPassword}
+              disabled={isResetLoading || resetCode.length < 6 || newPassword.length < 8}
+              accessibilityRole="button"
+              style={[styles.saveButton, { backgroundColor: colors.accent }, isResetLoading && styles.buttonDisabled]}
+            >
+              {isResetLoading ? (
+                <ActivityIndicator color={colors.accentOn} />
+              ) : (
+                <Text style={[styles.saveButtonText, { color: colors.accentOn }]}>Update password</Text>
+              )}
+            </Pressable>
+
+            {__DEV__ && devResetOtp ? (
+              <Text style={[styles.devDividerText, { color: colors.textMuted, marginTop: 12 }]}>
+                DEV ONLY - code is {devResetOtp}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
 
         {/* Quick login section (DEV ONLY) */}
-        {__DEV__ ? (
+        {__DEV__ && mode === "login" ? (
           <View style={styles.devSection}>
             <View style={styles.devDividerRow}>
               <View style={[styles.devDividerLine, { backgroundColor: colors.border }]} />
@@ -246,6 +418,25 @@ const styles = StyleSheet.create({
   headerLeft: {
     flex: 1,
     paddingRight: 12,
+  },
+  backButton: {
+    width: 32,
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: -6,
+    marginBottom: 6,
+  },
+  successRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 16,
+  },
+  successText: {
+    fontSize: 12,
+    fontWeight: "600",
+    flex: 1,
   },
   mainTitle: {
     fontSize: 32,

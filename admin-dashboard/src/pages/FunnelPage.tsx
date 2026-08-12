@@ -29,7 +29,7 @@ function formatPeriodLabel(period: string, index: number): string {
 export function FunnelPage() {
   const { accessToken, user } = useAuth();
   const { selectedSchoolId, isLoading: schoolsLoading } = useSchoolContext();
-  const isLeadership = user?.role === "leadership";
+  const needsSchoolPicker = user?.role === "leadership" || user?.role === "platform_admin";
 
   const [data, setData] = useState<FunnelResponse | null>(null);
   const [trend, setTrend] = useState<TrendResponse | null>(null);
@@ -41,11 +41,11 @@ export function FunnelPage() {
 
   const load = useCallback(async () => {
     if (!accessToken) return;
-    if (isLeadership && !selectedSchoolId) return;
+    if (needsSchoolPicker && !selectedSchoolId) return;
     setIsLoading(true);
     setError(null);
     try {
-      const schoolId = isLeadership ? selectedSchoolId ?? undefined : undefined;
+      const schoolId = needsSchoolPicker ? selectedSchoolId ?? undefined : undefined;
       const [funnelRes, trendRes, stagesRes] = await Promise.all([
         api.getFunnel(accessToken, {
           startDate: startDate || undefined,
@@ -63,13 +63,13 @@ export function FunnelPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [accessToken, startDate, endDate, isLeadership, selectedSchoolId]);
+  }, [accessToken, startDate, endDate, needsSchoolPicker, selectedSchoolId]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  if (isLeadership && !selectedSchoolId) {
+  if (needsSchoolPicker && !selectedSchoolId) {
     return schoolsLoading ? <p style={{ color: "var(--text-muted)" }}>Loading…</p> : <SelectSchoolPrompt />;
   }
 

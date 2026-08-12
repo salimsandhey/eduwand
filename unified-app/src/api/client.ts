@@ -16,7 +16,10 @@ async function requestEnvelope<T>(path: string, options: RequestInit = {}, token
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
     headers: {
-      "Content-Type": "application/json",
+      // Fastify's JSON body parser rejects an empty body when Content-Type is
+      // application/json (FST_ERR_CTP_EMPTY_JSON_BODY) - only send it for
+      // requests that actually have a body (e.g. not a bodyless POST/DELETE).
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     },
@@ -83,6 +86,41 @@ export interface CurrentUser {
   schoolId: string | null;
   trustId: string | null;
   status: string;
+}
+
+// ---- Student login (phone + OTP) ----
+
+export interface StudentOtpMatch {
+  id: string;
+  fullName: string;
+  schoolId: string;
+  classSectionId: string;
+}
+
+export interface StudentVerifyOtpResult {
+  selectionToken: string;
+  students: StudentOtpMatch[];
+}
+
+// ---- Student portal (read-only) ----
+
+export type StudentSubmissionStatus = "not_submitted" | "submitted" | "graded";
+
+export interface StudentAssignmentView {
+  id: string;
+  title: string;
+  questions: AssignmentQuestion[];
+  publishedAt: string | null;
+  submissionStatus: StudentSubmissionStatus;
+  grade: { finalScore: number | null; finalFeedback: string | null; releasedAt: string | null } | null;
+}
+
+export interface StudentProfile {
+  id: string;
+  fullName: string;
+  dateOfBirth: string;
+  classSectionId: string;
+  admissionDate: string;
 }
 
 // ---- Pipeline stages (FR-EG-3: configurable per school, not a fixed enum) ----
@@ -358,6 +396,36 @@ export const api = {
   login: (email: string, password: string) =>
     request<AuthTokens>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
   me: (token: string) => request<CurrentUser>("/auth/me", {}, token),
+
+  requestPasswordReset: (email: string) =>
+    request<{ message: string; devOtp?: string }>("/auth/request-password-reset", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
+  resetPassword: (email: string, code: string, newPassword: string) =>
+    request<{ message: string }>("/auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify({ email, code, newPassword }),
+    }),
+
+  requestStudentOtp: (phone: string) =>
+    request<{ message: string; devOtp?: string }>("/auth/student/request-otp", {
+      method: "POST",
+      body: JSON.stringify({ phone }),
+    }),
+  verifyStudentOtp: (phone: string, code: string) =>
+    request<StudentVerifyOtpResult>("/auth/student/verify-otp", {
+      method: "POST",
+      body: JSON.stringify({ phone, code }),
+    }),
+  selectStudent: (selectionToken: string, studentStubId: string) =>
+    request<AuthTokens>("/auth/student/select", {
+      method: "POST",
+      body: JSON.stringify({ selectionToken, studentStubId }),
+    }),
+
+  getStudentProfile: (token: string) => request<StudentProfile>("/student/me", {}, token),
+  listStudentAssignments: (token: string) => request<StudentAssignmentView[]>("/student/assignments", {}, token),
 
   listEnquiries: (token: string, params: { status?: string; source?: string; ownerUserId?: string } = {}) =>
     requestEnvelope<Enquiry[]>(`/enquiries${toQueryString(params)}`, {}, token),

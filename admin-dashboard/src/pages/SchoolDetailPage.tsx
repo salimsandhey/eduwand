@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useSchoolContext } from "../context/SchoolContext";
 import { api, ApiError } from "../api/client";
-import type { SchoolDetail } from "../api/client";
+import type { SchoolDetail, AcademicYear } from "../api/client";
 import { Card } from "../components/Card";
 import { PageHeader } from "../components/PageHeader";
 
@@ -11,9 +12,27 @@ const STATUSES = ["onboarding", "active", "suspended"];
 
 export function SchoolDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { accessToken, user } = useAuth();
+  const { setSelectedSchoolId } = useSchoolContext();
   const [school, setSchool] = useState<SchoolDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const [academicYears, setAcademicYears] = useState<AcademicYear[] | null>(null);
+  const [classesError, setClassesError] = useState<string | null>(null);
+
+  const [showAddYear, setShowAddYear] = useState(false);
+  const [yearLabel, setYearLabel] = useState("");
+  const [yearStart, setYearStart] = useState("");
+  const [yearEnd, setYearEnd] = useState("");
+  const [isAddingYear, setIsAddingYear] = useState(false);
+
+  const [addingSectionForYear, setAddingSectionForYear] = useState<string | null>(null);
+  const [sectionClassName, setSectionClassName] = useState("");
+  const [sectionName, setSectionName] = useState("");
+  const [isAddingSection, setIsAddingSection] = useState(false);
 
   const [name, setName] = useState("");
   const [board, setBoard] = useState("CBSE");
@@ -30,6 +49,7 @@ export function SchoolDetailPage() {
   const [inviteResult, setInviteResult] = useState<{ email: string; tempPassword: string } | null>(null);
 
   const canEdit = user?.role === "platform_admin" || user?.role === "leadership";
+  const canDelete = user?.role === "platform_admin";
 
   const load = useCallback(async () => {
     if (!accessToken || !id) return;
@@ -48,6 +68,77 @@ export function SchoolDetailPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const loadClasses = useCallback(async () => {
+    if (!accessToken || !id) return;
+    setClassesError(null);
+    try {
+      const years = await api.listAcademicYears(accessToken, id);
+      setAcademicYears(years);
+    } catch (err) {
+      setClassesError(err instanceof Error ? err.message : "Failed to load academic years");
+    }
+  }, [accessToken, id]);
+
+  useEffect(() => {
+    loadClasses();
+  }, [loadClasses]);
+
+  async function addAcademicYear() {
+    if (!accessToken || !id || !yearLabel.trim() || !yearStart || !yearEnd) return;
+    setIsAddingYear(true);
+    setClassesError(null);
+    try {
+      await api.createAcademicYear(accessToken, id, { label: yearLabel.trim(), startDate: yearStart, endDate: yearEnd });
+      setYearLabel("");
+      setYearStart("");
+      setYearEnd("");
+      setShowAddYear(false);
+      loadClasses();
+    } catch (err) {
+      setClassesError(err instanceof Error ? err.message : "Failed to add academic year");
+    } finally {
+      setIsAddingYear(false);
+    }
+  }
+
+  async function makeCurrentYear(academicYearId: string) {
+    if (!accessToken || !id) return;
+    setClassesError(null);
+    try {
+      await api.setCurrentAcademicYear(accessToken, id, academicYearId);
+      loadClasses();
+    } catch (err) {
+      setClassesError(err instanceof Error ? err.message : "Failed to update academic year");
+    }
+  }
+
+  async function addClassSection(academicYearId: string) {
+    if (!accessToken || !id || !sectionClassName.trim() || !sectionName.trim()) return;
+    setIsAddingSection(true);
+    setClassesError(null);
+    try {
+      await api.createClassSection(accessToken, id, {
+        academicYearId,
+        className: sectionClassName.trim(),
+        sectionName: sectionName.trim(),
+      });
+      setSectionClassName("");
+      setSectionName("");
+      setAddingSectionForYear(null);
+      loadClasses();
+    } catch (err) {
+      setClassesError(err instanceof Error ? err.message : "Failed to add class section");
+    } finally {
+      setIsAddingSection(false);
+    }
+  }
+
+  function viewStaff() {
+    if (!id) return;
+    setSelectedSchoolId(id);
+    navigate("/users");
+  }
 
   async function saveDetails() {
     if (!accessToken || !id) return;
@@ -100,6 +191,21 @@ export function SchoolDetailPage() {
       setSaveError(err instanceof Error ? err.message : "Failed to update status");
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function deleteSchool() {
+    if (!accessToken || !id || !school) return;
+    if (!window.confirm(`Permanently delete "${school.name}"? This cannot be undone.`)) return;
+    setDeleteError(null);
+    setIsDeleting(true);
+    try {
+      await api.deleteSchool(accessToken, id);
+      navigate(`/trusts/${school.trustId}`);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Failed to delete school");
+    } finally {
+      setIsDeleting(false);
     }
   }
 
@@ -175,9 +281,18 @@ export function SchoolDetailPage() {
                   Mark {s}
                 </button>
               ))}
+              {canDelete ? (
+                <button style={styles.dangerButton} onClick={deleteSchool} disabled={isDeleting}>
+                  {isDeleting ? "Deleting…" : "Delete school"}
+                </button>
+              ) : null}
+              <button style={styles.secondaryButton} onClick={viewStaff}>
+                View staff →
+              </button>
             </div>
             {saveMessage ? <p style={styles.success}>{saveMessage}</p> : null}
             {saveError ? <p style={styles.error}>{saveError}</p> : null}
+            {deleteError ? <p style={styles.error}>{deleteError}</p> : null}
           </>
         ) : (
           <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 12 }}>
@@ -227,6 +342,116 @@ export function SchoolDetailPage() {
           ) : null}
         </Card>
       ) : null}
+
+      <Card title="Academic Years & Classes">
+        {classesError ? <p style={styles.error}>{classesError}</p> : null}
+
+        {!academicYears ? (
+          <p style={{ color: "var(--text-muted)" }}>Loading…</p>
+        ) : academicYears.length === 0 ? (
+          <p style={{ color: "var(--text-muted)" }}>
+            This school has no academic year yet - nothing can be admitted or assigned to a class until one exists.
+          </p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {academicYears.map((year) => (
+              <div key={year.id} style={styles.yearBox}>
+                <div style={styles.yearHeader}>
+                  <strong>{year.label}</strong>
+                  {year.isCurrent ? (
+                    <span style={{ ...styles.statusBadge, color: "var(--status-good)" }}>current</span>
+                  ) : canEdit ? (
+                    <button style={styles.smallButton} onClick={() => makeCurrentYear(year.id)}>
+                      Make current
+                    </button>
+                  ) : null}
+                </div>
+                {year.classSections.length === 0 ? (
+                  <p style={{ color: "var(--text-muted)", fontSize: 13, margin: "6px 0" }}>No class sections yet.</p>
+                ) : (
+                  <div style={styles.sectionChips}>
+                    {year.classSections.map((cs) => (
+                      <span key={cs.id} style={styles.chip}>
+                        {cs.className} {cs.sectionName}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {canEdit ? (
+                  addingSectionForYear === year.id ? (
+                    <div style={{ ...styles.row, marginTop: 8 }}>
+                      <input
+                        style={styles.input}
+                        placeholder="Class (e.g. Grade 5)"
+                        value={sectionClassName}
+                        onChange={(e) => setSectionClassName(e.target.value)}
+                        autoFocus
+                      />
+                      <input
+                        style={styles.input}
+                        placeholder="Section (e.g. A)"
+                        value={sectionName}
+                        onChange={(e) => setSectionName(e.target.value)}
+                      />
+                      <button
+                        style={styles.button}
+                        onClick={() => addClassSection(year.id)}
+                        disabled={isAddingSection || !sectionClassName.trim() || !sectionName.trim()}
+                      >
+                        Add
+                      </button>
+                      <button style={styles.secondaryButton} onClick={() => setAddingSectionForYear(null)}>
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button style={{ ...styles.smallButton, marginTop: 8 }} onClick={() => setAddingSectionForYear(year.id)}>
+                      + Add class section
+                    </button>
+                  )
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {canEdit ? (
+          <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
+            {!showAddYear ? (
+              <button style={styles.secondaryButton} onClick={() => setShowAddYear(true)}>
+                + Add academic year
+              </button>
+            ) : (
+              <div style={styles.row}>
+                <input
+                  style={styles.input}
+                  placeholder="Label (e.g. 2026-2027)"
+                  value={yearLabel}
+                  onChange={(e) => setYearLabel(e.target.value)}
+                  autoFocus
+                />
+                <input
+                  style={styles.input}
+                  type="date"
+                  value={yearStart}
+                  onChange={(e) => setYearStart(e.target.value)}
+                />
+                <input style={styles.input} type="date" value={yearEnd} onChange={(e) => setYearEnd(e.target.value)} />
+                <button
+                  style={styles.button}
+                  onClick={addAcademicYear}
+                  disabled={isAddingYear || !yearLabel.trim() || !yearStart || !yearEnd}
+                >
+                  Add
+                </button>
+                <button style={styles.secondaryButton} onClick={() => setShowAddYear(false)}>
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
+        ) : null}
+      </Card>
     </div>
   );
 }
@@ -261,6 +486,16 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 14,
     textTransform: "capitalize",
   },
+  dangerButton: {
+    background: "var(--bg-page)",
+    color: "var(--status-critical)",
+    border: "1px solid var(--status-critical)",
+    borderRadius: 8,
+    padding: "10px 16px",
+    fontWeight: 600,
+    cursor: "pointer",
+    fontSize: 14,
+  },
   success: { color: "var(--status-good)", fontSize: 13, marginTop: 12, marginBottom: 0 },
   error: { color: "var(--status-critical)", fontSize: 13, marginTop: 12, marginBottom: 0 },
   tempPasswordBox: {
@@ -272,4 +507,26 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
   },
   code: { fontFamily: "monospace", fontSize: 15, fontWeight: 700, color: "var(--text-primary)" },
+  smallButton: {
+    padding: "6px 12px",
+    borderRadius: 6,
+    border: "1px solid var(--border)",
+    background: "var(--bg-page)",
+    color: "var(--text-primary)",
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  yearBox: { border: "1px solid var(--border)", borderRadius: 10, padding: 14 },
+  yearHeader: { display: "flex", alignItems: "center", gap: 10, marginBottom: 6 },
+  sectionChips: { display: "flex", flexWrap: "wrap", gap: 6 },
+  chip: {
+    fontSize: 12,
+    fontWeight: 600,
+    padding: "4px 10px",
+    borderRadius: 12,
+    background: "var(--bg-page)",
+    border: "1px solid var(--border)",
+    color: "var(--text-primary)",
+  },
 };

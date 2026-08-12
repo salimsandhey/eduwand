@@ -15,13 +15,16 @@ const SchoolContext = createContext<SchoolContextValue | undefined>(undefined);
 
 const STORAGE_KEY = "eduwand_admin_selected_school";
 
-// Only meaningful for the leadership role (trustId, no single schoolId) - lets
-// them pick which of their trust's schools to view, since every school-scoped
-// analytics/users endpoint now accepts a validated ?schoolId= for that role
-// (see backend/src/plugins/scope.ts). No-op for every other role.
+// Meaningful for leadership (trustId, no single schoolId) and platform_admin
+// (no schoolId or trustId at all) - lets either pick which school to view,
+// since every school-scoped analytics/users/templates/exports endpoint now
+// accepts a validated ?schoolId= for both roles (see backend/src/plugins/scope.ts).
+// No-op for every other role.
 export function SchoolProvider({ children }: { children: ReactNode }) {
   const { user, accessToken } = useAuth();
   const isLeadership = user?.role === "leadership";
+  const isPlatformAdmin = user?.role === "platform_admin";
+  const needsSchoolPicker = isLeadership || isPlatformAdmin;
 
   const [schools, setSchools] = useState<School[]>([]);
   const [selectedSchoolId, setSelectedSchoolIdState] = useState<string | null>(() =>
@@ -30,7 +33,7 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    if (!isLeadership || !accessToken) {
+    if (!needsSchoolPicker || !accessToken) {
       setSchools([]);
       return;
     }
@@ -48,7 +51,7 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
         });
       })
       .finally(() => setIsLoading(false));
-  }, [isLeadership, accessToken]);
+  }, [needsSchoolPicker, accessToken]);
 
   useEffect(() => {
     if (!user) {
@@ -67,7 +70,7 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
     <SchoolContext.Provider
       value={{
         schools,
-        selectedSchoolId: isLeadership ? selectedSchoolId : null,
+        selectedSchoolId: needsSchoolPicker ? selectedSchoolId : null,
         setSelectedSchoolId,
         isLoading,
       }}

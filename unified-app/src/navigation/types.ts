@@ -3,7 +3,7 @@ import { NavigatorScreenParams } from "@react-navigation/native";
 // Root stack: the tab navigator (role-dependent) plus full-focus form/detail screens
 // that push on top and hide the tab bar.
 export type RootStackParamList = {
-  MainTabs: NavigatorScreenParams<EnrolmentTabParamList | TeacherTabParamList>;
+  MainTabs: NavigatorScreenParams<EnrolmentTabParamList | TeacherTabParamList | StudentTabParamList>;
   EnquiryDetail: { enquiryId: string };
   NewEnquiryForm: undefined;
   AdmissionConfirmation: { enquiryId: string };
@@ -31,6 +31,11 @@ export type TeacherTabParamList = {
   Assignment: undefined;
   Analytics: undefined;
   More: undefined;
+};
+
+// student - read-only in this build phase, no More tab yet.
+export type StudentTabParamList = {
+  Home: undefined;
 };
 
 // Nested inside the enrolment "More" tab so CSV Export keeps that tab's bar visible when pushed.

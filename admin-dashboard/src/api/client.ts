@@ -15,11 +15,22 @@ export class ApiError extends Error {
   }
 }
 
+async function requestText(path: string, token: string): Promise<string> {
+  const response = await fetch(`${API_URL}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok) {
+    throw new ApiError("download_failed", "Download failed");
+  }
+  return response.text();
+}
+
 async function requestEnvelope<T>(path: string, options: RequestInit = {}, token?: string): Promise<ApiEnvelope<T>> {
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
     headers: {
-      "Content-Type": "application/json",
+      // Fastify's JSON body parser rejects an empty body when Content-Type is
+      // application/json (FST_ERR_CTP_EMPTY_JSON_BODY) - only send it for
+      // requests that actually have a body (e.g. not a bodyless DELETE).
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     },
@@ -139,6 +150,7 @@ export interface AppUserSummary {
   email: string;
   role: string;
   status: string;
+  schoolId: string | null;
 }
 
 export interface InviteUserInput {
@@ -147,6 +159,91 @@ export interface InviteUserInput {
   role: string;
   schoolId?: string;
   trustId?: string;
+}
+
+// ---- Academic structure (academic years / class sections) ----
+
+export interface ClassSection {
+  id: string;
+  academicYearId: string;
+  className: string;
+  sectionName: string;
+}
+
+export interface AcademicYear {
+  id: string;
+  schoolId: string;
+  label: string;
+  startDate: string;
+  endDate: string;
+  isCurrent: boolean;
+  classSections: ClassSection[];
+}
+
+export interface CreateAcademicYearInput {
+  label: string;
+  startDate: string;
+  endDate: string;
+  isCurrent?: boolean;
+}
+
+export interface CreateClassSectionInput {
+  academicYearId: string;
+  className: string;
+  sectionName: string;
+}
+
+// ---- Audit log ----
+
+export interface AuditLogEntry {
+  id: string;
+  actorEmail: string;
+  action: string;
+  targetType: string;
+  targetId: string | null;
+  targetLabel: string | null;
+  schoolId: string | null;
+  trustId: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+// ---- Message templates ----
+
+export type MessageChannel = "sms" | "email";
+
+export interface MessageTemplate {
+  id: string;
+  schoolId: string;
+  channel: MessageChannel;
+  name: string;
+  body: string;
+  language: string;
+  createdAt: string;
+}
+
+export interface CreateMessageTemplateInput {
+  channel: MessageChannel;
+  name: string;
+  body: string;
+  language?: string;
+}
+
+// ---- CSV exports ----
+
+export interface CsvExportLogEntry {
+  id: string;
+  schoolId: string;
+  runAt: string;
+  rowCount: number;
+  status: "success" | "failed";
+  fileLocation: string | null;
+}
+
+export interface CsvExportSchedule {
+  schoolId: string;
+  frequency: "daily" | "weekly";
+  isActive: boolean;
 }
 
 // ---- Onboarding: trusts & schools ----
@@ -204,6 +301,7 @@ export interface UpdateSchoolInput {
 export interface UpdateUserInput {
   role?: string;
   status?: string;
+  schoolId?: string;
 }
 
 export const api = {
@@ -243,6 +341,59 @@ export const api = {
     requestEnvelope<AppUserSummary>("/users", { method: "POST", body: JSON.stringify(input) }, token),
   updateUser: (token: string, id: string, input: UpdateUserInput) =>
     request<AppUserSummary>(`/users/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
+  resetUserPassword: (token: string, id: string) =>
+    requestEnvelope<AppUserSummary>(`/users/${id}/reset-password`, { method: "POST" }, token),
+
+  listAcademicYears: (token: string, schoolId: string) =>
+    request<AcademicYear[]>(`/schools/${schoolId}/academic-years`, {}, token),
+  createAcademicYear: (token: string, schoolId: string, input: CreateAcademicYearInput) =>
+    request<AcademicYear>(`/schools/${schoolId}/academic-years`, { method: "POST", body: JSON.stringify(input) }, token),
+  setCurrentAcademicYear: (token: string, schoolId: string, academicYearId: string) =>
+    request<AcademicYear>(
+      `/schools/${schoolId}/academic-years/${academicYearId}`,
+      { method: "PATCH", body: JSON.stringify({ isCurrent: true }) },
+      token
+    ),
+  createClassSection: (token: string, schoolId: string, input: CreateClassSectionInput) =>
+    request<ClassSection>(`/schools/${schoolId}/class-sections`, { method: "POST", body: JSON.stringify(input) }, token),
+
+  listAuditLog: (token: string, params: { schoolId?: string; page?: number; pageSize?: number } = {}) =>
+    requestEnvelope<AuditLogEntry[]>(
+      `/audit-log${toQueryString({
+        schoolId: params.schoolId,
+        page: params.page !== undefined ? String(params.page) : undefined,
+        pageSize: params.pageSize !== undefined ? String(params.pageSize) : undefined,
+      })}`,
+      {},
+      token
+    ),
+
+  listMessageTemplates: (token: string, params: { channel?: MessageChannel; schoolId?: string } = {}) =>
+    request<MessageTemplate[]>(`/message-templates${toQueryString(params)}`, {}, token),
+  createMessageTemplate: (token: string, input: CreateMessageTemplateInput, params: { schoolId?: string } = {}) =>
+    request<MessageTemplate>(`/message-templates${toQueryString(params)}`, { method: "POST", body: JSON.stringify(input) }, token),
+
+  runCsvExport: (token: string, params: { schoolId?: string } = {}) =>
+    requestEnvelope<CsvExportLogEntry>(`/exports/run${toQueryString(params)}`, { method: "POST" }, token),
+  listCsvExportLog: (token: string, params: { schoolId?: string; page?: number; pageSize?: number } = {}) =>
+    requestEnvelope<CsvExportLogEntry[]>(
+      `/exports/log${toQueryString({
+        schoolId: params.schoolId,
+        page: params.page !== undefined ? String(params.page) : undefined,
+        pageSize: params.pageSize !== undefined ? String(params.pageSize) : undefined,
+      })}`,
+      {},
+      token
+    ),
+  downloadExport: (token: string, id: string, params: { schoolId?: string } = {}) =>
+    requestText(`/exports/${id}/download${toQueryString(params)}`, token),
+  getCsvExportSchedule: (token: string, params: { schoolId?: string } = {}) =>
+    request<CsvExportSchedule | null>(`/exports/schedule${toQueryString(params)}`, {}, token),
+  updateCsvExportSchedule: (
+    token: string,
+    input: { frequency?: "daily" | "weekly"; isActive?: boolean },
+    params: { schoolId?: string } = {}
+  ) => request<CsvExportSchedule>(`/exports/schedule${toQueryString(params)}`, { method: "PUT", body: JSON.stringify(input) }, token),
 
   listTrusts: (token: string) => request<TrustSummary[]>("/trusts", {}, token),
   getTrust: (token: string, id: string) => request<TrustDetail>(`/trusts/${id}`, {}, token),
@@ -250,6 +401,7 @@ export const api = {
     request<TrustSummary>("/trusts", { method: "POST", body: JSON.stringify({ name, contactEmail }) }, token),
   updateTrust: (token: string, id: string, input: UpdateTrustInput) =>
     request<TrustSummary>(`/trusts/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
+  deleteTrust: (token: string, id: string) => request<{ deleted: true }>(`/trusts/${id}`, { method: "DELETE" }, token),
 
   listSchools: (token: string, trustId?: string) =>
     request<School[]>(`/schools${toQueryString({ trustId })}`, {}, token),
@@ -258,4 +410,5 @@ export const api = {
     request<School>("/schools", { method: "POST", body: JSON.stringify(input) }, token),
   updateSchool: (token: string, id: string, input: UpdateSchoolInput) =>
     request<SchoolDetail>(`/schools/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
+  deleteSchool: (token: string, id: string) => request<{ deleted: true }>(`/schools/${id}`, { method: "DELETE" }, token),
 };

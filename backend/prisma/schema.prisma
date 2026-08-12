@@ -496,3 +496,56 @@ model AiUsageLog {
   @@index([schoolId, teacherUserId])
   @@map("ai_usage_log")
 }
+
+// Student login (phone + OTP, no password). Keyed by phone rather than by
+// StudentStub because guardianContact can be shared by siblings - one OTP
+// verifies the phone, then /auth/student/select picks which StudentStub to
+// issue a token for. consumedAt prevents replaying a used code.
+model StudentOtpRequest {
+  id          String    @id @default(uuid()) @db.Uuid
+  phone       String
+  otpCodeHash String    @map("otp_code_hash")
+  expiresAt   DateTime  @map("expires_at")
+  attempts    Int       @default(0)
+  consumedAt  DateTime? @map("consumed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([phone])
+  @@map("student_otp_request")
+}
+
+// Staff (AppUser) password reset - same shape/lifecycle as StudentOtpRequest,
+// keyed by email instead of phone since staff sign in with email+password.
+model PasswordResetRequest {
+  id          String    @id @default(uuid()) @db.Uuid
+  email       String
+  otpCodeHash String    @map("otp_code_hash")
+  expiresAt   DateTime  @map("expires_at")
+  attempts    Int       @default(0)
+  consumedAt  DateTime? @map("consumed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([email])
+  @@map("password_reset_request")
+}
+
+// Minimal admin-action audit trail - who invited/disabled/changed-role/deleted
+// what, and when. Not a full change-history system (no before/after diffing
+// beyond a small metadata blob) - just enough to answer "who did this."
+model AuditLog {
+  id           String   @id @default(uuid()) @db.Uuid
+  actorUserId  String?  @map("actor_user_id") @db.Uuid
+  actorEmail   String   @map("actor_email")
+  action       String
+  targetType   String   @map("target_type")
+  targetId     String?  @map("target_id") @db.Uuid
+  targetLabel  String?  @map("target_label")
+  schoolId     String?  @map("school_id") @db.Uuid
+  trustId      String?  @map("trust_id") @db.Uuid
+  metadata     Json?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([schoolId, createdAt])
+  @@index([trustId, createdAt])
+  @@map("audit_log")
+}

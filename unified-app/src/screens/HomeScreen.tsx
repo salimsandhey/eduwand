@@ -321,7 +321,7 @@ export function HomeScreen() {
               <ActionCard
                 icon="book-outline"
                 label="Lesson Studio"
-                sublabel="Coming soon"
+                sublabel="Plan & generate lessons"
                 colors={colors}
                 shadow={cardShadow}
                 pressedOpacity={pressedOpacity}
@@ -330,7 +330,7 @@ export function HomeScreen() {
               <ActionCard
                 icon="document-text-outline"
                 label="Assignment Lab"
-                sublabel="Coming soon"
+                sublabel="Create & grade assignments"
                 colors={colors}
                 shadow={cardShadow}
                 pressedOpacity={pressedOpacity}
@@ -339,16 +339,13 @@ export function HomeScreen() {
               <ActionCard
                 icon="bar-chart-outline"
                 label="Analytics"
-                sublabel="Coming soon"
+                sublabel="View class insights"
                 colors={colors}
                 shadow={cardShadow}
                 pressedOpacity={pressedOpacity}
                 onPress={() => navigation.navigate("Analytics")}
               />
             </View>
-            <Text style={[styles.teacherSummary, { color: colors.textMuted }]}>
-              The AI Module (Lesson Studio, Assignment Lab, Analytics) hasn't been built yet.
-            </Text>
           </View>
         ) : (
           <Text style={[styles.teacherSummary, { color: colors.textMuted }]}>No screens configured.</Text>

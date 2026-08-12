@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api/client";
 import type { TrustDetail, School } from "../api/client";
@@ -10,16 +10,21 @@ const BOARDS = ["CBSE", "ICSE", "State"];
 
 export function TrustDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { accessToken, user } = useAuth();
   const canEdit = user?.role === "platform_admin";
   const [trust, setTrust] = useState<TrustDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const [name, setName] = useState("");
   const [contactEmail, setContactEmail] = useState("");
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+
+  const [schoolSearch, setSchoolSearch] = useState("");
 
   const [showAddSchool, setShowAddSchool] = useState(false);
   const [schoolName, setSchoolName] = useState("");
@@ -94,6 +99,22 @@ export function TrustDetailPage() {
     }
   }
 
+  async function deleteTrust() {
+    if (!accessToken || !id || !trust) return;
+    if (trust.schools.length > 0) return;
+    if (!window.confirm(`Permanently delete "${trust.name}"? This cannot be undone.`)) return;
+    setDeleteError(null);
+    setIsDeleting(true);
+    try {
+      await api.deleteTrust(accessToken, id);
+      navigate("/trusts");
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Failed to delete trust");
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
   if (error) {
     return (
       <div>
@@ -153,9 +174,23 @@ export function TrustDetailPage() {
               <button style={styles.secondaryButton} onClick={toggleStatus} disabled={isSaving}>
                 {trust.status === "active" ? "Suspend trust" : "Reactivate trust"}
               </button>
+              <button
+                style={styles.dangerButton}
+                onClick={deleteTrust}
+                disabled={isDeleting || trust.schools.length > 0}
+                title={trust.schools.length > 0 ? "Remove all schools from this trust first" : undefined}
+              >
+                {isDeleting ? "Deleting…" : "Delete trust"}
+              </button>
             </div>
+            {trust.schools.length > 0 ? (
+              <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>
+                This trust has {trust.schools.length} school(s) - remove them before it can be deleted.
+              </p>
+            ) : null}
             {saveMessage ? <p style={styles.success}>{saveMessage}</p> : null}
             {saveError ? <p style={styles.error}>{saveError}</p> : null}
+            {deleteError ? <p style={styles.error}>{deleteError}</p> : null}
           </>
         ) : (
           <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 12 }}>
@@ -211,6 +246,22 @@ export function TrustDetailPage() {
             {canEdit ? "Use \"+ Add school\" above." : "Ask your platform admin to add one."}
           </p>
         ) : (
+          <>
+            {trust.schools.length > 5 ? (
+              <input
+                style={{ ...styles.input, maxWidth: 280, marginBottom: 12 }}
+                placeholder="Search schools…"
+                value={schoolSearch}
+                onChange={(e) => setSchoolSearch(e.target.value)}
+              />
+            ) : null}
+            {(() => {
+              const q = schoolSearch.trim().toLowerCase();
+              const filteredSchools = q ? trust.schools.filter((s) => s.name.toLowerCase().includes(q)) : trust.schools;
+              if (filteredSchools.length === 0) {
+                return <p style={{ color: "var(--text-muted)" }}>No schools match "{schoolSearch}".</p>;
+              }
+              return (
           <table style={styles.table}>
             <thead>
               <tr>
@@ -221,7 +272,7 @@ export function TrustDetailPage() {
               </tr>
             </thead>
             <tbody>
-              {trust.schools.map((s) => (
+              {filteredSchools.map((s) => (
                 <tr key={s.id}>
                   <td style={styles.td}>{s.name}</td>
                   <td style={styles.td}>{s.board}</td>
@@ -249,6 +300,9 @@ export function TrustDetailPage() {
               ))}
             </tbody>
           </table>
+              );
+            })()}
+          </>
         )}
       </Card>
     </div>
@@ -278,6 +332,16 @@ const styles: Record<string, React.CSSProperties> = {
     background: "var(--bg-page)",
     color: "var(--text-primary)",
     border: "1px solid var(--border)",
+    borderRadius: 8,
+    padding: "10px 16px",
+    fontWeight: 600,
+    cursor: "pointer",
+    fontSize: 14,
+  },
+  dangerButton: {
+    background: "var(--bg-page)",
+    color: "var(--status-critical)",
+    border: "1px solid var(--status-critical)",
     borderRadius: 8,
     padding: "10px 16px",
     fontWeight: 600,

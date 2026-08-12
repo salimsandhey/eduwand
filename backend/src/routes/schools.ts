@@ -1,7 +1,9 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { PLATFORM_ADMIN_ROLE } from "../lib/roles";
 import { seedDefaultPipelineStages } from "../lib/pipeline-stages";
+import { recordAuditEvent } from "../lib/audit";
 
 interface CreateSchoolBody {
   trustId?: string;
@@ -183,7 +185,93 @@ export async function schoolRoutes(app: FastifyInstance) {
         },
       });
 
+      if (body.status && body.status !== existing.status) {
+        const actor = await prisma.appUser.findUnique({ where: { id: request.user.sub }, select: { email: true } });
+        await recordAuditEvent({
+          actorUserId: request.user.sub,
+          actorEmail: actor?.email ?? "unknown",
+          action: "school.status_change",
+          targetType: "School",
+          targetId: school.id,
+          targetLabel: school.name,
+          schoolId: school.id,
+          trustId: school.trustId,
+          metadata: { from: existing.status, to: school.status },
+        });
+      }
+
       return { data: school, meta: {} };
+    }
+  );
+
+  // Hard delete - only safe while the school has no operational data under it
+  // (academic years, enquiries, students, etc. are all ON DELETE RESTRICT to
+  // school_id). app_user.school_id is ON DELETE SET NULL so staff accounts
+  // don't block this - they're just unassigned from the school afterward.
+  app.delete<{ Params: { id: string } }>(
+    "/schools/:id",
+    { onRequest: [app.authenticate, requirePlatformAdmin] },
+    async (request, reply) => {
+      const existing = await prisma.school.findUnique({
+        where: { id: request.params.id },
+        include: {
+          _count: {
+            select: {
+              academicYears: true,
+              enquiries: true,
+              studentStubs: true,
+              csvExportLogs: true,
+              pipelineStages: true,
+              lessonPlans: true,
+              researchReports: true,
+              assignments: true,
+              aiUsageLogs: true,
+              userSchoolAccess: true,
+            },
+          },
+        },
+      });
+      if (!existing) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "School not found" } });
+      }
+
+      const dependentCount = Object.values(existing._count).reduce((sum, n) => sum + n, 0);
+      if (dependentCount > 0) {
+        return reply.code(409).send({
+          data: null,
+          error: {
+            code: "has_dependents",
+            message: "This school still has admissions, staff assignments, or other records. It can't be hard-deleted - suspend it instead.",
+          },
+        });
+      }
+
+      try {
+        await prisma.school.delete({ where: { id: request.params.id } });
+      } catch (err) {
+        // Fallback for relations not covered by the _count check above (e.g.
+        // csvExportSchedule, a 1:1 relation _count can't select).
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2003") {
+          return reply.code(409).send({
+            data: null,
+            error: { code: "has_dependents", message: "This school still has related records and can't be hard-deleted." },
+          });
+        }
+        throw err;
+      }
+
+      const actor = await prisma.appUser.findUnique({ where: { id: request.user.sub }, select: { email: true } });
+      await recordAuditEvent({
+        actorUserId: request.user.sub,
+        actorEmail: actor?.email ?? "unknown",
+        action: "school.delete",
+        targetType: "School",
+        targetId: existing.id,
+        targetLabel: existing.name,
+        trustId: existing.trustId,
+      });
+
+      return { data: { deleted: true }, meta: {} };
     }
   );
 }

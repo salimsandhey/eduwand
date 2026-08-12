@@ -34,7 +34,7 @@ function previousPeriod(startDate: string, endDate: string): { startDate: string
 export function BySourcePage() {
   const { accessToken, user } = useAuth();
   const { selectedSchoolId, isLoading: schoolsLoading } = useSchoolContext();
-  const isLeadership = user?.role === "leadership";
+  const needsSchoolPicker = user?.role === "leadership" || user?.role === "platform_admin";
 
   const [data, setData] = useState<BySourceResponse | null>(null);
   const [previous, setPrevious] = useState<BySourceResponse | null>(null);
@@ -45,11 +45,11 @@ export function BySourcePage() {
 
   const load = useCallback(async () => {
     if (!accessToken) return;
-    if (isLeadership && !selectedSchoolId) return;
+    if (needsSchoolPicker && !selectedSchoolId) return;
     setIsLoading(true);
     setError(null);
     try {
-      const schoolId = isLeadership ? selectedSchoolId ?? undefined : undefined;
+      const schoolId = needsSchoolPicker ? selectedSchoolId ?? undefined : undefined;
       const res = await api.getBySource(accessToken, { startDate: startDate || undefined, endDate: endDate || undefined, schoolId });
       setData(res);
 
@@ -65,13 +65,13 @@ export function BySourcePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [accessToken, startDate, endDate, isLeadership, selectedSchoolId]);
+  }, [accessToken, startDate, endDate, needsSchoolPicker, selectedSchoolId]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  if (isLeadership && !selectedSchoolId) {
+  if (needsSchoolPicker && !selectedSchoolId) {
     return schoolsLoading ? <p style={{ color: "var(--text-muted)" }}>Loading…</p> : <SelectSchoolPrompt />;
   }
 

@@ -12,7 +12,7 @@ const INVITABLE_ROLES = ["front_desk", "counsellor", "teacher", "admin"];
 export function UsersPage() {
   const { accessToken, user: currentUser } = useAuth();
   const { selectedSchoolId, isLoading: schoolsLoading } = useSchoolContext();
-  const isLeadership = currentUser?.role === "leadership";
+  const needsSchoolPicker = currentUser?.role === "leadership" || currentUser?.role === "platform_admin";
 
   const [users, setUsers] = useState<AppUserSummary[] | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -29,23 +29,29 @@ export function UsersPage() {
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
   const [rowError, setRowError] = useState<Record<string, string>>({});
   const [savingRowId, setSavingRowId] = useState<string | null>(null);
+  const [resetResult, setResetResult] = useState<{ email: string; tempPassword: string } | null>(null);
+
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [isBulkWorking, setIsBulkWorking] = useState(false);
 
   const load = useCallback(async () => {
     if (!accessToken) return;
-    if (isLeadership && !selectedSchoolId) return;
+    if (needsSchoolPicker && !selectedSchoolId) return;
     setIsLoading(true);
     setError(null);
     try {
       const res = await api.listUsers(accessToken, {
-        schoolId: isLeadership ? selectedSchoolId ?? undefined : undefined,
+        schoolId: needsSchoolPicker ? selectedSchoolId ?? undefined : undefined,
       });
       setUsers(res);
+      setSelectedIds(new Set());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load users");
     } finally {
       setIsLoading(false);
     }
-  }, [accessToken, isLeadership, selectedSchoolId]);
+  }, [accessToken, needsSchoolPicker, selectedSchoolId]);
 
   useEffect(() => {
     load();
@@ -56,7 +62,12 @@ export function UsersPage() {
     setInviteError(null);
     setInviteResult(null);
     try {
-      const res = await api.inviteUser(accessToken, { fullName: inviteName, email: inviteEmail, role: inviteRole });
+      const res = await api.inviteUser(accessToken, {
+        fullName: inviteName,
+        email: inviteEmail,
+        role: inviteRole,
+        schoolId: needsSchoolPicker ? selectedSchoolId ?? undefined : undefined,
+      });
       const tempPassword = res.meta?.tempPassword as string | undefined;
       setInviteResult({ email: inviteEmail, tempPassword: tempPassword ?? "(not returned)" });
       setInviteName("");
@@ -97,7 +108,56 @@ export function UsersPage() {
     }
   }
 
-  if (isLeadership && !selectedSchoolId) {
+  async function resetPassword(u: AppUserSummary) {
+    if (!accessToken) return;
+    if (!window.confirm(`Generate a new temporary password for ${u.fullName}? Their current password stops working immediately.`)) return;
+    setSavingRowId(u.id);
+    setRowError((prev) => ({ ...prev, [u.id]: "" }));
+    setResetResult(null);
+    try {
+      const res = await api.resetUserPassword(accessToken, u.id);
+      const tempPassword = res.meta?.tempPassword as string | undefined;
+      setResetResult({ email: u.email, tempPassword: tempPassword ?? "(not returned)" });
+      if (res.data) setUsers((prev) => prev?.map((x) => (x.id === u.id ? res.data! : x)) ?? prev);
+    } catch (err) {
+      setRowError((prev) => ({ ...prev, [u.id]: err instanceof Error ? err.message : "Failed to reset password" }));
+    } finally {
+      setSavingRowId(null);
+    }
+  }
+
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (!filteredUsers) return;
+    const selectableIds = filteredUsers.filter((u) => u.id !== currentUser?.id).map((u) => u.id);
+    setSelectedIds((prev) => (prev.size === selectableIds.length ? new Set() : new Set(selectableIds)));
+  }
+
+  async function bulkSetStatus(status: "active" | "disabled") {
+    if (!accessToken || selectedIds.size === 0) return;
+    setBulkError(null);
+    setIsBulkWorking(true);
+    try {
+      const results = await Promise.allSettled(
+        Array.from(selectedIds).map((id) => api.updateUser(accessToken, id, { status }))
+      );
+      const failures = results.filter((r) => r.status === "rejected").length;
+      if (failures > 0) setBulkError(`${failures} of ${selectedIds.size} update(s) failed.`);
+      await load();
+    } finally {
+      setIsBulkWorking(false);
+    }
+  }
+
+  if (needsSchoolPicker && !selectedSchoolId) {
     return schoolsLoading ? <p style={{ color: "var(--text-muted)" }}>Loading…</p> : <SelectSchoolPrompt />;
   }
 
@@ -106,6 +166,9 @@ export function UsersPage() {
     if (!q) return true;
     return u.fullName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q) || u.role.toLowerCase().includes(q);
   });
+
+  const selectableCount = filteredUsers?.filter((u) => u.id !== currentUser?.id).length ?? 0;
+  const allSelected = selectableCount > 0 && selectedIds.size === selectableCount;
 
   return (
     <div>
@@ -126,6 +189,16 @@ export function UsersPage() {
 
       {error ? <p style={{ color: "var(--status-critical)" }}>{error}</p> : null}
 
+      {resetResult ? (
+        <div style={styles.tempPasswordBox}>
+          <p style={{ margin: "0 0 4px 0" }}>
+            New temporary password for <strong>{resetResult.email}</strong> - share it with them yourself, there's no
+            email delivery yet:
+          </p>
+          <code style={styles.code}>{resetResult.tempPassword}</code>
+        </div>
+      ) : null}
+
       {isLoading ? (
         <p>Loading…</p>
       ) : (
@@ -135,91 +208,121 @@ export function UsersPage() {
           ) : filteredUsers && filteredUsers.length === 0 ? (
             <p style={{ color: "var(--text-muted)" }}>No users match "{search}".</p>
           ) : (
-            <table style={styles.table}>
-              <thead>
-                <tr>
-                  <th style={styles.th}>Name</th>
-                  <th style={styles.th}>Email</th>
-                  <th style={styles.th}>Role</th>
-                  <th style={styles.th}>Status</th>
-                  <th style={styles.th}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {(filteredUsers ?? []).map((u) => {
-                  const isSelf = u.id === currentUser?.id;
-                  const isSaving = savingRowId === u.id;
-                  return (
-                    <tr key={u.id}>
-                      <td style={styles.td}>{u.fullName}</td>
-                      <td style={styles.td}>{u.email}</td>
-                      <td style={{ ...styles.td, textTransform: "capitalize" }}>
-                        {editingRoleId === u.id ? (
-                          <select
-                            style={styles.roleSelect}
-                            defaultValue={u.role}
-                            autoFocus
-                            disabled={isSaving}
-                            onChange={(e) => changeRole(u.id, e.target.value)}
-                            onBlur={() => setEditingRoleId(null)}
+            <>
+              {selectedIds.size > 0 ? (
+                <div style={styles.bulkBar}>
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>{selectedIds.size} selected</span>
+                  <button style={styles.smallButton} disabled={isBulkWorking} onClick={() => bulkSetStatus("disabled")}>
+                    Disable selected
+                  </button>
+                  <button style={styles.smallButton} disabled={isBulkWorking} onClick={() => bulkSetStatus("active")}>
+                    Enable selected
+                  </button>
+                  {bulkError ? <span style={{ color: "var(--status-critical)", fontSize: 12 }}>{bulkError}</span> : null}
+                </div>
+              ) : null}
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th style={styles.th}>
+                      <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} aria-label="Select all" />
+                    </th>
+                    <th style={styles.th}>Name</th>
+                    <th style={styles.th}>Email</th>
+                    <th style={styles.th}>Role</th>
+                    <th style={styles.th}>Status</th>
+                    <th style={styles.th}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(filteredUsers ?? []).map((u) => {
+                    const isSelf = u.id === currentUser?.id;
+                    const isSaving = savingRowId === u.id;
+                    return (
+                      <tr key={u.id}>
+                        <td style={styles.td}>
+                          {isSelf ? null : (
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(u.id)}
+                              onChange={() => toggleSelected(u.id)}
+                              aria-label={`Select ${u.fullName}`}
+                            />
+                          )}
+                        </td>
+                        <td style={styles.td}>{u.fullName}</td>
+                        <td style={styles.td}>{u.email}</td>
+                        <td style={{ ...styles.td, textTransform: "capitalize" }}>
+                          {editingRoleId === u.id ? (
+                            <select
+                              style={styles.roleSelect}
+                              defaultValue={u.role}
+                              autoFocus
+                              disabled={isSaving}
+                              onChange={(e) => changeRole(u.id, e.target.value)}
+                              onBlur={() => setEditingRoleId(null)}
+                            >
+                              {INVITABLE_ROLES.map((r) => (
+                                <option key={r} value={r}>
+                                  {r}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            u.role
+                          )}
+                        </td>
+                        <td style={styles.td}>
+                          <span
+                            style={{
+                              ...styles.statusBadge,
+                              color:
+                                u.status === "active"
+                                  ? "var(--status-good)"
+                                  : u.status === "disabled"
+                                  ? "var(--status-critical)"
+                                  : "var(--text-muted)",
+                            }}
                           >
-                            {INVITABLE_ROLES.map((r) => (
-                              <option key={r} value={r}>
-                                {r}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          u.role
-                        )}
-                      </td>
-                      <td style={styles.td}>
-                        <span
-                          style={{
-                            ...styles.statusBadge,
-                            color:
-                              u.status === "active"
-                                ? "var(--status-good)"
-                                : u.status === "disabled"
-                                ? "var(--status-critical)"
-                                : "var(--text-muted)",
-                          }}
-                        >
-                          {u.status}
-                        </span>
-                      </td>
-                      <td style={styles.td}>
-                        {isSelf ? (
-                          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>You</span>
-                        ) : (
-                          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                            <button
-                              style={styles.smallButton}
-                              disabled={isSaving}
-                              onClick={() => setEditingRoleId(editingRoleId === u.id ? null : u.id)}
-                            >
-                              Change role
-                            </button>
-                            <button
-                              style={u.status === "disabled" ? styles.smallButton : styles.smallDangerButton}
-                              disabled={isSaving}
-                              onClick={() => toggleUserStatus(u)}
-                            >
-                              {u.status === "disabled" ? "Enable" : "Disable"}
-                            </button>
-                          </div>
-                        )}
-                        {rowError[u.id] ? (
-                          <p style={{ color: "var(--status-critical)", fontSize: 12, margin: "4px 0 0 0" }}>
-                            {rowError[u.id]}
-                          </p>
-                        ) : null}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                            {u.status}
+                          </span>
+                        </td>
+                        <td style={styles.td}>
+                          {isSelf ? (
+                            <span style={{ fontSize: 12, color: "var(--text-muted)" }}>You</span>
+                          ) : (
+                            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                              <button
+                                style={styles.smallButton}
+                                disabled={isSaving}
+                                onClick={() => setEditingRoleId(editingRoleId === u.id ? null : u.id)}
+                              >
+                                Change role
+                              </button>
+                              <button
+                                style={u.status === "disabled" ? styles.smallButton : styles.smallDangerButton}
+                                disabled={isSaving}
+                                onClick={() => toggleUserStatus(u)}
+                              >
+                                {u.status === "disabled" ? "Enable" : "Disable"}
+                              </button>
+                              <button style={styles.smallButton} disabled={isSaving} onClick={() => resetPassword(u)}>
+                                Reset password
+                              </button>
+                            </div>
+                          )}
+                          {rowError[u.id] ? (
+                            <p style={{ color: "var(--status-critical)", fontSize: 12, margin: "4px 0 0 0" }}>
+                              {rowError[u.id]}
+                            </p>
+                          ) : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </>
           )}
         </Card>
       )}
@@ -279,6 +382,14 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid var(--border)",
     fontSize: 13,
     minWidth: 220,
+  },
+  bulkBar: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "8px 0 14px 0",
+    marginBottom: 6,
+    borderBottom: "1px solid var(--border)",
   },
   table: { width: "100%", borderCollapse: "collapse" },
   th: {
