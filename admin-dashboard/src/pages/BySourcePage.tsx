@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { api, ApiError } from "../api/client";
+import { useSchoolContext } from "../context/SchoolContext";
+import { api } from "../api/client";
 import type { BySourceResponse } from "../api/client";
 import { Card } from "../components/Card";
 import { StatTile } from "../components/StatTile";
 import { BarChart } from "../components/BarChart";
-import { TrustScopeNotice } from "../components/TrustScopeNotice";
+import { PageHeader } from "../components/PageHeader";
+import { SelectSchoolPrompt } from "../components/SelectSchoolPrompt";
 
 // Fixed categorical order, validated for CVD/normal-vision separation
 // (dataviz skill, scripts/validate_palette.js) - never reordered per filter.
@@ -30,47 +32,48 @@ function previousPeriod(startDate: string, endDate: string): { startDate: string
 }
 
 export function BySourcePage() {
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
+  const { selectedSchoolId, isLoading: schoolsLoading } = useSchoolContext();
+  const isLeadership = user?.role === "leadership";
+
   const [data, setData] = useState<BySourceResponse | null>(null);
   const [previous, setPrevious] = useState<BySourceResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [needsTrustScope, setNeedsTrustScope] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
 
   const load = useCallback(async () => {
     if (!accessToken) return;
+    if (isLeadership && !selectedSchoolId) return;
     setIsLoading(true);
     setError(null);
-    setNeedsTrustScope(false);
     try {
-      const res = await api.getBySource(accessToken, { startDate: startDate || undefined, endDate: endDate || undefined });
+      const schoolId = isLeadership ? selectedSchoolId ?? undefined : undefined;
+      const res = await api.getBySource(accessToken, { startDate: startDate || undefined, endDate: endDate || undefined, schoolId });
       setData(res);
 
       const prevRange = previousPeriod(startDate, endDate);
       if (prevRange) {
-        const prevRes = await api.getBySource(accessToken, prevRange);
+        const prevRes = await api.getBySource(accessToken, { ...prevRange, schoolId });
         setPrevious(prevRes);
       } else {
         setPrevious(null);
       }
     } catch (err) {
-      if (err instanceof ApiError && err.code === "school_scope_required") {
-        setNeedsTrustScope(true);
-      } else {
-        setError(err instanceof Error ? err.message : "Failed to load source breakdown");
-      }
+      setError(err instanceof Error ? err.message : "Failed to load source breakdown");
     } finally {
       setIsLoading(false);
     }
-  }, [accessToken, startDate, endDate]);
+  }, [accessToken, startDate, endDate, isLeadership, selectedSchoolId]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  if (needsTrustScope) return <TrustScopeNotice />;
+  if (isLeadership && !selectedSchoolId) {
+    return schoolsLoading ? <p style={{ color: "var(--text-muted)" }}>Loading…</p> : <SelectSchoolPrompt />;
+  }
 
   const delta =
     data && previous && previous.totalCount > 0
@@ -79,7 +82,7 @@ export function BySourcePage() {
 
   return (
     <div>
-      <h1 style={{ marginTop: 0 }}>Enquiry Source Breakdown</h1>
+      <PageHeader title="Enquiry Source Breakdown" subtitle="Volume of enquiries by channel" />
 
       <Card>
         <div style={{ display: "flex", gap: 12, alignItems: "flex-end" }}>

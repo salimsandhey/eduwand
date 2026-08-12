@@ -1,12 +1,13 @@
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Animated } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import * as DocumentPicker from "expo-document-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "../navigation/types";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { Screen } from "../components/Screen";
-import { api, ClassSection } from "../api/client";
+import { api, ClassSection, EnquiryDocument } from "../api/client";
 
 type Props = NativeStackScreenProps<RootStackParamList, "AdmissionConfirmation">;
 
@@ -26,6 +27,10 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [documents, setDocuments] = useState<EnquiryDocument[]>([]);
+  const [isUploadingDoc, setIsUploadingDoc] = useState(false);
+  const [docError, setDocError] = useState<string | null>(null);
+
   // Focus states
   const [fullNameFocused, setFullNameFocused] = useState(false);
   const [dobFocused, setDobFocused] = useState(false);
@@ -35,6 +40,15 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
 
   // Save button animation scale
   const buttonScale = useRef(new Animated.Value(1)).current;
+
+  const loadDocuments = useCallback(async () => {
+    if (!accessToken) return;
+    try {
+      setDocuments(await api.listDocuments(accessToken, enquiryId));
+    } catch {
+      // Non-fatal - the admission form itself doesn't depend on this list.
+    }
+  }, [accessToken, enquiryId]);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -56,7 +70,30 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
         setIsLoadingContext(false);
       }
     })();
-  }, [accessToken, enquiryId]);
+    loadDocuments();
+  }, [accessToken, enquiryId, loadDocuments]);
+
+  async function pickAndUploadDocument() {
+    if (!accessToken) return;
+    setDocError(null);
+    try {
+      const picked = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
+      if (picked.canceled || !picked.assets?.[0]) return;
+      const asset = picked.assets[0];
+
+      setIsUploadingDoc(true);
+      await api.uploadDocument(accessToken, enquiryId, {
+        uri: asset.uri,
+        name: asset.name,
+        mimeType: asset.mimeType ?? "application/octet-stream",
+      });
+      await loadDocuments();
+    } catch (err) {
+      setDocError(err instanceof Error ? err.message : "Failed to upload document");
+    } finally {
+      setIsUploadingDoc(false);
+    }
+  }
 
   const handlePressIn = () => {
     Animated.spring(buttonScale, {
@@ -221,6 +258,39 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
           </View>
         </View>
 
+        {/* Documents Card (FR-EG-6) */}
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Documents</Text>
+
+          {documents.map((doc) => (
+            <View key={doc.id} style={[styles.docRow, { borderColor: colors.border }]}>
+              <Ionicons name="document-attach-outline" size={16} color={colors.textMuted} />
+              <Text style={[styles.docName, { color: colors.textPrimary }]} numberOfLines={1}>
+                {doc.fileName}
+              </Text>
+            </View>
+          ))}
+
+          <Pressable
+            style={({ pressed }) => [
+              styles.inputRow,
+              { backgroundColor: colors.surfaceRaised, borderColor: colors.border, marginTop: documents.length > 0 ? 8 : 0 },
+              pressed && { opacity: pressedOpacity },
+            ]}
+            onPress={pickAndUploadDocument}
+            disabled={isUploadingDoc}
+            accessibilityRole="button"
+          >
+            {isUploadingDoc ? (
+              <ActivityIndicator color={colors.accent} size="small" />
+            ) : (
+              <Ionicons name="attach-outline" size={16} color={colors.accent} style={styles.inputIcon} />
+            )}
+            <Text style={[styles.input, { color: colors.accent, fontWeight: "700" }]}>Attach a document</Text>
+          </Pressable>
+          {docError ? <Text style={[styles.error, { color: colors.danger, marginTop: 8 }]}>{docError}</Text> : null}
+        </View>
+
         {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
         {/* Animated Confirm Button */}
@@ -256,6 +326,8 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   content: { padding: 16, paddingBottom: 32 },
+  docRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8, borderBottomWidth: 1 },
+  docName: { fontSize: 13, fontWeight: "600", flex: 1 },
   centered: { justifyContent: "center", alignItems: "center" },
   titleSection: { marginBottom: 16 },
   title: { fontSize: 24, fontWeight: "800", letterSpacing: -0.5 },

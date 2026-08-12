@@ -68,10 +68,42 @@ export type EnquiryStatus = "new" | "contacted" | "visit" | "application" | "adm
 export type EnquirySource = "phone" | "walk_in" | "website" | "referral" | "event" | "social";
 
 export interface FunnelResponse {
-  byStatus: Record<EnquiryStatus, number>;
+  // Keyed by whatever pipeline stages the school has configured (FR-EG-3) - no
+  // longer a fixed enum, so this isn't Record<EnquiryStatus, number> anymore.
+  byStatus: Record<string, number>;
   totalCount: number;
   convertedCount: number;
   conversionRate: number;
+}
+
+export interface PipelineStage {
+  id: string;
+  key: string;
+  label: string;
+  order: number;
+  isTerminal: boolean;
+  isConverted: boolean;
+}
+
+export interface CreatePipelineStageInput {
+  key: string;
+  label: string;
+  isTerminal?: boolean;
+  isConverted?: boolean;
+}
+
+export interface UpdatePipelineStageInput {
+  label?: string;
+  order?: number;
+  isTerminal?: boolean;
+  isConverted?: boolean;
+}
+
+export interface AiUsageResponse {
+  totalGenerations: number;
+  avgGradingTurnaroundMs: number | null;
+  generationsByTeacher: { teacherUserId: string; fullName: string; count: number }[];
+  featureUsage: { feature: string; count: number }[];
 }
 
 export interface BySourceResponse {
@@ -85,11 +117,17 @@ export interface CounsellorPerformanceEntry {
   totalCount: number;
   convertedCount: number;
   conversionRate: number;
+  avgResponseHours: number | null;
+}
+
+export interface TrendResponse {
+  periods: { period: string; newEnquiries: number; converted: number }[];
 }
 
 interface DateRangeParams {
   startDate?: string;
   endDate?: string;
+  schoolId?: string;
   [key: string]: string | undefined;
 }
 
@@ -140,7 +178,9 @@ export interface SchoolDetail extends School {
 }
 
 export interface CreateSchoolInput {
-  trustId?: string;
+  // Only platform_admin can create a school, and always names the trust
+  // explicitly - see backend/src/routes/schools.ts.
+  trustId: string;
   name: string;
   board: string;
   address?: string;
@@ -177,8 +217,28 @@ export const api = {
     request<BySourceResponse>(`/analytics/enrolment/by-source${toQueryString(params)}`, {}, token),
   getCounsellorPerformance: (token: string, params: DateRangeParams = {}) =>
     request<CounsellorPerformanceEntry[]>(`/analytics/enrolment/counsellor-performance${toQueryString(params)}`, {}, token),
+  getTrend: (token: string, params: { months?: number; schoolId?: string } = {}) =>
+    request<TrendResponse>(
+      `/analytics/enrolment/trend${toQueryString({
+        months: params.months !== undefined ? String(params.months) : undefined,
+        schoolId: params.schoolId,
+      })}`,
+      {},
+      token
+    ),
 
-  listUsers: (token: string) => request<AppUserSummary[]>("/users", {}, token),
+  getAiUsage: (token: string, params: { schoolId?: string } = {}) =>
+    request<AiUsageResponse>(`/analytics/ai/usage${toQueryString(params)}`, {}, token),
+
+  listPipelineStages: (token: string, params: { schoolId?: string } = {}) =>
+    request<PipelineStage[]>(`/pipeline-stages${toQueryString(params)}`, {}, token),
+  createPipelineStage: (token: string, input: CreatePipelineStageInput, params: { schoolId?: string } = {}) =>
+    request<PipelineStage>(`/pipeline-stages${toQueryString(params)}`, { method: "POST", body: JSON.stringify(input) }, token),
+  updatePipelineStage: (token: string, id: string, input: UpdatePipelineStageInput, params: { schoolId?: string } = {}) =>
+    request<PipelineStage>(`/pipeline-stages/${id}${toQueryString(params)}`, { method: "PATCH", body: JSON.stringify(input) }, token),
+
+  listUsers: (token: string, params: { schoolId?: string } = {}) =>
+    request<AppUserSummary[]>(`/users${toQueryString(params)}`, {}, token),
   inviteUser: (token: string, input: InviteUserInput) =>
     requestEnvelope<AppUserSummary>("/users", { method: "POST", body: JSON.stringify(input) }, token),
   updateUser: (token: string, id: string, input: UpdateUserInput) =>

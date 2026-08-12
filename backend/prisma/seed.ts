@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import { prisma } from "../src/lib/prisma";
+import { seedDefaultPipelineStages } from "../src/lib/pipeline-stages";
 
 async function main() {
   const passwordHash = await bcrypt.hash("password123", 10);
@@ -82,6 +83,8 @@ async function main() {
     },
   });
 
+  await seedDefaultPipelineStages(school.id);
+
   const academicYear = await prisma.academicYear.upsert({
     where: { id: "00000000-0000-0000-0000-000000000010" },
     update: {},
@@ -117,6 +120,8 @@ async function main() {
       status: "active",
     },
   });
+
+  await seedDefaultPipelineStages(otherSchool.id);
 
   const otherSchoolAdmin = await prisma.appUser.upsert({
     where: { email: "admin2@dev.eduwand.local" },

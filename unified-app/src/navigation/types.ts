@@ -7,6 +7,11 @@ export type RootStackParamList = {
   EnquiryDetail: { enquiryId: string };
   NewEnquiryForm: undefined;
   AdmissionConfirmation: { enquiryId: string };
+  BulkUpload: undefined;
+  CreateAssignment: undefined;
+  AssignmentDetail: { assignmentId: string };
+  PersonalisationReview: { assignmentId: string };
+  GradingReview: { assignmentId: string };
 };
 
 // front_desk / counsellor / admin / leadership

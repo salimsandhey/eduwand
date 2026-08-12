@@ -27,7 +27,7 @@ function generateTempPassword(): string {
 // Read-only list for the Admin Dashboard's User and Role Management screen
 // (Docs/Dev/EduWand_UI_Screen_Spec.md section 5).
 export async function userRoutes(app: FastifyInstance) {
-  app.get(
+  app.get<{ Querystring: { schoolId?: string } }>(
     "/users",
     { onRequest: [app.authenticate, app.requireSchoolScope, requireRoles("admin", "leadership")] },
     async (request) => {

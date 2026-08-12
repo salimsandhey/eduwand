@@ -1,18 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { api, ApiError } from "../api/client";
+import { useSchoolContext } from "../context/SchoolContext";
+import { api } from "../api/client";
 import type { AppUserSummary } from "../api/client";
 import { Card } from "../components/Card";
-import { TrustScopeNotice } from "../components/TrustScopeNotice";
+import { PageHeader } from "../components/PageHeader";
+import { SelectSchoolPrompt } from "../components/SelectSchoolPrompt";
 
 const INVITABLE_ROLES = ["front_desk", "counsellor", "teacher", "admin"];
 
 export function UsersPage() {
   const { accessToken, user: currentUser } = useAuth();
+  const { selectedSchoolId, isLoading: schoolsLoading } = useSchoolContext();
+  const isLeadership = currentUser?.role === "leadership";
+
   const [users, setUsers] = useState<AppUserSummary[] | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [needsTrustScope, setNeedsTrustScope] = useState(false);
+  const [search, setSearch] = useState("");
 
   const [showInvite, setShowInvite] = useState(false);
   const [inviteName, setInviteName] = useState("");
@@ -27,22 +32,20 @@ export function UsersPage() {
 
   const load = useCallback(async () => {
     if (!accessToken) return;
+    if (isLeadership && !selectedSchoolId) return;
     setIsLoading(true);
     setError(null);
-    setNeedsTrustScope(false);
     try {
-      const res = await api.listUsers(accessToken);
+      const res = await api.listUsers(accessToken, {
+        schoolId: isLeadership ? selectedSchoolId ?? undefined : undefined,
+      });
       setUsers(res);
     } catch (err) {
-      if (err instanceof ApiError && err.code === "school_scope_required") {
-        setNeedsTrustScope(true);
-      } else {
-        setError(err instanceof Error ? err.message : "Failed to load users");
-      }
+      setError(err instanceof Error ? err.message : "Failed to load users");
     } finally {
       setIsLoading(false);
     }
-  }, [accessToken]);
+  }, [accessToken, isLeadership, selectedSchoolId]);
 
   useEffect(() => {
     load();
@@ -94,11 +97,32 @@ export function UsersPage() {
     }
   }
 
-  if (needsTrustScope) return <TrustScopeNotice />;
+  if (isLeadership && !selectedSchoolId) {
+    return schoolsLoading ? <p style={{ color: "var(--text-muted)" }}>Loading…</p> : <SelectSchoolPrompt />;
+  }
+
+  const filteredUsers = users?.filter((u) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return u.fullName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q) || u.role.toLowerCase().includes(q);
+  });
 
   return (
     <div>
-      <h1 style={{ marginTop: 0 }}>User & Role Management</h1>
+      <PageHeader
+        title="User & Role Management"
+        subtitle="Manage staff accounts and their access"
+        action={
+          users && users.length > 0 ? (
+            <input
+              style={styles.search}
+              placeholder="Search name, email, or role…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          ) : undefined
+        }
+      />
 
       {error ? <p style={{ color: "var(--status-critical)" }}>{error}</p> : null}
 
@@ -108,6 +132,8 @@ export function UsersPage() {
         <Card>
           {!users || users.length === 0 ? (
             <p style={{ color: "var(--text-muted)" }}>No users found for this school.</p>
+          ) : filteredUsers && filteredUsers.length === 0 ? (
+            <p style={{ color: "var(--text-muted)" }}>No users match "{search}".</p>
           ) : (
             <table style={styles.table}>
               <thead>
@@ -120,7 +146,7 @@ export function UsersPage() {
                 </tr>
               </thead>
               <tbody>
-                {users.map((u) => {
+                {(filteredUsers ?? []).map((u) => {
                   const isSelf = u.id === currentUser?.id;
                   const isSaving = savingRowId === u.id;
                   return (
@@ -247,6 +273,13 @@ export function UsersPage() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
+  search: {
+    padding: "8px 12px",
+    borderRadius: 8,
+    border: "1px solid var(--border)",
+    fontSize: 13,
+    minWidth: 220,
+  },
   table: { width: "100%", borderCollapse: "collapse" },
   th: {
     textAlign: "left",

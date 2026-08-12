@@ -1,84 +1,69 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
-import { toCsv } from "../lib/csv";
 import { storage } from "../lib/storage";
-
-// Fixed, standard column set (FR-EG-11) - not configurable per school.
-const CSV_HEADERS = [
-  "full_name",
-  "date_of_birth",
-  "class",
-  "section",
-  "board",
-  "guardian_name",
-  "guardian_contact",
-  "admission_date",
-  "fee_status",
-  "source_enquiry_id",
-];
+import { runCsvExport } from "../lib/exports";
+import { requireRoles } from "../lib/rbac";
 
 interface ListQuery {
   page?: string;
   pageSize?: string;
 }
 
+interface ScheduleBody {
+  frequency?: "daily" | "weekly";
+  isActive?: boolean;
+}
+
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope];
 
 export async function exportRoutes(app: FastifyInstance) {
   app.post("/exports/run", { onRequest: scoped(app) }, async (request, reply) => {
-    try {
-      const students = await prisma.studentStub.findMany({
-        where: { schoolId: request.schoolId },
-        include: { classSection: true, school: true },
-        orderBy: { admissionDate: "asc" },
-      });
-
-      const rows = students.map((s) => [
-        s.fullName,
-        s.dateOfBirth.toISOString().slice(0, 10),
-        s.classSection.className,
-        s.classSection.sectionName,
-        s.school.board,
-        s.guardianName,
-        s.guardianContact,
-        s.admissionDate.toISOString().slice(0, 10),
-        s.feeStatus,
-        s.sourceEnquiryId,
-      ]);
-
-      const csv = toCsv(CSV_HEADERS, rows);
-      const key = `${request.schoolId}/${Date.now()}-admitted-students.csv`;
-      const { location } = await storage.save(key, csv);
-
-      const log = await prisma.csvExportLog.create({
-        data: {
-          schoolId: request.schoolId,
-          requestedByUserId: request.user.sub,
-          runAt: new Date(),
-          rowCount: rows.length,
-          status: "success",
-          fileLocation: location,
-        },
-      });
-
-      return reply.code(201).send({ data: log, meta: {} });
-    } catch (err) {
-      app.log.error(err);
-      const log = await prisma.csvExportLog.create({
-        data: {
-          schoolId: request.schoolId,
-          requestedByUserId: request.user.sub,
-          runAt: new Date(),
-          rowCount: 0,
-          status: "failed",
-        },
-      });
+    const log = await runCsvExport(request.schoolId, request.user.sub);
+    if (log.status === "failed") {
       return reply.code(500).send({
         data: null,
         error: { code: "export_failed", message: "Export failed", exportLogId: log.id },
       });
     }
+    return reply.code(201).send({ data: log, meta: {} });
   });
+
+  // Recurring export config (FR-EG-11) - the worker (backend/src/worker.ts)
+  // checks lastRunAt against frequency each tick and calls runCsvExport itself.
+  app.get(
+    "/exports/schedule",
+    { onRequest: [...scoped(app), requireRoles("admin", "leadership")] },
+    async (request) => {
+      const schedule = await prisma.csvExportSchedule.findUnique({ where: { schoolId: request.schoolId } });
+      return { data: schedule, meta: {} };
+    }
+  );
+
+  app.put<{ Body: ScheduleBody }>(
+    "/exports/schedule",
+    { onRequest: [...scoped(app), requireRoles("admin", "leadership")] },
+    async (request, reply) => {
+      const body = request.body ?? {};
+      if (body.frequency && !["daily", "weekly"].includes(body.frequency)) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "frequency must be daily or weekly" },
+        });
+      }
+
+      const schedule = await prisma.csvExportSchedule.upsert({
+        where: { schoolId: request.schoolId },
+        update: { frequency: body.frequency ?? undefined, isActive: body.isActive ?? undefined },
+        create: {
+          schoolId: request.schoolId,
+          frequency: body.frequency ?? "weekly",
+          isActive: body.isActive ?? true,
+        },
+      });
+
+      return { data: schedule, meta: {} };
+    }
+  );
 
   app.get<{ Querystring: ListQuery }>("/exports/log", { onRequest: scoped(app) }, async (request) => {
     const page = Math.max(1, Number(request.query.page) || 1);

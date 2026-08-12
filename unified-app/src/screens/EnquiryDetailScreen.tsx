@@ -10,6 +10,7 @@ import { Screen } from "../components/Screen";
 import { DatePicker } from "../components/DatePicker";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { getStatusColor } from "../theme/statusColors";
+import { usePipelineStages } from "../hooks/usePipelineStages";
 import {
   api,
   EnquiryDetail,
@@ -20,9 +21,8 @@ import {
   FollowUpTask,
   ActivityItem,
   ActivityType,
+  EnquiryDocument,
 } from "../api/client";
-
-const STATUSES: EnquiryStatus[] = ["new", "contacted", "visit", "application", "admitted", "enrolled", "lost"];
 
 const ACTIVITY_ICON: Record<ActivityType, keyof typeof Ionicons.glyphMap> = {
   stage_change: "swap-horizontal-outline",
@@ -50,13 +50,17 @@ type Props = NativeStackScreenProps<RootStackParamList, "EnquiryDetail">;
 
 export function EnquiryDetailScreen({ route, navigation }: Props) {
   const { enquiryId } = route.params;
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const { colors, mode, cardShadow, pressedOpacity } = useTheme();
+  const { stages } = usePipelineStages();
+  const stageKeys = stages.map((s) => s.key);
+  const canErase = user?.role === "admin" || user?.role === "leadership";
 
   const [enquiry, setEnquiry] = useState<EnquiryDetail | null>(null);
   const [duplicates, setDuplicates] = useState<PossibleDuplicate[]>([]);
   const [tasks, setTasks] = useState<FollowUpTask[]>([]);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
+  const [documents, setDocuments] = useState<EnquiryDocument[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -65,6 +69,8 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
   const [lostReasonFocused, setLostReasonFocused] = useState(false);
 
   const [pendingStageChange, setPendingStageChange] = useState<EnquiryStatus | null>(null);
+  const [showEraseConfirm, setShowEraseConfirm] = useState(false);
+  const [isErasing, setIsErasing] = useState(false);
 
   const [noteBody, setNoteBody] = useState("");
   const [noteFocused, setNoteFocused] = useState(false);
@@ -80,15 +86,17 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
     setIsLoading(true);
     setError(null);
     try {
-      const [detailRes, allTasks, allTemplates] = await Promise.all([
+      const [detailRes, allTasks, allTemplates, docs] = await Promise.all([
         api.getEnquiry(accessToken, enquiryId),
         api.listFollowUpTasks(accessToken),
         api.listMessageTemplates(accessToken),
+        api.listDocuments(accessToken, enquiryId),
       ]);
       setEnquiry(detailRes.data);
       setDuplicates((detailRes.meta?.possibleDuplicates as PossibleDuplicate[]) ?? []);
       setTasks(allTasks.filter((t) => t.enquiryId === enquiryId));
       setTemplates(allTemplates);
+      setDocuments(docs);
       if (allTemplates.length > 0) setTaskTemplateId(allTemplates[0].id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load enquiry");
@@ -123,7 +131,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
       }
       return;
     }
-    const isOneStepForward = STATUSES.indexOf(status) === STATUSES.indexOf(enquiry.status) + 1;
+    const isOneStepForward = stageKeys.indexOf(status) === stageKeys.indexOf(enquiry.status) + 1;
     if (isOneStepForward) {
       applyStatusChange(status);
     } else {
@@ -154,6 +162,20 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to change status");
+    }
+  }
+
+  async function eraseNow() {
+    if (!accessToken) return;
+    setIsErasing(true);
+    try {
+      await api.eraseEnquiry(accessToken, enquiryId);
+      setShowEraseConfirm(false);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to erase personal data");
+    } finally {
+      setIsErasing(false);
     }
   }
 
@@ -282,8 +304,34 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
               </View>
               <Text style={[styles.actionText, { color: colors.textSecondary }]}>Share</Text>
             </Pressable>
+
+            {canErase && !enquiry.erasedAt ? (
+              <Pressable
+                onPress={() => setShowEraseConfirm(true)}
+                style={({ pressed }) => [styles.actionButton, pressed && { opacity: pressedOpacity }]}
+                accessibilityRole="button"
+              >
+                <View style={[styles.actionIconContainer, { backgroundColor: colors.surfaceRaised }]}>
+                  <Ionicons name="trash-outline" size={18} color={colors.danger} />
+                </View>
+                <Text style={[styles.actionText, { color: colors.danger }]}>Erase</Text>
+              </Pressable>
+            ) : null}
           </View>
         </View>
+
+        {enquiry.erasedAt ? (
+          <View style={[styles.duplicateBanner, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+            <View style={styles.duplicateTitleRow}>
+              <Ionicons name="shield-checkmark-outline" size={16} color={colors.textMuted} />
+              <Text style={[styles.duplicateTitle, { color: colors.textMuted }]}>Personal data erased</Text>
+            </View>
+            <Text style={[styles.meta, { color: colors.textMuted }]}>
+              This lead's contact details were erased on {new Date(enquiry.erasedAt).toLocaleDateString()} under a
+              DPDP right-to-erasure request. Stage and analytics history are unaffected.
+            </Text>
+          </View>
+        ) : null}
 
         {duplicates.length > 0 ? (
           <View style={[styles.duplicateBanner, { backgroundColor: colors.surfaceRaised, borderColor: colors.warning }]}>
@@ -309,12 +357,12 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
         {/* Horizontal Stage Selector Redesign */}
         <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Lead Stage</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.stageScroll}>
-          {STATUSES.map((s) => {
-            const active = enquiry.status === s;
-            const statusColor = getStatusColor(s, mode);
+          {stages.map((stage) => {
+            const active = enquiry.status === stage.key;
+            const statusColor = getStatusColor(stage.key, mode);
             return (
               <Pressable
-                key={s}
+                key={stage.key}
                 style={({ pressed }) => [
                   styles.stageChip,
                   active
@@ -322,11 +370,13 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
                     : { backgroundColor: colors.surface, borderColor: colors.border },
                   pressed && { opacity: pressedOpacity },
                 ]}
-                onPress={() => changeStatus(s)}
+                onPress={() => changeStatus(stage.key)}
                 accessibilityRole="button"
               >
                 {active && <Ionicons name="checkmark-circle" size={14} color={statusColor.text} style={{ marginRight: 4 }} />}
-                <Text style={[styles.stageChipText, { color: active ? statusColor.text : colors.textSecondary }]}>{s}</Text>
+                <Text style={[styles.stageChipText, { color: active ? statusColor.text : colors.textSecondary }]}>
+                  {stage.label}
+                </Text>
               </Pressable>
             );
           })}
@@ -381,6 +431,19 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
             <View style={[styles.detailRowItem, { borderTopWidth: 1, borderTopColor: colors.border }]}>
               <Text style={[styles.detailLabel, { color: colors.textMuted }]}>Grade of Interest</Text>
               <Text style={[styles.detailValue, { color: colors.textPrimary }]}>{enquiry.gradeInterest}</Text>
+            </View>
+          ) : null}
+          {documents.length > 0 ? (
+            <View style={[styles.detailRowItem, { borderTopWidth: 1, borderTopColor: colors.border }]}>
+              <Text style={[styles.detailLabel, { color: colors.textMuted }]}>Documents</Text>
+              {documents.map((doc) => (
+                <View key={doc.id} style={styles.documentRow}>
+                  <Ionicons name="document-attach-outline" size={14} color={colors.textMuted} />
+                  <Text style={[styles.detailValue, { color: colors.textPrimary, fontSize: 13 }]} numberOfLines={1}>
+                    {doc.fileName}
+                  </Text>
+                </View>
+              ))}
             </View>
           ) : null}
         </View>
@@ -557,7 +620,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
         message={
           pendingStageChange
             ? `This moves the lead ${
-                STATUSES.indexOf(pendingStageChange) < STATUSES.indexOf(enquiry.status) ? "backward" : "forward, skipping a stage"
+                stageKeys.indexOf(pendingStageChange) < stageKeys.indexOf(enquiry.status) ? "backward" : "forward, skipping a stage"
               }, from "${enquiry.status}" to "${pendingStageChange}". Continue?`
             : ""
         }
@@ -567,6 +630,15 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
           setPendingStageChange(null);
         }}
         onCancel={() => setPendingStageChange(null)}
+      />
+
+      <ConfirmModal
+        visible={showEraseConfirm}
+        title="Erase personal data"
+        message="This permanently redacts this lead's name, phone, and email, deletes any attached documents, and cannot be undone. Stage history and analytics counts are kept. Continue?"
+        confirmLabel={isErasing ? "Erasing…" : "Erase"}
+        onConfirm={eraseNow}
+        onCancel={() => setShowEraseConfirm(false)}
       />
     </Screen>
   );
@@ -622,6 +694,7 @@ const styles = StyleSheet.create({
   detailRowItem: { paddingVertical: 12 },
   detailLabel: { fontSize: 11, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.2 },
   detailValue: { fontSize: 14, fontWeight: "700", marginTop: 4 },
+  documentRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 },
   timelineContainer: { position: "relative", paddingLeft: 20, marginVertical: 6 },
   timelineVerticalLine: { position: "absolute", left: 8, top: 8, bottom: 8, width: 2 },
   timelineRow: { flexDirection: "row", gap: 12, marginBottom: 16, alignItems: "flex-start" },

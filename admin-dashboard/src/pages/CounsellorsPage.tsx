@@ -1,48 +1,52 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { api, ApiError } from "../api/client";
+import { useSchoolContext } from "../context/SchoolContext";
+import { api } from "../api/client";
 import type { CounsellorPerformanceEntry } from "../api/client";
 import { Card } from "../components/Card";
-import { TrustScopeNotice } from "../components/TrustScopeNotice";
+import { PageHeader } from "../components/PageHeader";
+import { SelectSchoolPrompt } from "../components/SelectSchoolPrompt";
 
 // A ranked list is a table, not a chart (dataviz skill, choosing-a-form.md) - the
 // inline bar is a secondary, sequential-hue magnitude cue beside the real numbers,
 // not a substitute for them.
 export function CounsellorsPage() {
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
+  const { selectedSchoolId, isLoading: schoolsLoading } = useSchoolContext();
+  const isLeadership = user?.role === "leadership";
+
   const [data, setData] = useState<CounsellorPerformanceEntry[] | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [needsTrustScope, setNeedsTrustScope] = useState(false);
 
   const load = useCallback(async () => {
     if (!accessToken) return;
+    if (isLeadership && !selectedSchoolId) return;
     setIsLoading(true);
     setError(null);
-    setNeedsTrustScope(false);
     try {
-      const res = await api.getCounsellorPerformance(accessToken);
+      const res = await api.getCounsellorPerformance(accessToken, {
+        schoolId: isLeadership ? selectedSchoolId ?? undefined : undefined,
+      });
       setData(res);
     } catch (err) {
-      if (err instanceof ApiError && err.code === "school_scope_required") {
-        setNeedsTrustScope(true);
-      } else {
-        setError(err instanceof Error ? err.message : "Failed to load counsellor performance");
-      }
+      setError(err instanceof Error ? err.message : "Failed to load counsellor performance");
     } finally {
       setIsLoading(false);
     }
-  }, [accessToken]);
+  }, [accessToken, isLeadership, selectedSchoolId]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  if (needsTrustScope) return <TrustScopeNotice />;
+  if (isLeadership && !selectedSchoolId) {
+    return schoolsLoading ? <p style={{ color: "var(--text-muted)" }}>Loading…</p> : <SelectSchoolPrompt />;
+  }
 
   return (
     <div>
-      <h1 style={{ marginTop: 0 }}>Counsellor Performance</h1>
+      <PageHeader title="Counsellor Performance" subtitle="Conversion rate and activity per counsellor" />
 
       {error ? <p style={{ color: "var(--status-critical)" }}>{error}</p> : null}
 
@@ -61,6 +65,7 @@ export function CounsellorsPage() {
                   <th style={styles.th}>Total</th>
                   <th style={styles.th}>Converted</th>
                   <th style={styles.th}>Conversion rate</th>
+                  <th style={styles.th}>Avg. response time</th>
                 </tr>
               </thead>
               <tbody>
@@ -78,14 +83,18 @@ export function CounsellorsPage() {
                         <span>{(row.conversionRate * 100).toFixed(0)}%</span>
                       </div>
                     </td>
+                    <td style={styles.td}>
+                      {row.avgResponseHours === null ? (
+                        <span style={{ color: "var(--text-muted)" }}>—</span>
+                      ) : (
+                        `${row.avgResponseHours}h`
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
-          <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 16, marginBottom: 0 }}>
-            Response time isn't tracked by the backend yet, so it isn't shown here.
-          </p>
         </Card>
       )}
     </div>

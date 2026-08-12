@@ -9,6 +9,11 @@ import { NoAccessScreen } from "../screens/NoAccessScreen";
 import { EnquiryDetailScreen } from "../screens/EnquiryDetailScreen";
 import { NewEnquiryFormScreen } from "../screens/NewEnquiryFormScreen";
 import { AdmissionConfirmationScreen } from "../screens/AdmissionConfirmationScreen";
+import { BulkUploadScreen } from "../screens/BulkUploadScreen";
+import { CreateAssignmentScreen } from "../screens/CreateAssignmentScreen";
+import { AssignmentDetailScreen } from "../screens/AssignmentDetailScreen";
+import { PersonalisationReviewScreen } from "../screens/PersonalisationReviewScreen";
+import { GradingReviewScreen } from "../screens/GradingReviewScreen";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -55,6 +60,15 @@ export function AppNavigator() {
           component={AdmissionConfirmationScreen}
           options={{ title: "Confirm Admission" }}
         />
+        <Stack.Screen name="BulkUpload" component={BulkUploadScreen} options={{ title: "Bulk Upload" }} />
+        <Stack.Screen name="CreateAssignment" component={CreateAssignmentScreen} options={{ title: "New Assignment" }} />
+        <Stack.Screen name="AssignmentDetail" component={AssignmentDetailScreen} options={{ title: "Assignment" }} />
+        <Stack.Screen
+          name="PersonalisationReview"
+          component={PersonalisationReviewScreen}
+          options={{ title: "Personalisation Review" }}
+        />
+        <Stack.Screen name="GradingReview" component={GradingReviewScreen} options={{ title: "Grading Review" }} />
       </Stack.Navigator>
     </NavigationContainer>
   );

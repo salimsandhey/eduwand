@@ -1,61 +1,81 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { api, ApiError } from "../api/client";
-import type { FunnelResponse, EnquiryStatus } from "../api/client";
+import { useSchoolContext } from "../context/SchoolContext";
+import { api } from "../api/client";
+import type { FunnelResponse, TrendResponse, PipelineStage } from "../api/client";
 import { Card } from "../components/Card";
 import { StatTile } from "../components/StatTile";
 import { BarChart } from "../components/BarChart";
-import { TrustScopeNotice } from "../components/TrustScopeNotice";
+import { LineChart } from "../components/LineChart";
+import { PageHeader } from "../components/PageHeader";
+import { SelectSchoolPrompt } from "../components/SelectSchoolPrompt";
 
-// Funnel stages in order, excluding "lost" (a terminal outcome, not a funnel step -
-// shown separately below rather than blended into the sequential ramp).
-const FUNNEL_STAGES: EnquiryStatus[] = ["new", "contacted", "visit", "application", "admitted", "enrolled"];
+// Pipeline stages are configurable per school (FR-EG-3) - fetched dynamically
+// rather than a fixed list. Colors cycle if a school configures more non-terminal
+// stages than the sequential ramp has steps, rather than crashing.
 const SEQ_COLORS = ["var(--seq-1)", "var(--seq-2)", "var(--seq-3)", "var(--seq-4)", "var(--seq-5)", "var(--seq-6)"];
 
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// "Jan" normally; "Jan '25" at the first bucket and at every year boundary, so a
+// 12-month trailing window that spans two calendar years never reads as ambiguous.
+function formatPeriodLabel(period: string, index: number): string {
+  const [year, month] = period.split("-");
+  const monthName = MONTH_NAMES[Number(month) - 1];
+  const isYearBoundary = index === 0 || month === "01";
+  return isYearBoundary ? `${monthName} '${year.slice(2)}` : monthName;
+}
+
 export function FunnelPage() {
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
+  const { selectedSchoolId, isLoading: schoolsLoading } = useSchoolContext();
+  const isLeadership = user?.role === "leadership";
+
   const [data, setData] = useState<FunnelResponse | null>(null);
+  const [trend, setTrend] = useState<TrendResponse | null>(null);
+  const [stages, setStages] = useState<PipelineStage[] | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [needsTrustScope, setNeedsTrustScope] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
 
   const load = useCallback(async () => {
     if (!accessToken) return;
+    if (isLeadership && !selectedSchoolId) return;
     setIsLoading(true);
     setError(null);
-    setNeedsTrustScope(false);
     try {
-      const res = await api.getFunnel(accessToken, {
-        startDate: startDate || undefined,
-        endDate: endDate || undefined,
-      });
-      setData(res);
+      const schoolId = isLeadership ? selectedSchoolId ?? undefined : undefined;
+      const [funnelRes, trendRes, stagesRes] = await Promise.all([
+        api.getFunnel(accessToken, {
+          startDate: startDate || undefined,
+          endDate: endDate || undefined,
+          schoolId,
+        }),
+        api.getTrend(accessToken, { schoolId }),
+        api.listPipelineStages(accessToken, { schoolId }),
+      ]);
+      setData(funnelRes);
+      setTrend(trendRes);
+      setStages([...stagesRes].sort((a, b) => a.order - b.order));
     } catch (err) {
-      if (err instanceof ApiError && err.code === "school_scope_required") {
-        setNeedsTrustScope(true);
-      } else {
-        setError(err instanceof Error ? err.message : "Failed to load funnel");
-      }
+      setError(err instanceof Error ? err.message : "Failed to load funnel");
     } finally {
       setIsLoading(false);
     }
-  }, [accessToken, startDate, endDate]);
+  }, [accessToken, startDate, endDate, isLeadership, selectedSchoolId]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  if (needsTrustScope) return <TrustScopeNotice />;
+  if (isLeadership && !selectedSchoolId) {
+    return schoolsLoading ? <p style={{ color: "var(--text-muted)" }}>Loading…</p> : <SelectSchoolPrompt />;
+  }
 
   return (
     <div style={styles.container}>
-      {/* Title Header Section */}
-      <div style={styles.headerBlock}>
-        <h1 style={styles.title}>Enrolment Funnel</h1>
-        <p style={styles.subtitle}>Monitor conversion milestones and lead pipeline metrics</p>
-      </div>
+      <PageHeader title="Enrolment Funnel" subtitle="Monitor conversion milestones and lead pipeline metrics" />
 
       <Card style={{ padding: "20px 24px" }}>
         <div style={styles.filterRow}>
@@ -92,32 +112,50 @@ export function FunnelPage() {
           <div style={styles.spinner} />
           <p style={{ color: "var(--text-secondary)", fontWeight: 600 }}>Loading funnel data…</p>
         </div>
-      ) : data ? (
+      ) : data && stages ? (
         <>
           <div style={styles.statsRow}>
             <StatTile label="Total enquiries" value={String(data.totalCount)} />
-            <StatTile label="Admitted or enrolled" value={String(data.convertedCount)} />
+            <StatTile label="Converted" value={String(data.convertedCount)} />
             <StatTile label="Conversion rate" value={`${(data.conversionRate * 100).toFixed(1)}%`} />
           </div>
 
           <Card title="Funnel Stage Analysis">
             <BarChart
-              data={FUNNEL_STAGES.map((stage, i) => ({
-                label: stage,
-                value: data.byStatus[stage] ?? 0,
-                color: SEQ_COLORS[i],
-              }))}
+              data={stages
+                .filter((s) => !s.isTerminal)
+                .map((stage, i) => ({
+                  label: stage.label,
+                  value: data.byStatus[stage.key] ?? 0,
+                  color: SEQ_COLORS[i % SEQ_COLORS.length],
+                }))}
             />
-            <div style={styles.chartSeparator}>
-              <BarChart
-                data={[{ label: "lost", value: data.byStatus.lost ?? 0, color: "var(--status-critical)" }]}
-              />
-            </div>
+            {stages.some((s) => s.isTerminal) ? (
+              <div style={styles.chartSeparator}>
+                <BarChart
+                  data={stages
+                    .filter((s) => s.isTerminal)
+                    .map((stage) => ({
+                      label: stage.label,
+                      value: data.byStatus[stage.key] ?? 0,
+                      color: "var(--status-critical)",
+                    }))}
+                />
+              </div>
+            ) : null}
           </Card>
 
-          <p style={styles.footerNote}>
-            Trend over time is currently unavailable - the backend returns current counts only, not historical snapshots.
-          </p>
+          {trend ? (
+            <Card title="Enrolment Trend (last 12 months)">
+              <LineChart
+                xLabels={trend.periods.map((p, i) => formatPeriodLabel(p.period, i))}
+                series={[
+                  { label: "New enquiries", color: "var(--series-1)", values: trend.periods.map((p) => p.newEnquiries) },
+                  { label: "Converted", color: "var(--series-2)", values: trend.periods.map((p) => p.converted) },
+                ]}
+              />
+            </Card>
+          ) : null}
         </>
       ) : null}
     </div>

@@ -10,9 +10,8 @@ import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { Screen } from "../components/Screen";
 import { getStatusColor } from "../theme/statusColors";
+import { usePipelineStages } from "../hooks/usePipelineStages";
 import { api, Enquiry, EnquiryStatus } from "../api/client";
-
-const STAGES: EnquiryStatus[] = ["new", "contacted", "visit", "application", "admitted", "enrolled", "lost"];
 
 type Props = CompositeScreenProps<
   BottomTabScreenProps<EnrolmentTabParamList, "Pipeline">,
@@ -22,6 +21,7 @@ type Props = CompositeScreenProps<
 export function PipelineBoardScreen({ navigation }: Props) {
   const { accessToken } = useAuth();
   const { colors, mode, cardShadow, pressedOpacity } = useTheme();
+  const { stages } = usePipelineStages();
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
   const [activeStage, setActiveStage] = useState<EnquiryStatus>("new");
   const [isLoading, setIsLoading] = useState(true);
@@ -76,14 +76,14 @@ export function PipelineBoardScreen({ navigation }: Props) {
       {/* Horizontal Sticky Tab Bar */}
       <View style={styles.tabBarWrapper}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabBar}>
-          {STAGES.map((stage) => {
-            const active = activeStage === stage;
-            const count = getStageCount(stage);
-            const statusColor = getStatusColor(stage, mode);
+          {stages.map((stage) => {
+            const active = activeStage === stage.key;
+            const count = getStageCount(stage.key);
+            const statusColor = getStatusColor(stage.key, mode);
             return (
               <Pressable
-                key={stage}
-                onPress={() => setActiveStage(stage)}
+                key={stage.key}
+                onPress={() => setActiveStage(stage.key)}
                 style={({ pressed }) => [
                   styles.tabItem,
                   active && { borderBottomColor: colors.accent },
@@ -93,7 +93,7 @@ export function PipelineBoardScreen({ navigation }: Props) {
                 accessibilityState={{ selected: active }}
               >
                 <Text style={[styles.tabText, { color: active ? colors.accent : colors.textSecondary }]}>
-                  {stage}
+                  {stage.label}
                 </Text>
                 <View
                   style={[
@@ -120,7 +120,7 @@ export function PipelineBoardScreen({ navigation }: Props) {
           <View style={[styles.emptyContainer, { borderColor: colors.border }]}>
             <Ionicons name="folder-open-outline" size={32} color={colors.textMuted} />
             <Text style={[styles.emptyText, { color: colors.textMuted }]}>
-              No leads currently in the "{activeStage}" stage
+              No leads currently in the "{stages.find((s) => s.key === activeStage)?.label ?? activeStage}" stage
             </Text>
           </View>
         }

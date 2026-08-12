@@ -1,10 +1,10 @@
 import { useCallback, useState, useRef } from "react";
-import { View, Text, Pressable, StyleSheet, ActivityIndicator, ScrollView, Platform, Animated } from "react-native";
+import { View, Text, Pressable, StyleSheet, ActivityIndicator, ScrollView, Platform, Animated, Switch } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
-import { api, CsvExportLog } from "../api/client";
+import { api, CsvExportLog, CsvExportSchedule } from "../api/client";
 import { Screen } from "../components/Screen";
 
 export function CsvExportScreen() {
@@ -15,6 +15,9 @@ export function CsvExportScreen() {
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ id: string; content: string } | null>(null);
+
+  const [schedule, setSchedule] = useState<CsvExportSchedule | null>(null);
+  const [isSavingSchedule, setIsSavingSchedule] = useState(false);
 
   // Button Scale Animation
   const buttonScale = useRef(new Animated.Value(1)).current;
@@ -38,8 +41,12 @@ export function CsvExportScreen() {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await api.listExportLog(accessToken);
+      const [res, scheduleRes] = await Promise.all([
+        api.listExportLog(accessToken),
+        api.getExportSchedule(accessToken).catch(() => null),
+      ]);
       setLog(res.data ?? []);
+      setSchedule(scheduleRes);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load export log");
     } finally {
@@ -52,6 +59,35 @@ export function CsvExportScreen() {
       load();
     }, [load])
   );
+
+  async function toggleAutoExport(isActive: boolean) {
+    if (!accessToken) return;
+    setIsSavingSchedule(true);
+    try {
+      const updated = await api.updateExportSchedule(accessToken, {
+        isActive,
+        frequency: schedule?.frequency ?? "weekly",
+      });
+      setSchedule(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update automatic export");
+    } finally {
+      setIsSavingSchedule(false);
+    }
+  }
+
+  async function setFrequency(frequency: "daily" | "weekly") {
+    if (!accessToken) return;
+    setIsSavingSchedule(true);
+    try {
+      const updated = await api.updateExportSchedule(accessToken, { frequency, isActive: schedule?.isActive ?? true });
+      setSchedule(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update automatic export");
+    } finally {
+      setIsSavingSchedule(false);
+    }
+  }
 
   async function runExport() {
     if (!accessToken) return;
@@ -125,6 +161,46 @@ export function CsvExportScreen() {
             )}
           </Pressable>
         </Animated.View>
+
+        {/* Automatic export (FR-EG-11) */}
+        <View style={[styles.scheduleCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <View style={styles.scheduleRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.scheduleTitle, { color: colors.textPrimary }]}>Automatic export</Text>
+              <Text style={[styles.meta, { color: colors.textMuted, marginBottom: 0 }]}>
+                Run this export on a recurring schedule
+              </Text>
+            </View>
+            <Switch
+              value={schedule?.isActive ?? false}
+              onValueChange={toggleAutoExport}
+              disabled={isSavingSchedule}
+              trackColor={{ true: colors.accent }}
+            />
+          </View>
+          {schedule?.isActive ? (
+            <View style={styles.chipRow}>
+              {(["daily", "weekly"] as const).map((f) => {
+                const active = (schedule?.frequency ?? "weekly") === f;
+                return (
+                  <Pressable
+                    key={f}
+                    style={({ pressed }) => [
+                      styles.freqChip,
+                      { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border },
+                      pressed && { opacity: pressedOpacity },
+                    ]}
+                    onPress={() => setFrequency(f)}
+                    disabled={isSavingSchedule}
+                    accessibilityRole="button"
+                  >
+                    <Text style={[styles.freqChipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{f}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : null}
+        </View>
 
         {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
@@ -209,6 +285,12 @@ const styles = StyleSheet.create({
   runButtonDisabled: { opacity: 0.6 },
   buttonInner: { flexDirection: "row", alignItems: "center", gap: 8 },
   runButtonText: { fontSize: 15, fontWeight: "700" },
+  scheduleCard: { borderWidth: 1, borderRadius: 14, padding: 14, marginTop: 16 },
+  scheduleRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  scheduleTitle: { fontSize: 14, fontWeight: "700", marginBottom: 2 },
+  chipRow: { flexDirection: "row", gap: 8, marginTop: 12 },
+  freqChip: { borderWidth: 1, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 6 },
+  freqChipText: { fontSize: 12, fontWeight: "700", textTransform: "capitalize" },
   sectionTitle: { fontSize: 14, fontWeight: "800", marginTop: 24, marginBottom: 10, letterSpacing: 0.2, textTransform: "uppercase" },
   emptyContainer: {
     borderWidth: 1,

@@ -1,9 +1,17 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 import { findPossibleDuplicates, buildActivityFeed } from "../lib/enquiries";
+import { requireRoles } from "../lib/rbac";
+import { storage } from "../lib/storage";
 
-const VALID_STATUSES = ["new", "contacted", "visit", "application", "admitted", "enrolled", "lost"];
 const VALID_SOURCES = ["phone", "walk_in", "website", "referral", "event", "social"];
+
+// Pipeline stages are configurable per school (FR-EG-3, backend/src/routes/pipeline-stages.ts)
+// rather than a fixed enum, so status validation looks up the school's own stage keys.
+async function validStatusKeys(schoolId: string): Promise<Set<string>> {
+  const stages = await prisma.pipelineStage.findMany({ where: { schoolId }, select: { key: true } });
+  return new Set(stages.map((s) => s.key));
+}
 
 interface CreateEnquiryBody {
   contactName: string;
@@ -63,11 +71,14 @@ export async function enquiryRoutes(app: FastifyInstance) {
       const page = Math.max(1, Number(request.query.page) || 1);
       const pageSize = Math.min(100, Math.max(1, Number(request.query.pageSize) || 20));
 
-      if (status && !VALID_STATUSES.includes(status)) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: `status must be one of ${VALID_STATUSES.join(", ")}` },
-        });
+      if (status) {
+        const validStatuses = await validStatusKeys(request.schoolId);
+        if (!validStatuses.has(status)) {
+          return reply.code(400).send({
+            data: null,
+            error: { code: "validation_error", message: `status must be one of ${[...validStatuses].join(", ")}` },
+          });
+        }
       }
       if (source && !VALID_SOURCES.includes(source)) {
         return reply.code(400).send({
@@ -150,6 +161,66 @@ export async function enquiryRoutes(app: FastifyInstance) {
     }
   );
 
+  // Bulk intake for event/expo enquiries (FR-EG-2). The client parses the
+  // picked CSV into rows itself and posts them as JSON - per-row errors are
+  // reported back rather than failing the whole batch on one bad row.
+  app.post<{ Body: { rows: CreateEnquiryBody[] } }>(
+    "/enquiries/bulk",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const rows = request.body?.rows;
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "rows must be a non-empty array" },
+        });
+      }
+      if (rows.length > 500) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "A single bulk upload is capped at 500 rows" },
+        });
+      }
+
+      const errors: { row: number; message: string }[] = [];
+      let createdCount = 0;
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i] ?? ({} as CreateEnquiryBody);
+        const rowNumber = i + 1;
+
+        if (!row.contactName || !row.contactPhone || !row.source) {
+          errors.push({ row: rowNumber, message: "contactName, contactPhone, and source are required" });
+          continue;
+        }
+        if (!VALID_SOURCES.includes(row.source)) {
+          errors.push({ row: rowNumber, message: `source must be one of ${VALID_SOURCES.join(", ")}` });
+          continue;
+        }
+
+        const enquiry = await prisma.enquiry.create({
+          data: {
+            schoolId: request.schoolId,
+            contactName: row.contactName,
+            contactPhone: row.contactPhone,
+            contactEmail: row.contactEmail,
+            source: row.source,
+            gradeInterest: row.gradeInterest,
+            ownerUserId: row.ownerUserId ?? request.user.sub,
+            consentCaptured: row.consentCaptured ?? false,
+            status: "new",
+          },
+        });
+        await prisma.enquiryStageHistory.create({
+          data: { enquiryId: enquiry.id, fromStatus: null, toStatus: "new", changedByUserId: request.user.sub },
+        });
+        createdCount += 1;
+      }
+
+      return reply.code(201).send({ data: { createdCount, errors }, meta: {} });
+    }
+  );
+
   app.get<{ Params: { id: string } }>(
     "/enquiries/:id",
     { onRequest: scoped(app) },
@@ -197,11 +268,14 @@ export async function enquiryRoutes(app: FastifyInstance) {
 
       const body = request.body ?? {};
 
-      if (body.status && !VALID_STATUSES.includes(body.status)) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: `status must be one of ${VALID_STATUSES.join(", ")}` },
-        });
+      if (body.status) {
+        const validStatuses = await validStatusKeys(request.schoolId);
+        if (!validStatuses.has(body.status)) {
+          return reply.code(400).send({
+            data: null,
+            error: { code: "validation_error", message: `status must be one of ${[...validStatuses].join(", ")}` },
+          });
+        }
       }
 
       if (body.status === "lost" && !body.lostReason && !existing.lostReason) {
@@ -332,6 +406,55 @@ export async function enquiryRoutes(app: FastifyInstance) {
       });
 
       return { data: updatedSource, meta: {} };
+    }
+  );
+
+  // DPDP right-to-erasure (FR-EG-9) - anonymize, don't hard-delete: status,
+  // source, timestamps, and stage history are untouched so funnel/counsellor
+  // analytics counts stay historically accurate. Uploaded documents are the
+  // one thing actually deleted (they're the highest-sensitivity PII on file).
+  app.post<{ Params: { id: string } }>(
+    "/enquiries/:id/erase",
+    { onRequest: [...scoped(app), requireRoles("admin", "leadership")] },
+    async (request, reply) => {
+      const enquiry = await prisma.enquiry.findFirst({
+        where: { id: request.params.id, schoolId: request.schoolId },
+        include: { documents: true, studentStub: true },
+      });
+      if (!enquiry) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Enquiry not found" } });
+      }
+      if (enquiry.erasedAt) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "This enquiry has already been erased" },
+        });
+      }
+
+      for (const doc of enquiry.documents) {
+        await storage.remove(doc.fileLocation);
+      }
+      await prisma.document.deleteMany({ where: { enquiryId: enquiry.id } });
+      await prisma.enquiryNote.updateMany({ where: { enquiryId: enquiry.id }, data: { body: "[redacted]" } });
+
+      if (enquiry.studentStub) {
+        await prisma.studentStub.update({
+          where: { id: enquiry.studentStub.id },
+          data: { fullName: "Redacted", guardianName: "Redacted", guardianContact: "REDACTED" },
+        });
+      }
+
+      const updated = await prisma.enquiry.update({
+        where: { id: enquiry.id },
+        data: {
+          contactName: "Redacted",
+          contactPhone: "REDACTED",
+          contactEmail: null,
+          erasedAt: new Date(),
+        },
+      });
+
+      return { data: updated, meta: {} };
     }
   );
 

@@ -2,8 +2,11 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api/client";
-import type { TrustDetail } from "../api/client";
+import type { TrustDetail, School } from "../api/client";
 import { Card } from "../components/Card";
+import { PageHeader } from "../components/PageHeader";
+
+const BOARDS = ["CBSE", "ICSE", "State"];
 
 export function TrustDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -17,6 +20,13 @@ export function TrustDetailPage() {
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+
+  const [showAddSchool, setShowAddSchool] = useState(false);
+  const [schoolName, setSchoolName] = useState("");
+  const [schoolBoard, setSchoolBoard] = useState(BOARDS[0]);
+  const [isCreatingSchool, setIsCreatingSchool] = useState(false);
+  const [schoolError, setSchoolError] = useState<string | null>(null);
+  const [createdSchool, setCreatedSchool] = useState<School | null>(null);
 
   const load = useCallback(async () => {
     if (!accessToken || !id) return;
@@ -48,6 +58,24 @@ export function TrustDetailPage() {
       setSaveError(err instanceof Error ? err.message : "Failed to save");
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function createSchool() {
+    if (!accessToken || !id || !schoolName.trim()) return;
+    setIsCreatingSchool(true);
+    setSchoolError(null);
+    try {
+      // trustId is always this page's trust - never a picker, per the new flow.
+      const school = await api.createSchool(accessToken, { name: schoolName.trim(), board: schoolBoard, trustId: id });
+      setCreatedSchool(school);
+      setSchoolName("");
+      setShowAddSchool(false);
+      load();
+    } catch (err) {
+      setSchoolError(err instanceof Error ? err.message : "Failed to add school");
+    } finally {
+      setIsCreatingSchool(false);
     }
   }
 
@@ -85,17 +113,20 @@ export function TrustDetailPage() {
         ← Back to trusts
       </Link>
 
-      <div style={styles.headerRow}>
-        <h1 style={{ marginTop: 0 }}>{trust.name}</h1>
-        <span
-          style={{
-            ...styles.statusBadge,
-            color: trust.status === "active" ? "var(--status-good)" : "var(--status-critical)",
-          }}
-        >
-          {trust.status}
-        </span>
-      </div>
+      <PageHeader
+        title={trust.name}
+        subtitle="Trust details"
+        action={
+          <span
+            style={{
+              ...styles.statusBadge,
+              color: trust.status === "active" ? "var(--status-good)" : "var(--status-critical)",
+            }}
+          >
+            {trust.status}
+          </span>
+        }
+      />
 
       <Card title="Details">
         <div style={styles.row}>
@@ -134,12 +165,50 @@ export function TrustDetailPage() {
       </Card>
 
       <Card title="Schools">
+        {canEdit ? (
+          <div style={styles.addSchoolBox}>
+            {!showAddSchool ? (
+              <button style={styles.secondaryButton} onClick={() => setShowAddSchool(true)}>
+                + Add school
+              </button>
+            ) : (
+              <div style={styles.row}>
+                <input
+                  style={styles.input}
+                  placeholder="School name"
+                  value={schoolName}
+                  onChange={(e) => setSchoolName(e.target.value)}
+                  autoFocus
+                />
+                <select style={styles.input} value={schoolBoard} onChange={(e) => setSchoolBoard(e.target.value)}>
+                  {BOARDS.map((b) => (
+                    <option key={b} value={b}>
+                      {b}
+                    </option>
+                  ))}
+                </select>
+                <button style={styles.button} onClick={createSchool} disabled={isCreatingSchool || !schoolName.trim()}>
+                  {isCreatingSchool ? "Adding…" : "Add school"}
+                </button>
+                <button style={styles.secondaryButton} onClick={() => setShowAddSchool(false)}>
+                  Cancel
+                </button>
+              </div>
+            )}
+            {schoolError ? <p style={styles.error}>{schoolError}</p> : null}
+            {createdSchool ? (
+              <p style={styles.success}>
+                Added "{createdSchool.name}" to this trust —{" "}
+                <Link to={`/schools/${createdSchool.id}`}>open it to invite the school's first admin</Link>.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
         {trust.schools.length === 0 ? (
           <p style={{ color: "var(--text-muted)" }}>
             No schools under this trust yet.{" "}
-            <Link to="/onboarding" style={{ color: "var(--accent)", fontWeight: 600 }}>
-              Add one from Onboarding.
-            </Link>
+            {canEdit ? "Use \"+ Add school\" above." : "Ask your platform admin to add one."}
           </p>
         ) : (
           <table style={styles.table}>
@@ -217,6 +286,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   success: { color: "var(--status-good)", fontSize: 13, marginTop: 12, marginBottom: 0 },
   error: { color: "var(--status-critical)", fontSize: 13, marginTop: 12, marginBottom: 0 },
+  addSchoolBox: { marginBottom: 16, paddingBottom: 16, borderBottom: "1px solid var(--border)" },
   table: { width: "100%", borderCollapse: "collapse" },
   th: {
     textAlign: "left",

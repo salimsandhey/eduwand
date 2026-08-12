@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 import type { SchoolDetail } from "../api/client";
 import { Card } from "../components/Card";
+import { PageHeader } from "../components/PageHeader";
 
 const BOARDS = ["CBSE", "ICSE", "State"];
 const STATUSES = ["onboarding", "active", "suspended"];
@@ -20,6 +21,13 @@ export function SchoolDetailPage() {
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+
+  const [showInvite, setShowInvite] = useState(false);
+  const [inviteName, setInviteName] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [isInviting, setIsInviting] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteResult, setInviteResult] = useState<{ email: string; tempPassword: string } | null>(null);
 
   const canEdit = user?.role === "platform_admin" || user?.role === "leadership";
 
@@ -57,6 +65,30 @@ export function SchoolDetailPage() {
     }
   }
 
+  async function inviteAdmin() {
+    if (!accessToken || !id || !inviteName.trim() || !inviteEmail.trim()) return;
+    setIsInviting(true);
+    setInviteError(null);
+    setInviteResult(null);
+    try {
+      const res = await api.inviteUser(accessToken, {
+        fullName: inviteName.trim(),
+        email: inviteEmail.trim(),
+        role: "admin",
+        schoolId: id,
+      });
+      const tempPassword = res.meta?.tempPassword as string | undefined;
+      setInviteResult({ email: inviteEmail.trim(), tempPassword: tempPassword ?? "(not returned)" });
+      setInviteName("");
+      setInviteEmail("");
+      setShowInvite(false);
+    } catch (err) {
+      setInviteError(err instanceof ApiError ? err.message : "Failed to invite admin");
+    } finally {
+      setIsInviting(false);
+    }
+  }
+
   async function setStatus(status: string) {
     if (!accessToken || !id) return;
     setSaveError(null);
@@ -90,22 +122,25 @@ export function SchoolDetailPage() {
         ← Back to trust
       </Link>
 
-      <div style={styles.headerRow}>
-        <h1 style={{ marginTop: 0 }}>{school.name}</h1>
-        <span
-          style={{
-            ...styles.statusBadge,
-            color:
-              school.status === "active"
-                ? "var(--status-good)"
-                : school.status === "suspended"
-                ? "var(--status-critical)"
-                : "var(--text-muted)",
-          }}
-        >
-          {school.status}
-        </span>
-      </div>
+      <PageHeader
+        title={school.name}
+        subtitle="School details"
+        action={
+          <span
+            style={{
+              ...styles.statusBadge,
+              color:
+                school.status === "active"
+                  ? "var(--status-good)"
+                  : school.status === "suspended"
+                  ? "var(--status-critical)"
+                  : "var(--text-muted)",
+            }}
+          >
+            {school.status}
+          </span>
+        }
+      />
 
       <Card title="Details">
         <div style={styles.row}>
@@ -150,6 +185,48 @@ export function SchoolDetailPage() {
           </p>
         )}
       </Card>
+
+      {canEdit ? (
+        <Card title="Invite an admin">
+          {!showInvite ? (
+            <button style={styles.secondaryButton} onClick={() => setShowInvite(true)}>
+              + Invite admin
+            </button>
+          ) : (
+            <div style={styles.row}>
+              <input
+                style={styles.input}
+                placeholder="Full name"
+                value={inviteName}
+                onChange={(e) => setInviteName(e.target.value)}
+                autoFocus
+              />
+              <input
+                style={styles.input}
+                placeholder="Email"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+              />
+              <button style={styles.button} onClick={inviteAdmin} disabled={isInviting || !inviteName.trim() || !inviteEmail.trim()}>
+                {isInviting ? "Inviting…" : "Send invite"}
+              </button>
+              <button style={styles.secondaryButton} onClick={() => setShowInvite(false)}>
+                Cancel
+              </button>
+            </div>
+          )}
+          {inviteError ? <p style={styles.error}>{inviteError}</p> : null}
+          {inviteResult ? (
+            <div style={styles.tempPasswordBox}>
+              <p style={{ margin: "0 0 4px 0" }}>
+                Share these credentials with <strong>{inviteResult.email}</strong> yourself - there's no email
+                delivery yet:
+              </p>
+              <code style={styles.code}>{inviteResult.tempPassword}</code>
+            </div>
+          ) : null}
+        </Card>
+      ) : null}
     </div>
   );
 }
@@ -186,4 +263,13 @@ const styles: Record<string, React.CSSProperties> = {
   },
   success: { color: "var(--status-good)", fontSize: 13, marginTop: 12, marginBottom: 0 },
   error: { color: "var(--status-critical)", fontSize: 13, marginTop: 12, marginBottom: 0 },
+  tempPasswordBox: {
+    marginTop: 16,
+    padding: 12,
+    background: "var(--bg-page)",
+    border: "1px solid var(--border)",
+    borderRadius: 8,
+    fontSize: 13,
+  },
+  code: { fontFamily: "monospace", fontSize: 15, fontWeight: 700, color: "var(--text-primary)" },
 };

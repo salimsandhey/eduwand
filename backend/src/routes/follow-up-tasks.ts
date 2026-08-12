@@ -1,6 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
-import { messageProvider, renderTemplate } from "../lib/messaging";
+import { sendFollowUpTask, FollowUpSendError } from "../lib/follow-up";
 
 const VALID_CHANNELS = ["sms", "email"];
 const VALID_STATUSES = ["pending", "sent", "failed", "cancelled"];
@@ -110,56 +110,26 @@ export async function followUpTaskRoutes(app: FastifyInstance) {
     "/follow-up-tasks/:id/send",
     { onRequest: scoped(app) },
     async (request, reply) => {
+      // school-scope check happens here (never inside the shared function,
+      // since the worker calls it directly for due tasks across every school).
       const task = await prisma.followUpTask.findFirst({
         where: { id: request.params.id, enquiry: { schoolId: request.schoolId } },
-        include: { enquiry: true, template: true },
+        select: { id: true },
       });
-
       if (!task) {
         return reply.code(404).send({ data: null, error: { code: "not_found", message: "Follow up task not found" } });
       }
 
-      if (task.status !== "pending") {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: `Task is already ${task.status}, only pending tasks can be sent` },
-        });
+      try {
+        const { task: updated, renderedBody } = await sendFollowUpTask(task.id);
+        return { data: updated, meta: { renderedBody } };
+      } catch (err) {
+        if (err instanceof FollowUpSendError) {
+          const statusCode = err.code === "not_found" ? 404 : err.code === "consent_required" ? 403 : 400;
+          return reply.code(statusCode).send({ data: null, error: { code: err.code, message: err.message } });
+        }
+        throw err;
       }
-
-      if (!task.enquiry.consentCaptured) {
-        return reply.code(403).send({
-          data: null,
-          error: { code: "consent_required", message: "Messaging consent has not been captured for this enquiry" },
-        });
-      }
-
-      const recipient = task.channel === "sms" ? task.enquiry.contactPhone : task.enquiry.contactEmail;
-
-      if (!recipient) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: `Enquiry has no ${task.channel === "sms" ? "phone" : "email"} on file` },
-        });
-      }
-
-      const renderedBody = renderTemplate(task.template.body, {
-        contactName: task.enquiry.contactName,
-        contactPhone: task.enquiry.contactPhone,
-        contactEmail: task.enquiry.contactEmail,
-        gradeInterest: task.enquiry.gradeInterest,
-      });
-
-      const result = await messageProvider.send(task.channel as "sms" | "email", recipient, renderedBody);
-
-      const updated = await prisma.followUpTask.update({
-        where: { id: task.id },
-        data: {
-          status: result.success ? "sent" : "failed",
-          sentAt: result.success ? new Date() : null,
-        },
-      });
-
-      return { data: updated, meta: { renderedBody } };
     }
   );
 

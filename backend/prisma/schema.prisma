@@ -42,12 +42,18 @@ model School {
   createdBy    String?  @map("created_by") @db.Uuid
   updatedBy    String?  @map("updated_by") @db.Uuid
 
-  academicYears    AcademicYear[]
-  users            AppUser[]
-  userSchoolAccess UserSchoolAccess[]
-  enquiries        Enquiry[]
-  studentStubs     StudentStub[]
-  csvExportLogs    CsvExportLog[]
+  academicYears     AcademicYear[]
+  users             AppUser[]
+  userSchoolAccess  UserSchoolAccess[]
+  enquiries         Enquiry[]
+  studentStubs      StudentStub[]
+  csvExportLogs     CsvExportLog[]
+  pipelineStages    PipelineStage[]
+  csvExportSchedule CsvExportSchedule?
+  lessonPlans       LessonPlan[]
+  researchReports   ResearchReport[]
+  assignments       Assignment[]
+  aiUsageLogs       AiUsageLog[]
 
   @@map("school")
 }
@@ -82,6 +88,8 @@ model ClassSection {
   updatedBy      String?      @map("updated_by") @db.Uuid
 
   studentStubs StudentStub[]
+  lessonPlans  LessonPlan[]
+  assignments  Assignment[]
 
   @@map("class_section")
 }
@@ -111,6 +119,13 @@ model AppUser {
   enquiryNotes        EnquiryNote[]
   assignedFollowUps   FollowUpTask[]
   csvExportLogs       CsvExportLog[]
+  uploadedDocuments   Document[]
+  lessonPlans         LessonPlan[]
+  researchReports     ResearchReport[]
+  assignments         Assignment[]
+  personalisationDecisions PersonalisationSuggestion[]
+  gradeOverrides      Grade[]
+  aiUsageLogs         AiUsageLog[]
 
   @@map("app_user")
 }
@@ -148,6 +163,7 @@ model Enquiry {
   duplicateOf          Enquiry?  @relation("EnquiryDuplicate", fields: [duplicateOfEnquiryId], references: [id])
   duplicates           Enquiry[] @relation("EnquiryDuplicate")
   consentCaptured      Boolean   @default(false) @map("consent_captured")
+  erasedAt             DateTime? @map("erased_at")
   createdAt            DateTime  @default(now()) @map("created_at")
   updatedAt            DateTime  @updatedAt @map("updated_at")
   createdBy            String?   @map("created_by") @db.Uuid
@@ -157,10 +173,67 @@ model Enquiry {
   notes         EnquiryNote[]
   followUpTasks FollowUpTask[]
   studentStub   StudentStub?
+  documents     Document[]
 
   @@index([schoolId, status])
   @@index([schoolId, contactPhone])
   @@map("enquiry")
+}
+
+// Configurable admissions pipeline (FR-EG-3): stages are per-school, not a fixed
+// enum. is_terminal marks a non-sequential outcome (e.g. "lost"), is_converted
+// marks a stage that counts toward the conversion rate (e.g. admitted/enrolled).
+// New schools are seeded with the same 7 default stages this replaces
+// (see lib/pipeline-stages.ts) so existing behavior is unchanged out of the box.
+model PipelineStage {
+  id          String   @id @default(uuid()) @db.Uuid
+  schoolId    String   @map("school_id") @db.Uuid
+  school      School   @relation(fields: [schoolId], references: [id])
+  key         String
+  label       String
+  order       Int
+  isTerminal  Boolean  @default(false) @map("is_terminal")
+  isConverted Boolean  @default(false) @map("is_converted")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([schoolId, key])
+  @@index([schoolId, order])
+  @@map("pipeline_stage")
+}
+
+// Admission document collection (FR-EG-6). fileLocation is whatever the Storage
+// interface returns (backend/src/lib/storage.ts) - local disk in dev, swappable
+// for S3 later, same pattern as CsvExportLog.fileLocation.
+model Document {
+  id               String   @id @default(uuid()) @db.Uuid
+  enquiryId        String   @map("enquiry_id") @db.Uuid
+  enquiry          Enquiry  @relation(fields: [enquiryId], references: [id])
+  uploadedByUserId String   @map("uploaded_by_user_id") @db.Uuid
+  uploadedBy       AppUser  @relation(fields: [uploadedByUserId], references: [id])
+  fileName         String   @map("file_name")
+  fileLocation     String   @map("file_location")
+  mimeType         String   @map("mime_type")
+  fileSize         Int      @map("file_size")
+  uploadedAt       DateTime @default(now()) @map("uploaded_at")
+
+  @@index([enquiryId])
+  @@map("document")
+}
+
+// Recurring CSV export config (FR-EG-11) - one per school. The worker
+// (backend/src/worker.ts) checks lastRunAt against frequency each tick.
+model CsvExportSchedule {
+  id         String   @id @default(uuid()) @db.Uuid
+  schoolId   String   @unique @map("school_id") @db.Uuid
+  school     School   @relation(fields: [schoolId], references: [id])
+  frequency  String   @default("weekly")
+  isActive   Boolean  @default(false) @map("is_active")
+  lastRunAt  DateTime? @map("last_run_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("csv_export_schedule")
 }
 
 model EnquiryStageHistory {
@@ -250,6 +323,9 @@ model StudentStub {
   createdBy       String?      @map("created_by") @db.Uuid
   updatedBy       String?      @map("updated_by") @db.Uuid
 
+  personalisationSuggestions PersonalisationSuggestion[]
+  submissions                Submission[]
+
   @@index([schoolId])
   @@map("student_stub")
 }
@@ -274,4 +350,149 @@ model CsvExportLog {
 
   @@index([schoolId])
   @@map("csv_export_log")
+}
+
+// ===== AI Module (Module 2, FR-AI-1..6) =====
+// backend/src/lib/ai.ts's AiProvider interface is the only thing that talks to
+// a model (a stub by default - see that file). Everything below is ordinary
+// persistence, same as Module 1.
+
+model LessonPlan {
+  id             String        @id @default(uuid()) @db.Uuid
+  schoolId       String        @map("school_id") @db.Uuid
+  school         School        @relation(fields: [schoolId], references: [id])
+  teacherUserId  String        @map("teacher_user_id") @db.Uuid
+  teacher        AppUser       @relation(fields: [teacherUserId], references: [id])
+  classSectionId String?       @map("class_section_id") @db.Uuid
+  classSection   ClassSection? @relation(fields: [classSectionId], references: [id])
+  topic          String
+  board          String
+  format         String        @default("lesson_plan")
+  content        String
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  @@index([schoolId, teacherUserId])
+  @@map("lesson_plan")
+}
+
+model ResearchReport {
+  id            String   @id @default(uuid()) @db.Uuid
+  schoolId      String   @map("school_id") @db.Uuid
+  school        School   @relation(fields: [schoolId], references: [id])
+  teacherUserId String   @map("teacher_user_id") @db.Uuid
+  teacher       AppUser  @relation(fields: [teacherUserId], references: [id])
+  topic         String
+  board         String
+  content       String
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([schoolId, teacherUserId])
+  @@map("research_report")
+}
+
+// Status is one of: draft, published
+model Assignment {
+  id                     String       @id @default(uuid()) @db.Uuid
+  schoolId               String       @map("school_id") @db.Uuid
+  school                 School       @relation(fields: [schoolId], references: [id])
+  teacherUserId          String       @map("teacher_user_id") @db.Uuid
+  teacher                AppUser      @relation(fields: [teacherUserId], references: [id])
+  classSectionId         String       @map("class_section_id") @db.Uuid
+  classSection           ClassSection @relation(fields: [classSectionId], references: [id])
+  title                  String
+  questions              Json
+  personalisationEnabled Boolean      @default(false) @map("personalisation_enabled")
+  status                 String       @default("draft")
+  publishedAt            DateTime?    @map("published_at")
+  createdAt              DateTime     @default(now()) @map("created_at")
+  updatedAt              DateTime     @updatedAt @map("updated_at")
+
+  personalisationSuggestions PersonalisationSuggestion[]
+  submissions                Submission[]
+
+  @@index([schoolId, classSectionId])
+  @@map("assignment")
+}
+
+// This is the model FR-AI-2's mandatory teacher-initiated fallback design turns
+// on. status is one of: pending, approved, overridden, opted_out. appliedMix is
+// set ONLY by PATCH /personalisation-suggestions/:id
+// (backend/src/routes/assignments.ts) - no other code path may write it, per
+// Docs/Dev/EduWand_Engineering_PRD.md section 6.4. A fresh row (and fresh
+// teacher decision) is generated per assignment - nothing here persists or
+// auto-applies to a later assignment.
+model PersonalisationSuggestion {
+  id              String      @id @default(uuid()) @db.Uuid
+  assignmentId    String      @map("assignment_id") @db.Uuid
+  assignment      Assignment  @relation(fields: [assignmentId], references: [id])
+  studentStubId   String      @map("student_stub_id") @db.Uuid
+  studentStub     StudentStub @relation(fields: [studentStubId], references: [id])
+  suggestedMix    Json        @map("suggested_mix")
+  reasoning       String
+  status          String      @default("pending")
+  appliedMix      Json?       @map("applied_mix")
+  decidedByUserId String?     @map("decided_by_user_id") @db.Uuid
+  decidedBy       AppUser?    @relation(fields: [decidedByUserId], references: [id])
+  decidedAt       DateTime?   @map("decided_at")
+  createdAt       DateTime    @default(now()) @map("created_at")
+
+  @@unique([assignmentId, studentStubId])
+  @@map("personalisation_suggestion")
+}
+
+// A teacher logs a submission on a student's behalf (Student role has no login
+// in this build phase - PRD section 3, "structural shell only").
+model Submission {
+  id            String      @id @default(uuid()) @db.Uuid
+  assignmentId  String      @map("assignment_id") @db.Uuid
+  assignment    Assignment  @relation(fields: [assignmentId], references: [id])
+  studentStubId String      @map("student_stub_id") @db.Uuid
+  studentStub   StudentStub @relation(fields: [studentStubId], references: [id])
+  answers       Json
+  submittedAt   DateTime    @default(now()) @map("submitted_at")
+
+  grade Grade?
+
+  @@unique([assignmentId, studentStubId])
+  @@map("submission")
+}
+
+// Status is one of: pending, ai_graded, released
+model Grade {
+  id                  String     @id @default(uuid()) @db.Uuid
+  submissionId        String     @unique @map("submission_id") @db.Uuid
+  submission          Submission @relation(fields: [submissionId], references: [id])
+  aiScore             Float?     @map("ai_score")
+  aiFeedback          String?    @map("ai_feedback")
+  finalScore          Float?     @map("final_score")
+  finalFeedback       String?    @map("final_feedback")
+  flaggedForAttention Boolean    @default(false) @map("flagged_for_attention")
+  status              String     @default("pending")
+  overriddenByUserId  String?    @map("overridden_by_user_id") @db.Uuid
+  overriddenBy        AppUser?   @relation(fields: [overriddenByUserId], references: [id])
+  releasedAt          DateTime?  @map("released_at")
+  createdAt           DateTime   @default(now()) @map("created_at")
+  updatedAt           DateTime   @updatedAt @map("updated_at")
+
+  @@map("grade")
+}
+
+// Written on every AI generation call (lesson plan, research report,
+// personalisation suggestion, grading) for cost tracking and the Admin
+// Dashboard's AI Usage Analytics screen (FR-AI-4).
+model AiUsageLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  schoolId      String   @map("school_id") @db.Uuid
+  school        School   @relation(fields: [schoolId], references: [id])
+  teacherUserId String   @map("teacher_user_id") @db.Uuid
+  teacher       AppUser  @relation(fields: [teacherUserId], references: [id])
+  feature       String
+  model         String
+  status        String   @default("success")
+  durationMs    Int?     @map("duration_ms")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([schoolId, createdAt])
+  @@index([schoolId, teacherUserId])
+  @@map("ai_usage_log")
 }

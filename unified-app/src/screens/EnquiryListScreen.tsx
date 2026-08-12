@@ -10,18 +10,8 @@ import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { Screen } from "../components/Screen";
 import { getStatusColor } from "../theme/statusColors";
+import { usePipelineStages } from "../hooks/usePipelineStages";
 import { api, Enquiry, EnquiryStatus } from "../api/client";
-
-const STATUS_FILTERS: (EnquiryStatus | "all")[] = [
-  "all",
-  "new",
-  "contacted",
-  "visit",
-  "application",
-  "admitted",
-  "enrolled",
-  "lost",
-];
 
 type Props = CompositeScreenProps<
   BottomTabScreenProps<EnrolmentTabParamList, "Enquiries">,
@@ -154,6 +144,11 @@ function AnimatedCard({
 export function EnquiryListScreen({ navigation }: Props) {
   const { accessToken } = useAuth();
   const { colors, mode, cardShadow, pressedOpacity } = useTheme();
+  const { stages } = usePipelineStages();
+  const statusFilters: (EnquiryStatus | "all")[] = ["all", ...stages.map((s) => s.key)];
+  const labelFor = (key: EnquiryStatus | "all") =>
+    key === "all" ? "all" : stages.find((s) => s.key === key)?.label ?? key;
+
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<EnquiryStatus | "all">("all");
@@ -259,7 +254,7 @@ export function EnquiryListScreen({ navigation }: Props) {
       <View style={styles.filterWrapper}>
         <FlatList
           horizontal
-          data={STATUS_FILTERS}
+          data={statusFilters}
           keyExtractor={(s) => s}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.filterRow}
@@ -280,7 +275,7 @@ export function EnquiryListScreen({ navigation }: Props) {
                 accessibilityRole="button"
               >
                 <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>
-                  {item}
+                  {labelFor(item)}
                 </Text>
                 {count > 0 && (
                   <View style={[styles.chipCountBadge, { backgroundColor: active ? colors.accentOn + "30" : colors.surfaceRaised }]}>
@@ -324,19 +319,29 @@ export function EnquiryListScreen({ navigation }: Props) {
         )}
       />
 
-      {/* Floating Action Button (FAB) */}
-      <Animated.View style={[styles.fabContainer, { transform: [{ scale: fabScale }] }]}>
+      {/* Floating Action Buttons */}
+      <View style={styles.fabColumn}>
         <Pressable
-          onPressIn={handleFabPressIn}
-          onPressOut={handleFabPressOut}
-          onPress={() => navigation.navigate("NewEnquiryForm")}
-          style={[styles.fab, { backgroundColor: colors.accent }, cardShadow]}
+          onPress={() => navigation.navigate("BulkUpload")}
+          style={[styles.secondaryFab, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}
           accessibilityRole="button"
-          accessibilityLabel="Add New Enquiry"
+          accessibilityLabel="Bulk upload enquiries"
         >
-          <Ionicons name="add" size={24} color={colors.accentOn} />
+          <Ionicons name="cloud-upload-outline" size={20} color={colors.accent} />
         </Pressable>
-      </Animated.View>
+        <Animated.View style={{ transform: [{ scale: fabScale }] }}>
+          <Pressable
+            onPressIn={handleFabPressIn}
+            onPressOut={handleFabPressOut}
+            onPress={() => navigation.navigate("NewEnquiryForm")}
+            style={[styles.fab, { backgroundColor: colors.accent }, cardShadow]}
+            accessibilityRole="button"
+            accessibilityLabel="Add New Enquiry"
+          >
+            <Ionicons name="add" size={24} color={colors.accentOn} />
+          </Pressable>
+        </Animated.View>
+      </View>
     </Screen>
   );
 }
@@ -412,10 +417,12 @@ const styles = StyleSheet.create({
   emptyState: { alignItems: "center", marginTop: 60, gap: 10 },
   empty: { textAlign: "center" },
   error: { textAlign: "center", marginBottom: 8 },
-  fabContainer: {
+  fabColumn: {
     position: "absolute",
     bottom: 24,
     right: 24,
+    alignItems: "center",
+    gap: 12,
   },
   fab: {
     width: 52,
@@ -424,5 +431,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     elevation: 4,
+  },
+  secondaryFab: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    elevation: 3,
   },
 });

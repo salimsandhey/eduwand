@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import rateLimit from "@fastify/rate-limit";
 import cors from "@fastify/cors";
+import multipart from "@fastify/multipart";
 import { authPlugin } from "./plugins/auth";
 import { scopePlugin } from "./plugins/scope";
 import { healthRoutes } from "./routes/health";
@@ -16,6 +17,12 @@ import { classSectionRoutes } from "./routes/class-sections";
 import { userRoutes } from "./routes/users";
 import { trustRoutes } from "./routes/trusts";
 import { schoolRoutes } from "./routes/schools";
+import { pipelineStageRoutes } from "./routes/pipeline-stages";
+import { documentRoutes } from "./routes/documents";
+import { lessonStudioRoutes } from "./routes/lesson-studio";
+import { assignmentRoutes } from "./routes/assignments";
+import { submissionRoutes } from "./routes/submissions";
+import { aiAnalyticsRoutes } from "./routes/ai-analytics";
 
 const app = Fastify({ logger: true });
 
@@ -23,6 +30,7 @@ const app = Fastify({ logger: true });
 // call the API regardless of port. Lock this down to real origins before production.
 app.register(cors, { origin: true });
 app.register(rateLimit, { global: true, max: 1000, timeWindow: "1 minute" });
+app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB per admission document (FR-EG-6)
 app.register(authPlugin);
 app.register(scopePlugin);
 app.register(healthRoutes, { prefix: "/api/v1" });
@@ -38,6 +46,12 @@ app.register(classSectionRoutes, { prefix: "/api/v1" });
 app.register(userRoutes, { prefix: "/api/v1" });
 app.register(trustRoutes, { prefix: "/api/v1" });
 app.register(schoolRoutes, { prefix: "/api/v1" });
+app.register(pipelineStageRoutes, { prefix: "/api/v1" });
+app.register(documentRoutes, { prefix: "/api/v1" });
+app.register(lessonStudioRoutes, { prefix: "/api/v1" });
+app.register(assignmentRoutes, { prefix: "/api/v1" });
+app.register(submissionRoutes, { prefix: "/api/v1" });
+app.register(aiAnalyticsRoutes, { prefix: "/api/v1" });
 
 const port = Number(process.env.PORT) || 4000;
 
