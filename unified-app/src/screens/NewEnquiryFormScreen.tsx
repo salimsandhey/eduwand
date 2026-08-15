@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Animated } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
@@ -6,9 +6,12 @@ import { RootStackParamList } from "../navigation/types";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { Screen } from "../components/Screen";
-import { api, EnquirySource, PossibleDuplicate } from "../api/client";
+import { DatePicker } from "../components/DatePicker";
+import { ProfilePhotoPicker, PickedPhoto } from "../components/ProfilePhotoPicker";
+import { api, EnquirySource, GuardianRelation, PossibleDuplicate, ClassSection } from "../api/client";
 
 const SOURCES: EnquirySource[] = ["phone", "walk_in", "website", "referral", "event", "social"];
+const GUARDIAN_RELATIONS: GuardianRelation[] = ["mother", "father", "guardian", "other"];
 
 type Props = NativeStackScreenProps<RootStackParamList, "NewEnquiryForm">;
 
@@ -20,16 +23,44 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
   const [contactEmail, setContactEmail] = useState("");
   const [source, setSource] = useState<EnquirySource>("phone");
   const [gradeInterest, setGradeInterest] = useState("");
+  const [studentName, setStudentName] = useState("");
+  const [studentDateOfBirth, setStudentDateOfBirth] = useState("");
+  const [guardianRelation, setGuardianRelation] = useState<GuardianRelation | null>(null);
+  const [photoPick, setPhotoPick] = useState<PickedPhoto>({ type: "none" });
   const [consentCaptured, setConsentCaptured] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [duplicates, setDuplicates] = useState<PossibleDuplicate[]>([]);
+  const [classSections, setClassSections] = useState<ClassSection[]>([]);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    api.listClassSections(accessToken).then(setClassSections).catch(() => {
+      // Non-fatal - falls back to a free-text grade field below.
+    });
+  }, [accessToken]);
+
+  // Grade options are the school's real class names (deduped), not free text,
+  // so what's captured here can be matched against ClassSection at Admission
+  // instead of re-typed. Falls back to a text field if no classes are set up yet.
+  const gradeOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const options: string[] = [];
+    for (const cs of classSections) {
+      if (!seen.has(cs.className)) {
+        seen.add(cs.className);
+        options.push(cs.className);
+      }
+    }
+    return options;
+  }, [classSections]);
 
   // Focus states
   const [nameFocused, setNameFocused] = useState(false);
   const [phoneFocused, setPhoneFocused] = useState(false);
   const [emailFocused, setEmailFocused] = useState(false);
   const [gradeFocused, setGradeFocused] = useState(false);
+  const [studentNameFocused, setStudentNameFocused] = useState(false);
 
   // Button scale animation
   const buttonScale = useRef(new Animated.Value(1)).current;
@@ -63,6 +94,9 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
         contactEmail: contactEmail || undefined,
         source,
         gradeInterest: gradeInterest || undefined,
+        studentName: studentName || undefined,
+        studentDateOfBirth: studentDateOfBirth || undefined,
+        guardianRelation: guardianRelation ?? undefined,
         consentCaptured,
       });
       const possibleDuplicates = (res.meta?.possibleDuplicates as PossibleDuplicate[]) ?? [];
@@ -70,7 +104,19 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
         setDuplicates(possibleDuplicates);
       }
       if (res.data) {
-        navigation.replace("EnquiryDetail", { enquiryId: res.data.id });
+        const enquiryId = res.data.id;
+        // Best-effort - the lead is already saved at this point, so a photo
+        // upload failure shouldn't block the counsellor from moving on.
+        try {
+          if (photoPick.type === "photo") {
+            await api.uploadEnquiryPhoto(accessToken, enquiryId, photoPick);
+          } else if (photoPick.type === "avatar") {
+            await api.setEnquiryAvatar(accessToken, enquiryId, photoPick.avatarKey);
+          }
+        } catch {
+          // Ignored - photo/avatar can still be set later from Enquiry Detail.
+        }
+        navigation.replace("EnquiryDetail", { enquiryId });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save enquiry");
@@ -88,6 +134,34 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
           <Text style={[styles.subtitle, { color: colors.textMuted }]}>
             Enter details to start the lead registration workflow
           </Text>
+        </View>
+
+        {/* Profile Photo Card */}
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Profile photo (optional)</Text>
+          <ProfilePhotoPicker value={photoPick} onChange={setPhotoPick} />
+        </View>
+
+        {/* Student Details Card */}
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Student details</Text>
+
+          <Text style={[styles.label, { color: colors.textSecondary }]}>Student name (optional)</Text>
+          <View style={[styles.inputRow, { backgroundColor: colors.surfaceRaised, borderColor: studentNameFocused ? colors.accent : colors.border }]}>
+            <Ionicons name="happy-outline" size={16} color={studentNameFocused ? colors.accent : colors.textMuted} style={styles.inputIcon} />
+            <TextInput
+              style={[styles.input, { color: colors.textPrimary }]}
+              placeholder="The child's full name"
+              placeholderTextColor={colors.textMuted}
+              value={studentName}
+              onChangeText={setStudentName}
+              onFocus={() => setStudentNameFocused(true)}
+              onBlur={() => setStudentNameFocused(false)}
+            />
+          </View>
+
+          <Text style={[styles.label, { color: colors.textSecondary }]}>Student date of birth (optional)</Text>
+          <DatePicker value={studentDateOfBirth} onChange={setStudentDateOfBirth} placeholder="Select date of birth" />
         </View>
 
         {/* Lead Details Card */}
@@ -138,6 +212,27 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
               onBlur={() => setEmailFocused(false)}
             />
           </View>
+
+          <Text style={[styles.label, { color: colors.textSecondary }]}>Relationship to student (optional)</Text>
+          <View style={styles.chipRow}>
+            {GUARDIAN_RELATIONS.map((relation) => {
+              const active = guardianRelation === relation;
+              return (
+                <Pressable
+                  key={relation}
+                  style={({ pressed }) => [
+                    styles.chip,
+                    { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border },
+                    pressed && { opacity: pressedOpacity },
+                  ]}
+                  onPress={() => setGuardianRelation(active ? null : relation)}
+                  accessibilityRole="button"
+                >
+                  <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{relation}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
 
         {/* Lead Preferences Card */}
@@ -165,19 +260,41 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
             })}
           </View>
 
-          <Text style={[styles.label, { color: colors.textSecondary }]}>Grade / board interest (optional)</Text>
-          <View style={[styles.inputRow, { backgroundColor: colors.surfaceRaised, borderColor: gradeFocused ? colors.accent : colors.border }]}>
-            <Ionicons name="school-outline" size={16} color={gradeFocused ? colors.accent : colors.textMuted} style={styles.inputIcon} />
-            <TextInput
-              style={[styles.input, { color: colors.textPrimary }]}
-              placeholder="e.g. Class 10, CBSE"
-              placeholderTextColor={colors.textMuted}
-              value={gradeInterest}
-              onChangeText={setGradeInterest}
-              onFocus={() => setGradeFocused(true)}
-              onBlur={() => setGradeFocused(false)}
-            />
-          </View>
+          <Text style={[styles.label, { color: colors.textSecondary }]}>Grade of interest (optional)</Text>
+          {gradeOptions.length > 0 ? (
+            <View style={styles.chipRow}>
+              {gradeOptions.map((grade) => {
+                const active = gradeInterest === grade;
+                return (
+                  <Pressable
+                    key={grade}
+                    style={({ pressed }) => [
+                      styles.chip,
+                      { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border },
+                      pressed && { opacity: pressedOpacity },
+                    ]}
+                    onPress={() => setGradeInterest(active ? "" : grade)}
+                    accessibilityRole="button"
+                  >
+                    <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{grade}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : (
+            <View style={[styles.inputRow, { backgroundColor: colors.surfaceRaised, borderColor: gradeFocused ? colors.accent : colors.border }]}>
+              <Ionicons name="school-outline" size={16} color={gradeFocused ? colors.accent : colors.textMuted} style={styles.inputIcon} />
+              <TextInput
+                style={[styles.input, { color: colors.textPrimary }]}
+                placeholder="e.g. Class 10, CBSE"
+                placeholderTextColor={colors.textMuted}
+                value={gradeInterest}
+                onChangeText={setGradeInterest}
+                onFocus={() => setGradeFocused(true)}
+                onBlur={() => setGradeFocused(false)}
+              />
+            </View>
+          )}
         </View>
 
         {/* Consent Section */}

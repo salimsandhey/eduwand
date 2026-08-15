@@ -1,11 +1,17 @@
 import { useCallback, useState } from "react";
 import { View, Text, FlatList, StyleSheet, ActivityIndicator, Pressable } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
+import type { CompositeScreenProps } from "@react-navigation/native";
+import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
+import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
+import { StudentTabParamList, RootStackParamList } from "../navigation/types";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { Screen } from "../components/Screen";
 import { api, StudentAssignmentView, StudentSubmissionStatus } from "../api/client";
+
+type Props = CompositeScreenProps<BottomTabScreenProps<StudentTabParamList, "Home">, NativeStackScreenProps<RootStackParamList>>;
 
 const STATUS_LABEL: Record<StudentSubmissionStatus, string> = {
   not_submitted: "Not submitted",
@@ -19,7 +25,7 @@ function statusColor(status: StudentSubmissionStatus, colors: ReturnType<typeof 
   return colors.danger;
 }
 
-export function StudentHomeScreen() {
+export function StudentHomeScreen({ navigation }: Props) {
   const { user, accessToken, logout } = useAuth();
   const { colors, cardShadow } = useTheme();
   const [assignments, setAssignments] = useState<StudentAssignmentView[]>([]);
@@ -76,45 +82,60 @@ export function StudentHomeScreen() {
               <Text style={[styles.empty, { color: colors.textMuted }]}>No assignments yet</Text>
             </View>
           }
-          renderItem={({ item }) => (
-            <View
-              style={[
-                styles.card,
-                { backgroundColor: colors.surface, borderColor: colors.border, borderLeftColor: colors.accent },
-                cardShadow,
-              ]}
-            >
-              <View style={styles.cardHeader}>
-                <Text style={[styles.cardTitle, { color: colors.textPrimary }]} numberOfLines={1}>
-                  {item.title}
-                </Text>
-                <Text
-                  style={[
-                    styles.statusBadge,
-                    { color: statusColor(item.submissionStatus, colors), backgroundColor: colors.surfaceRaised },
-                  ]}
-                >
-                  {STATUS_LABEL[item.submissionStatus]}
-                </Text>
-              </View>
-              <View style={styles.cardMetaRow}>
-                <Ionicons name="help-circle-outline" size={13} color={colors.textMuted} />
-                <Text style={[styles.cardMeta, { color: colors.textMuted }]}>
-                  {item.questions.length} question{item.questions.length === 1 ? "" : "s"}
-                </Text>
-              </View>
-              {item.grade ? (
-                <View style={styles.gradeRow}>
-                  <Text style={[styles.gradeScore, { color: colors.accent }]}>{item.grade.finalScore ?? "—"}</Text>
-                  {item.grade.finalFeedback ? (
-                    <Text style={[styles.gradeFeedback, { color: colors.textMuted }]} numberOfLines={2}>
-                      {item.grade.finalFeedback}
-                    </Text>
-                  ) : null}
+          renderItem={({ item }) => {
+            const canSubmit = item.submissionStatus === "not_submitted";
+            return (
+              <Pressable
+                disabled={!canSubmit}
+                onPress={() =>
+                  canSubmit &&
+                  navigation.navigate("StudentAssignmentSubmit", {
+                    assignmentId: item.id,
+                    questions: item.questions,
+                    title: item.title,
+                  })
+                }
+                accessibilityRole={canSubmit ? "button" : undefined}
+                style={[
+                  styles.card,
+                  { backgroundColor: colors.surface, borderColor: colors.border, borderLeftColor: colors.accent },
+                  cardShadow,
+                ]}
+              >
+                <View style={styles.cardHeader}>
+                  <Text style={[styles.cardTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+                    {item.title}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.statusBadge,
+                      { color: statusColor(item.submissionStatus, colors), backgroundColor: colors.surfaceRaised },
+                    ]}
+                  >
+                    {STATUS_LABEL[item.submissionStatus]}
+                  </Text>
                 </View>
-              ) : null}
-            </View>
-          )}
+                <View style={styles.cardMetaRow}>
+                  <Ionicons name="help-circle-outline" size={13} color={colors.textMuted} />
+                  <Text style={[styles.cardMeta, { color: colors.textMuted }]}>
+                    {item.questions.length} question{item.questions.length === 1 ? "" : "s"}
+                  </Text>
+                </View>
+                {item.grade ? (
+                  <View style={styles.gradeRow}>
+                    <Text style={[styles.gradeScore, { color: colors.accent }]}>{item.grade.finalScore ?? "—"}</Text>
+                    {item.grade.finalFeedback ? (
+                      <Text style={[styles.gradeFeedback, { color: colors.textMuted }]} numberOfLines={2}>
+                        {item.grade.finalFeedback}
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : canSubmit ? (
+                  <Text style={[styles.tapToSubmit, { color: colors.accent }]}>Tap to submit</Text>
+                ) : null}
+              </Pressable>
+            );
+          }}
         />
       )}
     </Screen>
@@ -139,4 +160,5 @@ const styles = StyleSheet.create({
   gradeRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10 },
   gradeScore: { fontSize: 18, fontWeight: "800" },
   gradeFeedback: { fontSize: 12, flex: 1 },
+  tapToSubmit: { fontSize: 12, fontWeight: "700", marginTop: 10 },
 });

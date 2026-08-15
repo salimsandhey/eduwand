@@ -11,6 +11,9 @@ interface CreateSchoolBody {
   board: string;
   address?: string;
   timezone?: string;
+  principalName?: string;
+  principalPhone?: string;
+  expectedStudentStrength?: number;
 }
 
 interface UpdateSchoolBody {
@@ -18,7 +21,35 @@ interface UpdateSchoolBody {
   board?: string;
   address?: string;
   timezone?: string;
+  principalName?: string;
+  principalPhone?: string;
+  expectedStudentStrength?: number;
   status?: string;
+}
+
+// A school is only really "ready" once it has a current academic year with
+// at least one class section, and at least one admin/leadership account -
+// checked here rather than left silently unenforced (a school could sit at
+// status:"active" with nothing actually configured under it).
+async function computeReadiness(schoolId: string) {
+  const [currentYear, staffCount] = await Promise.all([
+    prisma.academicYear.findFirst({
+      where: { schoolId, isCurrent: true },
+      include: { _count: { select: { classSections: true } } },
+    }),
+    prisma.appUser.count({ where: { schoolId, role: { in: ["admin", "leadership"] }, status: { not: "disabled" } } }),
+  ]);
+
+  const hasCurrentAcademicYear = !!currentYear;
+  const hasClassSections = (currentYear?._count.classSections ?? 0) > 0;
+  const hasAdmin = staffCount > 0;
+
+  const missing: string[] = [];
+  if (!hasCurrentAcademicYear) missing.push("no current academic year set");
+  if (!hasClassSections) missing.push("no class sections in the current academic year");
+  if (!hasAdmin) missing.push("no admin or leadership user invited");
+
+  return { hasCurrentAcademicYear, hasClassSections, hasAdmin, ready: missing.length === 0, missing };
 }
 
 const SCHOOL_STATUSES = ["onboarding", "active", "suspended"];
@@ -70,13 +101,28 @@ export async function schoolRoutes(app: FastifyInstance) {
         return reply.code(404).send({ data: null, error: { code: "not_found", message: "Trust not found" } });
       }
 
+      // Duplicate check scoped to the trust, not global - two different
+      // trusts can each legitimately have a "DPS Main Branch".
+      const duplicate = await prisma.school.findFirst({
+        where: { trustId: body.trustId, name: { equals: body.name.trim(), mode: "insensitive" } },
+      });
+      if (duplicate) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: `A school named "${duplicate.name}" already exists in this trust` },
+        });
+      }
+
       const school = await prisma.school.create({
         data: {
           trustId: body.trustId,
-          name: body.name,
+          name: body.name.trim(),
           board: body.board,
           address: body.address,
           timezone: body.timezone ?? "Asia/Kolkata",
+          principalName: body.principalName,
+          principalPhone: body.principalPhone,
+          expectedStudentStrength: body.expectedStudentStrength,
           status: "onboarding",
         },
       });
@@ -148,7 +194,8 @@ export async function schoolRoutes(app: FastifyInstance) {
         return reply.code(403).send({ data: null, error: { code: "forbidden", message: "Not authorized to view this school" } });
       }
 
-      return { data: school, meta: {} };
+      const readiness = await computeReadiness(school.id);
+      return { data: { ...school, readiness }, meta: {} };
     }
   );
 
@@ -174,6 +221,24 @@ export async function schoolRoutes(app: FastifyInstance) {
         return reply.code(403).send({ data: null, error: { code: "forbidden", message: "School not in your trust" } });
       }
 
+      // A school can't be marked active until it's actually usable - has a
+      // current academic year with class sections, and at least one
+      // admin/leadership account. Previously this was a free-text status
+      // dropdown with no gate, so a school could sit at "active" while
+      // silently unconfigured.
+      if (body.status === "active" && existing.status !== "active") {
+        const readiness = await computeReadiness(existing.id);
+        if (!readiness.ready) {
+          return reply.code(400).send({
+            data: null,
+            error: {
+              code: "not_ready",
+              message: `This school isn't ready to go active yet: ${readiness.missing.join("; ")}`,
+            },
+          });
+        }
+      }
+
       const school = await prisma.school.update({
         where: { id: request.params.id },
         data: {
@@ -181,6 +246,9 @@ export async function schoolRoutes(app: FastifyInstance) {
           board: body.board ?? undefined,
           address: body.address ?? undefined,
           timezone: body.timezone ?? undefined,
+          principalName: body.principalName ?? undefined,
+          principalPhone: body.principalPhone ?? undefined,
+          expectedStudentStrength: body.expectedStudentStrength ?? undefined,
           status: body.status ?? undefined,
         },
       });
@@ -200,7 +268,8 @@ export async function schoolRoutes(app: FastifyInstance) {
         });
       }
 
-      return { data: school, meta: {} };
+      const readiness = await computeReadiness(school.id);
+      return { data: { ...school, readiness }, meta: {} };
     }
   );
 

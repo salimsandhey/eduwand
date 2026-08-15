@@ -7,7 +7,7 @@ import { RootStackParamList } from "../navigation/types";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { Screen } from "../components/Screen";
-import { api, AssignmentDetail } from "../api/client";
+import { api, AssignmentDetail, PersonalisationEligibility } from "../api/client";
 
 type Props = NativeStackScreenProps<RootStackParamList, "PersonalisationReview">;
 
@@ -23,6 +23,7 @@ export function PersonalisationReviewScreen({ route, navigation }: Props) {
   const { colors, cardShadow, pressedOpacity } = useTheme();
 
   const [assignment, setAssignment] = useState<AssignmentDetail | null>(null);
+  const [eligibility, setEligibility] = useState<PersonalisationEligibility[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -39,7 +40,12 @@ export function PersonalisationReviewScreen({ route, navigation }: Props) {
     setIsLoading(true);
     setError(null);
     try {
-      setAssignment(await api.getAssignment(accessToken, assignmentId));
+      const [a, elig] = await Promise.all([
+        api.getAssignment(accessToken, assignmentId),
+        api.getPersonalisationEligibility(accessToken, assignmentId),
+      ]);
+      setAssignment(a);
+      setEligibility(elig);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load assignment");
     } finally {
@@ -211,6 +217,22 @@ export function PersonalisationReviewScreen({ route, navigation }: Props) {
             </View>
           );
         })}
+
+        {(() => {
+          const reviewedIds = new Set(assignment.personalisationSuggestions.map((s) => s.studentStubId));
+          const ineligible = eligibility.filter((e) => !e.eligible && !reviewedIds.has(e.studentStubId));
+          if (ineligible.length === 0) return null;
+          return (
+            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+              <Text style={[styles.studentName, { color: colors.textPrimary, marginBottom: 6 }]}>Personalisation unavailable</Text>
+              {ineligible.map((e) => (
+                <Text key={e.studentStubId} style={[styles.reasoning, { color: colors.textMuted }]}>
+                  {e.fullName}: needs 2 prior graded assignments on this topic first
+                </Text>
+              ))}
+            </View>
+          );
+        })()}
 
         <Pressable
           style={({ pressed }) => [styles.doneButton, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}

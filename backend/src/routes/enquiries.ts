@@ -1,10 +1,16 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
-import { findPossibleDuplicates, buildActivityFeed } from "../lib/enquiries";
+import { findPossibleDuplicates, buildActivityFeed, admissionCompletionPercent } from "../lib/enquiries";
 import { requireRoles } from "../lib/rbac";
 import { storage } from "../lib/storage";
 
 const VALID_SOURCES = ["phone", "walk_in", "website", "referral", "event", "social"];
+const VALID_NOTE_TYPES = ["lead_note", "admission_note", "system_note"];
+const VALID_GUARDIAN_RELATIONS = ["mother", "father", "guardian", "other"];
+// Mirrors the unified-app EnquiryDetailScreen's Admission-tab unlock gate -
+// see the ADMISSION_STAGE_KEYS comment in lib/enquiries.ts for the caveat
+// about custom per-school stage keys.
+const ADMISSION_UNLOCKED_STATUSES = new Set(["application", "admitted", "enrolled"]);
 
 // Pipeline stages are configurable per school (FR-EG-3, backend/src/routes/pipeline-stages.ts)
 // rather than a fixed enum, so status validation looks up the school's own stage keys.
@@ -21,6 +27,9 @@ interface CreateEnquiryBody {
   gradeInterest?: string;
   ownerUserId?: string;
   consentCaptured?: boolean;
+  studentName?: string;
+  studentDateOfBirth?: string;
+  guardianRelation?: string;
 }
 
 interface UpdateEnquiryBody {
@@ -33,10 +42,23 @@ interface UpdateEnquiryBody {
   consentCaptured?: boolean;
   status?: string;
   lostReason?: string;
+  studentName?: string;
+  studentDateOfBirth?: string;
+  guardianRelation?: string;
 }
 
 interface CreateNoteBody {
   body: string;
+  type?: string;
+}
+
+interface AdmissionDraftBody {
+  fullName?: string;
+  dateOfBirth?: string;
+  classSectionId?: string;
+  guardianName?: string;
+  guardianContact?: string;
+  admissionDate?: string;
 }
 
 interface ListQuery {
@@ -53,7 +75,7 @@ interface MergeBody {
 
 interface ConfirmAdmissionBody {
   fullName?: string;
-  dateOfBirth: string;
+  dateOfBirth?: string;
   classSectionId: string;
   guardianName?: string;
   guardianContact?: string;
@@ -132,6 +154,13 @@ export async function enquiryRoutes(app: FastifyInstance) {
         });
       }
 
+      if (body.guardianRelation && !VALID_GUARDIAN_RELATIONS.includes(body.guardianRelation)) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: `guardianRelation must be one of ${VALID_GUARDIAN_RELATIONS.join(", ")}` },
+        });
+      }
+
       const enquiry = await prisma.enquiry.create({
         data: {
           schoolId: request.schoolId,
@@ -142,6 +171,9 @@ export async function enquiryRoutes(app: FastifyInstance) {
           gradeInterest: body.gradeInterest,
           ownerUserId: body.ownerUserId ?? request.user.sub,
           consentCaptured: body.consentCaptured ?? false,
+          studentName: body.studentName,
+          studentDateOfBirth: body.studentDateOfBirth ? new Date(body.studentDateOfBirth) : undefined,
+          guardianRelation: body.guardianRelation,
           status: "new",
         },
       });
@@ -231,6 +263,7 @@ export async function enquiryRoutes(app: FastifyInstance) {
           stageHistory: { orderBy: { changedAt: "asc" }, include: { changedBy: { select: { fullName: true } } } },
           notes: { orderBy: { createdAt: "desc" }, include: { author: { select: { fullName: true } } } },
           followUpTasks: { orderBy: { createdAt: "asc" }, include: { assignedTo: { select: { fullName: true } } } },
+          studentStub: { select: { id: true } },
         },
       });
 
@@ -247,7 +280,33 @@ export async function enquiryRoutes(app: FastifyInstance) {
 
       const activity = buildActivityFeed(enquiry);
 
-      return { data: { ...enquiry, activity }, meta: { possibleDuplicates } };
+      const currentStage = await prisma.pipelineStage.findFirst({
+        where: { schoolId: request.schoolId, key: enquiry.status },
+        select: { key: true, label: true, order: true, isTerminal: true, isConverted: true },
+      });
+
+      const pipeline = {
+        status: enquiry.status,
+        stage: currentStage ?? null,
+      };
+
+      const followUpSummary = {
+        total: enquiry.followUpTasks.length,
+        pending: enquiry.followUpTasks.filter((t) => t.status === "pending").length,
+        sent: enquiry.followUpTasks.filter((t) => t.status === "sent").length,
+        overdue: enquiry.followUpTasks.filter((t) => t.status === "pending" && t.dueAt < new Date()).length,
+      };
+
+      const admissionSummary = {
+        unlocked: ADMISSION_UNLOCKED_STATUSES.has(enquiry.status),
+        confirmed: enquiry.studentStub !== null,
+        studentStubId: enquiry.studentStub?.id ?? null,
+        startedAt: enquiry.admissionStartedAt,
+        completedAt: enquiry.admissionCompletedAt,
+        completionPercent: admissionCompletionPercent(enquiry.admissionDraft as Record<string, unknown> | null),
+      };
+
+      return { data: { ...enquiry, activity, pipeline, followUpSummary, admissionSummary }, meta: { possibleDuplicates } };
     }
   );
 
@@ -285,6 +344,13 @@ export async function enquiryRoutes(app: FastifyInstance) {
         });
       }
 
+      if (body.guardianRelation && !VALID_GUARDIAN_RELATIONS.includes(body.guardianRelation)) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: `guardianRelation must be one of ${VALID_GUARDIAN_RELATIONS.join(", ")}` },
+        });
+      }
+
       const statusChanged = body.status !== undefined && body.status !== existing.status;
 
       const updated = await prisma.enquiry.update({
@@ -299,6 +365,9 @@ export async function enquiryRoutes(app: FastifyInstance) {
           consentCaptured: body.consentCaptured,
           status: body.status,
           lostReason: body.lostReason,
+          studentName: body.studentName,
+          studentDateOfBirth: body.studentDateOfBirth ? new Date(body.studentDateOfBirth) : undefined,
+          guardianRelation: body.guardianRelation,
         },
       });
 
@@ -322,11 +391,19 @@ export async function enquiryRoutes(app: FastifyInstance) {
     { onRequest: scoped(app) },
     async (request, reply) => {
       const body = request.body?.body?.trim();
+      const type = request.body?.type ?? "lead_note";
 
       if (!body) {
         return reply.code(400).send({
           data: null,
           error: { code: "validation_error", message: "body is required" },
+        });
+      }
+
+      if (!VALID_NOTE_TYPES.includes(type)) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: `type must be one of ${VALID_NOTE_TYPES.join(", ")}` },
         });
       }
 
@@ -346,6 +423,7 @@ export async function enquiryRoutes(app: FastifyInstance) {
           enquiryId: enquiry.id,
           authorUserId: request.user.sub,
           body,
+          type,
         },
         include: { author: { select: { fullName: true } } },
       });
@@ -458,23 +536,159 @@ export async function enquiryRoutes(app: FastifyInstance) {
     }
   );
 
+  // Admission-in-progress state, read before the final confirm-admission call
+  // that creates the StudentStub. completionPercent scores the draft against
+  // the fields the Admission tab's form collects (lib/enquiries.ts).
+  app.get<{ Params: { id: string } }>(
+    "/enquiries/:id/admission",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const enquiry = await prisma.enquiry.findFirst({
+        where: { id: request.params.id, schoolId: request.schoolId },
+        include: { studentStub: true },
+      });
+
+      if (!enquiry) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Enquiry not found" } });
+      }
+
+      const draft = enquiry.admissionDraft as Record<string, unknown> | null;
+
+      return {
+        data: {
+          unlocked: ADMISSION_UNLOCKED_STATUSES.has(enquiry.status),
+          confirmed: enquiry.studentStub !== null,
+          draft,
+          studentStub: enquiry.studentStub,
+          startedAt: enquiry.admissionStartedAt,
+          completedAt: enquiry.admissionCompletedAt,
+          completionPercent: admissionCompletionPercent(draft),
+        },
+        meta: {},
+      };
+    }
+  );
+
+  // Merges partial admission-form fields into the draft as the counsellor fills
+  // them in, ahead of the final POST confirm-admission. Rejects once admission
+  // is already confirmed - the StudentStub, not the draft, is authoritative past
+  // that point.
+  app.patch<{ Params: { id: string }; Body: AdmissionDraftBody }>(
+    "/enquiries/:id/admission-draft",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const enquiry = await prisma.enquiry.findFirst({
+        where: { id: request.params.id, schoolId: request.schoolId },
+        include: { studentStub: { select: { id: true } } },
+      });
+
+      if (!enquiry) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Enquiry not found" } });
+      }
+
+      if (enquiry.studentStub) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "Admission is already confirmed for this enquiry" },
+        });
+      }
+
+      const body = request.body ?? ({} as AdmissionDraftBody);
+      const existingDraft = (enquiry.admissionDraft as Record<string, unknown> | null) ?? {};
+      const mergedDraft = { ...existingDraft, ...body };
+
+      const updated = await prisma.enquiry.update({
+        where: { id: enquiry.id },
+        data: {
+          admissionDraft: mergedDraft,
+          admissionStartedAt: enquiry.admissionStartedAt ?? new Date(),
+        },
+      });
+
+      return {
+        data: {
+          draft: updated.admissionDraft,
+          startedAt: updated.admissionStartedAt,
+          completionPercent: admissionCompletionPercent(updated.admissionDraft as Record<string, unknown> | null),
+        },
+        meta: {},
+      };
+    }
+  );
+
+  // Hard delete (distinct from /erase, which anonymizes PII but keeps the
+  // record for analytics/history). Restricted to admin/leadership since it's
+  // destructive and, unlike erase, removes the row itself. Blocked once a
+  // StudentStub exists - a confirmed admission is a real student record, not
+  // a lead to discard - and blocked if other enquiries were merged into this
+  // one (their duplicateOfEnquiryId FK would otherwise orphan).
+  app.delete<{ Params: { id: string } }>(
+    "/enquiries/:id",
+    { onRequest: [...scoped(app), requireRoles("admin", "leadership")] },
+    async (request, reply) => {
+      const enquiry = await prisma.enquiry.findFirst({
+        where: { id: request.params.id, schoolId: request.schoolId },
+        include: { studentStub: { select: { id: true } }, documents: true, duplicates: { select: { id: true } } },
+      });
+
+      if (!enquiry) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Enquiry not found" } });
+      }
+
+      if (enquiry.studentStub) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "Cannot delete an enquiry that has already been admitted" },
+        });
+      }
+
+      if (enquiry.duplicates.length > 0) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "Cannot delete a lead that other enquiries were merged into" },
+        });
+      }
+
+      for (const doc of enquiry.documents) {
+        await storage.remove(doc.fileLocation);
+      }
+      if (enquiry.photoLocation) {
+        await storage.remove(enquiry.photoLocation);
+      }
+
+      await prisma.$transaction([
+        prisma.document.deleteMany({ where: { enquiryId: enquiry.id } }),
+        prisma.enquiryNote.deleteMany({ where: { enquiryId: enquiry.id } }),
+        prisma.followUpTask.deleteMany({ where: { enquiryId: enquiry.id } }),
+        prisma.enquiryStageHistory.deleteMany({ where: { enquiryId: enquiry.id } }),
+        prisma.enquiry.delete({ where: { id: enquiry.id } }),
+      ]);
+
+      return { data: { id: enquiry.id }, meta: {} };
+    }
+  );
+
   app.post<{ Params: { id: string }; Body: ConfirmAdmissionBody }>(
     "/enquiries/:id/confirm-admission",
     { onRequest: scoped(app) },
     async (request, reply) => {
       const body = request.body ?? ({} as ConfirmAdmissionBody);
 
-      if (!body.dateOfBirth || !body.classSectionId || !body.admissionDate) {
+      const enquiry = await prisma.enquiry.findFirst({
+        where: { id: request.params.id, schoolId: request.schoolId },
+        include: { studentStub: true },
+      });
+
+      // dateOfBirth can come from the intake-time studentDateOfBirth field
+      // instead of being re-typed at confirm time, if it was captured there.
+      const dateOfBirth = body.dateOfBirth ?? (enquiry?.studentDateOfBirth ? enquiry.studentDateOfBirth.toISOString().slice(0, 10) : undefined);
+
+      if (!dateOfBirth || !body.classSectionId || !body.admissionDate) {
         return reply.code(400).send({
           data: null,
           error: { code: "validation_error", message: "dateOfBirth, classSectionId, and admissionDate are required" },
         });
       }
-
-      const enquiry = await prisma.enquiry.findFirst({
-        where: { id: request.params.id, schoolId: request.schoolId },
-        include: { studentStub: true },
-      });
 
       if (!enquiry) {
         return reply.code(404).send({ data: null, error: { code: "not_found", message: "Enquiry not found" } });
@@ -507,15 +721,22 @@ export async function enquiryRoutes(app: FastifyInstance) {
           data: {
             schoolId: request.schoolId,
             sourceEnquiryId: enquiry.id,
-            fullName: body.fullName ?? enquiry.contactName,
-            dateOfBirth: new Date(body.dateOfBirth),
+            fullName: body.fullName ?? enquiry.studentName ?? enquiry.contactName,
+            dateOfBirth: new Date(dateOfBirth),
             classSectionId: classSection.id,
             guardianName: body.guardianName ?? enquiry.contactName,
             guardianContact: body.guardianContact ?? enquiry.contactPhone,
             admissionDate: new Date(body.admissionDate),
           },
         }),
-        prisma.enquiry.update({ where: { id: enquiry.id }, data: { status: "admitted" } }),
+        prisma.enquiry.update({
+          where: { id: enquiry.id },
+          data: {
+            status: "admitted",
+            admissionStartedAt: enquiry.admissionStartedAt ?? new Date(),
+            admissionCompletedAt: new Date(),
+          },
+        }),
         prisma.enquiryStageHistory.create({
           data: {
             enquiryId: enquiry.id,

@@ -10,6 +10,15 @@ import { PageHeader } from "../components/PageHeader";
 const BOARDS = ["CBSE", "ICSE", "State"];
 const STATUSES = ["onboarding", "active", "suspended"];
 
+function ChecklistRow({ done, label }: { done: boolean; label: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
+      <span style={{ color: done ? "var(--status-good)" : "var(--text-muted)", fontWeight: 700 }}>{done ? "✓" : "○"}</span>
+      <span style={{ color: done ? "var(--text-primary)" : "var(--text-muted)" }}>{label}</span>
+    </div>
+  );
+}
+
 export function SchoolDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -37,6 +46,9 @@ export function SchoolDetailPage() {
   const [name, setName] = useState("");
   const [board, setBoard] = useState("CBSE");
   const [address, setAddress] = useState("");
+  const [principalName, setPrincipalName] = useState("");
+  const [principalPhone, setPrincipalPhone] = useState("");
+  const [expectedStudentStrength, setExpectedStudentStrength] = useState("");
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -60,6 +72,9 @@ export function SchoolDetailPage() {
       setName(s.name);
       setBoard(s.board);
       setAddress(s.address ?? "");
+      setPrincipalName(s.principalName ?? "");
+      setPrincipalPhone(s.principalPhone ?? "");
+      setExpectedStudentStrength(s.expectedStudentStrength != null ? String(s.expectedStudentStrength) : "");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load school");
     }
@@ -95,6 +110,7 @@ export function SchoolDetailPage() {
       setYearEnd("");
       setShowAddYear(false);
       loadClasses();
+      load();
     } catch (err) {
       setClassesError(err instanceof Error ? err.message : "Failed to add academic year");
     } finally {
@@ -108,6 +124,7 @@ export function SchoolDetailPage() {
     try {
       await api.setCurrentAcademicYear(accessToken, id, academicYearId);
       loadClasses();
+      load();
     } catch (err) {
       setClassesError(err instanceof Error ? err.message : "Failed to update academic year");
     }
@@ -127,6 +144,7 @@ export function SchoolDetailPage() {
       setSectionName("");
       setAddingSectionForYear(null);
       loadClasses();
+      load();
     } catch (err) {
       setClassesError(err instanceof Error ? err.message : "Failed to add class section");
     } finally {
@@ -146,7 +164,14 @@ export function SchoolDetailPage() {
     setSaveMessage(null);
     setIsSaving(true);
     try {
-      const updated = await api.updateSchool(accessToken, id, { name, board, address: address || undefined });
+      const updated = await api.updateSchool(accessToken, id, {
+        name,
+        board,
+        address: address || undefined,
+        principalName: principalName || undefined,
+        principalPhone: principalPhone || undefined,
+        expectedStudentStrength: expectedStudentStrength ? Number(expectedStudentStrength) : undefined,
+      });
       setSchool(updated);
       setSaveMessage("Saved");
     } catch (err) {
@@ -172,6 +197,7 @@ export function SchoolDetailPage() {
       setInviteResult({ email: inviteEmail.trim(), tempPassword: tempPassword ?? "(not returned)" });
       setInviteName("");
       setInviteEmail("");
+      load();
       setShowInvite(false);
     } catch (err) {
       setInviteError(err instanceof ApiError ? err.message : "Failed to invite admin");
@@ -248,6 +274,19 @@ export function SchoolDetailPage() {
         }
       />
 
+      {!school.readiness.ready ? (
+        <Card title="Setup checklist">
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <ChecklistRow done={school.readiness.hasCurrentAcademicYear} label="Current academic year set" />
+            <ChecklistRow done={school.readiness.hasClassSections} label="At least one class section added" />
+            <ChecklistRow done={school.readiness.hasAdmin} label="Admin or leadership user invited" />
+          </div>
+          <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 10, marginBottom: 0 }}>
+            This school can't be marked active until everything above is checked off.
+          </p>
+        </Card>
+      ) : null}
+
       <Card title="Details">
         <div style={styles.row}>
           <div style={styles.field}>
@@ -265,9 +304,40 @@ export function SchoolDetailPage() {
             </select>
           </div>
         </div>
-        <div style={{ ...styles.field, marginTop: 12 }}>
-          <label style={styles.label}>Address</label>
-          <input style={styles.input} value={address} onChange={(e) => setAddress(e.target.value)} disabled={!canEdit} />
+        <div style={{ ...styles.row, marginTop: 12 }}>
+          <div style={styles.field}>
+            <label style={styles.label}>Address</label>
+            <input style={styles.input} value={address} onChange={(e) => setAddress(e.target.value)} disabled={!canEdit} />
+          </div>
+          <div style={styles.field}>
+            <label style={styles.label}>Principal name</label>
+            <input
+              style={styles.input}
+              value={principalName}
+              onChange={(e) => setPrincipalName(e.target.value)}
+              disabled={!canEdit}
+            />
+          </div>
+          <div style={styles.field}>
+            <label style={styles.label}>Principal phone</label>
+            <input
+              style={styles.input}
+              value={principalPhone}
+              onChange={(e) => setPrincipalPhone(e.target.value)}
+              disabled={!canEdit}
+            />
+          </div>
+          <div style={{ ...styles.field, maxWidth: 160 }}>
+            <label style={styles.label}>Expected students</label>
+            <input
+              style={styles.input}
+              type="number"
+              min={0}
+              value={expectedStudentStrength}
+              onChange={(e) => setExpectedStudentStrength(e.target.value)}
+              disabled={!canEdit}
+            />
+          </div>
         </div>
 
         {canEdit ? (
@@ -276,11 +346,20 @@ export function SchoolDetailPage() {
               <button style={styles.button} onClick={saveDetails} disabled={isSaving || !name}>
                 Save changes
               </button>
-              {STATUSES.filter((s) => s !== school.status).map((s) => (
-                <button key={s} style={styles.secondaryButton} onClick={() => setStatus(s)} disabled={isSaving}>
-                  Mark {s}
-                </button>
-              ))}
+              {STATUSES.filter((s) => s !== school.status).map((s) => {
+                const blocked = s === "active" && !school.readiness.ready;
+                return (
+                  <button
+                    key={s}
+                    style={styles.secondaryButton}
+                    onClick={() => setStatus(s)}
+                    disabled={isSaving || blocked}
+                    title={blocked ? `Not ready: ${school.readiness.missing.join("; ")}` : undefined}
+                  >
+                    Mark {s}
+                  </button>
+                );
+              })}
               {canDelete ? (
                 <button style={styles.dangerButton} onClick={deleteSchool} disabled={isDeleting}>
                   {isDeleting ? "Deleting…" : "Delete school"}

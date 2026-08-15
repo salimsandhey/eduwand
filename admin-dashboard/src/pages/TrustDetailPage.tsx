@@ -19,7 +19,14 @@ export function TrustDetailPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const [name, setName] = useState("");
+  const [legalName, setLegalName] = useState("");
+  const [trustType, setTrustType] = useState("");
+  const [contactPersonName, setContactPersonName] = useState("");
+  const [contactPersonPhone, setContactPersonPhone] = useState("");
   const [contactEmail, setContactEmail] = useState("");
+  const [registeredAddress, setRegisteredAddress] = useState("");
+  const [gstNumber, setGstNumber] = useState("");
+  const [expectedSchoolCount, setExpectedSchoolCount] = useState("");
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -29,6 +36,11 @@ export function TrustDetailPage() {
   const [showAddSchool, setShowAddSchool] = useState(false);
   const [schoolName, setSchoolName] = useState("");
   const [schoolBoard, setSchoolBoard] = useState(BOARDS[0]);
+  const [schoolAddress, setSchoolAddress] = useState("");
+  const [schoolTimezone, setSchoolTimezone] = useState("Asia/Kolkata");
+  const [principalName, setPrincipalName] = useState("");
+  const [principalPhone, setPrincipalPhone] = useState("");
+  const [expectedStudentStrength, setExpectedStudentStrength] = useState("");
   const [isCreatingSchool, setIsCreatingSchool] = useState(false);
   const [schoolError, setSchoolError] = useState<string | null>(null);
   const [createdSchool, setCreatedSchool] = useState<School | null>(null);
@@ -40,7 +52,14 @@ export function TrustDetailPage() {
       const t = await api.getTrust(accessToken, id);
       setTrust(t);
       setName(t.name);
+      setLegalName(t.legalName ?? "");
+      setTrustType(t.trustType ?? "");
+      setContactPersonName(t.contactPersonName ?? "");
+      setContactPersonPhone(t.contactPersonPhone ?? "");
       setContactEmail(t.contactEmail ?? "");
+      setRegisteredAddress(t.registeredAddress ?? "");
+      setGstNumber(t.gstNumber ?? "");
+      setExpectedSchoolCount(t.expectedSchoolCount != null ? String(t.expectedSchoolCount) : "");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load trust");
     }
@@ -56,8 +75,18 @@ export function TrustDetailPage() {
     setSaveMessage(null);
     setIsSaving(true);
     try {
-      const updated = await api.updateTrust(accessToken, id, { name, contactEmail: contactEmail || undefined });
-      setTrust((prev) => (prev ? { ...prev, name: updated.name } : prev));
+      const updated = await api.updateTrust(accessToken, id, {
+        name,
+        legalName: legalName || undefined,
+        trustType: trustType || undefined,
+        contactPersonName: contactPersonName || undefined,
+        contactPersonPhone: contactPersonPhone || undefined,
+        contactEmail: contactEmail || undefined,
+        registeredAddress: registeredAddress || undefined,
+        gstNumber: gstNumber || undefined,
+        expectedSchoolCount: expectedSchoolCount ? Number(expectedSchoolCount) : undefined,
+      });
+      setTrust((prev) => (prev ? { ...prev, ...updated } : prev));
       setSaveMessage("Saved");
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Failed to save");
@@ -72,9 +101,22 @@ export function TrustDetailPage() {
     setSchoolError(null);
     try {
       // trustId is always this page's trust - never a picker, per the new flow.
-      const school = await api.createSchool(accessToken, { name: schoolName.trim(), board: schoolBoard, trustId: id });
+      const school = await api.createSchool(accessToken, {
+        name: schoolName.trim(),
+        board: schoolBoard,
+        trustId: id,
+        address: schoolAddress.trim() || undefined,
+        timezone: schoolTimezone || undefined,
+        principalName: principalName.trim() || undefined,
+        principalPhone: principalPhone.trim() || undefined,
+        expectedStudentStrength: expectedStudentStrength ? Number(expectedStudentStrength) : undefined,
+      });
       setCreatedSchool(school);
       setSchoolName("");
+      setSchoolAddress("");
+      setPrincipalName("");
+      setPrincipalPhone("");
+      setExpectedStudentStrength("");
       setShowAddSchool(false);
       load();
     } catch (err) {
@@ -152,8 +194,44 @@ export function TrustDetailPage() {
       <Card title="Details">
         <div style={styles.row}>
           <div style={styles.field}>
-            <label style={styles.label}>Name</label>
+            <label style={styles.label}>Display name</label>
             <input style={styles.input} value={name} onChange={(e) => setName(e.target.value)} disabled={!canEdit} />
+          </div>
+          <div style={styles.field}>
+            <label style={styles.label}>Legal / registered name</label>
+            <input style={styles.input} value={legalName} onChange={(e) => setLegalName(e.target.value)} disabled={!canEdit} />
+          </div>
+          <div style={styles.field}>
+            <label style={styles.label}>Trust type</label>
+            <select style={styles.input} value={trustType} onChange={(e) => setTrustType(e.target.value)} disabled={!canEdit}>
+              <option value="">Not set</option>
+              <option value="society">Society</option>
+              <option value="trust">Trust</option>
+              <option value="section_8_company">Section 8 company</option>
+              <option value="private_limited">Private limited</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+        </div>
+        <div style={{ ...styles.row, marginTop: 16 }}>
+          <div style={styles.field}>
+            <label style={styles.label}>Contact person</label>
+            <input
+              style={styles.input}
+              value={contactPersonName}
+              onChange={(e) => setContactPersonName(e.target.value)}
+              disabled={!canEdit}
+              placeholder="Name"
+            />
+          </div>
+          <div style={styles.field}>
+            <label style={styles.label}>Contact person phone</label>
+            <input
+              style={styles.input}
+              value={contactPersonPhone}
+              onChange={(e) => setContactPersonPhone(e.target.value)}
+              disabled={!canEdit}
+            />
           </div>
           <div style={styles.field}>
             <label style={styles.label}>Contact email</label>
@@ -161,6 +239,32 @@ export function TrustDetailPage() {
               style={styles.input}
               value={contactEmail}
               onChange={(e) => setContactEmail(e.target.value)}
+              disabled={!canEdit}
+            />
+          </div>
+        </div>
+        <div style={{ ...styles.row, marginTop: 16 }}>
+          <div style={styles.field}>
+            <label style={styles.label}>Registered address</label>
+            <input
+              style={styles.input}
+              value={registeredAddress}
+              onChange={(e) => setRegisteredAddress(e.target.value)}
+              disabled={!canEdit}
+            />
+          </div>
+          <div style={styles.field}>
+            <label style={styles.label}>GST number</label>
+            <input style={styles.input} value={gstNumber} onChange={(e) => setGstNumber(e.target.value)} disabled={!canEdit} />
+          </div>
+          <div style={{ ...styles.field, maxWidth: 160 }}>
+            <label style={styles.label}>Expected schools</label>
+            <input
+              style={styles.input}
+              type="number"
+              min={0}
+              value={expectedSchoolCount}
+              onChange={(e) => setExpectedSchoolCount(e.target.value)}
               disabled={!canEdit}
             />
           </div>
@@ -207,28 +311,66 @@ export function TrustDetailPage() {
                 + Add school
               </button>
             ) : (
-              <div style={styles.row}>
-                <input
-                  style={styles.input}
-                  placeholder="School name"
-                  value={schoolName}
-                  onChange={(e) => setSchoolName(e.target.value)}
-                  autoFocus
-                />
-                <select style={styles.input} value={schoolBoard} onChange={(e) => setSchoolBoard(e.target.value)}>
-                  {BOARDS.map((b) => (
-                    <option key={b} value={b}>
-                      {b}
-                    </option>
-                  ))}
-                </select>
-                <button style={styles.button} onClick={createSchool} disabled={isCreatingSchool || !schoolName.trim()}>
-                  {isCreatingSchool ? "Adding…" : "Add school"}
-                </button>
-                <button style={styles.secondaryButton} onClick={() => setShowAddSchool(false)}>
-                  Cancel
-                </button>
-              </div>
+              <>
+                <div style={styles.row}>
+                  <input
+                    style={styles.input}
+                    placeholder="School name"
+                    value={schoolName}
+                    onChange={(e) => setSchoolName(e.target.value)}
+                    autoFocus
+                  />
+                  <select style={styles.input} value={schoolBoard} onChange={(e) => setSchoolBoard(e.target.value)}>
+                    {BOARDS.map((b) => (
+                      <option key={b} value={b}>
+                        {b}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    style={styles.input}
+                    placeholder="Timezone"
+                    value={schoolTimezone}
+                    onChange={(e) => setSchoolTimezone(e.target.value)}
+                  />
+                </div>
+                <div style={{ ...styles.row, marginTop: 10 }}>
+                  <input
+                    style={styles.input}
+                    placeholder="Address (optional)"
+                    value={schoolAddress}
+                    onChange={(e) => setSchoolAddress(e.target.value)}
+                  />
+                  <input
+                    style={styles.input}
+                    placeholder="Principal name (optional)"
+                    value={principalName}
+                    onChange={(e) => setPrincipalName(e.target.value)}
+                  />
+                  <input
+                    style={styles.input}
+                    placeholder="Principal phone (optional)"
+                    value={principalPhone}
+                    onChange={(e) => setPrincipalPhone(e.target.value)}
+                  />
+                  <input
+                    style={{ ...styles.input, maxWidth: 160 }}
+                    placeholder="Expected students"
+                    type="number"
+                    min={0}
+                    value={expectedStudentStrength}
+                    onChange={(e) => setExpectedStudentStrength(e.target.value)}
+                  />
+                </div>
+                <div style={{ ...styles.actionRow, marginTop: 10 }}>
+                  <button style={styles.button} onClick={createSchool} disabled={isCreatingSchool || !schoolName.trim()}>
+                    {isCreatingSchool ? "Adding…" : "Add school"}
+                  </button>
+                  <button style={styles.secondaryButton} onClick={() => setShowAddSchool(false)}>
+                    Cancel
+                  </button>
+                </div>
+              </>
             )}
             {schoolError ? <p style={styles.error}>{schoolError}</p> : null}
             {createdSchool ? (

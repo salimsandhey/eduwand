@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator, ScrollView, Animated } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../context/AuthContext";
-import { useTheme } from "../theme/ThemeContext";
+import { lightColors, PRESSED_OPACITY } from "../theme/tokens";
 import { Screen } from "../components/Screen";
 import { StudentOtpMatch } from "../api/client";
 
@@ -29,7 +29,12 @@ interface Props {
 
 export function StudentLoginScreen({ onBackToStaffLogin }: Props) {
   const { requestStudentOtp, verifyStudentOtp, selectStudent, isLoading, error } = useAuth();
-  const { colors, pressedOpacity } = useTheme();
+  // Fixed light palette, not useTheme() - same reasoning as LoginScreen.tsx:
+  // this screen's background is already hardcoded light, so pulling text
+  // colors from the device theme could put near-white text on a near-white
+  // background in dark mode.
+  const colors = lightColors;
+  const pressedOpacity = PRESSED_OPACITY;
 
   const [step, setStep] = useState<Step>("phone");
   const [phone, setPhone] = useState("");

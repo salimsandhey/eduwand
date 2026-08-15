@@ -12,15 +12,27 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Onboarding fields added per the admin dashboard's Trust/School onboarding
+// flow review (see chat 15 Aug 2026) - the create forms previously only took
+// name + contact email, with no named human contact and no registration/
+// billing detail on record. trustType is one of: society, trust,
+// section_8_company, private_limited, other (free text, not enum-enforced).
 model Trust {
-  id           String   @id @default(uuid()) @db.Uuid
-  name         String
-  contactEmail String?  @map("contact_email")
-  status       String   @default("active")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
-  createdBy    String?  @map("created_by") @db.Uuid
-  updatedBy    String?  @map("updated_by") @db.Uuid
+  id                    String   @id @default(uuid()) @db.Uuid
+  name                  String
+  legalName             String?  @map("legal_name")
+  contactEmail          String?  @map("contact_email")
+  contactPersonName     String?  @map("contact_person_name")
+  contactPersonPhone    String?  @map("contact_person_phone")
+  registeredAddress     String?  @map("registered_address")
+  gstNumber             String?  @map("gst_number")
+  trustType             String?  @map("trust_type")
+  expectedSchoolCount   Int?     @map("expected_school_count")
+  status                String   @default("active")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+  createdBy             String?  @map("created_by") @db.Uuid
+  updatedBy             String?  @map("updated_by") @db.Uuid
 
   schools School[]
 
@@ -28,19 +40,22 @@ model Trust {
 }
 
 model School {
-  id           String   @id @default(uuid()) @db.Uuid
-  trustId      String   @map("trust_id") @db.Uuid
-  trust        Trust    @relation(fields: [trustId], references: [id])
-  name         String
-  board        String
-  address      String?
-  timezone     String   @default("Asia/Kolkata")
-  incumbentErp String?  @map("incumbent_erp")
-  status       String   @default("onboarding")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
-  createdBy    String?  @map("created_by") @db.Uuid
-  updatedBy    String?  @map("updated_by") @db.Uuid
+  id                        String   @id @default(uuid()) @db.Uuid
+  trustId                   String   @map("trust_id") @db.Uuid
+  trust                     Trust    @relation(fields: [trustId], references: [id])
+  name                      String
+  board                     String
+  address                   String?
+  timezone                  String   @default("Asia/Kolkata")
+  incumbentErp              String?  @map("incumbent_erp")
+  principalName             String?  @map("principal_name")
+  principalPhone            String?  @map("principal_phone")
+  expectedStudentStrength   Int?     @map("expected_student_strength")
+  status                    String   @default("onboarding")
+  createdAt                 DateTime @default(now()) @map("created_at")
+  updatedAt                 DateTime @updatedAt @map("updated_at")
+  createdBy                 String?  @map("created_by") @db.Uuid
+  updatedBy                 String?  @map("updated_by") @db.Uuid
 
   academicYears     AcademicYear[]
   users             AppUser[]
@@ -54,6 +69,10 @@ model School {
   researchReports   ResearchReport[]
   assignments       Assignment[]
   aiUsageLogs       AiUsageLog[]
+  topics            Topic[]
+  schoolFormatTemplates SchoolFormatTemplate[]
+  classBandConfig   ClassBandConfig?
+  communicationMessages CommunicationMessage[]
 
   @@map("school")
 }
@@ -90,6 +109,8 @@ model ClassSection {
   studentStubs StudentStub[]
   lessonPlans  LessonPlan[]
   assignments  Assignment[]
+  topics       Topic[]
+  communicationMessages CommunicationMessage[]
 
   @@map("class_section")
 }
@@ -126,6 +147,10 @@ model AppUser {
   personalisationDecisions PersonalisationSuggestion[]
   gradeOverrides      Grade[]
   aiUsageLogs         AiUsageLog[]
+  topics              Topic[]
+  generations         Generation[]
+  observations        Observation[]
+  sentCommunicationMessages CommunicationMessage[]
 
   @@map("app_user")
 }
@@ -155,6 +180,20 @@ model Enquiry {
   contactEmail         String?   @map("contact_email")
   source               String
   gradeInterest        String?   @map("grade_interest")
+  // Captured at intake so the child's identity isn't conflated with the
+  // guardian's contact details (contactName is the person the counsellor is
+  // talking to, not necessarily the student) - see chat 15 Aug 2026.
+  studentName          String?   @map("student_name")
+  studentDateOfBirth   DateTime? @map("student_date_of_birth") @db.Date
+  // guardianRelation is one of: mother, father, guardian, other
+  guardianRelation     String?   @map("guardian_relation")
+  // Profile photo: either an uploaded file (photoLocation/photoMimeType, via
+  // the Storage interface - backend/src/lib/storage.ts) or a picked preset
+  // avatar (avatarKey, one of unified-app's bundled avatar-01..avatar-10).
+  // Mutually exclusive - setting one clears the other (see enquiries.ts).
+  photoLocation        String?   @map("photo_location")
+  photoMimeType        String?   @map("photo_mime_type")
+  avatarKey            String?   @map("avatar_key")
   status               String    @default("new")
   lostReason           String?   @map("lost_reason")
   ownerUserId          String?   @map("owner_user_id") @db.Uuid
@@ -164,6 +203,12 @@ model Enquiry {
   duplicates           Enquiry[] @relation("EnquiryDuplicate")
   consentCaptured      Boolean   @default(false) @map("consent_captured")
   erasedAt             DateTime? @map("erased_at")
+  // Admission-in-progress state, ahead of the final confirm-admission call that
+  // creates the StudentStub - lets the Admission tab survive navigating away
+  // mid-fill instead of losing everything (unified-app EnquiryDetailScreen).
+  admissionDraft        Json?     @map("admission_draft")
+  admissionStartedAt    DateTime? @map("admission_started_at")
+  admissionCompletedAt  DateTime? @map("admission_completed_at")
   createdAt            DateTime  @default(now()) @map("created_at")
   updatedAt            DateTime  @updatedAt @map("updated_at")
   createdBy            String?   @map("created_by") @db.Uuid
@@ -205,6 +250,11 @@ model PipelineStage {
 // Admission document collection (FR-EG-6). fileLocation is whatever the Storage
 // interface returns (backend/src/lib/storage.ts) - local disk in dev, swappable
 // for S3 later, same pattern as CsvExportLog.fileLocation.
+// documentType is one of: student_photo, birth_certificate, transfer_certificate,
+// previous_marksheet, id_proof, address_proof, other - a fixed checklist for now
+// (FR-EG-6 admission document collection), matching the Admission tab's
+// required-documents checklist. Nullable for documents uploaded before this
+// field existed.
 model Document {
   id               String   @id @default(uuid()) @db.Uuid
   enquiryId        String   @map("enquiry_id") @db.Uuid
@@ -215,6 +265,7 @@ model Document {
   fileLocation     String   @map("file_location")
   mimeType         String   @map("mime_type")
   fileSize         Int      @map("file_size")
+  documentType      String?  @map("document_type")
   uploadedAt       DateTime @default(now()) @map("uploaded_at")
 
   @@index([enquiryId])
@@ -249,6 +300,8 @@ model EnquiryStageHistory {
   @@map("enquiry_stage_history")
 }
 
+// type is one of: lead_note, admission_note, system_note - lets the UI show a
+// note under the tab it belongs to instead of one undifferentiated list.
 model EnquiryNote {
   id             String   @id @default(uuid()) @db.Uuid
   enquiryId      String   @map("enquiry_id") @db.Uuid
@@ -256,6 +309,7 @@ model EnquiryNote {
   authorUserId   String?  @map("author_user_id") @db.Uuid
   author         AppUser? @relation(fields: [authorUserId], references: [id])
   body           String
+  type           String   @default("lead_note")
   createdAt      DateTime @default(now()) @map("created_at")
 
   @@index([enquiryId, createdAt])
@@ -325,6 +379,8 @@ model StudentStub {
 
   personalisationSuggestions PersonalisationSuggestion[]
   submissions                Submission[]
+  receivedCommunicationMessages CommunicationMessage[] @relation("CommunicationRecipientStudent")
+  sentCommunicationMessages     CommunicationMessage[] @relation("CommunicationSenderStudent")
 
   @@index([schoolId])
   @@map("student_stub")
@@ -352,10 +408,139 @@ model CsvExportLog {
   @@map("csv_export_log")
 }
 
-// ===== AI Module (Module 2, FR-AI-1..6) =====
+// ===== AI Module (Module 2) =====
 // backend/src/lib/ai.ts's AiProvider interface is the only thing that talks to
 // a model (a stub by default - see that file). Everything below is ordinary
 // persistence, same as Module 1.
+//
+// Rebuilt 11 Aug 2026 against the client's AI Module Build Document
+// (Docs/Client/EduWand_AI_Module_User Journey.pdf) - see
+// Docs/Dev/AI_Module_Rebuild_Plan.md for the phased plan this follows. Topic
+// is now the spine every generation/assignment/observation/report belongs to.
+// LessonPlan/ResearchReport are kept (read-only for historical rows) pending
+// a follow-up cleanup migration once Generation fully covers their reads.
+
+// Phase 1: the container every generation, assignment, and report belongs to.
+model Topic {
+  id             String        @id @default(uuid()) @db.Uuid
+  schoolId       String        @map("school_id") @db.Uuid
+  school         School        @relation(fields: [schoolId], references: [id])
+  teacherUserId  String        @map("teacher_user_id") @db.Uuid
+  teacher        AppUser       @relation(fields: [teacherUserId], references: [id])
+  classSectionId String        @map("class_section_id") @db.Uuid
+  classSection   ClassSection  @relation(fields: [classSectionId], references: [id])
+  subject        String
+  name           String
+  board          String
+  status         String        @default("active")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  contextSources   ContextSource[]
+  generations      Generation[]
+  observations     Observation[]
+  assignments      Assignment[]
+  attainmentReport AttainmentReport?
+  communicationMessages CommunicationMessage[]
+
+  @@index([schoolId, teacherUserId])
+  @@index([classSectionId, subject])
+  @@map("topic")
+}
+
+// sourceType is one of: pdf, docx, pptx, image, url, idream_k12
+// extractionStatus is one of: pending, extracted, failed_no_text
+model ContextSource {
+  id                    String   @id @default(uuid()) @db.Uuid
+  topicId               String   @map("topic_id") @db.Uuid
+  topic                 Topic    @relation(fields: [topicId], references: [id])
+  sourceType            String   @map("source_type")
+  fileLocation          String?  @map("file_location")
+  sourceUrl             String?  @map("source_url")
+  idreamK12ReferenceId  String?  @map("idream_k12_reference_id")
+  extractionStatus      String   @default("pending") @map("extraction_status")
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  @@index([topicId])
+  @@map("context_source")
+}
+
+// The output template applied to generations/attainment reports so documents
+// are standardised across a school. Ownership (school vs EduWand at
+// onboarding) is open - Docs/Dev/EduWand_Engineering_PRD.md section 6.7, Q-16.
+model SchoolFormatTemplate {
+  id           String   @id @default(uuid()) @db.Uuid
+  schoolId     String   @map("school_id") @db.Uuid
+  school       School   @relation(fields: [schoolId], references: [id])
+  appliesTo    String   @map("applies_to")
+  templateBody String   @map("template_body")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  generations Generation[]
+
+  @@index([schoolId, appliesTo])
+  @@map("school_format_template")
+}
+
+model Observation {
+  id           String   @id @default(uuid()) @db.Uuid
+  topicId      String   @map("topic_id") @db.Uuid
+  topic        Topic    @relation(fields: [topicId], references: [id])
+  authorUserId String   @map("author_user_id") @db.Uuid
+  author       AppUser  @relation(fields: [authorUserId], references: [id])
+  body         String
+  recordedAt   DateTime @default(now()) @map("recorded_at")
+
+  @@index([topicId])
+  @@map("observation")
+}
+
+// Phase 2: supersedes LessonPlan/ResearchReport. outputType is one of:
+// lesson_plan, custom_activity_report, flashcards, presentation,
+// explanatory_video. mode is one of: plan, generate.
+// editedOutput, once set, is authoritative everywhere this generation is
+// read (distribution, attainment report) - never aiOutput once edited.
+model Generation {
+  id                     String                @id @default(uuid()) @db.Uuid
+  topicId                String                @map("topic_id") @db.Uuid
+  topic                  Topic                 @relation(fields: [topicId], references: [id])
+  teacherUserId          String                @map("teacher_user_id") @db.Uuid
+  teacher                AppUser               @relation(fields: [teacherUserId], references: [id])
+  outputType             String                @map("output_type")
+  mode                   String                @default("generate")
+  classCount             Int?                  @map("class_count")
+  minutesPerClass        Int?                  @map("minutes_per_class")
+  language               String                @default("English")
+  customPrompt           String?               @map("custom_prompt")
+  aiOutput               String                @map("ai_output")
+  editedOutput           String?               @map("edited_output")
+  schoolFormatTemplateId String?               @map("school_format_template_id") @db.Uuid
+  schoolFormatTemplate   SchoolFormatTemplate? @relation(fields: [schoolFormatTemplateId], references: [id])
+  modelUsed              String                @map("model_used")
+  modelVersion           String?               @map("model_version")
+  promptVersion          String?               @map("prompt_version")
+  generationStatus       String                @default("succeeded") @map("generation_status")
+  generatedAt            DateTime              @default(now()) @map("generated_at")
+
+  @@index([topicId])
+  @@index([teacherUserId])
+  @@map("generation")
+}
+
+model AttainmentReport {
+  id                    String    @id @default(uuid()) @db.Uuid
+  topicId               String    @unique @map("topic_id") @db.Uuid
+  topic                 Topic     @relation(fields: [topicId], references: [id])
+  bloomsTaxonomyMapping Json?     @map("blooms_taxonomy_mapping")
+  whatWasDone           String?   @map("what_was_done")
+  outcomes              String?   @map("outcomes")
+  improvementNotes      String?   @map("improvement_notes")
+  pdfFileLocation       String?   @map("pdf_file_location")
+  generatedAt           DateTime  @default(now()) @map("generated_at")
+
+  @@map("attainment_report")
+}
 
 model LessonPlan {
   id             String        @id @default(uuid()) @db.Uuid
@@ -391,10 +576,15 @@ model ResearchReport {
 }
 
 // Status is one of: draft, published
+// topicId is nullable during the Phase 1/2 transition (Docs/Dev/AI_Module_Rebuild_Plan.md)
+// - existing assignments predate Topic and are not backfilled in this phase.
+// New assignments created via Phase 3's rebuilt Assignment Lab always set it.
 model Assignment {
   id                     String       @id @default(uuid()) @db.Uuid
   schoolId               String       @map("school_id") @db.Uuid
   school                 School       @relation(fields: [schoolId], references: [id])
+  topicId                String?      @map("topic_id") @db.Uuid
+  topic                  Topic?       @relation(fields: [topicId], references: [id])
   teacherUserId          String       @map("teacher_user_id") @db.Uuid
   teacher                AppUser      @relation(fields: [teacherUserId], references: [id])
   classSectionId         String       @map("class_section_id") @db.Uuid
@@ -409,9 +599,28 @@ model Assignment {
 
   personalisationSuggestions PersonalisationSuggestion[]
   submissions                Submission[]
+  answerKeys                  AnswerKey[]
 
   @@index([schoolId, classSectionId])
+  @@index([topicId])
   @@map("assignment")
+}
+
+// Phase 3 groundwork: the teacher-verified answer is authoritative, never the
+// AI's original, same edited-supersedes-generated pattern as Generation.
+model AnswerKey {
+  id                      String     @id @default(uuid()) @db.Uuid
+  assignmentId            String     @map("assignment_id") @db.Uuid
+  assignment              Assignment @relation(fields: [assignmentId], references: [id])
+  questionIndex           Int        @map("question_index")
+  photoSubmissionRequired Boolean    @default(false) @map("photo_submission_required")
+  aiAnswer                String     @map("ai_answer")
+  teacherVerifiedAnswer   String?    @map("teacher_verified_answer")
+  marks                   Float      @default(1)
+  createdAt               DateTime   @default(now()) @map("created_at")
+
+  @@unique([assignmentId, questionIndex])
+  @@map("answer_key")
 }
 
 // This is the model FR-AI-2's mandatory teacher-initiated fallback design turns
@@ -440,16 +649,21 @@ model PersonalisationSuggestion {
   @@map("personalisation_suggestion")
 }
 
-// A teacher logs a submission on a student's behalf (Student role has no login
-// in this build phase - PRD section 3, "structural shell only").
+// A teacher logs a submission on a student's behalf today; Phase 4 adds a
+// student's-own POST /student/submissions using the same table.
+// submissionType is one of: online, photo.
 model Submission {
-  id            String      @id @default(uuid()) @db.Uuid
-  assignmentId  String      @map("assignment_id") @db.Uuid
-  assignment    Assignment  @relation(fields: [assignmentId], references: [id])
-  studentStubId String      @map("student_stub_id") @db.Uuid
-  studentStub   StudentStub @relation(fields: [studentStubId], references: [id])
-  answers       Json
-  submittedAt   DateTime    @default(now()) @map("submitted_at")
+  id                String      @id @default(uuid()) @db.Uuid
+  assignmentId      String      @map("assignment_id") @db.Uuid
+  assignment        Assignment  @relation(fields: [assignmentId], references: [id])
+  studentStubId     String      @map("student_stub_id") @db.Uuid
+  studentStub       StudentStub @relation(fields: [studentStubId], references: [id])
+  answers           Json
+  submissionType    String      @default("online") @map("submission_type")
+  photoFileLocation String?     @map("photo_file_location")
+  ocrExtractedText  String?     @map("ocr_extracted_text")
+  ocrConfidence     Float?      @map("ocr_confidence")
+  submittedAt       DateTime    @default(now()) @map("submitted_at")
 
   grade Grade?
 
@@ -457,24 +671,81 @@ model Submission {
   @@map("submission")
 }
 
-// Status is one of: pending, ai_graded, released
+// Status is one of: pending, ai_graded, released (kept for backward
+// compatibility). releasedToStudent is the actual gate new code should check
+// - equivalent to status:"released" but explicit. performanceBand is one of:
+// level_1 (>80%), level_2 (50-80%), level_3 (<50%), thresholds editable per
+// school via ClassBandConfig.
 model Grade {
   id                  String     @id @default(uuid()) @db.Uuid
   submissionId        String     @unique @map("submission_id") @db.Uuid
   submission          Submission @relation(fields: [submissionId], references: [id])
   aiScore             Float?     @map("ai_score")
   aiFeedback          String?    @map("ai_feedback")
+  aiNextStep          String?    @map("ai_next_step")
   finalScore          Float?     @map("final_score")
   finalFeedback       String?    @map("final_feedback")
+  performanceBand     String?    @map("performance_band")
   flaggedForAttention Boolean    @default(false) @map("flagged_for_attention")
   status              String     @default("pending")
   overriddenByUserId  String?    @map("overridden_by_user_id") @db.Uuid
   overriddenBy        AppUser?   @relation(fields: [overriddenByUserId], references: [id])
+  releasedToStudent   Boolean    @default(false) @map("released_to_student")
   releasedAt          DateTime?  @map("released_at")
   createdAt           DateTime   @default(now()) @map("created_at")
   updatedAt           DateTime   @updatedAt @map("updated_at")
 
   @@map("grade")
+}
+
+// Editable per-school override of the default performance band thresholds.
+model ClassBandConfig {
+  id               String   @id @default(uuid()) @db.Uuid
+  schoolId         String   @unique @map("school_id") @db.Uuid
+  school           School   @relation(fields: [schoolId], references: [id])
+  level1MinPercent Float    @default(80) @map("level_1_min_percent")
+  level2MinPercent Float    @default(50) @map("level_2_min_percent")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@map("class_band_config")
+}
+
+// Backs all four Communication Hub channels (Docs/Dev/AI_Module_Rebuild_Plan.md
+// Phase 4, extended). channel is one of: parent_weekly_update,
+// teacher_to_student, teacher_to_class, student_to_teacher. The first three
+// original channels are in-app messaging between accounts that already exist
+// in the system (teacher <-> student), so they deliver immediately -
+// deliveryStatus:"pending" only ever applies to parent_weekly_update, since
+// that one needs an external channel (SMS/email) the client doc's own Q-08
+// gap leaves unresolved (Section 7.3 references a Q-08 that Section 8 never
+// defines). senderStudentStubId is set for student-initiated messages -
+// StudentStub has no AppUser row, so it can't use senderUserId.
+model CommunicationMessage {
+  id                       String        @id @default(uuid()) @db.Uuid
+  schoolId                 String        @map("school_id") @db.Uuid
+  school                   School        @relation(fields: [schoolId], references: [id])
+  channel                  String
+  senderUserId             String?       @map("sender_user_id") @db.Uuid
+  sender                   AppUser?      @relation(fields: [senderUserId], references: [id])
+  senderStudentStubId      String?       @map("sender_student_stub_id") @db.Uuid
+  senderStudentStub        StudentStub?  @relation("CommunicationSenderStudent", fields: [senderStudentStubId], references: [id])
+  recipientStudentStubId   String?       @map("recipient_student_stub_id") @db.Uuid
+  recipientStudentStub     StudentStub?  @relation("CommunicationRecipientStudent", fields: [recipientStudentStubId], references: [id])
+  recipientClassSectionId  String?       @map("recipient_class_section_id") @db.Uuid
+  recipientClassSection    ClassSection? @relation(fields: [recipientClassSectionId], references: [id])
+  topicId                  String?       @map("topic_id") @db.Uuid
+  topic                    Topic?        @relation(fields: [topicId], references: [id])
+  body                     String
+  deliveryMechanism        String?       @map("delivery_mechanism")
+  deliveryStatus           String        @default("sent") @map("delivery_status")
+  sentAt                   DateTime?     @map("sent_at")
+  createdAt                DateTime      @default(now()) @map("created_at")
+
+  @@index([schoolId, channel])
+  @@index([recipientStudentStubId])
+  @@index([senderStudentStubId])
+  @@map("communication_message")
 }
 
 // Written on every AI generation call (lesson plan, research report,

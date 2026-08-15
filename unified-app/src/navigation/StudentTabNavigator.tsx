@@ -1,25 +1,37 @@
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Ionicons } from "@expo/vector-icons";
 import { StudentTabParamList } from "./types";
-import { useTheme } from "../theme/ThemeContext";
 import { StudentHomeScreen } from "../screens/StudentHomeScreen";
+import { StudentMaterialsScreen } from "../screens/StudentMaterialsScreen";
+import { StudentResultsScreen } from "../screens/StudentResultsScreen";
+import { StudentMessagesScreen } from "../screens/StudentMessagesScreen";
+import { FloatingTabBar } from "./FloatingTabBar";
 
 const Tab = createBottomTabNavigator<StudentTabParamList>();
 
-export function StudentTabNavigator() {
-  const { colors } = useTheme();
+const ICONS: Record<keyof StudentTabParamList, keyof typeof Ionicons.glyphMap> = {
+  Home: "home-outline",
+  Materials: "book-outline",
+  Results: "checkmark-done-outline",
+  Messages: "chatbubble-outline",
+};
 
+export function StudentTabNavigator() {
   return (
     <Tab.Navigator
-      screenOptions={{
+      tabBar={(props) => <FloatingTabBar {...props} icons={ICONS} />}
+      screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarActiveTintColor: colors.accent,
-        tabBarInactiveTintColor: colors.textMuted,
-        tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
-        tabBarIcon: ({ color, size }) => <Ionicons name="home-outline" size={size} color={color} />,
-      }}
+        tabBarHideOnKeyboard: true,
+        tabBarIcon: ({ color, size }) => (
+          <Ionicons name={ICONS[route.name as keyof StudentTabParamList]} size={size} color={color} />
+        ),
+      })}
     >
       <Tab.Screen name="Home" component={StudentHomeScreen} />
+      <Tab.Screen name="Materials" component={StudentMaterialsScreen} />
+      <Tab.Screen name="Results" component={StudentResultsScreen} />
+      <Tab.Screen name="Messages" component={StudentMessagesScreen} />
     </Tab.Navigator>
   );
 }

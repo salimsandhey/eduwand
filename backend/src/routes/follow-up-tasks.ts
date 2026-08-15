@@ -16,6 +16,7 @@ interface CreateTaskBody {
 interface ListQuery {
   assignedToUserId?: string;
   status?: string;
+  enquiryId?: string;
 }
 
 interface UpdateTaskBody {
@@ -30,7 +31,7 @@ export async function followUpTaskRoutes(app: FastifyInstance) {
     "/follow-up-tasks",
     { onRequest: scoped(app) },
     async (request, reply) => {
-      const { assignedToUserId, status } = request.query;
+      const { assignedToUserId, status, enquiryId } = request.query;
 
       if (status && !VALID_STATUSES.includes(status)) {
         return reply.code(400).send({
@@ -44,6 +45,7 @@ export async function followUpTaskRoutes(app: FastifyInstance) {
           enquiry: { schoolId: request.schoolId },
           ...(assignedToUserId ? { assignedToUserId } : {}),
           ...(status ? { status } : {}),
+          ...(enquiryId ? { enquiryId } : {}),
         },
         orderBy: { dueAt: "asc" },
         include: { enquiry: { select: { id: true, contactName: true, contactPhone: true, contactEmail: true } } },

@@ -6,12 +6,26 @@ import { recordAuditEvent } from "../lib/audit";
 
 interface CreateTrustBody {
   name: string;
+  legalName?: string;
   contactEmail?: string;
+  contactPersonName?: string;
+  contactPersonPhone?: string;
+  registeredAddress?: string;
+  gstNumber?: string;
+  trustType?: string;
+  expectedSchoolCount?: number;
 }
 
 interface UpdateTrustBody {
   name?: string;
+  legalName?: string;
   contactEmail?: string;
+  contactPersonName?: string;
+  contactPersonPhone?: string;
+  registeredAddress?: string;
+  gstNumber?: string;
+  trustType?: string;
+  expectedSchoolCount?: number;
   status?: string;
 }
 
@@ -47,8 +61,31 @@ export async function trustRoutes(app: FastifyInstance) {
         });
       }
 
+      // Case-insensitive duplicate check - two trusts with the same name
+      // (typos or accidental double-entry) previously went through silently.
+      const duplicate = await prisma.trust.findFirst({
+        where: { name: { equals: body.name.trim(), mode: "insensitive" } },
+      });
+      if (duplicate) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: `A trust named "${duplicate.name}" already exists` },
+        });
+      }
+
       const trust = await prisma.trust.create({
-        data: { name: body.name, contactEmail: body.contactEmail, status: "active" },
+        data: {
+          name: body.name.trim(),
+          legalName: body.legalName,
+          contactEmail: body.contactEmail,
+          contactPersonName: body.contactPersonName,
+          contactPersonPhone: body.contactPersonPhone,
+          registeredAddress: body.registeredAddress,
+          gstNumber: body.gstNumber,
+          trustType: body.trustType,
+          expectedSchoolCount: body.expectedSchoolCount,
+          status: "active",
+        },
       });
 
       return reply.code(201).send({ data: trust, meta: {} });
@@ -95,11 +132,30 @@ export async function trustRoutes(app: FastifyInstance) {
         return reply.code(404).send({ data: null, error: { code: "not_found", message: "Trust not found" } });
       }
 
+      if (body.name && body.name.trim().toLowerCase() !== existing.name.toLowerCase()) {
+        const duplicate = await prisma.trust.findFirst({
+          where: { name: { equals: body.name.trim(), mode: "insensitive" }, id: { not: existing.id } },
+        });
+        if (duplicate) {
+          return reply.code(400).send({
+            data: null,
+            error: { code: "validation_error", message: `A trust named "${duplicate.name}" already exists` },
+          });
+        }
+      }
+
       const trust = await prisma.trust.update({
         where: { id: request.params.id },
         data: {
-          name: body.name ?? undefined,
+          name: body.name?.trim() ?? undefined,
+          legalName: body.legalName ?? undefined,
           contactEmail: body.contactEmail ?? undefined,
+          contactPersonName: body.contactPersonName ?? undefined,
+          contactPersonPhone: body.contactPersonPhone ?? undefined,
+          registeredAddress: body.registeredAddress ?? undefined,
+          gstNumber: body.gstNumber ?? undefined,
+          trustType: body.trustType ?? undefined,
+          expectedSchoolCount: body.expectedSchoolCount ?? undefined,
           status: body.status ?? undefined,
         },
       });

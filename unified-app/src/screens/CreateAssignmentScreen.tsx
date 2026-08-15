@@ -12,7 +12,8 @@ type Props = NativeStackScreenProps<RootStackParamList, "CreateAssignment">;
 
 let nextQuestionId = 1;
 
-export function CreateAssignmentScreen({ navigation }: Props) {
+export function CreateAssignmentScreen({ navigation, route }: Props) {
+  const topicId = route.params?.topicId;
   const { accessToken } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
 
@@ -63,6 +64,7 @@ export function CreateAssignmentScreen({ navigation }: Props) {
         classSectionId,
         questions: filledQuestions,
         personalisationEnabled,
+        topicId,
       });
 
       if (publish) {

@@ -1,10 +1,14 @@
 export interface ThemeColors {
   background: string;
+  backgroundMuted: string;
   surface: string;
   surfaceRaised: string;
+  surfaceAccent: string;
   border: string;
   accent: string;
   accentDark: string;
+  accentSoft: string;
+  accentSoftAlt: string;
   accentOn: string; // text/icon color on top of a solid accent fill
   textPrimary: string;
   textSecondary: string;
@@ -14,18 +18,22 @@ export interface ThemeColors {
 }
 
 export const darkColors: ThemeColors = {
-  background: "#0B0F0D",
-  surface: "#141B17",
-  surfaceRaised: "#1B231E",
-  border: "#232B26",
-  accent: "#17C964",
-  accentDark: "#0FA855",
-  accentOn: "#04170D",
-  textPrimary: "#F5F7F6",
-  textSecondary: "#A8B3AD",
-  textMuted: "#6B756F",
-  danger: "#F31260",
-  warning: "#F5A524",
+  background: "#090909",
+  backgroundMuted: "#141414",
+  surface: "#111111",
+  surfaceRaised: "#171717",
+  surfaceAccent: "#1C1C1C",
+  border: "#2A2A2A",
+  accent: "#7B2D2B",
+  accentDark: "#541C1B",
+  accentSoft: "#1A1010",
+  accentSoftAlt: "#2A1717",
+  accentOn: "#FFFFFF",
+  textPrimary: "#FFFFFF",
+  textSecondary: "#D7D7D7",
+  textMuted: "#9E9E9E",
+  danger: "#D85A5A",
+  warning: "#C98732",
 };
 
 // Cards read as flat/pasted-on without some depth cue. Dark surfaces barely show a
@@ -35,34 +43,38 @@ export function getCardShadow(mode: "light" | "dark") {
   if (mode === "dark") {
     return {
       shadowColor: "#000000",
-      shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.4,
-      shadowRadius: 3,
-      elevation: 2,
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.28,
+      shadowRadius: 18,
+      elevation: 8,
     };
   }
   return {
-    shadowColor: "#0B1F14",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.07,
-    shadowRadius: 8,
-    elevation: 2,
+    shadowColor: "#4A201E",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.12,
+    shadowRadius: 20,
+    elevation: 6,
   };
 }
 
 export const PRESSED_OPACITY = 0.65;
 
 export const lightColors: ThemeColors = {
-  background: "#F5F7F4",
+  background: "#FFFFFF",
+  backgroundMuted: "#F7F7F7",
   surface: "#FFFFFF",
-  surfaceRaised: "#F0F2EF",
-  border: "#E1E6DE",
-  accent: "#1F9D55",
-  accentDark: "#17803F",
+  surfaceRaised: "#F8F8F8",
+  surfaceAccent: "#F2F2F2",
+  border: "#E8E8E8",
+  accent: "#7B2D2B",
+  accentDark: "#5D201F",
+  accentSoft: "#FAF1F1",
+  accentSoftAlt: "#F3E3E3",
   accentOn: "#FFFFFF",
-  textPrimary: "#131A15",
-  textSecondary: "#4B564D",
-  textMuted: "#8A948B",
-  danger: "#C0392B",
-  warning: "#B7791F",
+  textPrimary: "#121212",
+  textSecondary: "#343434",
+  textMuted: "#767676",
+  danger: "#A63F35",
+  warning: "#A7722E",
 };

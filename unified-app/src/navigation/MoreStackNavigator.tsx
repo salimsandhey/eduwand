@@ -18,7 +18,7 @@ export function MoreStackNavigator() {
         headerTitleStyle: { fontWeight: "700" },
       }}
     >
-      <Stack.Screen name="MoreMenu" component={MoreMenuScreen} options={{ title: "More" }} />
+      <Stack.Screen name="MoreMenu" component={MoreMenuScreen} options={{ headerShown: false }} />
       <Stack.Screen name="CsvExport" component={CsvExportScreen} options={{ title: "CSV Export" }} />
     </Stack.Navigator>
   );

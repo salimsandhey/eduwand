@@ -15,7 +15,14 @@ export function TrustsPage() {
 
   const [showCreate, setShowCreate] = useState(false);
   const [trustName, setTrustName] = useState("");
+  const [legalName, setLegalName] = useState("");
+  const [trustType, setTrustType] = useState("");
+  const [contactPersonName, setContactPersonName] = useState("");
+  const [contactPersonPhone, setContactPersonPhone] = useState("");
   const [trustEmail, setTrustEmail] = useState("");
+  const [registeredAddress, setRegisteredAddress] = useState("");
+  const [gstNumber, setGstNumber] = useState("");
+  const [expectedSchoolCount, setExpectedSchoolCount] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -32,7 +39,17 @@ export function TrustsPage() {
     setIsCreating(true);
     setCreateError(null);
     try {
-      const trust = await api.createTrust(accessToken, trustName.trim(), trustEmail.trim() || undefined);
+      const trust = await api.createTrust(accessToken, {
+        name: trustName.trim(),
+        legalName: legalName.trim() || undefined,
+        trustType: trustType || undefined,
+        contactPersonName: contactPersonName.trim() || undefined,
+        contactPersonPhone: contactPersonPhone.trim() || undefined,
+        contactEmail: trustEmail.trim() || undefined,
+        registeredAddress: registeredAddress.trim() || undefined,
+        gstNumber: gstNumber.trim() || undefined,
+        expectedSchoolCount: expectedSchoolCount ? Number(expectedSchoolCount) : undefined,
+      });
       // Straight to its detail page - that's where "+ Add school" lives now,
       // so creating a trust flows directly into onboarding its first school.
       navigate(`/trusts/${trust.id}`);
@@ -72,10 +89,38 @@ export function TrustsPage() {
           <div style={styles.row}>
             <input
               style={styles.input}
-              placeholder="Trust name"
+              placeholder="Trust / display name"
               value={trustName}
               onChange={(e) => setTrustName(e.target.value)}
               autoFocus
+            />
+            <input
+              style={styles.input}
+              placeholder="Legal / registered name (optional)"
+              value={legalName}
+              onChange={(e) => setLegalName(e.target.value)}
+            />
+            <select style={styles.input} value={trustType} onChange={(e) => setTrustType(e.target.value)}>
+              <option value="">Trust type (optional)</option>
+              <option value="society">Society</option>
+              <option value="trust">Trust</option>
+              <option value="section_8_company">Section 8 company</option>
+              <option value="private_limited">Private limited</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div style={{ ...styles.row, marginTop: 10 }}>
+            <input
+              style={styles.input}
+              placeholder="Contact person name"
+              value={contactPersonName}
+              onChange={(e) => setContactPersonName(e.target.value)}
+            />
+            <input
+              style={styles.input}
+              placeholder="Contact person phone"
+              value={contactPersonPhone}
+              onChange={(e) => setContactPersonPhone(e.target.value)}
             />
             <input
               style={styles.input}
@@ -83,6 +128,30 @@ export function TrustsPage() {
               value={trustEmail}
               onChange={(e) => setTrustEmail(e.target.value)}
             />
+          </div>
+          <div style={{ ...styles.row, marginTop: 10 }}>
+            <input
+              style={styles.input}
+              placeholder="Registered address (optional)"
+              value={registeredAddress}
+              onChange={(e) => setRegisteredAddress(e.target.value)}
+            />
+            <input
+              style={styles.input}
+              placeholder="GST number (optional)"
+              value={gstNumber}
+              onChange={(e) => setGstNumber(e.target.value)}
+            />
+            <input
+              style={{ ...styles.input, maxWidth: 160 }}
+              placeholder="Expected schools"
+              type="number"
+              min={0}
+              value={expectedSchoolCount}
+              onChange={(e) => setExpectedSchoolCount(e.target.value)}
+            />
+          </div>
+          <div style={{ ...styles.actionRow, marginTop: 14 }}>
             <button style={styles.newButton} onClick={createTrust} disabled={isCreating || !trustName.trim()}>
               {isCreating ? "Creating…" : "Create trust"}
             </button>
@@ -140,6 +209,7 @@ export function TrustsPage() {
 
 const styles: Record<string, React.CSSProperties> = {
   row: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" },
+  actionRow: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" },
   input: {
     padding: "10px 12px",
     borderRadius: 8,

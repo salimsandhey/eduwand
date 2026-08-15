@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "unified-app",
-    "slug": "unified-app",
+    "name": "EduWand",
+    "slug": "eduwand",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -17,7 +17,7 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.salimsandhey.unifiedapp"
+      "package": "com.eduwand.app"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -27,6 +27,15 @@
         "projectId": "fdaed8d4-1330-454d-9dfb-ff1315f34562"
       }
     },
-    "owner": "salimsandhey"
+    "owner": "salimsandhey",
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Used to attach a profile photo to a lead from your photo library.",
+          "cameraPermission": "Used to take a profile photo of a lead directly in the app."
+        }
+      ]
+    ]
   }
 }

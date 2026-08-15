@@ -1,12 +1,12 @@
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Ionicons } from "@expo/vector-icons";
 import { EnrolmentTabParamList } from "./types";
-import { useTheme } from "../theme/ThemeContext";
 import { HomeScreen } from "../screens/HomeScreen";
 import { EnquiryListScreen } from "../screens/EnquiryListScreen";
 import { PipelineBoardScreen } from "../screens/PipelineBoardScreen";
 import { FollowUpTaskListScreen } from "../screens/FollowUpTaskListScreen";
 import { MoreStackNavigator } from "./MoreStackNavigator";
+import { FloatingTabBar } from "./FloatingTabBar";
 
 const Tab = createBottomTabNavigator<EnrolmentTabParamList>();
 
@@ -19,15 +19,12 @@ const ICONS: Record<keyof EnrolmentTabParamList, keyof typeof Ionicons.glyphMap>
 };
 
 export function EnrolmentTabNavigator() {
-  const { colors } = useTheme();
-
   return (
     <Tab.Navigator
+      tabBar={(props) => <FloatingTabBar {...props} icons={ICONS} />}
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarActiveTintColor: colors.accent,
-        tabBarInactiveTintColor: colors.textMuted,
-        tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
+        tabBarHideOnKeyboard: true,
         tabBarIcon: ({ color, size }) => (
           <Ionicons name={ICONS[route.name as keyof EnrolmentTabParamList]} size={size} color={color} />
         ),

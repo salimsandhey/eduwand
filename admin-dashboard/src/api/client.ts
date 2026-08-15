@@ -255,9 +255,28 @@ export interface TrustSummary {
 }
 
 export interface TrustDetail extends TrustSummary {
+  legalName: string | null;
   contactEmail: string | null;
+  contactPersonName: string | null;
+  contactPersonPhone: string | null;
+  registeredAddress: string | null;
+  gstNumber: string | null;
+  trustType: string | null;
+  expectedSchoolCount: number | null;
   createdAt: string;
   schools: { id: string; name: string; board: string; status: string }[];
+}
+
+export interface CreateTrustInput {
+  name: string;
+  legalName?: string;
+  contactEmail?: string;
+  contactPersonName?: string;
+  contactPersonPhone?: string;
+  registeredAddress?: string;
+  gstNumber?: string;
+  trustType?: string;
+  expectedSchoolCount?: number;
 }
 
 export interface School {
@@ -268,10 +287,22 @@ export interface School {
   status: string;
 }
 
+export interface SchoolReadiness {
+  hasCurrentAcademicYear: boolean;
+  hasClassSections: boolean;
+  hasAdmin: boolean;
+  ready: boolean;
+  missing: string[];
+}
+
 export interface SchoolDetail extends School {
   address: string | null;
   timezone: string;
+  principalName: string | null;
+  principalPhone: string | null;
+  expectedStudentStrength: number | null;
   createdAt: string;
+  readiness: SchoolReadiness;
 }
 
 export interface CreateSchoolInput {
@@ -282,11 +313,21 @@ export interface CreateSchoolInput {
   board: string;
   address?: string;
   timezone?: string;
+  principalName?: string;
+  principalPhone?: string;
+  expectedStudentStrength?: number;
 }
 
 export interface UpdateTrustInput {
   name?: string;
+  legalName?: string;
   contactEmail?: string;
+  contactPersonName?: string;
+  contactPersonPhone?: string;
+  registeredAddress?: string;
+  gstNumber?: string;
+  trustType?: string;
+  expectedSchoolCount?: number;
   status?: string;
 }
 
@@ -295,6 +336,9 @@ export interface UpdateSchoolInput {
   board?: string;
   address?: string;
   timezone?: string;
+  principalName?: string;
+  principalPhone?: string;
+  expectedStudentStrength?: number;
   status?: string;
 }
 
@@ -397,8 +441,8 @@ export const api = {
 
   listTrusts: (token: string) => request<TrustSummary[]>("/trusts", {}, token),
   getTrust: (token: string, id: string) => request<TrustDetail>(`/trusts/${id}`, {}, token),
-  createTrust: (token: string, name: string, contactEmail?: string) =>
-    request<TrustSummary>("/trusts", { method: "POST", body: JSON.stringify({ name, contactEmail }) }, token),
+  createTrust: (token: string, input: CreateTrustInput) =>
+    request<TrustDetail>("/trusts", { method: "POST", body: JSON.stringify(input) }, token),
   updateTrust: (token: string, id: string, input: UpdateTrustInput) =>
     request<TrustSummary>(`/trusts/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
   deleteTrust: (token: string, id: string) => request<{ deleted: true }>(`/trusts/${id}`, { method: "DELETE" }, token),

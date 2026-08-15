@@ -1,4 +1,4 @@
-import { useCallback, useState, useRef } from "react";
+import { useCallback, useState } from "react";
 import {
   View,
   Text,
@@ -6,8 +6,8 @@ import {
   StyleSheet,
   ScrollView,
   ActivityIndicator,
-  ViewStyle,
-  Animated,
+  Image,
+  ImageSourcePropType,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
@@ -16,21 +16,38 @@ import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { Screen } from "../components/Screen";
 import { getStatusColor } from "../theme/statusColors";
-import { api, Enquiry } from "../api/client";
+import { api, Enquiry, FollowUpTask } from "../api/client";
+import { usePipelineStages } from "../hooks/usePipelineStages";
+import { decorativeAssets } from "../theme/decorativeAssets";
 
 const ENROLMENT_ROLES = ["front_desk", "counsellor", "admin", "leadership"];
 
+const AVATAR_SOURCES: ImageSourcePropType[] = [
+  require("../../assets/avatars/avatar-01.png"),
+  require("../../assets/avatars/avatar-02.png"),
+  require("../../assets/avatars/avatar-03.png"),
+  require("../../assets/avatars/avatar-04.png"),
+  require("../../assets/avatars/avatar-05.png"),
+  require("../../assets/avatars/avatar-06.png"),
+  require("../../assets/avatars/avatar-07.png"),
+  require("../../assets/avatars/avatar-08.png"),
+  require("../../assets/avatars/avatar-09.png"),
+  require("../../assets/avatars/avatar-10.png"),
+];
+
 interface Stats {
+  totalLeads: number;
   newEnquiries: number;
   followUps: number;
   visitsToday: number;
+  converted: number;
 }
 
 function greeting(): string {
   const hour = new Date().getHours();
-  if (hour < 12) return "Good Morning";
-  if (hour < 17) return "Good Afternoon";
-  return "Good Evening";
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
 }
 
 function formatRelativeTime(dateString: string): string {
@@ -42,12 +59,22 @@ function formatRelativeTime(dateString: string): string {
   if (diffMins < 60) return `${diffMins} min${diffMins === 1 ? "" : "s"} ago`;
   const diffHours = Math.floor(diffMins / 60);
   if (diffHours < 24) return `${diffHours} hour${diffHours === 1 ? "" : "s"} ago`;
-  return past.toLocaleDateString();
+  return past.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+}
+
+function formatSource(value: string): string {
+  return value.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function getAvatarSource(seed: string) {
+  const hash = seed.split("").reduce((total, char) => total + char.charCodeAt(0), 0);
+  return AVATAR_SOURCES[hash % AVATAR_SOURCES.length];
 }
 
 export function HomeScreen() {
   const { user, accessToken } = useAuth();
   const { colors, mode, cardShadow, pressedOpacity } = useTheme();
+  const { stages } = usePipelineStages();
   const navigation = useNavigation<any>();
 
   const isEnrolmentRole = user ? ENROLMENT_ROLES.includes(user.role) : false;
@@ -55,6 +82,7 @@ export function HomeScreen() {
 
   const [stats, setStats] = useState<Stats | null>(null);
   const [recentEnquiries, setRecentEnquiries] = useState<Enquiry[]>([]);
+  const [pendingTasks, setPendingTasks] = useState<FollowUpTask[]>([]);
   const [isLoadingStats, setIsLoadingStats] = useState(false);
 
   const loadStats = useCallback(async () => {
@@ -67,24 +95,38 @@ export function HomeScreen() {
         api.listEnquiries(accessToken, { status: "visit" }),
         api.listEnquiries(accessToken),
       ]);
+
+      const allEnquiries = allEnquiriesRes.data ?? [];
+      const convertedStage = stages.find((stage) => stage.isConverted);
+      const convertedCount = convertedStage
+        ? allEnquiries.filter((enquiry) => enquiry.status === convertedStage.key).length
+        : 0;
+
       setStats({
+        totalLeads: (allEnquiriesRes.meta?.totalCount as number) ?? allEnquiries.length,
         newEnquiries: (newRes.meta?.totalCount as number) ?? newRes.data?.length ?? 0,
         followUps: followUps.length,
         visitsToday: (visitRes.meta?.totalCount as number) ?? visitRes.data?.length ?? 0,
+        converted: convertedCount,
       });
 
-      // Get top 3 sorted by createdAt descending
-      const sorted = [...(allEnquiriesRes.data ?? [])].sort(
+      const sorted = [...allEnquiries].sort(
         (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       );
-      setRecentEnquiries(sorted.slice(0, 3));
+      const sortedTasks = [...followUps].sort(
+        (a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime()
+      );
+
+      setRecentEnquiries(sorted.slice(0, 4));
+      setPendingTasks(sortedTasks.slice(0, 3));
     } catch {
       setStats(null);
       setRecentEnquiries([]);
+      setPendingTasks([]);
     } finally {
       setIsLoadingStats(false);
     }
-  }, [accessToken, isEnrolmentRole]);
+  }, [accessToken, isEnrolmentRole, stages]);
 
   useFocusEffect(
     useCallback(() => {
@@ -94,234 +136,267 @@ export function HomeScreen() {
 
   if (!user) return null;
 
-  // Extract initials
-  const initials = user.fullName
-    ? user.fullName
-        .split(" ")
-        .map((n) => n[0])
-        .join("")
-        .toUpperCase()
-        .slice(0, 2)
-    : "?";
-
   return (
     <Screen>
-      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
-        
-        {/* Deep Green Gradient Banner Header */}
-        <LinearGradient
-          colors={["#0A4D27", "#145D33", "#1B6D3D"]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.gradientHeader}
-        >
-          {/* Top Profile & Bell Row */}
-          <View style={styles.topHeaderRow}>
-            <View style={styles.profileSection}>
-              <View style={[styles.avatarCircle, { backgroundColor: "rgba(255, 255, 255, 0.2)" }]}>
-                <Text style={styles.avatarText}>{initials}</Text>
-              </View>
-              <View style={styles.nameSection}>
-                <Text style={styles.greetingText}>{greeting()},</Text>
-                <Text style={styles.nameText}>{user.fullName} 👋</Text>
-              </View>
-            </View>
-            <Pressable
-              style={({ pressed }) => [styles.bellButton, pressed && { opacity: pressedOpacity }]}
-              accessibilityRole="button"
-            >
-              <Ionicons name="notifications-outline" size={20} color="#000000" />
-              <View style={styles.bellDot} />
-            </Pressable>
-          </View>
-
-          {/* Slogan & Book Graphic Container */}
-          <View style={styles.sloganContainer}>
-            <View style={styles.sloganTextContainer}>
-              <Text style={styles.sloganTitle}>Ready to grow today's admissions?</Text>
-              <Text style={styles.sloganSubtitle}>
-                Manage enquiries, follow ups and convert more students.
-              </Text>
-            </View>
-            <View style={styles.bookIllustration}>
-              <Ionicons name="school" size={48} color="rgba(255, 255, 255, 0.45)" style={styles.schoolIcon} />
-              <Ionicons name="ribbon-outline" size={24} color="rgba(255, 255, 255, 0.35)" style={styles.ribbonIcon} />
-            </View>
-          </View>
-        </LinearGradient>
-
-        {/* Overlapping Summary Card */}
+      <ScrollView contentContainerStyle={[styles.container, { backgroundColor: colors.background }]} showsVerticalScrollIndicator={false}>
         {isEnrolmentRole ? (
-          <View style={[styles.overlapCard, cardShadow]}>
-            <View style={styles.overlapLeft}>
-              <Text style={styles.overlapValue}>{stats?.newEnquiries ?? 18}</Text>
-              <Text style={styles.overlapLabel}>New Enquiries</Text>
-              <Text style={styles.overlapTrend}>▲ +12% from yesterday</Text>
-            </View>
-            <Pressable
-              onPress={() => navigation.navigate("NewEnquiryForm")}
-              style={({ pressed }) => [
-                styles.quickAddBtn,
-                { backgroundColor: colors.accent },
-                pressed && { opacity: pressedOpacity },
-              ]}
-              accessibilityRole="button"
+          <>
+            <LinearGradient
+              colors={[colors.accent, colors.accentDark]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.heroCard}
             >
-              <Text style={[styles.quickAddText, { color: colors.accentOn }]}>Quick Add Enquiry +</Text>
-            </Pressable>
-          </View>
-        ) : null}
-
-        {isEnrolmentRole ? (
-          <View style={styles.mainContent}>
-            
-            {/* Today's Overview Section */}
-            <View style={styles.sectionHeaderRow}>
-              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Today's Overview</Text>
-              <Pressable onPress={() => navigation.navigate("Enquiries")} style={styles.viewDetailsLink}>
-                <Text style={[styles.viewDetailsText, { color: colors.textMuted }]}>View Details</Text>
-                <Ionicons name="chevron-forward" size={12} color={colors.textMuted} />
-              </Pressable>
-            </View>
-
-            {isLoadingStats && !stats ? (
-              <ActivityIndicator color={colors.accent} style={{ marginVertical: 12 }} />
-            ) : (
-              <View style={styles.statsRow}>
-                <StatTile
-                  icon="person-add-outline"
-                  label="New Enquiries"
-                  value={stats?.newEnquiries ?? 0}
-                  colors={colors}
-                  shadow={cardShadow}
-                />
-                <StatTile
-                  icon="time-outline"
-                  label="Follow Ups"
-                  value={stats?.followUps ?? 0}
-                  colors={colors}
-                  shadow={cardShadow}
-                />
-                <StatTile
-                  icon="calendar-outline"
-                  label="Visits Today"
-                  value={stats?.visitsToday ?? 0}
-                  colors={colors}
-                  shadow={cardShadow}
-                />
-              </View>
-            )}
-
-            {/* Task Warning Banner */}
-            {stats && stats.followUps > 0 ? (
-              <Pressable
-                style={({ pressed }) => [
-                  styles.taskBanner,
-                  pressed && { opacity: pressedOpacity },
-                ]}
-                onPress={() => navigation.navigate("Tasks")}
-                accessibilityRole="button"
-              >
-                <View style={styles.taskBannerLeft}>
-                  <View style={styles.alarmIconBg}>
-                    <Ionicons name="alarm-outline" size={20} color="#BF7A0A" />
-                  </View>
-                  <View style={styles.taskBannerTextContainer}>
-                    <Text style={styles.taskBannerTitle}>Stay on top of your pipeline!</Text>
-                    <Text style={styles.taskBannerSub}>You have {stats.followUps} tasks due today.</Text>
+              <Image source={decorativeAssets.dotGrid} style={styles.heroDecorGrid} resizeMode="contain" />
+              <Image source={decorativeAssets.waveLines} style={styles.heroDecorWave} resizeMode="contain" />
+              <Image source={decorativeAssets.cornerFrame} style={styles.heroDecorFrame} resizeMode="contain" />
+              <View style={styles.heroTopRow}>
+                <View style={styles.profileBlock}>
+                  <View style={styles.profileTextBlock}>
+                    <Text style={[styles.eyebrow, { color: "rgba(255,255,255,0.78)" }]}>{greeting()}</Text>
+                    <Text style={[styles.heroTitle, { color: "#FFFFFF" }]}>{user.fullName}</Text>
+                    <Text style={[styles.heroSubtitle, { color: "rgba(255,255,255,0.84)" }]}>
+                      Admissions command center for today&apos;s lead movement, follow-ups, and conversions.
+                    </Text>
                   </View>
                 </View>
-                <View style={styles.reviewTasksBtn}>
-                  <Text style={styles.reviewTasksText}>Review Tasks</Text>
-                  <Ionicons name="chevron-forward" size={10} color="#664608" />
+                <Pressable
+                  style={({ pressed }) => [styles.heroBell, pressed && { opacity: pressedOpacity }]}
+                  accessibilityRole="button"
+                >
+                  <Ionicons name="notifications-outline" size={20} color="#FFFFFF" />
+                </Pressable>
+              </View>
+
+              <View style={styles.heroMiddleRow}>
+                <View style={styles.heroFocusCard}>
+                  <Text style={styles.heroFocusLabel}>Today&apos;s focus</Text>
+                  <Text style={styles.heroFocusValue}>{stats?.newEnquiries ?? 0} fresh leads</Text>
+                  <Text style={styles.heroFocusMeta}>
+                    {stats?.followUps ?? 0} pending follow-up{stats?.followUps === 1 ? "" : "s"}
+                  </Text>
                 </View>
-              </Pressable>
-            ) : null}
+              </View>
 
-            {/* Quick Actions Grid */}
-            <View style={styles.sectionHeaderRow}>
-              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Quick Actions</Text>
-              <Text style={[styles.subtitleHelper, { color: colors.textMuted }]}>Everything you need in one place</Text>
-            </View>
-            
-            <View style={styles.actionGrid}>
-              <ActionCard
-                icon="person-add-outline"
-                label="Enquiries"
-                sublabel="View & manage all enquiries"
-                colors={colors}
-                shadow={cardShadow}
-                pressedOpacity={pressedOpacity}
-                onPress={() => navigation.navigate("Enquiries")}
-              />
-              <ActionCard
-                icon="git-network-outline"
-                label="Pipeline Board"
-                sublabel="Track your admissions pipeline"
-                colors={colors}
-                shadow={cardShadow}
-                pressedOpacity={pressedOpacity}
-                onPress={() => navigation.navigate("Pipeline")}
-              />
-              <ActionCard
-                icon="time-outline"
-                label="Follow Up Tasks"
-                sublabel="Never miss a follow up"
-                colors={colors}
-                shadow={cardShadow}
-                pressedOpacity={pressedOpacity}
-                onPress={() => navigation.navigate("Tasks")}
-              />
-              <ActionCard
-                icon="download-outline"
-                label="CSV Export"
-                sublabel="Download data & reports"
-                colors={colors}
-                shadow={cardShadow}
-                pressedOpacity={pressedOpacity}
-                onPress={() => navigation.navigate("More", { screen: "CsvExport" })}
-              />
-            </View>
+              <View style={styles.heroStatsRow}>
+                <HeroStat value={stats?.totalLeads ?? 0} label="Total leads" />
+                <HeroStat value={stats?.converted ?? 0} label="Converted" />
+                <HeroStat value={stats?.followUps ?? 0} label="Pending" />
+              </View>
 
-            {/* Recent Activity List */}
-            <View style={styles.sectionHeaderRow}>
-              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Recent Activity</Text>
-              <Pressable onPress={() => navigation.navigate("Enquiries")} style={styles.viewDetailsLink}>
-                <Text style={[styles.viewDetailsText, { color: colors.textMuted }]}>View All</Text>
-                <Ionicons name="chevron-forward" size={12} color={colors.textMuted} />
-              </Pressable>
-            </View>
+              <View style={styles.heroCtaRow}>
+                <Pressable
+                  onPress={() => navigation.navigate("NewEnquiryForm")}
+                  style={({ pressed }) => [
+                    styles.primaryHeroButton,
+                    { backgroundColor: "#FFFFFF" },
+                    pressed && { opacity: pressedOpacity },
+                  ]}
+                >
+                  <Text style={[styles.primaryHeroButtonText, { color: colors.accentDark }]}>Add New Enquiry</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => navigation.navigate("Pipeline")}
+                  style={({ pressed }) => [
+                    styles.secondaryHeroButton,
+                    pressed && { opacity: pressedOpacity },
+                  ]}
+                >
+                  <Text style={styles.secondaryHeroButtonText}>Open Pipeline</Text>
+                </Pressable>
+              </View>
+            </LinearGradient>
 
-            <View style={[styles.recentActivityList, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
-              {recentEnquiries.map((e, index) => {
-                const statusColor = getStatusColor(e.status, mode);
-                return (
-                  <ActivityRow
-                    key={e.id}
+            <View style={styles.dashboardBody}>
+              <View style={styles.sectionRow}>
+                <View>
+                  <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Today&apos;s view</Text>
+                  <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>A fast read of pipeline pressure and conversions.</Text>
+                </View>
+              </View>
+
+              {isLoadingStats && !stats ? (
+                <ActivityIndicator color={colors.accent} style={{ marginVertical: 16 }} />
+              ) : (
+                <View style={styles.kpiGrid}>
+                  <KpiCard
+                    title="Fresh enquiries"
+                    value={stats?.newEnquiries ?? 0}
+                    hint="New leads waiting to be worked"
                     icon="person-add-outline"
-                    title="New enquiry from "
-                    boldTitle={e.contactName}
-                    time={formatRelativeTime(e.createdAt)}
-                    tagText={e.status}
-                    tagColor={statusColor.text}
+                    graphic={decorativeAssets.idCard}
                     colors={colors}
-                    isMiddle={index === 1}
+                    shadow={cardShadow}
                   />
-                );
-              })}
-              {recentEnquiries.length === 0 ? (
-                <Text style={[styles.emptyActivityText, { color: colors.textMuted }]}>No recent activities</Text>
-              ) : null}
-            </View>
+                  <KpiCard
+                    title="Follow-up queue"
+                    value={stats?.followUps ?? 0}
+                    hint="Tasks still pending today"
+                    icon="time-outline"
+                    graphic={decorativeAssets.chevronFlow}
+                    colors={colors}
+                    shadow={cardShadow}
+                  />
+                  <KpiCard
+                    title="Visits stage"
+                    value={stats?.visitsToday ?? 0}
+                    hint="Leads currently at visit"
+                    icon="calendar-outline"
+                    graphic={decorativeAssets.paperPlane}
+                    colors={colors}
+                    shadow={cardShadow}
+                  />
+                  <KpiCard
+                    title="Conversions"
+                    value={stats?.converted ?? 0}
+                    hint="Leads in converted stage"
+                    icon="checkmark-done-outline"
+                    graphic={decorativeAssets.checkCircle}
+                    colors={colors}
+                    shadow={cardShadow}
+                  />
+                </View>
+              )}
 
-          </View>
+              {stats && stats.followUps > 0 ? (
+                <Pressable
+                  onPress={() => navigation.navigate("Tasks")}
+                  style={({ pressed }) => [
+                    styles.alertCard,
+                    { backgroundColor: colors.surface, borderColor: colors.accent },
+                    cardShadow,
+                    pressed && { opacity: pressedOpacity },
+                  ]}
+                >
+                  <View style={styles.alertLeft}>
+                    <View style={[styles.alertIconWrap, { backgroundColor: colors.accentSoft }]}>
+                      <Ionicons name="flash-outline" size={18} color={colors.accent} />
+                    </View>
+                    <View style={styles.alertTextBlock}>
+                      <Text style={[styles.alertTitle, { color: colors.textPrimary }]}>Follow-ups need attention</Text>
+                      <Text style={[styles.alertSubtitle, { color: colors.textMuted }]}>
+                        {stats.followUps} pending task{stats.followUps === 1 ? "" : "s"} can affect today&apos;s conversion flow.
+                      </Text>
+                    </View>
+                  </View>
+                  <Ionicons name="arrow-forward" size={16} color={colors.accent} />
+                </Pressable>
+              ) : null}
+
+              <View style={styles.sectionRow}>
+                <View>
+                  <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Quick desk actions</Text>
+                  <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>Jump into the screens that matter most.</Text>
+                </View>
+              </View>
+
+              <View style={styles.actionGrid}>
+                <ActionCard
+                  icon="mail-open-outline"
+                  label="Enquiries"
+                  sublabel="Browse, filter and work all incoming leads"
+                  graphic={decorativeAssets.idCard}
+                  colors={colors}
+                  shadow={cardShadow}
+                  pressedOpacity={pressedOpacity}
+                  onPress={() => navigation.navigate("Enquiries")}
+                />
+                <ActionCard
+                  icon="git-network-outline"
+                  label="Pipeline"
+                  sublabel="See every stage and move leads faster"
+                  graphic={decorativeAssets.chevronFlow}
+                  colors={colors}
+                  shadow={cardShadow}
+                  pressedOpacity={pressedOpacity}
+                  onPress={() => navigation.navigate("Pipeline")}
+                />
+                <ActionCard
+                  icon="checkbox-outline"
+                  label="Follow-ups"
+                  sublabel="Review pending tasks and clear blockers"
+                  graphic={decorativeAssets.checkCircle}
+                  colors={colors}
+                  shadow={cardShadow}
+                  pressedOpacity={pressedOpacity}
+                  onPress={() => navigation.navigate("Tasks")}
+                />
+                <ActionCard
+                  icon="download-outline"
+                  label="CSV Export"
+                  sublabel="Download operational data and logs"
+                  graphic={decorativeAssets.ribbonBanner}
+                  colors={colors}
+                  shadow={cardShadow}
+                  pressedOpacity={pressedOpacity}
+                  onPress={() => navigation.navigate("More", { screen: "CsvExport" })}
+                />
+              </View>
+
+              <View style={styles.splitSection}>
+                <View style={styles.splitColumn}>
+                  <View style={styles.sectionRow}>
+                    <View>
+                      <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Recent leads</Text>
+                      <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>The newest activity entering the desk.</Text>
+                    </View>
+                  </View>
+
+                  <View style={[styles.panelCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+                    {recentEnquiries.length === 0 ? (
+                      <Text style={[styles.emptyText, { color: colors.textMuted }]}>No recent enquiries yet.</Text>
+                    ) : (
+                      recentEnquiries.map((enquiry, index) => (
+                        <RecentLeadRow
+                          key={enquiry.id}
+                          enquiry={enquiry}
+                          colors={colors}
+                          mode={mode}
+                          isLast={index === recentEnquiries.length - 1}
+                          onPress={() => navigation.navigate("EnquiryDetail", { enquiryId: enquiry.id })}
+                        />
+                      ))
+                    )}
+                  </View>
+                </View>
+
+                <View style={styles.splitColumn}>
+                  <View style={styles.sectionRow}>
+                    <View>
+                      <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Next follow-ups</Text>
+                      <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>A simple queue of the most urgent pending outreach.</Text>
+                    </View>
+                  </View>
+
+                  <View style={[styles.panelCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+                    {pendingTasks.length === 0 ? (
+                      <Text style={[styles.emptyText, { color: colors.textMuted }]}>No pending tasks right now.</Text>
+                    ) : (
+                      pendingTasks.map((task, index) => (
+                        <TaskPreviewRow
+                          key={task.id}
+                          task={task}
+                          colors={colors}
+                          isLast={index === pendingTasks.length - 1}
+                          onPress={() => navigation.navigate("Tasks")}
+                        />
+                      ))
+                    )}
+                  </View>
+                </View>
+              </View>
+            </View>
+          </>
         ) : isTeacher ? (
-          <View style={styles.mainContent}>
+          <View style={styles.teacherWrap}>
+            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Teacher workspace</Text>
+            <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>Quick access to planning, assignments, and analytics.</Text>
             <View style={styles.actionGrid}>
               <ActionCard
                 icon="book-outline"
                 label="Lesson Studio"
-                sublabel="Plan & generate lessons"
+                sublabel="Plan lessons and generate teaching material"
+                graphic={decorativeAssets.book}
                 colors={colors}
                 shadow={cardShadow}
                 pressedOpacity={pressedOpacity}
@@ -330,7 +405,8 @@ export function HomeScreen() {
               <ActionCard
                 icon="document-text-outline"
                 label="Assignment Lab"
-                sublabel="Create & grade assignments"
+                sublabel="Create, review and publish assignments"
+                graphic={decorativeAssets.ribbonBanner}
                 colors={colors}
                 shadow={cardShadow}
                 pressedOpacity={pressedOpacity}
@@ -339,7 +415,8 @@ export function HomeScreen() {
               <ActionCard
                 icon="bar-chart-outline"
                 label="Analytics"
-                sublabel="View class insights"
+                sublabel="Open performance and class insights"
+                graphic={decorativeAssets.shield}
                 colors={colors}
                 shadow={cardShadow}
                 pressedOpacity={pressedOpacity}
@@ -348,47 +425,50 @@ export function HomeScreen() {
             </View>
           </View>
         ) : (
-          <Text style={[styles.teacherSummary, { color: colors.textMuted }]}>No screens configured.</Text>
+          <Text style={[styles.emptyText, { color: colors.textMuted }]}>No dashboard is configured for this role yet.</Text>
         )}
       </ScrollView>
     </Screen>
   );
 }
 
-function StatTile({
-  icon,
-  label,
+function HeroStat({ value, label }: { value: number; label: string }) {
+  return (
+    <View style={styles.heroStatCard}>
+      <Text style={styles.heroStatValue}>{value}</Text>
+      <Text style={styles.heroStatLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function KpiCard({
+  title,
   value,
+  hint,
+  icon,
+  graphic,
   colors,
   shadow,
 }: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
+  title: string;
   value: number;
+  hint: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  graphic: ImageSourcePropType;
   colors: ReturnType<typeof useTheme>["colors"];
-  shadow: any;
+  shadow: ReturnType<typeof useTheme>["cardShadow"];
 }) {
   return (
-    <View
-      style={[
-        styles.statTile,
-        {
-          backgroundColor: colors.surface,
-          borderColor: colors.border,
-          borderLeftColor: colors.accent,
-        },
-        shadow,
-      ]}
-    >
-      <View style={[styles.statIconContainer, { backgroundColor: colors.accent + "12" }]}>
-        <Ionicons name={icon} size={15} color={colors.accent} />
+    <View style={[styles.kpiCard, { backgroundColor: colors.surface, borderColor: colors.border }, shadow]}>
+      <Image source={graphic} style={styles.kpiGraphic} resizeMode="contain" />
+      <View style={styles.kpiTopRow}>
+        <View style={[styles.kpiIconWrap, { backgroundColor: colors.accentSoft }]}>
+          <Ionicons name={icon} size={17} color={colors.accent} />
+        </View>
+        <Text style={[styles.kpiValue, { color: colors.textPrimary }]}>{String(value).padStart(2, "0")}</Text>
       </View>
-      <Text style={[styles.statValue, { color: colors.textPrimary }]}>
-        {String(value).padStart(2, "0")}
-      </Text>
-      <Text style={[styles.statLabel, { color: colors.textMuted }]} numberOfLines={1}>
-        {label}
-      </Text>
+      <Text style={[styles.kpiTitle, { color: colors.textPrimary }]}>{title}</Text>
+      <Text style={[styles.kpiHint, { color: colors.textMuted }]}>{hint}</Text>
     </View>
   );
 }
@@ -397,6 +477,7 @@ function ActionCard({
   icon,
   label,
   sublabel,
+  graphic,
   colors,
   shadow,
   pressedOpacity,
@@ -405,426 +486,485 @@ function ActionCard({
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   sublabel: string;
+  graphic: ImageSourcePropType;
   colors: ReturnType<typeof useTheme>["colors"];
-  shadow: any;
+  shadow: ReturnType<typeof useTheme>["cardShadow"];
   pressedOpacity: number;
   onPress: () => void;
 }) {
-  const actionScale = useRef(new Animated.Value(1)).current;
-
-  const handlePressIn = () => {
-    Animated.spring(actionScale, {
-      toValue: 0.96,
-      useNativeDriver: true,
-      tension: 100,
-      friction: 6,
-    }).start();
-  };
-
-  const handlePressOut = () => {
-    Animated.spring(actionScale, {
-      toValue: 1,
-      useNativeDriver: true,
-      tension: 100,
-      friction: 6,
-    }).start();
-  };
-
   return (
-    <Animated.View style={[styles.actionWrapper, { transform: [{ scale: actionScale }] }]}>
-      <Pressable
-        onPressIn={handlePressIn}
-        onPressOut={handlePressOut}
-        onPress={onPress}
-        style={({ pressed }) => [
-          styles.actionCard,
-          { backgroundColor: colors.surface, borderColor: colors.border },
-          shadow,
-          pressed && { opacity: pressedOpacity },
-        ]}
-        accessibilityRole="button"
-      >
-        <View style={styles.actionCardHeader}>
-          <View style={[styles.actionIconBg, { backgroundColor: colors.accent + "12" }]}>
-            <Ionicons name={icon} size={16} color={colors.accent} />
-          </View>
-          <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.actionCard,
+        { backgroundColor: colors.surface, borderColor: colors.border },
+        shadow,
+        pressed && { opacity: pressedOpacity },
+      ]}
+      accessibilityRole="button"
+    >
+      <Image source={graphic} style={styles.actionGraphic} resizeMode="contain" />
+      <View style={styles.actionCardHeader}>
+        <View style={[styles.actionIconBg, { backgroundColor: colors.accentSoft }]}>
+          <Ionicons name={icon} size={18} color={colors.accent} />
         </View>
-        <Text style={[styles.actionLabel, { color: colors.textPrimary }]}>{label}</Text>
-        <Text style={[styles.actionSub, { color: colors.textMuted }]}>{sublabel}</Text>
-      </Pressable>
-    </Animated.View>
+        <Ionicons name="arrow-forward" size={14} color={colors.textMuted} />
+      </View>
+      <Text style={[styles.actionLabel, { color: colors.textPrimary }]}>{label}</Text>
+      <Text style={[styles.actionSub, { color: colors.textMuted }]}>{sublabel}</Text>
+    </Pressable>
   );
 }
 
-function ActivityRow({
-  icon,
-  title,
-  boldTitle,
-  time,
-  tagText,
-  tagColor,
+function RecentLeadRow({
+  enquiry,
   colors,
-  isMiddle,
+  mode,
+  isLast,
+  onPress,
 }: {
-  icon: keyof typeof Ionicons.glyphMap;
-  title: string;
-  boldTitle: string;
-  time: string;
-  tagText: string;
-  tagColor: string;
+  enquiry: Enquiry;
   colors: ReturnType<typeof useTheme>["colors"];
-  isMiddle?: boolean;
+  mode: "light" | "dark";
+  isLast: boolean;
+  onPress: () => void;
+}) {
+  const avatarSource = getAvatarSource(enquiry.id);
+  const statusColor = getStatusColor(enquiry.status, mode);
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[
+        styles.listRow,
+        !isLast && { borderBottomWidth: 1, borderBottomColor: colors.border },
+      ]}
+    >
+      <View style={[styles.rowAvatarWrap, { backgroundColor: colors.surfaceRaised, borderColor: colors.accent }]}>
+        <Image source={avatarSource} style={styles.rowAvatar} resizeMode="contain" />
+      </View>
+      <View style={styles.rowMain}>
+        <Text style={[styles.rowTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+          {enquiry.contactName}
+        </Text>
+        <Text style={[styles.rowMeta, { color: colors.textMuted }]} numberOfLines={1}>
+          {formatSource(enquiry.source)} · {formatRelativeTime(enquiry.createdAt)}
+        </Text>
+      </View>
+      <View style={[styles.rowBadge, { backgroundColor: statusColor.bg }]}>
+        <Text style={[styles.rowBadgeText, { color: statusColor.text }]}>{enquiry.status}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function TaskPreviewRow({
+  task,
+  colors,
+  isLast,
+  onPress,
+}: {
+  task: FollowUpTask;
+  colors: ReturnType<typeof useTheme>["colors"];
+  isLast: boolean;
+  onPress: () => void;
 }) {
   return (
-    <View style={[styles.activityRow, isMiddle && { borderTopWidth: 1, borderBottomWidth: 1, borderColor: colors.border }]}>
-      <View style={[styles.activityIconContainer, { backgroundColor: tagColor + "12" }]}>
-        <Ionicons name={icon} size={15} color={tagColor} />
+    <Pressable
+      onPress={onPress}
+      style={[
+        styles.listRow,
+        !isLast && { borderBottomWidth: 1, borderBottomColor: colors.border },
+      ]}
+    >
+      <View style={[styles.taskPreviewIcon, { backgroundColor: colors.accentSoft }]}>
+        <Ionicons name={task.channel === "sms" ? "chatbubble-outline" : "mail-outline"} size={16} color={colors.accent} />
       </View>
-      <View style={styles.activityMain}>
-        <Text style={[styles.activityText, { color: colors.textPrimary }]} numberOfLines={1}>
-          {title}
-          <Text style={{ fontWeight: "700" }}>{boldTitle}</Text>
+      <View style={styles.rowMain}>
+        <Text style={[styles.rowTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+          {task.enquiry?.contactName ?? "Lead follow-up"}
         </Text>
-        <Text style={[styles.activityTime, { color: colors.textMuted }]}>{time}</Text>
+        <Text style={[styles.rowMeta, { color: colors.textMuted }]} numberOfLines={1}>
+          {task.channel.toUpperCase()} · due {new Date(task.dueAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+        </Text>
       </View>
-      <View style={[styles.activityBadge, { backgroundColor: tagColor + "15" }]}>
-        <Text style={[styles.activityBadgeText, { color: tagColor }]}>{tagText}</Text>
-      </View>
-    </View>
+      <Ionicons name="arrow-forward" size={14} color={colors.textMuted} />
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flexGrow: 1, backgroundColor: "#F7F8F7", paddingBottom: 32 },
-  gradientHeader: {
-    paddingTop: 16,
-    paddingHorizontal: 20,
-    paddingBottom: 48,
-    borderBottomLeftRadius: 28,
-    borderBottomRightRadius: 28,
+  container: {
+    flexGrow: 1,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 36,
   },
-  topHeaderRow: {
+  heroCard: {
+    borderRadius: 30,
+    padding: 20,
+    gap: 20,
+    overflow: "hidden",
+  },
+  heroDecorGrid: {
+    position: "absolute",
+    right: 16,
+    top: 18,
+    width: 118,
+    height: 118,
+    opacity: 0.12,
+  },
+  heroDecorWave: {
+    position: "absolute",
+    left: -6,
+    bottom: 14,
+    width: 118,
+    height: 68,
+    opacity: 0.14,
+  },
+  heroDecorFrame: {
+    position: "absolute",
+    right: -8,
+    bottom: 14,
+    width: 104,
+    height: 104,
+    opacity: 0.12,
+  },
+  heroTopRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 20,
+    alignItems: "flex-start",
+    gap: 14,
   },
-  profileSection: {
-    flexDirection: "row",
+  profileBlock: {
+    flex: 1,
+  },
+  profileTextBlock: {
+    flex: 1,
+  },
+  eyebrow: {
+    fontSize: 12,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  heroTitle: {
+    marginTop: 6,
+    fontSize: 28,
+    lineHeight: 32,
+    fontWeight: "800",
+    letterSpacing: -0.7,
+  },
+  heroSubtitle: {
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 20,
+    maxWidth: "95%",
+  },
+  heroBell: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.14)",
     alignItems: "center",
+    justifyContent: "center",
+  },
+  heroMiddleRow: {
+    flexDirection: "row",
+  },
+  heroFocusCard: {
+    flex: 1,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.12)",
+    padding: 14,
+  },
+  heroFocusLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.9,
+    color: "rgba(255,255,255,0.72)",
+  },
+  heroFocusValue: {
+    marginTop: 8,
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#FFFFFF",
+    letterSpacing: -0.4,
+  },
+  heroFocusMeta: {
+    marginTop: 4,
+    fontSize: 12,
+    fontWeight: "600",
+    color: "rgba(255,255,255,0.8)",
+  },
+  heroStatsRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  heroStatCard: {
+    flex: 1,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.12)",
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+  },
+  heroStatValue: {
+    fontSize: 22,
+    fontWeight: "800",
+    color: "#FFFFFF",
+  },
+  heroStatLabel: {
+    marginTop: 4,
+    fontSize: 12,
+    fontWeight: "600",
+    color: "rgba(255,255,255,0.78)",
+  },
+  heroCtaRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  primaryHeroButton: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  primaryHeroButtonText: {
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  secondaryHeroButton: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.22)",
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  secondaryHeroButtonText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#FFFFFF",
+  },
+  dashboardBody: {
+    marginTop: 20,
+    gap: 16,
+  },
+  sectionRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
+  },
+  sectionTitle: {
+    fontSize: 21,
+    fontWeight: "800",
+    letterSpacing: -0.4,
+  },
+  sectionSubtitle: {
+    marginTop: 4,
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  kpiGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: 12,
   },
-  avatarCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: "center",
-    justifyContent: "center",
+  kpiCard: {
+    width: "48%",
+    borderWidth: 1,
+    borderRadius: 24,
+    padding: 16,
+    minHeight: 128,
+    overflow: "hidden",
   },
-  avatarText: { fontSize: 15, fontWeight: "800", color: "#FFFFFF" },
-  nameSection: { justifyContent: "center" },
-  greetingText: { fontSize: 12, color: "#D1EEDC", fontWeight: "500" },
-  nameText: { fontSize: 16, color: "#FFFFFF", fontWeight: "700" },
-  bellButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "#FFFFFF",
-    alignItems: "center",
-    justifyContent: "center",
-    position: "relative",
-  },
-  bellDot: {
+  kpiGraphic: {
     position: "absolute",
-    top: 8,
     right: 8,
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: "#17C964",
+    bottom: 6,
+    width: 54,
+    height: 54,
+    opacity: 0.1,
   },
-  sloganContainer: {
+  kpiTopRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginTop: 8,
   },
-  sloganTextContainer: {
-    flex: 1,
-    paddingRight: 16,
-  },
-  sloganTitle: {
-    fontSize: 20,
-    color: "#FFFFFF",
-    fontWeight: "800",
-    lineHeight: 25,
-  },
-  sloganSubtitle: {
-    fontSize: 12,
-    color: "#E2F6EA",
-    marginTop: 6,
-    lineHeight: 16,
-    opacity: 0.85,
-  },
-  bookIllustration: {
-    width: 72,
-    height: 72,
-    position: "relative",
-    justifyContent: "center",
+  kpiIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
     alignItems: "center",
+    justifyContent: "center",
   },
-  schoolIcon: {
-    position: "absolute",
+  kpiValue: {
+    fontSize: 26,
+    fontWeight: "800",
+    letterSpacing: -0.6,
   },
-  ribbonIcon: {
-    position: "absolute",
-    bottom: 2,
-    right: 2,
+  kpiTitle: {
+    marginTop: 18,
+    fontSize: 14,
+    fontWeight: "800",
   },
-  overlapCard: {
-    marginHorizontal: 16,
-    marginTop: -24,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
+  kpiHint: {
+    marginTop: 5,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  alertCard: {
+    borderWidth: 1,
+    borderRadius: 22,
     padding: 16,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    borderWidth: 1,
-    borderColor: "#EAECE9",
+    gap: 12,
   },
-  overlapLeft: {
+  alertLeft: {
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "center",
     flex: 1,
   },
-  overlapValue: {
-    fontSize: 26,
+  alertIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  alertTextBlock: {
+    flex: 1,
+  },
+  alertTitle: {
+    fontSize: 14,
     fontWeight: "800",
-    color: "#131A15",
   },
-  overlapLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#4B564D",
-    marginTop: 2,
-  },
-  overlapTrend: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#1F9D55",
+  alertSubtitle: {
     marginTop: 4,
-  },
-  quickAddBtn: {
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    height: 38,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  quickAddText: {
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  mainContent: {
-    paddingHorizontal: 16,
-    marginTop: 18,
-  },
-  sectionHeaderRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 18,
-    marginBottom: 10,
-  },
-  sectionTitle: {
-    fontSize: 15,
-    fontWeight: "800",
-  },
-  viewDetailsLink: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 2,
-  },
-  viewDetailsText: {
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  subtitleHelper: {
-    fontSize: 11,
-    fontWeight: "500",
-  },
-  statsRow: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  statTile: {
-    flex: 1,
-    borderWidth: 1,
-    borderLeftWidth: 4,
-    borderRadius: 12,
-    padding: 12,
-  },
-  statIconContainer: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 6,
-  },
-  statValue: {
-    fontSize: 22,
-    fontWeight: "800",
-  },
-  statLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    marginTop: 1,
-  },
-  taskBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#FDF4E7",
-    borderWidth: 1,
-    borderColor: "#FBE3BF",
-    borderRadius: 14,
-    padding: 12,
-    marginTop: 16,
-  },
-  taskBannerLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    flex: 1,
-  },
-  alarmIconBg: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#FCECD5",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  taskBannerTextContainer: {
-    flex: 1,
-  },
-  taskBannerTitle: {
     fontSize: 12,
-    fontWeight: "800",
-    color: "#664608",
-  },
-  taskBannerSub: {
-    fontSize: 11,
-    color: "#8C6A2E",
-    marginTop: 1,
-    fontWeight: "600",
-  },
-  reviewTasksBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FFFFFF",
-    borderRadius: 14,
-    paddingHorizontal: 10,
-    height: 28,
-    gap: 2,
-    borderWidth: 1,
-    borderColor: "#FBE3BF",
-  },
-  reviewTasksText: {
-    fontSize: 10,
-    fontWeight: "800",
-    color: "#664608",
+    lineHeight: 18,
   },
   actionGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 10,
-    justifyContent: "space-between",
-  },
-  actionWrapper: {
-    width: "48%",
-    marginBottom: 10,
+    gap: 12,
   },
   actionCard: {
-    width: "100%",
+    width: "48%",
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
-    minHeight: 112,
+    borderRadius: 22,
+    padding: 16,
+    minHeight: 132,
+    overflow: "hidden",
+  },
+  actionGraphic: {
+    position: "absolute",
+    right: 8,
+    bottom: 8,
+    width: 54,
+    height: 54,
+    opacity: 0.1,
   },
   actionCardHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 10,
+    marginBottom: 18,
   },
   actionIconBg: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
+    width: 36,
+    height: 36,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
   },
   actionLabel: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "800",
   },
   actionSub: {
-    fontSize: 10,
-    fontWeight: "600",
-    marginTop: 2,
-    lineHeight: 13,
+    marginTop: 6,
+    fontSize: 12,
+    fontWeight: "500",
+    lineHeight: 18,
   },
-  recentActivityList: {
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingVertical: 4,
+  splitSection: {
+    gap: 16,
   },
-  activityRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+  splitColumn: {
     gap: 10,
   },
-  activityIconContainer: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+  panelCard: {
+    borderWidth: 1,
+    borderRadius: 24,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+  },
+  listRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 12,
+  },
+  rowAvatarWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 15,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  rowAvatar: {
+    width: 34,
+    height: 34,
+  },
+  taskPreviewIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 15,
     alignItems: "center",
     justifyContent: "center",
   },
-  activityMain: {
+  rowMain: {
     flex: 1,
   },
-  activityText: {
-    fontSize: 11,
-    fontWeight: "500",
-  },
-  activityTime: {
-    fontSize: 10,
-    marginTop: 2,
-  },
-  activityBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  activityBadgeText: {
-    fontSize: 9,
+  rowTitle: {
+    fontSize: 13,
     fontWeight: "800",
   },
-  emptyActivityText: {
+  rowMeta: {
+    marginTop: 4,
+    fontSize: 11,
+    fontWeight: "500",
+    lineHeight: 16,
+  },
+  rowBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  rowBadgeText: {
+    fontSize: 10,
+    fontWeight: "800",
+    textTransform: "capitalize",
+  },
+  teacherWrap: {
+    paddingTop: 12,
+    gap: 14,
+  },
+  emptyText: {
+    paddingVertical: 18,
     textAlign: "center",
-    paddingVertical: 20,
     fontSize: 13,
     fontWeight: "500",
-  },
-  teacherSummary: {
-    fontSize: 13,
-    marginTop: 20,
-    lineHeight: 19,
-    textAlign: "center",
+    lineHeight: 20,
   },
 });

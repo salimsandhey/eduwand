@@ -126,6 +126,18 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
           ))}
         </View>
 
+        <Pressable
+          style={({ pressed }) => [styles.linkCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow, pressed && { opacity: pressedOpacity }]}
+          onPress={() => navigation.navigate("AnswerKeyReview", { assignmentId })}
+          accessibilityRole="button"
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.cardTitle, { color: colors.textPrimary, marginBottom: 2 }]}>Answer Key</Text>
+            <Text style={[styles.meta, { color: colors.textMuted }]}>Review and verify before distributing</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+        </Pressable>
+
         {assignment.personalisationEnabled ? (
           <Pressable
             style={({ pressed }) => [styles.linkCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow, pressed && { opacity: pressedOpacity }]}

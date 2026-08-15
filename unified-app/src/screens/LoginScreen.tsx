@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../context/AuthContext";
-import { useTheme } from "../theme/ThemeContext";
+import { lightColors, PRESSED_OPACITY } from "../theme/tokens";
 import { Screen } from "../components/Screen";
 import { api } from "../api/client";
 
@@ -31,7 +31,15 @@ interface Props {
 
 export function LoginScreen({ onStudentLogin }: Props) {
   const { login, isLoading, error } = useAuth();
-  const { colors, pressedOpacity } = useTheme();
+  // Fixed light palette, not useTheme() - this screen's background/curves/
+  // illustration were already hardcoded light regardless of device theme, but
+  // the text colors were still pulled from the theme. On a device in dark
+  // mode (ThemeContext defaults to dark unless the OS explicitly reports
+  // "light"), that put near-white text on a near-white background - the
+  // "elements not visible" bug. Keeping the whole screen theme-independent
+  // instead of only the background fixes it for good.
+  const colors = lightColors;
+  const pressedOpacity = PRESSED_OPACITY;
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);

@@ -3,10 +3,11 @@ import { Ionicons } from "@expo/vector-icons";
 import { TeacherTabParamList } from "./types";
 import { useTheme } from "../theme/ThemeContext";
 import { HomeScreen } from "../screens/HomeScreen";
-import { StudioScreen } from "../screens/StudioScreen";
+import { TopicListScreen } from "../screens/TopicListScreen";
 import { AssignmentScreen } from "../screens/AssignmentScreen";
 import { TeacherAnalyticsScreen } from "../screens/TeacherAnalyticsScreen";
 import { MoreMenuScreen } from "../screens/MoreMenuScreen";
+import { FloatingTabBar } from "./FloatingTabBar";
 
 const Tab = createBottomTabNavigator<TeacherTabParamList>();
 
@@ -23,18 +24,17 @@ export function TeacherTabNavigator() {
 
   return (
     <Tab.Navigator
+      tabBar={(props) => <FloatingTabBar {...props} icons={ICONS} />}
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarActiveTintColor: colors.accent,
-        tabBarInactiveTintColor: colors.textMuted,
-        tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
+        tabBarHideOnKeyboard: true,
         tabBarIcon: ({ color, size }) => (
           <Ionicons name={ICONS[route.name as keyof TeacherTabParamList]} size={size} color={color} />
         ),
       })}
     >
       <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Studio" component={StudioScreen} />
+      <Tab.Screen name="Studio" component={TopicListScreen} />
       <Tab.Screen name="Assignment" component={AssignmentScreen} />
       <Tab.Screen name="Analytics" component={TeacherAnalyticsScreen} />
       <Tab.Screen
