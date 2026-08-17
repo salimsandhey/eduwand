@@ -1,10 +1,10 @@
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Ionicons } from "@expo/vector-icons";
 import { EnrolmentTabParamList } from "./types";
-import { HomeScreen } from "../screens/HomeScreen";
-import { EnquiryListScreen } from "../screens/EnquiryListScreen";
-import { PipelineBoardScreen } from "../screens/PipelineBoardScreen";
-import { FollowUpTaskListScreen } from "../screens/FollowUpTaskListScreen";
+import { HomeScreen } from "../screens/shared/HomeScreen";
+import { EnquiryListScreen } from "../screens/enrolment/EnquiryListScreen";
+import { PipelineBoardScreen } from "../screens/enrolment/PipelineBoardScreen";
+import { FollowUpTaskListScreen } from "../screens/enrolment/FollowUpTaskListScreen";
 import { MoreStackNavigator } from "./MoreStackNavigator";
 import { FloatingTabBar } from "./FloatingTabBar";
 

@@ -4,8 +4,8 @@ import { storage } from "../lib/storage";
 
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope];
 
-// Fixed admission document checklist (per-school configurability deferred -
-// chat 15 Aug 2026). "other" covers anything outside this list.
+// Fixed admission document checklist (per-school configurability deferred).
+// "other" covers anything outside this list.
 const VALID_DOCUMENT_TYPES = [
   "student_photo",
   "birth_certificate",

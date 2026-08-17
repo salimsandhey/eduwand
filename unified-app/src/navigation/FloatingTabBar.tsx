@@ -4,6 +4,7 @@ import { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../theme/ThemeContext";
+import { typography } from "../theme/tokens";
 
 interface FloatingTabBarProps extends BottomTabBarProps {
   icons: Record<string, keyof typeof Ionicons.glyphMap>;
@@ -14,7 +15,7 @@ export function FloatingTabBar({ state, descriptors, navigation, icons }: Floati
   const insets = useSafeAreaInsets();
 
   return (
-    <View style={[styles.wrap, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+    <View pointerEvents="box-none" style={[styles.wrap, { bottom: Math.max(insets.bottom, 10) }]}>
       <View style={[styles.bar, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
         {state.routes.map((route, index) => {
           const descriptor = descriptors[route.key];
@@ -150,8 +151,11 @@ function AnimatedTabItem({
 
 const styles = StyleSheet.create({
   wrap: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 10,
     paddingHorizontal: 12,
-    paddingTop: 8,
     backgroundColor: "transparent",
   },
   bar: {
@@ -194,11 +198,13 @@ const styles = StyleSheet.create({
     borderRadius: 13,
   },
   label: {
+    fontFamily: typography.fontFamily,
     fontSize: 10,
     fontWeight: "700",
     letterSpacing: 0,
   },
   activeLabel: {
+    fontFamily: typography.fontFamily,
     fontWeight: "800",
   },
 });

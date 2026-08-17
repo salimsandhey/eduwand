@@ -7,23 +7,23 @@
 // small, bold badge labels, so the small-text threshold applies, not the 3:1
 // large-text one.
 const LIGHT: Record<string, { bg: string; text: string }> = {
-  new: { bg: "#F4F4F4", text: "#191919" },
-  contacted: { bg: "#EFEFEF", text: "#2B2B2B" },
-  visit: { bg: "#FAF1F1", text: "#7B2D2B" },
-  application: { bg: "#F7F7F7", text: "#1F1F1F" },
-  admitted: { bg: "#ECECEC", text: "#1A1A1A" },
-  enrolled: { bg: "#151515", text: "#FFFFFF" },
-  lost: { bg: "#F6E5E5", text: "#922E2E" },
+  new: { bg: "#F7E6F2", text: "#7C005A" },
+  contacted: { bg: "#FFF1D0", text: "#7A5100" },
+  visit: { bg: "#DFFAF8", text: "#14736D" },
+  application: { bg: "#F4F1E8", text: "#1F1F1F" },
+  admitted: { bg: "#FFE3EA", text: "#9B1F3B" },
+  enrolled: { bg: "#1F1F1F", text: "#FFFFFF" },
+  lost: { bg: "#FFE3EA", text: "#A51839" },
 };
 
 const DARK: Record<string, { bg: string; text: string }> = {
-  new: { bg: "#1C1C1C", text: "#F4F4F4" },
-  contacted: { bg: "#232323", text: "#E9E9E9" },
-  visit: { bg: "#351B1B", text: "#F2D6D6" },
-  application: { bg: "#2A2A2A", text: "#EFEFEF" },
-  admitted: { bg: "#303030", text: "#FFFFFF" },
-  enrolled: { bg: "#7B2D2B", text: "#FFFFFF" },
-  lost: { bg: "#4A2020", text: "#F0B0B0" },
+  new: { bg: "#3B1230", text: "#FFD9F1" },
+  contacted: { bg: "#3A2B12", text: "#FFD98A" },
+  visit: { bg: "#143B39", text: "#A9FFF9" },
+  application: { bg: "#33302A", text: "#F4F1E8" },
+  admitted: { bg: "#44202A", text: "#FFC0CD" },
+  enrolled: { bg: "#7C005A", text: "#FFFFFF" },
+  lost: { bg: "#4A1F2A", text: "#FFC0CD" },
 };
 
 export function getStatusColor(status: string, mode: "light" | "dark") {

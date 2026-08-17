@@ -1,10 +1,10 @@
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Ionicons } from "@expo/vector-icons";
 import { StudentTabParamList } from "./types";
-import { StudentHomeScreen } from "../screens/StudentHomeScreen";
-import { StudentMaterialsScreen } from "../screens/StudentMaterialsScreen";
-import { StudentResultsScreen } from "../screens/StudentResultsScreen";
-import { StudentMessagesScreen } from "../screens/StudentMessagesScreen";
+import { StudentHomeScreen } from "../screens/student/StudentHomeScreen";
+import { StudentMaterialsScreen } from "../screens/student/StudentMaterialsScreen";
+import { StudentResultsScreen } from "../screens/student/StudentResultsScreen";
+import { StudentMessagesScreen } from "../screens/student/StudentMessagesScreen";
 import { FloatingTabBar } from "./FloatingTabBar";
 
 const Tab = createBottomTabNavigator<StudentTabParamList>();

@@ -17,23 +17,40 @@ export interface ThemeColors {
   warning: string;
 }
 
+export const brandPalette = {
+  deepPlum: "#7C005A",
+  amber: "#FBAA0A",
+  ivory: "#F4F1E8",
+  coral: "#FB5F7E",
+  charcoal: "#1F1F1F",
+  teal: "#52DFD6",
+  white: "#FFFFFF",
+};
+
+export const typography = {
+  fontFamily: "Poppins-Regular",
+  medium: "Poppins-Medium",
+  semiBold: "Poppins-SemiBold",
+  bold: "Poppins-Bold",
+};
+
 export const darkColors: ThemeColors = {
-  background: "#090909",
-  backgroundMuted: "#141414",
-  surface: "#111111",
-  surfaceRaised: "#171717",
-  surfaceAccent: "#1C1C1C",
-  border: "#2A2A2A",
-  accent: "#7B2D2B",
-  accentDark: "#541C1B",
-  accentSoft: "#1A1010",
-  accentSoftAlt: "#2A1717",
+  background: "#1F1F1F",
+  backgroundMuted: "#282828",
+  surface: "#252525",
+  surfaceRaised: "#303030",
+  surfaceAccent: "#3A2A35",
+  border: "#3C3C3C",
+  accent: "#FBAA0A",
+  accentDark: "#D28A00",
+  accentSoft: "#3A2B12",
+  accentSoftAlt: "#503A12",
   accentOn: "#FFFFFF",
   textPrimary: "#FFFFFF",
-  textSecondary: "#D7D7D7",
-  textMuted: "#9E9E9E",
-  danger: "#D85A5A",
-  warning: "#C98732",
+  textSecondary: "#F4F1E8",
+  textMuted: "#BDB7AC",
+  danger: "#FB5F7E",
+  warning: "#FBAA0A",
 };
 
 // Cards read as flat/pasted-on without some depth cue. Dark surfaces barely show a
@@ -50,9 +67,9 @@ export function getCardShadow(mode: "light" | "dark") {
     };
   }
   return {
-    shadowColor: "#4A201E",
+    shadowColor: "#7C005A",
     shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.12,
+    shadowOpacity: 0.13,
     shadowRadius: 20,
     elevation: 6,
   };
@@ -61,20 +78,20 @@ export function getCardShadow(mode: "light" | "dark") {
 export const PRESSED_OPACITY = 0.65;
 
 export const lightColors: ThemeColors = {
-  background: "#FFFFFF",
-  backgroundMuted: "#F7F7F7",
+  background: "#F4F1E8",
+  backgroundMuted: "#ECE7DB",
   surface: "#FFFFFF",
-  surfaceRaised: "#F8F8F8",
-  surfaceAccent: "#F2F2F2",
-  border: "#E8E8E8",
-  accent: "#7B2D2B",
-  accentDark: "#5D201F",
-  accentSoft: "#FAF1F1",
-  accentSoftAlt: "#F3E3E3",
+  surfaceRaised: "#FAF8F1",
+  surfaceAccent: "#F4F1E8",
+  border: "#E4DED0",
+  accent: "#7C005A",
+  accentDark: "#5B0042",
+  accentSoft: "#F7E6F2",
+  accentSoftAlt: "#E9C9DE",
   accentOn: "#FFFFFF",
-  textPrimary: "#121212",
-  textSecondary: "#343434",
-  textMuted: "#767676",
-  danger: "#A63F35",
-  warning: "#A7722E",
+  textPrimary: "#1F1F1F",
+  textSecondary: "#3A3437",
+  textMuted: "#756C72",
+  danger: "#FB5F7E",
+  warning: "#FBAA0A",
 };

@@ -7,8 +7,11 @@ const monorepoRoot = path.resolve(projectRoot, '..');
 
 const config = getDefaultConfig(projectRoot);
 
-// 1. Watch all files within the monorepo
-config.watchFolders = [monorepoRoot];
+// 1. Watch all files within the monorepo - appended to Expo's own defaults,
+// not replacing them (a full overwrite here is what "expo doctor" flags as
+// "watchFolders does not contain all entries from Expo's defaults", which
+// EAS Build treats as a hard failure before it ever compiles anything).
+config.watchFolders = [...config.watchFolders, monorepoRoot];
 
 // 2. Let Metro know where to resolve packages
 config.resolver.nodeModulesPaths = [

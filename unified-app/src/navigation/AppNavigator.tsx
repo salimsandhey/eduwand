@@ -6,23 +6,24 @@ import { useAuth } from "../context/AuthContext";
 import { EnrolmentTabNavigator } from "./EnrolmentTabNavigator";
 import { TeacherTabNavigator } from "./TeacherTabNavigator";
 import { StudentTabNavigator } from "./StudentTabNavigator";
-import { NoAccessScreen } from "../screens/NoAccessScreen";
-import { EnquiryDetailScreen } from "../screens/EnquiryDetailScreen";
-import { NewEnquiryFormScreen } from "../screens/NewEnquiryFormScreen";
-import { EditEnquiryScreen } from "../screens/EditEnquiryScreen";
-import { AdmissionConfirmationScreen } from "../screens/AdmissionConfirmationScreen";
-import { BulkUploadScreen } from "../screens/BulkUploadScreen";
-import { CreateAssignmentScreen } from "../screens/CreateAssignmentScreen";
-import { AssignmentDetailScreen } from "../screens/AssignmentDetailScreen";
-import { PersonalisationReviewScreen } from "../screens/PersonalisationReviewScreen";
-import { GradingReviewScreen } from "../screens/GradingReviewScreen";
-import { TopicDetailScreen } from "../screens/TopicDetailScreen";
-import { GenerationSetupScreen } from "../screens/GenerationSetupScreen";
-import { GenerationReviewScreen } from "../screens/GenerationReviewScreen";
-import { AnswerKeyReviewScreen } from "../screens/AnswerKeyReviewScreen";
-import { AttainmentReportScreen } from "../screens/AttainmentReportScreen";
-import { CommunicationHubScreen } from "../screens/CommunicationHubScreen";
-import { StudentAssignmentSubmitScreen } from "../screens/StudentAssignmentSubmitScreen";
+import { NoAccessScreen } from "../screens/auth/NoAccessScreen";
+import { EnquiryDetailScreen } from "../screens/enrolment/EnquiryDetailScreen";
+import { NewEnquiryFormScreen } from "../screens/enrolment/NewEnquiryFormScreen";
+import { EditEnquiryScreen } from "../screens/enrolment/EditEnquiryScreen";
+import { AdmissionConfirmationScreen } from "../screens/enrolment/AdmissionConfirmationScreen";
+import { BulkUploadScreen } from "../screens/enrolment/BulkUploadScreen";
+import { CreateAssignmentScreen } from "../screens/assignments/CreateAssignmentScreen";
+import { AssignmentDetailScreen } from "../screens/assignments/AssignmentDetailScreen";
+import { PersonalisationReviewScreen } from "../screens/studio/PersonalisationReviewScreen";
+import { GradingReviewScreen } from "../screens/assignments/GradingReviewScreen";
+import { TopicDetailScreen } from "../screens/studio/TopicDetailScreen";
+import { GenerationSetupScreen } from "../screens/studio/GenerationSetupScreen";
+import { GenerationReviewScreen } from "../screens/studio/GenerationReviewScreen";
+import { AnswerKeyReviewScreen } from "../screens/studio/AnswerKeyReviewScreen";
+import { AttainmentReportScreen } from "../screens/analytics/AttainmentReportScreen";
+import { CommunicationHubScreen } from "../screens/enrolment/CommunicationHubScreen";
+import { NotificationScreen } from "../screens/shared/NotificationScreen";
+import { StudentAssignmentSubmitScreen } from "../screens/student/StudentAssignmentSubmitScreen";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -91,6 +92,7 @@ export function AppNavigator() {
         <Stack.Screen name="AnswerKeyReview" component={AnswerKeyReviewScreen} options={{ title: "Answer Key" }} />
         <Stack.Screen name="AttainmentReport" component={AttainmentReportScreen} options={{ title: "Attainment Report" }} />
         <Stack.Screen name="CommunicationHub" component={CommunicationHubScreen} options={{ title: "Communication Hub" }} />
+        <Stack.Screen name="Notifications" component={NotificationScreen} options={{ title: "Notifications" }} />
         <Stack.Screen
           name="StudentAssignmentSubmit"
           component={StudentAssignmentSubmitScreen}

@@ -2,11 +2,11 @@ import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Ionicons } from "@expo/vector-icons";
 import { TeacherTabParamList } from "./types";
 import { useTheme } from "../theme/ThemeContext";
-import { HomeScreen } from "../screens/HomeScreen";
-import { TopicListScreen } from "../screens/TopicListScreen";
-import { AssignmentScreen } from "../screens/AssignmentScreen";
-import { TeacherAnalyticsScreen } from "../screens/TeacherAnalyticsScreen";
-import { MoreMenuScreen } from "../screens/MoreMenuScreen";
+import { HomeScreen } from "../screens/shared/HomeScreen";
+import { TopicListScreen } from "../screens/studio/TopicListScreen";
+import { AssignmentScreen } from "../screens/assignments/AssignmentScreen";
+import { TeacherAnalyticsScreen } from "../screens/analytics/TeacherAnalyticsScreen";
+import { MoreMenuScreen } from "../screens/shared/MoreMenuScreen";
 import { FloatingTabBar } from "./FloatingTabBar";
 
 const Tab = createBottomTabNavigator<TeacherTabParamList>();

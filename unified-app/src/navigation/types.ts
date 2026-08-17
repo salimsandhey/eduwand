@@ -20,6 +20,7 @@ export type RootStackParamList = {
   AnswerKeyReview: { assignmentId: string };
   AttainmentReport: { topicId: string };
   CommunicationHub: undefined;
+  Notifications: undefined;
   StudentAssignmentSubmit: { assignmentId: string; questions: AssignmentQuestion[]; title: string };
 };
 

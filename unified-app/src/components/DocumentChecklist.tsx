@@ -13,7 +13,7 @@ export interface ChecklistItem {
 }
 
 // Fixed admission document checklist (backend/src/routes/documents.ts
-// VALID_DOCUMENT_TYPES) - per-school configurability deferred (chat 15 Aug 2026).
+// VALID_DOCUMENT_TYPES) - per-school configurability deferred.
 export const DOCUMENT_CHECKLIST: ChecklistItem[] = [
   { key: "student_photo", label: "Student photo", required: true },
   { key: "birth_certificate", label: "Birth certificate", required: true },

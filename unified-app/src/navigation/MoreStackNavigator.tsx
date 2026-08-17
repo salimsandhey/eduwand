@@ -1,7 +1,7 @@
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { MoreStackParamList } from "./types";
-import { MoreMenuScreen } from "../screens/MoreMenuScreen";
-import { CsvExportScreen } from "../screens/CsvExportScreen";
+import { MoreMenuScreen } from "../screens/shared/MoreMenuScreen";
+import { CsvExportScreen } from "../screens/enrolment/CsvExportScreen";
 import { useTheme } from "../theme/ThemeContext";
 
 const Stack = createNativeStackNavigator<MoreStackParamList>();

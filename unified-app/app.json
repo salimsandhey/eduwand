@@ -4,27 +4,36 @@
     "slug": "eduwand",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/brand/eduwand-icon.png",
+    "assetBundlePatterns": [
+      "assets/fonts/*",
+      "assets/brand/*",
+      "assets/decorative/*",
+      "assets/avatars/*"
+    ],
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundColor": "#F4F1E8",
+        "foregroundImage": "./assets/brand/eduwand-icon.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.eduwand.app"
+      "package": "com.eduwand.app",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/brand/eduwand-icon.png"
     },
     "extra": {
       "eas": {
-        "projectId": "fdaed8d4-1330-454d-9dfb-ff1315f34562"
+        "projectId": "74df1a69-be7b-4ab8-a55e-d12357e211a8"
       }
     },
     "owner": "salimsandhey",

@@ -2,6 +2,7 @@ import { ReactNode } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme/ThemeContext";
+import { typography } from "../theme/tokens";
 
 interface HeaderMetric {
   label: string;
@@ -76,12 +77,14 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   eyebrow: {
+    fontFamily: typography.fontFamily,
     fontSize: 11,
     fontWeight: "800",
     letterSpacing: 0.8,
     textTransform: "uppercase",
   },
   title: {
+    fontFamily: typography.fontFamily,
     marginTop: 5,
     fontSize: 24,
     lineHeight: 29,
@@ -89,6 +92,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
   },
   subtitle: {
+    fontFamily: typography.fontFamily,
     marginTop: 5,
     fontSize: 13,
     lineHeight: 19,
@@ -114,11 +118,13 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   metricValue: {
+    fontFamily: typography.fontFamily,
     fontSize: 18,
     fontWeight: "800",
     letterSpacing: 0,
   },
   metricLabel: {
+    fontFamily: typography.fontFamily,
     marginTop: 2,
     fontSize: 11,
     fontWeight: "700",
