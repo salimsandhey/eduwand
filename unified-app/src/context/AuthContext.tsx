@@ -13,8 +13,8 @@ interface AuthContextValue {
   // phone can match more than one StudentStub (siblings), so verifying the
   // code returns candidates to pick from before a real session is issued.
   requestStudentOtp: (phone: string) => Promise<string | undefined>;
-  verifyStudentOtp: (phone: string, code: string) => Promise<StudentOtpMatch[]>;
-  selectStudent: (studentStubId: string) => Promise<void>;
+  verifyStudentOtp: (phone: string, code: string) => Promise<{ students: StudentOtpMatch[]; selectionToken: string }>;
+  selectStudent: (studentStubId: string, selectionTokenOverride?: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -55,13 +55,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function verifyStudentOtp(phone: string, code: string): Promise<StudentOtpMatch[]> {
+  async function verifyStudentOtp(phone: string, code: string): Promise<{ students: StudentOtpMatch[]; selectionToken: string }> {
     setIsLoading(true);
     setError(null);
     try {
       const result = await api.verifyStudentOtp(phone, code);
       setSelectionToken(result.selectionToken);
-      return result.students;
+      return { students: result.students, selectionToken: result.selectionToken };
     } catch (err) {
       setError(err instanceof Error ? err.message : "Invalid code");
       throw err;
@@ -70,15 +70,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function selectStudent(studentStubId: string) {
-    if (!selectionToken) {
+  // selectionTokenOverride lets a caller that JUST got a token back from
+  // verifyStudentOtp() (the single-student auto-select path in
+  // StudentLoginScreen) use it immediately, instead of reading the
+  // `selectionToken` state variable - setSelectionToken() above doesn't take
+  // effect in this closure until the next render, so reading state here would
+  // see the pre-update value and fail with "Session expired" on every first
+  // attempt. The "pick from a list" path still relies on state, since by the
+  // time that Pressable is tapped the component has already re-rendered.
+  async function selectStudent(studentStubId: string, selectionTokenOverride?: string) {
+    const token = selectionTokenOverride ?? selectionToken;
+    if (!token) {
       setError("Session expired, request a new code");
       return;
     }
     setIsLoading(true);
     setError(null);
     try {
-      const tokens = await api.selectStudent(selectionToken, studentStubId);
+      const tokens = await api.selectStudent(token, studentStubId);
       const me = await api.me(tokens.accessToken);
       setAccessToken(tokens.accessToken);
       setUser(me);

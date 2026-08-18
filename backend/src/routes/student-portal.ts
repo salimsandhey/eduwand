@@ -239,6 +239,10 @@ export async function studentPortalRoutes(app: FastifyInstance) {
         OR: [
           { channel: "teacher_to_student", recipientStudentStubId: student.id },
           { channel: "student_to_teacher", senderStudentStubId: student.id },
+          // Class-wide broadcasts (POST /communications/teacher-to-class) were never
+          // matched here, so a teacher's whole-class message silently never reached
+          // any student's own thread - only direct teacher_to_student messages did.
+          { channel: "teacher_to_class", recipientClassSectionId: student.classSectionId },
         ],
       },
       orderBy: { createdAt: "asc" },

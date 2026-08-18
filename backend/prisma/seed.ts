@@ -138,6 +138,122 @@ async function main() {
     },
   });
 
+  // Demo content so the student panel's Home/Materials/Results screens show
+  // something real instead of empty states - all five student screens are
+  // already fully built and wired, this just gives them data to display.
+  const topic = await prisma.topic.upsert({
+    where: { id: "00000000-0000-0000-0000-000000000013" },
+    update: {},
+    create: {
+      id: "00000000-0000-0000-0000-000000000013",
+      schoolId: school.id,
+      teacherUserId: teacher.id,
+      classSectionId: classSection.id,
+      subject: "Science",
+      name: "Photosynthesis",
+      board: "CBSE",
+      status: "active",
+    },
+  });
+
+  await prisma.generation.upsert({
+    where: { id: "00000000-0000-0000-0000-000000000014" },
+    update: {},
+    create: {
+      id: "00000000-0000-0000-0000-000000000014",
+      topicId: topic.id,
+      teacherUserId: teacher.id,
+      outputType: "lesson_plan",
+      aiOutput:
+        "Photosynthesis converts light energy into chemical energy. Plants use sunlight, water, and carbon dioxide to produce glucose and oxygen. Key stages: light-dependent reactions and the Calvin cycle.",
+      modelUsed: "claude-sonnet",
+      generationStatus: "succeeded",
+    },
+  });
+
+  // Not yet submitted - lets the demo student actually exercise the submit flow.
+  const openAssignment = await prisma.assignment.upsert({
+    where: { id: "00000000-0000-0000-0000-000000000015" },
+    update: {},
+    create: {
+      id: "00000000-0000-0000-0000-000000000015",
+      schoolId: school.id,
+      topicId: topic.id,
+      teacherUserId: teacher.id,
+      classSectionId: classSection.id,
+      title: "Fractions Practice",
+      questions: [
+        { id: "q1", prompt: "What is 3/4 + 1/8?" },
+        { id: "q2", prompt: "Simplify 6/8 to its lowest terms." },
+      ],
+      status: "published",
+      publishedAt: new Date(),
+    },
+  });
+
+  // Already submitted and graded - lets Home/Results show a released grade immediately.
+  const gradedAssignment = await prisma.assignment.upsert({
+    where: { id: "00000000-0000-0000-0000-000000000016" },
+    update: {},
+    create: {
+      id: "00000000-0000-0000-0000-000000000016",
+      schoolId: school.id,
+      topicId: topic.id,
+      teacherUserId: teacher.id,
+      classSectionId: classSection.id,
+      title: "Photosynthesis Quiz",
+      questions: [
+        { id: "q1", prompt: "What gas do plants absorb during photosynthesis?" },
+        { id: "q2", prompt: "Name the two main stages of photosynthesis." },
+      ],
+      status: "published",
+      publishedAt: new Date(),
+    },
+  });
+
+  const gradedSubmission = await prisma.submission.upsert({
+    where: { assignmentId_studentStubId: { assignmentId: gradedAssignment.id, studentStubId: student.id } },
+    update: {},
+    create: {
+      assignmentId: gradedAssignment.id,
+      studentStubId: student.id,
+      answers: { q1: "Carbon dioxide", q2: "Light-dependent reactions and the Calvin cycle" },
+      submissionType: "online",
+    },
+  });
+
+  await prisma.grade.upsert({
+    where: { submissionId: gradedSubmission.id },
+    update: {},
+    create: {
+      submissionId: gradedSubmission.id,
+      aiScore: 90,
+      aiFeedback: "Strong answers, both key terms correctly identified.",
+      finalScore: 90,
+      finalFeedback: "Great work! Fully correct.",
+      performanceBand: "level_1",
+      status: "released",
+      releasedToStudent: true,
+      releasedAt: new Date(),
+    },
+  });
+
+  // teacher_to_class, not teacher_to_student - exercises the class-broadcast channel.
+  await prisma.communicationMessage.upsert({
+    where: { id: "00000000-0000-0000-0000-000000000017" },
+    update: {},
+    create: {
+      id: "00000000-0000-0000-0000-000000000017",
+      schoolId: school.id,
+      channel: "teacher_to_class",
+      senderUserId: teacher.id,
+      recipientClassSectionId: classSection.id,
+      body: "Welcome back! Don't forget to submit the Fractions Practice assignment by Friday.",
+      deliveryStatus: "sent",
+      sentAt: new Date(),
+    },
+  });
+
   const otherSchool = await prisma.school.upsert({
     where: { id: "00000000-0000-0000-0000-000000000003" },
     update: {},
@@ -216,6 +332,7 @@ async function main() {
   console.log("Login with: admin2@dev.eduwand.local / password123 (Dev School 2)");
   console.log("Login with: leadership@dev.eduwand.local / password123 (trust-scoped, no school_id)");
   console.log("Student login: phone +911234567890 (Dev Student, Grade 5 A) via /auth/student/request-otp");
+  console.log(`Student demo content: "${openAssignment.title}" (open, not submitted), "${gradedAssignment.title}" (graded 90/100), 1 material, 1 class broadcast`);
 }
 
 main()

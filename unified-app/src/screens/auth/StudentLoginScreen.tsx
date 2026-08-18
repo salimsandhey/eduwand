@@ -11,6 +11,12 @@ type Step = "phone" | "code" | "select";
 const STEP_ORDER: Step[] = ["phone", "code", "select"];
 const CODE_LENGTH = 6;
 
+// Matches backend/prisma/seed.ts's demo student. __DEV__-gated, same reasoning as
+// this screen's own devOtp quick-fill chip below - a guardian phone number is
+// sensitive-looking enough to keep out of production builds, unlike LoginScreen's
+// dev.eduwand.local staff accounts.
+const DEV_QUICK_LOGIN_STUDENTS = [{ label: "Dev Student", phone: "+911234567890", initials: "DS" }];
+
 const STEP_ICON: Record<Step, keyof typeof Ionicons.glyphMap> = {
   phone: "call",
   code: "key",
@@ -99,9 +105,9 @@ export function StudentLoginScreen({ onBackToStaffLogin }: Props) {
 
   async function handleVerifyOtp() {
     const code = digits.join("");
-    const students = await verifyStudentOtp(phone, code);
+    const { students, selectionToken } = await verifyStudentOtp(phone, code);
     if (students.length === 1) {
-      await selectStudent(students[0].id);
+      await selectStudent(students[0].id, selectionToken);
       return;
     }
     setCandidates(students);
@@ -223,6 +229,38 @@ export function StudentLoginScreen({ onBackToStaffLogin }: Props) {
                 )}
               </Pressable>
             </Animated.View>
+
+            {__DEV__ ? (
+              <View style={[styles.devSection, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <View style={styles.devDividerRow}>
+                  <View style={[styles.devDividerLine, { backgroundColor: colors.border }]} />
+                  <Text style={[styles.devDividerText, { color: colors.textMuted }]}>QUICK LOGIN</Text>
+                  <View style={[styles.devDividerLine, { backgroundColor: colors.border }]} />
+                </View>
+                {DEV_QUICK_LOGIN_STUDENTS.map((s) => (
+                  <Pressable
+                    key={s.phone}
+                    style={({ pressed }) => [
+                      styles.devRow,
+                      { borderColor: colors.border, backgroundColor: colors.surfaceRaised },
+                      pressed && { opacity: pressedOpacity },
+                    ]}
+                    onPress={() => setPhone(s.phone)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Fill guardian phone for ${s.label}`}
+                  >
+                    <View style={[styles.devAvatar, { backgroundColor: colors.accent + "15" }]}>
+                      <Text style={[styles.devAvatarText, { color: colors.accent }]}>{s.initials}</Text>
+                    </View>
+                    <View style={styles.devRowDetails}>
+                      <Text style={[styles.devRoleTitle, { color: colors.textPrimary }]}>{s.label}</Text>
+                      <Text style={[styles.devRoleEmail, { color: colors.textMuted }]}>{s.phone}</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
           </View>
         ) : null}
 
@@ -401,4 +439,34 @@ const styles = StyleSheet.create({
   studentAvatar: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
   studentAvatarText: { fontSize: 16, fontWeight: "800" },
   studentName: { fontSize: 15, fontWeight: "700", flex: 1 },
+
+  devSection: {
+    marginTop: 4,
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 12,
+  },
+  devDividerRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 },
+  devDividerLine: { flex: 1, height: 1 },
+  devDividerText: { fontSize: 10, fontWeight: "700", letterSpacing: 0.5 },
+  devRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 10,
+    minHeight: 52,
+  },
+  devAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+  },
+  devAvatarText: { fontSize: 11, fontWeight: "800" },
+  devRowDetails: { flex: 1 },
+  devRoleTitle: { fontSize: 13, fontWeight: "700" },
+  devRoleEmail: { fontSize: 11, marginTop: 1 },
 });
