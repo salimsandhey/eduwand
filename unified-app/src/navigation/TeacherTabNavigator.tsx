@@ -3,7 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { TeacherTabParamList } from "./types";
 import { useTheme } from "../theme/ThemeContext";
 import { HomeScreen } from "../screens/shared/HomeScreen";
-import { TopicListScreen } from "../screens/studio/TopicListScreen";
+import { MyClassesScreen } from "../screens/studio/MyClassesScreen";
 import { AssignmentScreen } from "../screens/assignments/AssignmentScreen";
 import { TeacherAnalyticsScreen } from "../screens/analytics/TeacherAnalyticsScreen";
 import { MoreMenuScreen } from "../screens/shared/MoreMenuScreen";
@@ -34,7 +34,7 @@ export function TeacherTabNavigator() {
       })}
     >
       <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Studio" component={TopicListScreen} />
+      <Tab.Screen name="Studio" component={MyClassesScreen} />
       <Tab.Screen name="Assignment" component={AssignmentScreen} />
       <Tab.Screen name="Analytics" component={TeacherAnalyticsScreen} />
       <Tab.Screen

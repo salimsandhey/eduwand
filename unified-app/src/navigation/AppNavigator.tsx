@@ -16,6 +16,7 @@ import { CreateAssignmentScreen } from "../screens/assignments/CreateAssignmentS
 import { AssignmentDetailScreen } from "../screens/assignments/AssignmentDetailScreen";
 import { PersonalisationReviewScreen } from "../screens/studio/PersonalisationReviewScreen";
 import { GradingReviewScreen } from "../screens/assignments/GradingReviewScreen";
+import { TopicListScreen } from "../screens/studio/TopicListScreen";
 import { TopicDetailScreen } from "../screens/studio/TopicDetailScreen";
 import { GenerationSetupScreen } from "../screens/studio/GenerationSetupScreen";
 import { GenerationReviewScreen } from "../screens/studio/GenerationReviewScreen";
@@ -86,6 +87,11 @@ export function AppNavigator() {
           options={{ title: "Personalisation Review" }}
         />
         <Stack.Screen name="GradingReview" component={GradingReviewScreen} options={{ title: "Grading Review" }} />
+        <Stack.Screen
+          name="TopicList"
+          component={TopicListScreen}
+          options={({ route }) => ({ title: `${route.params.className} ${route.params.sectionName}` })}
+        />
         <Stack.Screen name="TopicDetail" component={TopicDetailScreen} options={{ title: "Topic" }} />
         <Stack.Screen name="GenerationSetup" component={GenerationSetupScreen} options={{ title: "Generate" }} />
         <Stack.Screen name="GenerationReview" component={GenerationReviewScreen} options={{ title: "Review" }} />

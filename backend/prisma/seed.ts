@@ -109,6 +109,14 @@ async function main() {
     },
   });
 
+  // Without this, the dev teacher would see zero classes in Lesson Studio's
+  // "My Classes" screen after teacher-to-class assignment became a real gate.
+  await prisma.classSectionTeacher.upsert({
+    where: { classSectionId_teacherUserId: { classSectionId: classSection.id, teacherUserId: teacher.id } },
+    update: {},
+    create: { classSectionId: classSection.id, teacherUserId: teacher.id },
+  });
+
   const studentEnquiry = await prisma.enquiry.upsert({
     where: { id: "00000000-0000-0000-0000-000000000012" },
     update: {},

@@ -4,6 +4,7 @@ import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
+import { spacing, radius } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { api, GenerationOutputType } from "../../api/client";
 
@@ -137,12 +138,12 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   content: { padding: 16, paddingBottom: 40 },
-  card: { borderWidth: 1, borderRadius: 16, padding: 16 },
+  card: { borderWidth: 1, borderRadius: radius.lg, padding: spacing.lg },
   label: { fontSize: 12, fontWeight: "700", marginBottom: 6, marginTop: 14 },
-  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  chip: { borderWidth: 1, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 7 },
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  chip: { borderWidth: 1, borderRadius: radius.lg, paddingHorizontal: 14, paddingVertical: 7 },
   chipText: { fontSize: 12, fontWeight: "700" },
-  input: { borderWidth: 1, borderRadius: 8, padding: 10, height: 44, fontSize: 14 },
+  input: { borderWidth: 1, borderRadius: radius.sm, padding: 10, height: 44, fontSize: 14 },
   multilineInput: { height: 70, textAlignVertical: "top" },
   error: { textAlign: "center", marginTop: 12 },
   generateButton: { borderRadius: 10, height: 46, alignItems: "center", justifyContent: "center", marginTop: 18 },

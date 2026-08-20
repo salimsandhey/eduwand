@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import type { TrustDetail, School } from "../api/client";
 import { Card } from "../components/Card";
 import { PageHeader } from "../components/PageHeader";
+import { Modal, ModalFooter } from "../components/Modal";
 
 const BOARDS = ["CBSE", "ICSE", "State"];
 
@@ -306,73 +307,93 @@ export function TrustDetailPage() {
       <Card title="Schools">
         {canEdit ? (
           <div style={styles.addSchoolBox}>
-            {!showAddSchool ? (
-              <button style={styles.secondaryButton} onClick={() => setShowAddSchool(true)}>
-                + Add school
-              </button>
-            ) : (
-              <>
-                <div style={styles.row}>
-                  <input
-                    style={styles.input}
-                    placeholder="School name"
-                    value={schoolName}
-                    onChange={(e) => setSchoolName(e.target.value)}
-                    autoFocus
-                  />
-                  <select style={styles.input} value={schoolBoard} onChange={(e) => setSchoolBoard(e.target.value)}>
-                    {BOARDS.map((b) => (
-                      <option key={b} value={b}>
-                        {b}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    style={styles.input}
-                    placeholder="Timezone"
-                    value={schoolTimezone}
-                    onChange={(e) => setSchoolTimezone(e.target.value)}
-                  />
+            <button style={styles.secondaryButton} onClick={() => setShowAddSchool(true)}>
+              + Add school
+            </button>
+
+            {showAddSchool ? (
+              <Modal title="Add school" onClose={() => setShowAddSchool(false)}>
+                <div style={styles.formGrid}>
+                  <div style={styles.field}>
+                    <label style={styles.label}>School name</label>
+                    <input
+                      style={styles.input}
+                      placeholder="e.g. Sunrise Public School"
+                      value={schoolName}
+                      onChange={(e) => setSchoolName(e.target.value)}
+                      autoFocus
+                    />
+                  </div>
+                  <div style={styles.field}>
+                    <label style={styles.label}>Board</label>
+                    <select style={styles.input} value={schoolBoard} onChange={(e) => setSchoolBoard(e.target.value)}>
+                      {BOARDS.map((b) => (
+                        <option key={b} value={b}>
+                          {b}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={styles.field}>
+                    <label style={styles.label}>Timezone</label>
+                    <input
+                      style={styles.input}
+                      placeholder="e.g. Asia/Kolkata"
+                      value={schoolTimezone}
+                      onChange={(e) => setSchoolTimezone(e.target.value)}
+                    />
+                  </div>
+                  <div style={styles.field}>
+                    <label style={styles.label}>Expected student strength</label>
+                    <input
+                      style={styles.input}
+                      placeholder="Optional"
+                      type="number"
+                      min={0}
+                      value={expectedStudentStrength}
+                      onChange={(e) => setExpectedStudentStrength(e.target.value)}
+                    />
+                  </div>
+                  <div style={{ ...styles.field, ...styles.fieldFull }}>
+                    <label style={styles.label}>Address</label>
+                    <input
+                      style={styles.input}
+                      placeholder="Optional"
+                      value={schoolAddress}
+                      onChange={(e) => setSchoolAddress(e.target.value)}
+                    />
+                  </div>
+                  <div style={styles.field}>
+                    <label style={styles.label}>Principal name</label>
+                    <input
+                      style={styles.input}
+                      placeholder="Optional"
+                      value={principalName}
+                      onChange={(e) => setPrincipalName(e.target.value)}
+                    />
+                  </div>
+                  <div style={styles.field}>
+                    <label style={styles.label}>Principal phone</label>
+                    <input
+                      style={styles.input}
+                      placeholder="Optional"
+                      value={principalPhone}
+                      onChange={(e) => setPrincipalPhone(e.target.value)}
+                    />
+                  </div>
                 </div>
-                <div style={{ ...styles.row, marginTop: 10 }}>
-                  <input
-                    style={styles.input}
-                    placeholder="Address (optional)"
-                    value={schoolAddress}
-                    onChange={(e) => setSchoolAddress(e.target.value)}
-                  />
-                  <input
-                    style={styles.input}
-                    placeholder="Principal name (optional)"
-                    value={principalName}
-                    onChange={(e) => setPrincipalName(e.target.value)}
-                  />
-                  <input
-                    style={styles.input}
-                    placeholder="Principal phone (optional)"
-                    value={principalPhone}
-                    onChange={(e) => setPrincipalPhone(e.target.value)}
-                  />
-                  <input
-                    style={{ ...styles.input, maxWidth: 160 }}
-                    placeholder="Expected students"
-                    type="number"
-                    min={0}
-                    value={expectedStudentStrength}
-                    onChange={(e) => setExpectedStudentStrength(e.target.value)}
-                  />
-                </div>
-                <div style={{ ...styles.actionRow, marginTop: 10 }}>
-                  <button style={styles.button} onClick={createSchool} disabled={isCreatingSchool || !schoolName.trim()}>
-                    {isCreatingSchool ? "Adding…" : "Add school"}
-                  </button>
+                {schoolError ? <p style={styles.error}>{schoolError}</p> : null}
+                <ModalFooter>
                   <button style={styles.secondaryButton} onClick={() => setShowAddSchool(false)}>
                     Cancel
                   </button>
-                </div>
-              </>
-            )}
-            {schoolError ? <p style={styles.error}>{schoolError}</p> : null}
+                  <button style={styles.button} onClick={createSchool} disabled={isCreatingSchool || !schoolName.trim()}>
+                    {isCreatingSchool ? "Adding…" : "Add school"}
+                  </button>
+                </ModalFooter>
+              </Modal>
+            ) : null}
+
             {createdSchool ? (
               <p style={styles.success}>
                 Added "{createdSchool.name}" to this trust —{" "}
@@ -456,6 +477,8 @@ const styles: Record<string, React.CSSProperties> = {
   headerRow: { display: "flex", alignItems: "center", gap: 12 },
   statusBadge: { fontSize: 13, fontWeight: 700, textTransform: "capitalize" },
   row: { display: "flex", gap: 16, flexWrap: "wrap" },
+  formGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 },
+  fieldFull: { gridColumn: "1 / -1" },
   field: { display: "flex", flexDirection: "column", gap: 6, flex: 1, minWidth: 200 },
   label: { fontSize: 12, fontWeight: 700, color: "var(--text-muted)" },
   input: { padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 14 },

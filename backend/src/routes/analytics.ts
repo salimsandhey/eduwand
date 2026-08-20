@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
+import { PLATFORM_ADMIN_ROLE } from "../lib/roles";
 
 interface DateRangeQuery {
   startDate?: string;
@@ -16,7 +17,7 @@ interface TrendQuery {
 const analyticsGuard = (app: FastifyInstance) => [
   app.authenticate,
   app.requireSchoolScope,
-  requireRoles("admin", "leadership"),
+  requireRoles("admin", "leadership", PLATFORM_ADMIN_ROLE),
 ];
 
 function dateRangeFilter(query: DateRangeQuery) {

@@ -10,7 +10,16 @@ const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolSco
 export async function classSectionRoutes(app: FastifyInstance) {
   app.get("/class-sections", { onRequest: scoped(app) }, async (request) => {
     const classSections = await prisma.classSection.findMany({
-      where: { academicYear: { schoolId: request.schoolId, isCurrent: true } },
+      where: {
+        academicYear: { schoolId: request.schoolId, isCurrent: true },
+        // Teachers only see classes school admin has assigned them to
+        // (Lesson Studio's "My Classes" screen). Every other role (front_desk,
+        // admin, etc.) keeps seeing everything - this route is shared with the
+        // Admission Confirmation screen above.
+        ...(request.user.role === "teacher"
+          ? { teacherAssignments: { some: { teacherUserId: request.user.sub } } }
+          : {}),
+      },
       orderBy: [{ className: "asc" }, { sectionName: "asc" }],
     });
 

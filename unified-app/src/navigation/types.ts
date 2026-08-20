@@ -14,6 +14,7 @@ export type RootStackParamList = {
   AssignmentDetail: { assignmentId: string };
   PersonalisationReview: { assignmentId: string };
   GradingReview: { assignmentId: string };
+  TopicList: { classSectionId: string; className: string; sectionName: string };
   TopicDetail: { topicId: string };
   GenerationSetup: { topicId: string };
   GenerationReview: { generationId: string };

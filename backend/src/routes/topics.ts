@@ -1,9 +1,22 @@
-import { FastifyInstance } from "fastify";
+import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { storage } from "../lib/storage";
+import { extractText, extractUrlText } from "../lib/extraction";
+import { aiProvider } from "../lib/ai";
 
 const VALID_SOURCE_TYPES = ["pdf", "docx", "pptx", "image", "url", "idream_k12"];
+
+const FILE_CONTENT_TYPES: Record<string, string> = {
+  pdf: "application/pdf",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  gif: "image/gif",
+  webp: "image/webp",
+};
 
 interface CreateTopicBody {
   classSectionId: string;
@@ -80,7 +93,7 @@ export async function topicRoutes(app: FastifyInstance) {
       where: { id: request.params.id, schoolId: request.schoolId },
       include: {
         contextSources: { orderBy: { createdAt: "desc" } },
-        generations: { orderBy: { generatedAt: "desc" } },
+        generations: { orderBy: { generatedAt: "desc" }, include: { contextSources: true } },
         observations: { orderBy: { recordedAt: "desc" } },
         assignments: { orderBy: { createdAt: "desc" } },
       },
@@ -106,8 +119,11 @@ export async function topicRoutes(app: FastifyInstance) {
       const isMultipart = request.isMultipart?.();
       let sourceType: string;
       let fileLocation: string | null = null;
+      let originalFilename: string | null = null;
       let sourceUrl: string | null = null;
       let idreamK12ReferenceId: string | null = null;
+      let extractedText: string | null = null;
+      let extractionError: string | null = null;
 
       if (isMultipart) {
         const file = await request.file();
@@ -122,9 +138,32 @@ export async function topicRoutes(app: FastifyInstance) {
             ? "pptx"
             : "pdf"
           : "image";
+        originalFilename = file.filename;
         const buffer = await file.toBuffer();
         const { location } = await storage.save(`context-sources/${topic.id}/${Date.now()}-${file.filename}`, buffer);
         fileLocation = location;
+
+        // Real text extraction for PDF/DOCX/PPTX (backend/src/lib/extraction.ts).
+        // Images go through Gemini OCR (lib/ai.ts's extractTextFromPhoto) when
+        // GEMINI_API_KEY is configured - if not, stays pending exactly as
+        // before this existed, no regression for environments without the key.
+        // Edge case from the client doc ("uploaded PDF is a scan with no
+        // extractable text") lands here as extractionStatus: "failed_no_text".
+        try {
+          if (sourceType === "image") {
+            if (process.env.GEMINI_API_KEY) {
+              const ocr = await aiProvider.extractTextFromPhoto({ fileLocation });
+              if (ocr.text.length > 0) extractedText = ocr.text;
+            }
+          } else {
+            const result = await extractText(buffer, sourceType);
+            if (result && result.text.length > 0) {
+              extractedText = result.text;
+            }
+          }
+        } catch (err) {
+          extractionError = err instanceof Error ? err.message : "Extraction failed";
+        }
       } else {
         const body = request.body ?? ({} as CreateContextSourceBody);
         if (!body.sourceType || !VALID_SOURCE_TYPES.includes(body.sourceType)) {
@@ -145,24 +184,98 @@ export async function topicRoutes(app: FastifyInstance) {
         sourceType = body.sourceType;
         sourceUrl = body.sourceUrl ?? null;
         idreamK12ReferenceId = body.idreamK12ReferenceId ?? null;
+
+        // Real page-content extraction (backend/src/lib/extraction.ts's
+        // extractUrlText) - includes SSRF guards (private/loopback address
+        // rejection). A dead link, timeout, or JS-only page lands on
+        // extractionStatus: "failed_no_text" below, same as any other source
+        // that produced no usable text.
+        if (sourceType === "url" && sourceUrl) {
+          try {
+            const result = await extractUrlText(sourceUrl);
+            if (result && result.text.length > 0) {
+              extractedText = result.text;
+            }
+          } catch (err) {
+            extractionError = err instanceof Error ? err.message : "URL fetch failed";
+          }
+        }
       }
+
+      const extractionStatus =
+        sourceType === "idream_k12"
+          ? "extracted" // no vendor integration exists - nothing to extract
+          : extractedText
+          ? "extracted"
+          : sourceType === "image" && !process.env.GEMINI_API_KEY
+          ? "pending" // OCR not configured - GEMINI_API_KEY unset
+          : "failed_no_text"; // extraction ran (or was configured) but found no usable text, or threw
 
       const contextSource = await prisma.contextSource.create({
         data: {
           topicId: topic.id,
           sourceType,
           fileLocation,
+          originalFilename,
           sourceUrl,
           idreamK12ReferenceId,
-          // Text extraction (for PDF/DOCX/PPTX context) isn't wired to a real
-          // parser yet - left pending rather than faked. Edge case from the
-          // client doc ("uploaded PDF is a scan with no extractable text")
-          // maps to extractionStatus:"failed_no_text" once that parser exists.
-          extractionStatus: sourceType === "url" || sourceType === "idream_k12" ? "extracted" : "pending",
+          extractionStatus,
+          extractedText,
+          extractionError,
         },
       });
 
       return reply.code(201).send({ data: contextSource, meta: {} });
+    }
+  );
+
+  // Lets a teacher open/download what they uploaded - fileLocation is a raw
+  // server-local path with no other way to reach it. Accepts the access token
+  // via ?token= in addition to the normal Authorization header: React
+  // Native's Linking.openURL can't attach headers, so this is the only way to
+  // let the OS/browser open the file directly. Deliberate, scoped tradeoff
+  // (token briefly visible in a URL/server log) accepted for a dev-stage
+  // internal tool - revisit before this goes anywhere more exposed.
+  async function authenticateFromHeaderOrToken(request: FastifyRequest, reply: FastifyReply) {
+    if (request.headers.authorization) {
+      return app.authenticate(request, reply);
+    }
+    const token = (request.query as { token?: string } | undefined)?.token;
+    if (!token) {
+      reply.code(401).send({ data: null, error: { code: "unauthorized", message: "Missing access token" } });
+      return;
+    }
+    try {
+      const payload = app.jwt.verify(token) as typeof request.user;
+      if (payload.type !== "access") throw new Error("Not an access token");
+      request.user = payload;
+    } catch {
+      reply.code(401).send({ data: null, error: { code: "unauthorized", message: "Missing or invalid access token" } });
+    }
+  }
+
+  app.get<{ Params: { topicId: string; contextSourceId: string } }>(
+    "/topics/:topicId/context/:contextSourceId/file",
+    { onRequest: [authenticateFromHeaderOrToken, app.requireSchoolScope, requireRoles("teacher")] },
+    async (request, reply) => {
+      const contextSource = await prisma.contextSource.findFirst({
+        where: {
+          id: request.params.contextSourceId,
+          topicId: request.params.topicId,
+          topic: { schoolId: request.schoolId },
+        },
+      });
+      if (!contextSource || !contextSource.fileLocation) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "File not found for this context source" } });
+      }
+
+      const buffer = await storage.readBuffer(contextSource.fileLocation);
+      const filename = contextSource.originalFilename ?? contextSource.fileLocation.split(/[\\/]/).pop() ?? "file";
+      const ext = (filename.split(".").pop() ?? "").toLowerCase();
+
+      reply.header("Content-Disposition", `attachment; filename="${filename.replace(/"/g, "")}"`);
+      reply.type(FILE_CONTENT_TYPES[ext] ?? "application/octet-stream");
+      return reply.send(buffer);
     }
   );
 

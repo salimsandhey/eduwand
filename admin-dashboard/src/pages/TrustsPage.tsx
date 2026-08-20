@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import type { TrustSummary } from "../api/client";
 import { Card } from "../components/Card";
 import { PageHeader } from "../components/PageHeader";
+import { Modal, ModalFooter } from "../components/Modal";
 
 export function TrustsPage() {
   const { accessToken } = useAuth();
@@ -77,87 +78,113 @@ export function TrustsPage() {
                 onChange={(e) => setSearch(e.target.value)}
               />
             ) : null}
-            <button style={styles.newButton} onClick={() => setShowCreate((v) => !v)}>
-              {showCreate ? "Cancel" : "+ New trust"}
+            <button style={styles.newButton} onClick={() => setShowCreate(true)}>
+              + New trust
             </button>
           </div>
         }
       />
 
       {showCreate ? (
-        <Card title="Create a trust">
-          <div style={styles.row}>
-            <input
-              style={styles.input}
-              placeholder="Trust / display name"
-              value={trustName}
-              onChange={(e) => setTrustName(e.target.value)}
-              autoFocus
-            />
-            <input
-              style={styles.input}
-              placeholder="Legal / registered name (optional)"
-              value={legalName}
-              onChange={(e) => setLegalName(e.target.value)}
-            />
-            <select style={styles.input} value={trustType} onChange={(e) => setTrustType(e.target.value)}>
-              <option value="">Trust type (optional)</option>
-              <option value="society">Society</option>
-              <option value="trust">Trust</option>
-              <option value="section_8_company">Section 8 company</option>
-              <option value="private_limited">Private limited</option>
-              <option value="other">Other</option>
-            </select>
+        <Modal title="Create a trust" onClose={() => setShowCreate(false)}>
+          <div style={styles.formGrid}>
+            <div style={styles.field}>
+              <label style={styles.label}>Trust / display name</label>
+              <input
+                style={styles.input}
+                placeholder="e.g. Sunrise Education Trust"
+                value={trustName}
+                onChange={(e) => setTrustName(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div style={styles.field}>
+              <label style={styles.label}>Legal / registered name</label>
+              <input
+                style={styles.input}
+                placeholder="Optional"
+                value={legalName}
+                onChange={(e) => setLegalName(e.target.value)}
+              />
+            </div>
+            <div style={styles.field}>
+              <label style={styles.label}>Trust type</label>
+              <select style={styles.input} value={trustType} onChange={(e) => setTrustType(e.target.value)}>
+                <option value="">Not set</option>
+                <option value="society">Society</option>
+                <option value="trust">Trust</option>
+                <option value="section_8_company">Section 8 company</option>
+                <option value="private_limited">Private limited</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div style={styles.field}>
+              <label style={styles.label}>Expected schools</label>
+              <input
+                style={styles.input}
+                placeholder="Optional"
+                type="number"
+                min={0}
+                value={expectedSchoolCount}
+                onChange={(e) => setExpectedSchoolCount(e.target.value)}
+              />
+            </div>
+            <div style={styles.field}>
+              <label style={styles.label}>Contact person name</label>
+              <input
+                style={styles.input}
+                placeholder="Optional"
+                value={contactPersonName}
+                onChange={(e) => setContactPersonName(e.target.value)}
+              />
+            </div>
+            <div style={styles.field}>
+              <label style={styles.label}>Contact person phone</label>
+              <input
+                style={styles.input}
+                placeholder="Optional"
+                value={contactPersonPhone}
+                onChange={(e) => setContactPersonPhone(e.target.value)}
+              />
+            </div>
+            <div style={{ ...styles.field, ...styles.fieldFull }}>
+              <label style={styles.label}>Contact email</label>
+              <input
+                style={styles.input}
+                placeholder="Optional"
+                value={trustEmail}
+                onChange={(e) => setTrustEmail(e.target.value)}
+              />
+            </div>
+            <div style={{ ...styles.field, ...styles.fieldFull }}>
+              <label style={styles.label}>Registered address</label>
+              <input
+                style={styles.input}
+                placeholder="Optional"
+                value={registeredAddress}
+                onChange={(e) => setRegisteredAddress(e.target.value)}
+              />
+            </div>
+            <div style={styles.field}>
+              <label style={styles.label}>GST number</label>
+              <input
+                style={styles.input}
+                placeholder="Optional"
+                value={gstNumber}
+                onChange={(e) => setGstNumber(e.target.value)}
+              />
+            </div>
           </div>
-          <div style={{ ...styles.row, marginTop: 10 }}>
-            <input
-              style={styles.input}
-              placeholder="Contact person name"
-              value={contactPersonName}
-              onChange={(e) => setContactPersonName(e.target.value)}
-            />
-            <input
-              style={styles.input}
-              placeholder="Contact person phone"
-              value={contactPersonPhone}
-              onChange={(e) => setContactPersonPhone(e.target.value)}
-            />
-            <input
-              style={styles.input}
-              placeholder="Contact email (optional)"
-              value={trustEmail}
-              onChange={(e) => setTrustEmail(e.target.value)}
-            />
-          </div>
-          <div style={{ ...styles.row, marginTop: 10 }}>
-            <input
-              style={styles.input}
-              placeholder="Registered address (optional)"
-              value={registeredAddress}
-              onChange={(e) => setRegisteredAddress(e.target.value)}
-            />
-            <input
-              style={styles.input}
-              placeholder="GST number (optional)"
-              value={gstNumber}
-              onChange={(e) => setGstNumber(e.target.value)}
-            />
-            <input
-              style={{ ...styles.input, maxWidth: 160 }}
-              placeholder="Expected schools"
-              type="number"
-              min={0}
-              value={expectedSchoolCount}
-              onChange={(e) => setExpectedSchoolCount(e.target.value)}
-            />
-          </div>
-          <div style={{ ...styles.actionRow, marginTop: 14 }}>
+          {createError ? <p style={{ color: "var(--status-critical)", fontSize: 13, marginTop: 16 }}>{createError}</p> : null}
+          <ModalFooter>
+            <button style={styles.secondaryButton} onClick={() => setShowCreate(false)}>
+              Cancel
+            </button>
             <button style={styles.newButton} onClick={createTrust} disabled={isCreating || !trustName.trim()}>
               {isCreating ? "Creating…" : "Create trust"}
             </button>
-          </div>
-          {createError ? <p style={{ color: "var(--status-critical)", fontSize: 13, marginTop: 8 }}>{createError}</p> : null}
-        </Card>
+          </ModalFooter>
+        </Modal>
       ) : null}
 
       {error ? <p style={{ color: "var(--status-critical)" }}>{error}</p> : null}
@@ -210,13 +237,30 @@ export function TrustsPage() {
 const styles: Record<string, React.CSSProperties> = {
   row: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" },
   actionRow: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" },
+  formGrid: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: 16,
+  },
+  field: { display: "flex", flexDirection: "column", gap: 6 },
+  fieldFull: { gridColumn: "1 / -1" },
+  label: { fontSize: 12, fontWeight: 700, color: "var(--text-muted)" },
   input: {
     padding: "10px 12px",
     borderRadius: 8,
     border: "1px solid var(--border)",
     fontSize: 14,
-    flex: 1,
-    minWidth: 160,
+    width: "100%",
+  },
+  secondaryButton: {
+    background: "var(--bg-page)",
+    color: "var(--text-primary)",
+    border: "1px solid var(--border)",
+    borderRadius: 8,
+    cursor: "pointer",
+    padding: "10px 16px",
+    fontWeight: 600,
+    fontSize: 14,
   },
   search: {
     padding: "8px 12px",

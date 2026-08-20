@@ -163,11 +163,17 @@ export interface InviteUserInput {
 
 // ---- Academic structure (academic years / class sections) ----
 
+export interface ClassSectionTeacherAssignment {
+  teacherUserId: string;
+  teacher: { id: string; fullName: string; email: string };
+}
+
 export interface ClassSection {
   id: string;
   academicYearId: string;
   className: string;
   sectionName: string;
+  teacherAssignments: ClassSectionTeacherAssignment[];
 }
 
 export interface AcademicYear {
@@ -185,12 +191,42 @@ export interface CreateAcademicYearInput {
   startDate: string;
   endDate: string;
   isCurrent?: boolean;
+  copyFromAcademicYearId?: string;
 }
 
 export interface CreateClassSectionInput {
   academicYearId: string;
   className: string;
   sectionName: string;
+}
+
+export interface BulkCreateClassSectionsInput {
+  academicYearId: string;
+  classNames: string[];
+  sectionNames: string[];
+}
+
+export interface BulkCreateClassSectionsResult {
+  created: ClassSection[];
+  skipped: number;
+}
+
+// ---- School format templates ----
+
+export type SchoolFormatTemplateAppliesTo = "generation" | "attainment_report";
+
+export interface SchoolFormatTemplate {
+  id: string;
+  schoolId: string;
+  appliesTo: SchoolFormatTemplateAppliesTo;
+  templateBody: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SchoolFormatTemplates {
+  generation: SchoolFormatTemplate | null;
+  attainmentReport: SchoolFormatTemplate | null;
 }
 
 // ---- Audit log ----
@@ -400,6 +436,35 @@ export const api = {
     ),
   createClassSection: (token: string, schoolId: string, input: CreateClassSectionInput) =>
     request<ClassSection>(`/schools/${schoolId}/class-sections`, { method: "POST", body: JSON.stringify(input) }, token),
+  bulkCreateClassSections: (token: string, schoolId: string, input: BulkCreateClassSectionsInput) =>
+    request<BulkCreateClassSectionsResult>(
+      `/schools/${schoolId}/class-sections/bulk`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    ),
+  assignClassSectionTeacher: (token: string, schoolId: string, classSectionId: string, teacherUserId: string) =>
+    request<ClassSectionTeacherAssignment>(
+      `/schools/${schoolId}/class-sections/${classSectionId}/teachers`,
+      { method: "POST", body: JSON.stringify({ teacherUserId }) },
+      token
+    ),
+  unassignClassSectionTeacher: (token: string, schoolId: string, classSectionId: string, teacherUserId: string) =>
+    request<{ deleted: boolean }>(
+      `/schools/${schoolId}/class-sections/${classSectionId}/teachers/${teacherUserId}`,
+      { method: "DELETE" },
+      token
+    ),
+
+  getSchoolFormatTemplates: (token: string, schoolId: string) =>
+    request<SchoolFormatTemplates>(`/schools/${schoolId}/format-templates`, {}, token),
+  saveSchoolFormatTemplate: (token: string, schoolId: string, appliesTo: SchoolFormatTemplateAppliesTo, templateBody: string) =>
+    request<SchoolFormatTemplate>(
+      `/schools/${schoolId}/format-templates/${appliesTo}`,
+      { method: "PUT", body: JSON.stringify({ templateBody }) },
+      token
+    ),
+  deleteSchoolFormatTemplate: (token: string, schoolId: string, appliesTo: SchoolFormatTemplateAppliesTo) =>
+    request<{ deleted: boolean }>(`/schools/${schoolId}/format-templates/${appliesTo}`, { method: "DELETE" }, token),
 
   listAuditLog: (token: string, params: { schoolId?: string; page?: number; pageSize?: number } = {}) =>
     requestEnvelope<AuditLogEntry[]>(

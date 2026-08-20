@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { SchoolPicker } from "./SchoolPicker";
 
@@ -76,37 +76,50 @@ interface NavItem {
   label: string;
   icon: IconName;
   badge?: string;
+  roles: string[];
 }
 
-const OVERVIEW_NAV_ITEM: NavItem = { to: "/overview", label: "Overview", icon: "home" };
-const AI_USAGE_NAV_ITEM: NavItem = { to: "/ai-usage", label: "AI Usage Analytics", icon: "sparkle" };
-const TRUSTS_NAV_ITEM: NavItem = { to: "/trusts", label: "Trusts", icon: "building" };
+const ADMIN_LEADERSHIP_PLATFORM = ["admin", "leadership", "platform_admin"];
 
-const SCHOOL_SCOPED_NAV_ITEMS: NavItem[] = [
-  { to: "/funnel", label: "Enrolment Funnel", icon: "filter" },
-  { to: "/sources", label: "Source Breakdown", icon: "chart" },
-  { to: "/counsellors", label: "Counsellor Performance", icon: "users" },
-  { to: "/users", label: "User & Role Management", icon: "users" },
-  { to: "/pipeline-stages", label: "Pipeline Stages", icon: "layers" },
-  { to: "/message-templates", label: "Message Templates", icon: "layers" },
-  { to: "/exports", label: "CSV Exports", icon: "chart" },
-  { to: "/audit-log", label: "Audit Log", icon: "filter" },
-  AI_USAGE_NAV_ITEM,
+// Keep this list in sync with the per-role guard in App.tsx (ROUTE_ROLES) and
+// with the backend requireRoles(...) calls that actually enforce access -
+// this only controls what's shown in the sidebar / blocked client-side.
+export const NAV_ITEMS: NavItem[] = [
+  { to: "/overview", label: "Overview", icon: "home", roles: ["front_desk", "counsellor", "teacher", "admin", "leadership", "platform_admin"] },
+  { to: "/trusts", label: "Trusts", icon: "building", roles: ["platform_admin"] },
+  { to: "/my-school", label: "My School", icon: "building", roles: ["admin"] },
+  { to: "/funnel", label: "Enrolment Funnel", icon: "filter", roles: ADMIN_LEADERSHIP_PLATFORM },
+  { to: "/sources", label: "Source Breakdown", icon: "chart", roles: ADMIN_LEADERSHIP_PLATFORM },
+  { to: "/counsellors", label: "Counsellor Performance", icon: "users", roles: ADMIN_LEADERSHIP_PLATFORM },
+  { to: "/pipeline-stages", label: "Pipeline Stages", icon: "layers", roles: ADMIN_LEADERSHIP_PLATFORM },
+  { to: "/message-templates", label: "Message Templates", icon: "layers", roles: ADMIN_LEADERSHIP_PLATFORM },
+  { to: "/exports", label: "CSV Exports", icon: "chart", roles: ADMIN_LEADERSHIP_PLATFORM },
+  { to: "/audit-log", label: "Audit Log", icon: "filter", roles: ADMIN_LEADERSHIP_PLATFORM },
+  { to: "/ai-usage", label: "AI Usage Analytics", icon: "sparkle", roles: ADMIN_LEADERSHIP_PLATFORM },
 ];
+
+// Pages that actually read the SchoolPicker's selected school (school-scoped
+// analytics/config pages) - everywhere else (Overview, Trusts, a specific
+// school's own detail page) the picker would just be a redundant/confusing
+// second "which school" control.
+const SCHOOL_SCOPED_PATHS = new Set([
+  "/funnel",
+  "/sources",
+  "/counsellors",
+  "/ai-usage",
+  "/pipeline-stages",
+  "/message-templates",
+  "/exports",
+  "/audit-log",
+]);
 
 export function Layout() {
   const { user, logout } = useAuth();
+  const location = useLocation();
 
-  // platform_admin has no school_id, but requireSchoolScope now accepts a
-  // ?schoolId= query param for it too (backend/src/plugins/scope.ts), same as
-  // leadership - so it gets the same school-scoped nav plus the "Viewing"
-  // school switcher, instead of being limited to Trusts only.
-  let navItems: NavItem[] = [OVERVIEW_NAV_ITEM, ...SCHOOL_SCOPED_NAV_ITEMS];
-  if (user?.role === "platform_admin") {
-    navItems = [OVERVIEW_NAV_ITEM, TRUSTS_NAV_ITEM, ...SCHOOL_SCOPED_NAV_ITEMS];
-  } else if (user?.role === "leadership") {
-    navItems = [OVERVIEW_NAV_ITEM, ...SCHOOL_SCOPED_NAV_ITEMS];
-  }
+  const navItems = NAV_ITEMS.filter((item) => !!user?.role && item.roles.includes(user.role));
+  const showSchoolPicker =
+    (user?.role === "leadership" || user?.role === "platform_admin") && SCHOOL_SCOPED_PATHS.has(location.pathname);
 
   const initials = (user?.fullName ?? "")
     .split(" ")
@@ -141,7 +154,7 @@ export function Layout() {
 
       <div style={styles.main}>
         <header style={styles.topbar}>
-          <div>{user?.role === "leadership" || user?.role === "platform_admin" ? <SchoolPicker /> : null}</div>
+          <div>{showSchoolPicker ? <SchoolPicker /> : null}</div>
           <div style={styles.profile}>
             <span style={styles.avatar}>{initials}</span>
             <div style={styles.profileText}>

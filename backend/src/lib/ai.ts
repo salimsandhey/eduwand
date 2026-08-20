@@ -1,10 +1,13 @@
 import { prisma } from "./prisma";
+import { storage } from "./storage";
+import { MAX_EXTRACTED_CHARS } from "./extraction";
 
 // PRD's model routing (Docs/Dev/EduWand_Engineering_PRD.md section 6.3) -
 // recorded on every usage log even though the stub never calls a real model,
 // so Admin Dashboard usage analytics (FR-AI-4) reflects the intended routing.
 export const MODEL_SONNET = "claude-sonnet"; // lesson plan / research report generation
 export const MODEL_HAIKU = "claude-haiku"; // grading, personalisation suggestion
+export const MODEL_GEMINI_FLASH = "gemini-2.5-flash"; // Lesson Studio content generation
 
 // Model routing here reflects the pre-rebuild scope (Docs/Dev/EduWand_Engineering_PRD.md
 // section 6.3) and has not been reconfirmed against the expanded 7-component
@@ -27,6 +30,14 @@ export interface GenerationInput {
   language: string;
   customPrompt?: string | null;
   classLabel?: string;
+  // Extracted text from the topic's uploaded context sources (backend/src/lib/
+  // extraction.ts), pre-capped by the caller. Only GeminiAiProvider uses this -
+  // StubAiProvider ignores it, since the stub never calls a real model.
+  contextText?: string | null;
+  // The school's format/style instructions (SchoolFormatTemplate, appliesTo:
+  // "generation"), free text - e.g. letterhead line, heading conventions, a
+  // closing disclaimer. Only GeminiAiProvider uses this, same as contextText.
+  schoolFormatInstructions?: string | null;
 }
 
 export interface AnswerKeyQuestionInput {
@@ -274,7 +285,7 @@ class StubAiProvider implements AiProvider {
       case "custom_activity_report":
         body = [
           "## Custom Activity",
-          `**Objective:** ${audience} demonstrate understanding of ${topicName}.`,
+          `**Objective:** [Apply] ${audience} demonstrate understanding of ${topicName}.`,
           `**Activity:** A ${minutesPerClass}-minute in-class task applying ${topicName}.`,
           "**Report format:** what was attempted, what was observed, what to reinforce next class.",
         ].join("\n");
@@ -283,8 +294,8 @@ class StubAiProvider implements AiProvider {
       default:
         body = [
           "## Learning Objectives",
-          `- Understand the core principles of ${topicName}`,
-          `- Apply ${topicName} concepts to examples appropriate for ${board}`,
+          `- [Understand] Understand the core principles of ${topicName}`,
+          `- [Apply] Apply ${topicName} concepts to examples appropriate for ${board}`,
           "",
           `## Lesson Structure (${minutesPerClass} minutes x ${classCount} class(es))`,
           `1. **Warm-up** — Ask ${audience} what they already know about ${topicName}`,
@@ -318,7 +329,164 @@ class StubAiProvider implements AiProvider {
   }
 }
 
-export const aiProvider: AiProvider = new StubAiProvider();
+const stubProvider = new StubAiProvider();
+
+const GEMINI_ENDPOINT =
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+
+const IMAGE_MIME_TYPES: Record<string, string> = {
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  gif: "image/gif",
+  webp: "image/webp",
+};
+
+const OCR_NO_TEXT_SENTINEL = "NO_TEXT_FOUND";
+
+const OUTPUT_TYPE_INSTRUCTIONS: Record<GenerationOutputType, string> = {
+  lesson_plan:
+    "Produce a full lesson plan in Markdown: learning objectives, materials needed, a " +
+    "step-by-step lesson structure with timing that fits the given number of classes and " +
+    "minutes per class, and an assessment/exit-ticket section.",
+  custom_activity_report:
+    "Produce a custom classroom activity in Markdown: the objective, the activity itself " +
+    "(sized to the minutes per class), and a report format the teacher can fill in afterwards " +
+    "covering what was attempted, what was observed, and what to reinforce next class.",
+  flashcards:
+    "Produce a set of at least 8 flashcards in Markdown as a numbered list, each with a " +
+    "**Front:** question and **Back:** answer, covering the key concepts of the topic.",
+  presentation:
+    "Produce a slide-by-slide presentation outline in Markdown, each slide labelled " +
+    "**Slide N:** with a short title and the key points/notes for that slide.",
+  explanatory_video:
+    "Produce an explanatory video script in Markdown with timestamped sections: a hook, the " +
+    "main explanation broken into clear steps, a worked example, and a recap.",
+};
+
+// Real Gemini-backed generation for Lesson Studio (backend/src/routes/generations.ts)
+// and image OCR for Lesson Studio context sources (backend/src/routes/topics.ts).
+// Every other AiProvider method still delegates to the stub, matching the
+// existing swap-in pattern used in backend/src/lib/messaging.ts. Swap those in
+// one at a time in later passes.
+class GeminiAiProvider implements AiProvider {
+  generateLessonPlan = stubProvider.generateLessonPlan.bind(stubProvider);
+  generateResearchReport = stubProvider.generateResearchReport.bind(stubProvider);
+  generatePersonalisationSuggestion = stubProvider.generatePersonalisationSuggestion.bind(stubProvider);
+  gradeSubmission = stubProvider.gradeSubmission.bind(stubProvider);
+  generateAnswerKey = stubProvider.generateAnswerKey.bind(stubProvider);
+
+  // Reused by Lesson Studio's image context sources today. Not yet wired into
+  // any grading path (Assignment Lab submissions still use the stub) - the
+  // client doc explicitly flags submission-grading OCR as the higher-risk
+  // piece, since a wrong grade reaches a parent quickly. confidence here is a
+  // binary "the model found and returned text" signal, not a calibrated
+  // accuracy score - real accuracy needs measurement against a labelled
+  // sample before this is trusted for anything grading-adjacent.
+  async extractTextFromPhoto({ fileLocation }: OcrInput): Promise<{ text: string; confidence: number }> {
+    const buffer = await storage.readBuffer(fileLocation);
+    const ext = (fileLocation.split(".").pop() ?? "").toLowerCase();
+    const mimeType = IMAGE_MIME_TYPES[ext] ?? "image/jpeg";
+    const base64 = buffer.toString("base64");
+
+    const prompt =
+      "Transcribe all readable text from this image exactly as written, preserving structure " +
+      "(headings, bullet points, paragraphs) where possible. Do not translate - transcribe in " +
+      `the original language. If the image has no readable text, respond with exactly: ${OCR_NO_TEXT_SENTINEL}`;
+
+    const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: base64 } }] }],
+      }),
+    });
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => "");
+      throw new Error(`Gemini OCR request failed (${response.status}): ${errBody}`);
+    }
+
+    const data = (await response.json()) as {
+      candidates?: { content?: { parts?: { text?: string }[] } }[];
+    };
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+
+    if (!text || text === OCR_NO_TEXT_SENTINEL) {
+      return { text: "", confidence: 0 };
+    }
+    return { text: text.slice(0, MAX_EXTRACTED_CHARS), confidence: 1 };
+  }
+
+  async generateContent({
+    topicName,
+    subject,
+    board,
+    outputType,
+    classCount,
+    minutesPerClass,
+    language,
+    customPrompt,
+    classLabel,
+    contextText,
+    schoolFormatInstructions,
+  }: GenerationInput): Promise<{ content: string; model: string }> {
+    const audience = classLabel ? `${classLabel} students` : "students";
+    const instructions = OUTPUT_TYPE_INSTRUCTIONS[outputType] ?? OUTPUT_TYPE_INSTRUCTIONS.lesson_plan;
+    const prompt = [
+      `You are an experienced ${board} curriculum teacher writing material for ${audience}.`,
+      `Topic: ${topicName}`,
+      `Subject: ${subject}`,
+      `Board: ${board}`,
+      `Classes covered: ${classCount}`,
+      `Minutes per class: ${minutesPerClass}`,
+      `Output language: ${language}`,
+      "",
+      instructions,
+      "",
+      "Write in Markdown. Start with a level-1 heading naming the topic. Do not include any " +
+        "preamble or closing remarks outside the material itself.",
+      "Wherever you state learning objectives or outcomes, label each one with its Bloom's " +
+        "Taxonomy level in square brackets immediately before the objective (e.g., " +
+        "\"[Understand] Explain why...\"). Use only these levels: Remember, Understand, Apply, " +
+        "Analyze, Evaluate, Create.",
+      customPrompt ? `\nAdditional instructions from the teacher: ${customPrompt}` : "",
+      contextText
+        ? `\nBase the material on the following source content the teacher provided, prioritising ` +
+          `its accuracy and specifics over general knowledge. Do not simply repeat it verbatim - ` +
+          `use it to ground the material you write.\n"""\n${contextText}\n"""`
+        : "",
+      schoolFormatInstructions
+        ? `\nThe school this is for requires the following output format/style - follow it exactly:\n"""\n${schoolFormatInstructions}\n"""`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+    });
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => "");
+      throw new Error(`Gemini API request failed (${response.status}): ${errBody}`);
+    }
+
+    const data = (await response.json()) as {
+      candidates?: { content?: { parts?: { text?: string }[] } }[];
+    };
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) {
+      throw new Error("Gemini API returned no generated text");
+    }
+
+    return { content: text, model: MODEL_GEMINI_FLASH };
+  }
+}
+
+export const aiProvider: AiProvider = process.env.GEMINI_API_KEY ? new GeminiAiProvider() : stubProvider;
 
 // Written by every route that calls aiProvider above (API Specification section
 // 7: "All AI generation calls should write to ai_usage_log ... for cost

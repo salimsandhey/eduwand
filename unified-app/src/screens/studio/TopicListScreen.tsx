@@ -1,29 +1,29 @@
 import { useCallback, useState } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
-import type { CompositeScreenProps } from "@react-navigation/native";
-import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
-import { TeacherTabParamList, RootStackParamList } from "../../navigation/types";
+import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
+import { spacing, radius } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
-import { api, ClassSection, Topic } from "../../api/client";
+import { api, Topic } from "../../api/client";
 
 const BOARDS = ["CBSE", "ICSE", "IB"];
 
-type Props = CompositeScreenProps<BottomTabScreenProps<TeacherTabParamList, "Studio">, NativeStackScreenProps<RootStackParamList>>;
+type Props = NativeStackScreenProps<RootStackParamList, "TopicList">;
 
-// Entry point for Lesson Studio (Docs/Dev/AI_Module_Rebuild_Plan.md Phase 1/2)
-// - replaces the old direct-generate StudioScreen. A teacher picks or creates
-// a Topic here first; everything else (context, generations, observations)
-// hangs off that Topic from TopicDetailScreen onward.
-export function TopicListScreen({ navigation }: Props) {
+// Second step of Lesson Studio, after MyClassesScreen (Docs/Client/EduWand_AI_Module
+// build doc, workflow step 1: "select/filter the class"). Scoped to the class
+// section chosen on the previous screen - a teacher picks or creates a Topic
+// here; everything else (context, generations, observations) hangs off that
+// Topic from TopicDetailScreen onward.
+export function TopicListScreen({ navigation, route }: Props) {
+  const { classSectionId, className, sectionName } = route.params;
   const { accessToken } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
 
-  const [classSections, setClassSections] = useState<ClassSection[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +32,6 @@ export function TopicListScreen({ navigation }: Props) {
   const [name, setName] = useState("");
   const [subject, setSubject] = useState("");
   const [board, setBoard] = useState(BOARDS[0]);
-  const [classSectionId, setClassSectionId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
   const load = useCallback(async () => {
@@ -40,17 +39,14 @@ export function TopicListScreen({ navigation }: Props) {
     setIsLoading(true);
     setError(null);
     try {
-      const [sections, topicList] = await Promise.all([api.listClassSections(accessToken), api.listTopics(accessToken)]);
-      setClassSections(sections);
+      const topicList = await api.listTopics(accessToken, { classSectionId });
       setTopics(topicList);
-      if (!classSectionId && sections.length > 0) setClassSectionId(sections[0].id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load topics");
     } finally {
       setIsLoading(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accessToken]);
+  }, [accessToken, classSectionId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -59,7 +55,7 @@ export function TopicListScreen({ navigation }: Props) {
   );
 
   async function createTopic() {
-    if (!accessToken || !name.trim() || !subject.trim() || !classSectionId) return;
+    if (!accessToken || !name.trim() || !subject.trim()) return;
     setIsCreating(true);
     setError(null);
     try {
@@ -79,7 +75,9 @@ export function TopicListScreen({ navigation }: Props) {
     <Screen>
       <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.titleSection}>
-          <Text style={[styles.title, { color: colors.textPrimary }]}>Lesson Studio</Text>
+          <Text style={[styles.title, { color: colors.textPrimary }]}>
+            {className} {sectionName}
+          </Text>
           <Text style={[styles.subtitle, { color: colors.textMuted }]}>Pick a topic to continue, or start a new one</Text>
         </View>
 
@@ -124,41 +122,14 @@ export function TopicListScreen({ navigation }: Props) {
               })}
             </View>
 
-            {classSections.length > 0 ? (
-              <>
-                <Text style={[styles.label, { color: colors.textSecondary }]}>Class</Text>
-                <View style={styles.chipRow}>
-                  {classSections.map((cs) => {
-                    const active = classSectionId === cs.id;
-                    return (
-                      <Pressable
-                        key={cs.id}
-                        style={({ pressed }) => [
-                          styles.chip,
-                          { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border },
-                          pressed && { opacity: pressedOpacity },
-                        ]}
-                        onPress={() => setClassSectionId(cs.id)}
-                        accessibilityRole="button"
-                      >
-                        <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>
-                          {cs.className} {cs.sectionName}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              </>
-            ) : null}
-
             <Pressable
               style={({ pressed }) => [
                 styles.createButton,
                 { backgroundColor: colors.accent },
-                (isCreating || !name.trim() || !subject.trim() || !classSectionId || pressed) && { opacity: pressedOpacity },
+                (isCreating || !name.trim() || !subject.trim() || pressed) && { opacity: pressedOpacity },
               ]}
               onPress={createTopic}
-              disabled={isCreating || !name.trim() || !subject.trim() || !classSectionId}
+              disabled={isCreating || !name.trim() || !subject.trim()}
               accessibilityRole="button"
             >
               {isCreating ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.createButtonText, { color: colors.accentOn }]}>Start topic</Text>}
@@ -186,7 +157,7 @@ export function TopicListScreen({ navigation }: Props) {
           topics.map((t) => (
             <Pressable
               key={t.id}
-              style={({ pressed }) => [styles.topicRow, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+              style={({ pressed }) => [styles.topicRow, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow, pressed && { opacity: pressedOpacity }]}
               onPress={() => navigation.navigate("TopicDetail", { topicId: t.id })}
               accessibilityRole="button"
             >
@@ -194,7 +165,7 @@ export function TopicListScreen({ navigation }: Props) {
                 <Text style={[styles.topicName, { color: colors.textPrimary }]} numberOfLines={1}>
                   {t.name}
                 </Text>
-                <Text style={[styles.meta, { color: colors.textMuted, marginBottom: 0 }]}>
+                <Text style={[styles.meta, { color: colors.textMuted, marginBottom: 0 }]} numberOfLines={1}>
                   {t.subject} · {t.board} · {new Date(t.updatedAt).toLocaleDateString()}
                 </Text>
               </View>
@@ -213,11 +184,11 @@ const styles = StyleSheet.create({
   titleSection: { marginBottom: 16 },
   title: { fontSize: 24, fontWeight: "800", letterSpacing: -0.5 },
   subtitle: { fontSize: 13, marginTop: 2, fontWeight: "500" },
-  card: { borderWidth: 1, borderRadius: 16, padding: 16, marginBottom: 16 },
+  card: { borderWidth: 1, borderRadius: radius.lg, padding: spacing.lg, marginBottom: spacing.lg },
   label: { fontSize: 12, fontWeight: "700", marginBottom: 6, marginTop: 10 },
-  input: { borderWidth: 1, borderRadius: 8, padding: 10, height: 44, fontSize: 14 },
-  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  chip: { borderWidth: 1, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 7 },
+  input: { borderWidth: 1, borderRadius: radius.sm, padding: 10, height: 44, fontSize: 14 },
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  chip: { borderWidth: 1, borderRadius: radius.lg, paddingHorizontal: 14, paddingVertical: 7 },
   chipText: { fontSize: 12, fontWeight: "700" },
   createButton: { borderRadius: 10, height: 46, alignItems: "center", justifyContent: "center", marginTop: 18 },
   createButtonText: { fontSize: 14, fontWeight: "700" },
@@ -226,6 +197,6 @@ const styles = StyleSheet.create({
   error: { textAlign: "center", marginBottom: 12 },
   sectionTitle: { fontSize: 14, fontWeight: "800", marginTop: 8, marginBottom: 10, letterSpacing: 0.2, textTransform: "uppercase" },
   meta: { fontSize: 12, marginBottom: 8 },
-  topicRow: { flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 8 },
+  topicRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, borderWidth: 1, borderRadius: radius.lg, padding: spacing.lg, marginBottom: spacing.sm },
   topicName: { fontSize: 14, fontWeight: "700" },
 });

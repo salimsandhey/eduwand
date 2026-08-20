@@ -1,16 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 
-// Matches backend/prisma/seed.ts. Dev-only - stripped from production builds by
-// import.meta.env.DEV (false once built with `vite build`).
-const DEV_ACCOUNTS = [
-  { label: "Platform admin", email: "platform@eduwand.local" },
-  { label: "Admin (Dev School)", email: "admin@dev.eduwand.local" },
-  { label: "Admin (Dev School 2)", email: "admin2@dev.eduwand.local" },
-  { label: "Leadership (trust-scoped)", email: "leadership@dev.eduwand.local" },
-];
-const DEV_PASSWORD = "password123";
-
 export function LoginPage() {
   const { login, isLoading, error } = useAuth();
   const [email, setEmail] = useState("");
@@ -77,27 +67,6 @@ export function LoginPage() {
         <button type="submit" style={styles.button} disabled={isLoading}>
           {isLoading ? "Logging in…" : "Log in"}
         </button>
-
-        {import.meta.env.DEV ? (
-          <div style={styles.devSection}>
-            <p style={styles.devLabel}>DEV QUICK-FILL</p>
-            <div style={styles.devButtonRow}>
-              {DEV_ACCOUNTS.map((acct) => (
-                <button
-                  key={acct.email}
-                  type="button"
-                  style={styles.devButton}
-                  onClick={() => {
-                    setEmail(acct.email);
-                    setPassword(DEV_PASSWORD);
-                  }}
-                >
-                  {acct.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
       </form>
     </div>
   );
@@ -109,7 +78,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    background: "radial-gradient(circle at 50% 50%, #FCFDFC 0%, #EFF1EF 100%)",
+    background: "radial-gradient(circle at 50% 50%, #FAF8F1 0%, var(--bg-page) 100%)",
   },
   card: {
     background: "var(--bg-card)",
@@ -163,19 +132,5 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     fontSize: 14,
     transition: "opacity 0.2s",
-  },
-  devSection: { marginTop: 24, borderTop: "1px solid var(--border)", paddingTop: 16 },
-  devLabel: { fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textAlign: "center", marginBottom: 12, letterSpacing: "0.5px" },
-  devButtonRow: { display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" },
-  devButton: {
-    border: "1px solid var(--border)",
-    color: "var(--text-secondary)",
-    background: "var(--bg-card)",
-    borderRadius: 16,
-    padding: "6px 12px",
-    fontSize: 11,
-    fontWeight: 600,
-    cursor: "pointer",
-    transition: "all 0.15s",
   },
 };

@@ -416,9 +416,12 @@ export interface ContextSource {
   topicId: string;
   sourceType: "pdf" | "docx" | "pptx" | "image" | "url" | "idream_k12";
   fileLocation: string | null;
+  originalFilename: string | null;
   sourceUrl: string | null;
   idreamK12ReferenceId: string | null;
   extractionStatus: "pending" | "extracted" | "failed_no_text";
+  extractedText: string | null;
+  extractionError: string | null;
 }
 
 export interface Observation {
@@ -444,6 +447,7 @@ export interface Generation {
   modelUsed: string;
   generationStatus: "pending" | "succeeded" | "failed";
   generatedAt: string;
+  contextSources: ContextSource[];
 }
 
 export interface TopicDetail extends Topic {
@@ -720,6 +724,16 @@ export const api = {
   getTopic: (token: string, id: string) => request<TopicDetail>(`/topics/${id}`, {}, token),
   addTopicContextUrl: (token: string, topicId: string, input: { sourceType: "url" | "idream_k12"; sourceUrl?: string; idreamK12ReferenceId?: string }) =>
     request<ContextSource>(`/topics/${topicId}/context`, { method: "POST", body: JSON.stringify(input) }, token),
+  addTopicContextFile: (token: string, topicId: string, file: { uri: string; name: string; mimeType: string }) => {
+    const formData = new FormData();
+    formData.append("file", { uri: file.uri, name: file.name, type: file.mimeType } as unknown as Blob);
+    return requestMultipart<ContextSource>(`/topics/${topicId}/context`, formData, token);
+  },
+  // For Linking.openURL, which can't attach an Authorization header - the
+  // backend route accepts the token via ?token= specifically for this reason
+  // (backend/src/routes/topics.ts).
+  contextSourceFileUrl: (topicId: string, contextSourceId: string, token: string) =>
+    `${API_URL}/topics/${topicId}/context/${contextSourceId}/file?token=${encodeURIComponent(token)}`,
   addTopicObservation: (token: string, topicId: string, body: string) =>
     request<Observation>(`/topics/${topicId}/observations`, { method: "POST", body: JSON.stringify({ body }) }, token),
 

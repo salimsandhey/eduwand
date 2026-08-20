@@ -1,20 +1,21 @@
-/* Product accent per Docs/Dev/EduWand_UI_Screen_Spec.md 1.1: single green accent,
-   light neutral background, card-based, rounded corners. Chart data colors below
+/* Brand palette matches unified-app's design system (unified-app/src/theme/tokens.ts,
+   lightColors) so the admin dashboard reads as the same product: deep plum accent,
+   warm ivory page background, white cards, charcoal text. Chart data colors below
    are the dataviz skill's validated default palette (references/palette.md) —
    the product spec doesn't define a chart palette of its own, so chart marks use
    the skill's palette while buttons/nav/highlights use the product's own accent. */
 :root {
-  --accent: #1f9d55;
-  --accent-dark: #17803f;
-  --accent-wash: #e6f4ea;
+  --accent: #7c005a;
+  --accent-dark: #5b0042;
+  --accent-wash: #f7e6f2;
 
-  --bg-page: #f5f6f8;
+  --bg-page: #f4f1e8;
   --bg-card: #ffffff;
-  --text-primary: #0b0b0b;
-  --text-secondary: #52514e;
-  --text-muted: #898781;
-  --border: #e2e4e8;
-  --gridline: #e1e0d9;
+  --text-primary: #1f1f1f;
+  --text-secondary: #3a3437;
+  --text-muted: #756c72;
+  --border: #e4ded0;
+  --gridline: #e9e3d5;
 
   --status-good: #0ca30c;
   --status-warning: #fab219;
@@ -44,7 +45,7 @@
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: "Poppins", system-ui, -apple-system, "Segoe UI", sans-serif;
   background: var(--bg-page);
   color: var(--text-primary);
 }

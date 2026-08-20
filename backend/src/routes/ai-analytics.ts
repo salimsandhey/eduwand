@@ -1,9 +1,10 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
+import { PLATFORM_ADMIN_ROLE } from "../lib/roles";
 
 const teacherScoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope, requireRoles("teacher")];
-const adminScoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope, requireRoles("admin", "leadership")];
+const adminScoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope, requireRoles("admin", "leadership", PLATFORM_ADMIN_ROLE)];
 
 function scoreOf(grade: { finalScore: number | null; aiScore: number | null } | null): number | null {
   if (!grade) return null;

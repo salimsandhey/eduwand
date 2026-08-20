@@ -2,6 +2,35 @@ import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { aiProvider, logAiUsage, GenerationOutputType } from "../lib/ai";
+import { ContextSource } from "@prisma/client";
+
+// Combined cap across all of a topic's context sources when building a
+// generation prompt - individual sources are already capped at extraction
+// time (backend/src/lib/extraction.ts), this bounds the total regardless of
+// how many sources a topic has.
+const MAX_CONTEXT_CHARS_FOR_PROMPT = 12000;
+
+// Only sources with real extracted text can inform a generation - and only
+// those get connected to it afterward, so "sources used" (client doc
+// acceptance criterion) reflects what actually fed the AI call, not every
+// source ever added to the topic.
+function buildContextText(contextSources: ContextSource[]): { contextText: string | null; usedSources: ContextSource[] } {
+  const usedSources = contextSources.filter((s) => s.extractionStatus === "extracted" && s.extractedText);
+  if (usedSources.length === 0) {
+    return { contextText: null, usedSources: [] };
+  }
+  const combined = usedSources.map((s) => s.extractedText).join("\n\n---\n\n").slice(0, MAX_CONTEXT_CHARS_FOR_PROMPT);
+  return { contextText: combined, usedSources };
+}
+
+// The school's standing format/style instructions for generations
+// (SchoolFormatTemplate, appliesTo: "generation") - null if the school hasn't
+// set one, in which case generation behaves exactly as before this existed.
+async function getSchoolFormatTemplate(schoolId: string) {
+  return prisma.schoolFormatTemplate.findUnique({
+    where: { schoolId_appliesTo: { schoolId, appliesTo: "generation" } },
+  });
+}
 
 const VALID_OUTPUT_TYPES: GenerationOutputType[] = [
   "lesson_plan",
@@ -55,11 +84,14 @@ export async function generationRoutes(app: FastifyInstance) {
 
       const topic = await prisma.topic.findFirst({
         where: { id: request.params.id, schoolId: request.schoolId },
-        include: { classSection: true },
+        include: { classSection: true, contextSources: true },
       });
       if (!topic) {
         return reply.code(404).send({ data: null, error: { code: "not_found", message: "Topic not found" } });
       }
+
+      const { contextText, usedSources } = buildContextText(topic.contextSources);
+      const formatTemplate = await getSchoolFormatTemplate(request.schoolId);
 
       const classCount = body.classCount ?? 1;
       const minutesPerClass = body.minutesPerClass ?? 45;
@@ -88,6 +120,8 @@ export async function generationRoutes(app: FastifyInstance) {
           language: body.language ?? "English",
           customPrompt: body.customPrompt ?? null,
           classLabel: `${topic.classSection.className} ${topic.classSection.sectionName}`,
+          contextText,
+          schoolFormatInstructions: formatTemplate?.templateBody ?? null,
         });
         content = result.content;
         model = result.model;
@@ -111,6 +145,7 @@ export async function generationRoutes(app: FastifyInstance) {
             modelUsed: "unknown",
             generationStatus: "failed",
           },
+          include: { contextSources: true },
         });
         return reply.code(201).send({ data: failed, meta: {} });
       }
@@ -128,7 +163,10 @@ export async function generationRoutes(app: FastifyInstance) {
           aiOutput: content,
           modelUsed: model,
           generationStatus,
+          contextSources: { connect: usedSources.map((s) => ({ id: s.id })) },
+          schoolFormatTemplateId: formatTemplate?.id ?? null,
         },
+        include: { contextSources: true },
       });
 
       await logAiUsage({
@@ -146,7 +184,7 @@ export async function generationRoutes(app: FastifyInstance) {
   app.get<{ Params: { id: string } }>("/generations/:id", { onRequest: scoped(app) }, async (request, reply) => {
     const generation = await prisma.generation.findFirst({
       where: { id: request.params.id, topic: { schoolId: request.schoolId } },
-      include: { topic: { include: { contextSources: true } } },
+      include: { contextSources: true },
     });
     if (!generation) {
       return reply.code(404).send({ data: null, error: { code: "not_found", message: "Generation not found" } });
@@ -175,6 +213,7 @@ export async function generationRoutes(app: FastifyInstance) {
       const updated = await prisma.generation.update({
         where: { id: generation.id },
         data: { editedOutput: body.editedOutput },
+        include: { contextSources: true },
       });
 
       return { data: updated, meta: {} };
@@ -186,11 +225,14 @@ export async function generationRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string } }>("/generations/:id/retry", { onRequest: scoped(app) }, async (request, reply) => {
     const generation = await prisma.generation.findFirst({
       where: { id: request.params.id, topic: { schoolId: request.schoolId } },
-      include: { topic: { include: { classSection: true } } },
+      include: { topic: { include: { classSection: true, contextSources: true } } },
     });
     if (!generation) {
       return reply.code(404).send({ data: null, error: { code: "not_found", message: "Generation not found" } });
     }
+
+    const { contextText, usedSources } = buildContextText(generation.topic.contextSources);
+    const formatTemplate = await getSchoolFormatTemplate(request.schoolId);
 
     const start = Date.now();
     const { content, model } = await aiProvider.generateContent({
@@ -203,11 +245,21 @@ export async function generationRoutes(app: FastifyInstance) {
       language: generation.language,
       customPrompt: generation.customPrompt,
       classLabel: `${generation.topic.classSection.className} ${generation.topic.classSection.sectionName}`,
+      contextText,
+      schoolFormatInstructions: formatTemplate?.templateBody ?? null,
     });
 
     const updated = await prisma.generation.update({
       where: { id: generation.id },
-      data: { aiOutput: content, modelUsed: model, generationStatus: "succeeded", editedOutput: null },
+      data: {
+        aiOutput: content,
+        modelUsed: model,
+        generationStatus: "succeeded",
+        editedOutput: null,
+        contextSources: { set: usedSources.map((s) => ({ id: s.id })) },
+        schoolFormatTemplateId: formatTemplate?.id ?? null,
+      },
+      include: { contextSources: true },
     });
 
     await logAiUsage({

@@ -43,8 +43,12 @@ export function LoginScreen({ onStudentLogin }: Props) {
   // instead of only the background fixes it for good.
   const colors = lightColors;
   const pressedOpacity = PRESSED_OPACITY;
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  // Pre-filled with the seeded dev teacher account (backend/prisma/seed.ts)
+  // so testing the Lesson Studio flow doesn't require typing credentials
+  // every time. Fine to leave in place - these are local dev-seed creds, not
+  // a real account.
+  const [email, setEmail] = useState("teacher@dev.eduwand.local");
+  const [password, setPassword] = useState("password123");
   const [showPassword, setShowPassword] = useState(false);
   const [emailFocused, setEmailFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);

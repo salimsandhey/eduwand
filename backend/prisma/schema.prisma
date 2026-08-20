@@ -111,8 +111,25 @@ model ClassSection {
   assignments  Assignment[]
   topics       Topic[]
   communicationMessages CommunicationMessage[]
+  teacherAssignments ClassSectionTeacher[]
 
   @@map("class_section")
+}
+
+// Which teachers are assigned to which class sections - managed by school
+// admin (admin-dashboard), consumed by the mobile app to scope Lesson Studio's
+// "My Classes" screen to only the classes a teacher actually teaches. Class-
+// level, not subject-scoped: subject already lives as free text on Topic.
+model ClassSectionTeacher {
+  id             String       @id @default(uuid()) @db.Uuid
+  classSectionId String       @map("class_section_id") @db.Uuid
+  classSection   ClassSection @relation(fields: [classSectionId], references: [id])
+  teacherUserId  String       @map("teacher_user_id") @db.Uuid
+  teacher        AppUser      @relation(fields: [teacherUserId], references: [id])
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  @@unique([classSectionId, teacherUserId])
+  @@map("class_section_teacher")
 }
 
 // Role is one of: front_desk, counsellor, teacher, admin, leadership
@@ -151,6 +168,7 @@ model AppUser {
   generations         Generation[]
   observations        Observation[]
   sentCommunicationMessages CommunicationMessage[]
+  classSectionAssignments ClassSectionTeacher[]
 
   @@map("app_user")
 }
@@ -456,10 +474,18 @@ model ContextSource {
   topic                 Topic    @relation(fields: [topicId], references: [id])
   sourceType            String   @map("source_type")
   fileLocation          String?  @map("file_location")
+  originalFilename      String?  @map("original_filename")
   sourceUrl             String?  @map("source_url")
   idreamK12ReferenceId  String?  @map("idream_k12_reference_id")
   extractionStatus      String   @default("pending") @map("extraction_status")
+  extractedText         String?  @map("extracted_text")
+  extractionError       String?  @map("extraction_error")
   createdAt             DateTime @default(now()) @map("created_at")
+
+  // Which generations this source's extracted text actually fed - lets the
+  // app answer "what sources was this generation based on" (client build doc
+  // acceptance criterion), not just "what sources exist on the topic."
+  generations Generation[]
 
   @@index([topicId])
   @@map("context_source")
@@ -479,7 +505,7 @@ model SchoolFormatTemplate {
 
   generations Generation[]
 
-  @@index([schoolId, appliesTo])
+  @@unique([schoolId, appliesTo])
   @@map("school_format_template")
 }
 
@@ -522,6 +548,8 @@ model Generation {
   promptVersion          String?               @map("prompt_version")
   generationStatus       String                @default("succeeded") @map("generation_status")
   generatedAt            DateTime              @default(now()) @map("generated_at")
+
+  contextSources ContextSource[]
 
   @@index([topicId])
   @@index([teacherUserId])

@@ -9,3 +9,5 @@ build/
 coverage/
 .vscode/
 backend/var/
+/Docs/
+/UI/

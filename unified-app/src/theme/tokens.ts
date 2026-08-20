@@ -77,6 +77,14 @@ export function getCardShadow(mode: "light" | "dark") {
 
 export const PRESSED_OPACITY = 0.65;
 
+// No shared spacing/radius scale existed before this - every screen picked
+// its own numbers for "card padding"/"card radius", which is why the same
+// visual concept (a card, a list row) looked different screen to screen.
+// radius.lg (16) and spacing.lg (16) are the standard for card/row
+// containers; spacing.md/sm/xs cover internal gaps and margins.
+export const spacing = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 };
+export const radius = { sm: 8, md: 12, lg: 16, pill: 999 };
+
 export const lightColors: ThemeColors = {
   background: "#F4F1E8",
   backgroundMuted: "#ECE7DB",

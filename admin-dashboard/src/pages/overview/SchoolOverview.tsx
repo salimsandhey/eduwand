@@ -12,7 +12,7 @@ const FUNNEL_STAGES: EnquiryStatus[] = ["new", "contacted", "visit", "applicatio
 const SEQ_COLORS = ["var(--seq-1)", "var(--seq-2)", "var(--seq-3)", "var(--seq-4)", "var(--seq-5)", "var(--seq-6)"];
 
 export function SchoolOverview() {
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const [funnel, setFunnel] = useState<FunnelResponse | null>(null);
   const [counsellors, setCounsellors] = useState<CounsellorPerformanceEntry[] | null>(null);
   const [users, setUsers] = useState<AppUserSummary[] | null>(null);
@@ -79,9 +79,11 @@ export function SchoolOverview() {
               <p style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 16, marginBottom: 0 }}>
                 {users.length} staff · {activeStaff} active
               </p>
-              <Link to="/users" style={styles.viewAllLink}>
-                Manage users →
-              </Link>
+              {user?.schoolId ? (
+                <Link to={`/schools/${user.schoolId}/staff`} style={styles.viewAllLink}>
+                  Manage staff →
+                </Link>
+              ) : null}
             </Card>
           </div>
         </>
