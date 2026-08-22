@@ -96,6 +96,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: "/exports", label: "CSV Exports", icon: "chart", roles: ADMIN_LEADERSHIP_PLATFORM },
   { to: "/audit-log", label: "Audit Log", icon: "filter", roles: ADMIN_LEADERSHIP_PLATFORM },
   { to: "/ai-usage", label: "AI Usage Analytics", icon: "sparkle", roles: ADMIN_LEADERSHIP_PLATFORM },
+  { to: "/ai-prompts", label: "AI Prompts", icon: "sparkle", roles: ["platform_admin"] },
 ];
 
 // Pages that actually read the SchoolPicker's selected school (school-scoped
@@ -131,7 +132,10 @@ export function Layout() {
   return (
     <div style={styles.shell}>
       <aside style={styles.sidebar}>
-        <div style={styles.logo}>EduWand</div>
+        <div style={styles.logo}>
+          <img src="/eduwand-logo.png" alt="EduWand" style={styles.logoImage} />
+          <span style={styles.logoCaption}>Admin workspace</span>
+        </div>
         <nav style={styles.nav}>
           {navItems.map((item) => (
             <NavLink
@@ -178,29 +182,33 @@ export function Layout() {
 const styles: Record<string, React.CSSProperties> = {
   shell: { display: "flex", minHeight: "100vh" },
   sidebar: {
-    width: 240,
-    background: "var(--bg-card)",
+    width: 264,
+    background: "rgba(255,255,255,0.88)",
     borderRight: "1px solid var(--border)",
-    padding: "20px 16px",
+    padding: "24px 14px",
     flexShrink: 0,
+    backdropFilter: "blur(18px)",
   },
-  logo: { fontSize: 20, fontWeight: 700, marginBottom: 28, color: "var(--text-primary)" },
-  nav: { display: "flex", flexDirection: "column", gap: 4 },
+  logo: { margin: "0 10px 30px", display: "flex", flexDirection: "column", gap: 8 },
+  logoImage: { width: 150, height: "auto", objectFit: "contain", objectPosition: "left center" },
+  logoCaption: { fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.9px" },
+  nav: { display: "flex", flexDirection: "column", gap: 6 },
   navLink: {
     display: "flex",
     alignItems: "center",
-    gap: 10,
-    padding: "10px 12px",
-    borderRadius: 8,
+    gap: 11,
+    padding: "11px 12px",
+    borderRadius: 12,
     color: "var(--text-secondary)",
     textDecoration: "none",
     fontSize: 14,
-    fontWeight: 500,
+    fontWeight: 600,
   },
   navIcon: { display: "flex", flexShrink: 0, color: "inherit" },
   navLinkActive: {
-    background: "var(--accent-wash)",
+    background: "linear-gradient(135deg, var(--accent-wash), #fbeef7)",
     color: "var(--accent-dark)",
+    boxShadow: "inset 3px 0 0 var(--accent)",
   },
   badge: {
     fontSize: 10,
@@ -213,27 +221,28 @@ const styles: Record<string, React.CSSProperties> = {
     textTransform: "uppercase",
     letterSpacing: "0.3px",
   },
-  main: { flex: 1, display: "flex", flexDirection: "column" },
+  main: { flex: 1, display: "flex", flexDirection: "column", minWidth: 0 },
   topbar: {
-    height: 64,
+    height: 72,
     borderBottom: "1px solid var(--border)",
-    background: "var(--bg-card)",
+    background: "rgba(255,255,255,0.76)",
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    padding: "0 24px",
+    padding: "0 32px",
+    backdropFilter: "blur(18px)",
   },
   profile: { display: "flex", alignItems: "center", gap: 12 },
   avatar: {
-    width: 32,
-    height: 32,
+    width: 38,
+    height: 38,
     borderRadius: "50%",
     background: "var(--accent-wash)",
     color: "var(--accent-dark)",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: 700,
     flexShrink: 0,
   },
@@ -245,14 +254,14 @@ const styles: Record<string, React.CSSProperties> = {
     textTransform: "capitalize",
   },
   logoutButton: {
-    background: "var(--accent)",
-    color: "#fff",
-    border: "none",
-    borderRadius: 6,
-    padding: "8px 14px",
+    background: "var(--accent-wash)",
+    color: "var(--accent-dark)",
+    border: "1px solid #e8c4dc",
+    borderRadius: 10,
+    padding: "9px 13px",
     fontWeight: 600,
     cursor: "pointer",
     fontSize: 13,
   },
-  content: { flex: 1, padding: 24, maxWidth: 1100 },
+  content: { flex: 1, width: "100%", maxWidth: 1440, padding: "34px 40px 48px", margin: "0 auto" },
 };

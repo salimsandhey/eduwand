@@ -1,5 +1,10 @@
 export const decorativeAssets = {
   heroBlob: require("../../assets/decorative/decor-hero-blob.png"),
+  teacherHero: require("../../assets/decorative/decor-teacher-hero.png"),
+  teacherLessonCat: require("../../assets/decorative/decor-teacher-lesson-cat.png"),
+  teacherAssignment: require("../../assets/decorative/decor-teacher-assignment.png"),
+  teacherSubmissions: require("../../assets/decorative/decor-teacher-submissions.png"),
+  studioTeacher: require("../../assets/decorative/decor-studio-teacher.png"),
   sparklesLine: require("../../assets/decorative/decor-sparkles-line.png"),
   book: require("../../assets/decorative/decor-book.png"),
   cap: require("../../assets/decorative/decor-cap.png"),
@@ -16,4 +21,3 @@ export const decorativeAssets = {
   paperPlane: require("../../assets/decorative/decor-paper-plane.png"),
   ribbonBanner: require("../../assets/decorative/decor-ribbon-banner.png"),
 } as const;
-

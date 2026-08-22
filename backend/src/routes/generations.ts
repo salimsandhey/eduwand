@@ -37,7 +37,6 @@ const VALID_OUTPUT_TYPES: GenerationOutputType[] = [
   "custom_activity_report",
   "flashcards",
   "presentation",
-  "explanatory_video",
 ];
 const VALID_MODES = ["plan", "generate"];
 
@@ -166,7 +165,10 @@ export async function generationRoutes(app: FastifyInstance) {
           contextSources: { connect: usedSources.map((s) => ({ id: s.id })) },
           schoolFormatTemplateId: formatTemplate?.id ?? null,
         },
-        include: { contextSources: true },
+        include: {
+          contextSources: true,
+          topic: { select: { name: true, subject: true, board: true, classSection: { select: { className: true, sectionName: true } } } },
+        },
       });
 
       await logAiUsage({
@@ -184,7 +186,10 @@ export async function generationRoutes(app: FastifyInstance) {
   app.get<{ Params: { id: string } }>("/generations/:id", { onRequest: scoped(app) }, async (request, reply) => {
     const generation = await prisma.generation.findFirst({
       where: { id: request.params.id, topic: { schoolId: request.schoolId } },
-      include: { contextSources: true },
+      include: {
+        contextSources: true,
+        topic: { select: { name: true, subject: true, board: true, classSection: { select: { className: true, sectionName: true } } } },
+      },
     });
     if (!generation) {
       return reply.code(404).send({ data: null, error: { code: "not_found", message: "Generation not found" } });
@@ -259,7 +264,10 @@ export async function generationRoutes(app: FastifyInstance) {
         contextSources: { set: usedSources.map((s) => ({ id: s.id })) },
         schoolFormatTemplateId: formatTemplate?.id ?? null,
       },
-      include: { contextSources: true },
+      include: {
+        contextSources: true,
+        topic: { select: { name: true, subject: true, board: true, classSection: { select: { className: true, sectionName: true } } } },
+      },
     });
 
     await logAiUsage({

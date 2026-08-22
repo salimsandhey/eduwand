@@ -18,6 +18,7 @@ export type RootStackParamList = {
   TopicDetail: { topicId: string };
   GenerationSetup: { topicId: string };
   GenerationReview: { generationId: string };
+  LessonWithAiTest: undefined;
   AnswerKeyReview: { assignmentId: string };
   AttainmentReport: { topicId: string };
   CommunicationHub: undefined;

@@ -13,7 +13,6 @@ const OUTPUT_TYPE_LABELS: Record<string, string> = {
   custom_activity_report: "Custom Activity",
   flashcards: "Flashcards",
   presentation: "Presentation",
-  explanatory_video: "Explanatory Video",
 };
 
 // Students Dashboard, materials view (client doc section 5). See

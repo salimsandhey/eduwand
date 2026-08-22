@@ -9,6 +9,7 @@ import { FunnelPage } from "./pages/FunnelPage";
 import { BySourcePage } from "./pages/BySourcePage";
 import { CounsellorsPage } from "./pages/CounsellorsPage";
 import { AiUsagePage } from "./pages/AiUsagePage";
+import { AiPromptsPage } from "./pages/AiPromptsPage";
 import { PipelineStagesPage } from "./pages/PipelineStagesPage";
 import { MessageTemplatesPage } from "./pages/MessageTemplatesPage";
 import { ExportsPage } from "./pages/ExportsPage";
@@ -20,6 +21,7 @@ import { SchoolDetailsTab } from "./pages/school/SchoolDetailsTab";
 import { SchoolStaffTab } from "./pages/school/SchoolStaffTab";
 import { SchoolAcademicsTab } from "./pages/school/SchoolAcademicsTab";
 import { SchoolTemplatesTab } from "./pages/school/SchoolTemplatesTab";
+import { SchoolSubjectsTab } from "./pages/school/SchoolSubjectsTab";
 import { MySchoolRedirect } from "./pages/MySchoolRedirect";
 
 // Routes not shown in the sidebar (drill-in detail pages) still need a role
@@ -66,6 +68,7 @@ function Root() {
         <Route path="/sources" element={<RequireRole path="/sources"><BySourcePage /></RequireRole>} />
         <Route path="/counsellors" element={<RequireRole path="/counsellors"><CounsellorsPage /></RequireRole>} />
         <Route path="/ai-usage" element={<RequireRole path="/ai-usage"><AiUsagePage /></RequireRole>} />
+        <Route path="/ai-prompts" element={<RequireRole path="/ai-prompts"><AiPromptsPage /></RequireRole>} />
         <Route path="/pipeline-stages" element={<RequireRole path="/pipeline-stages"><PipelineStagesPage /></RequireRole>} />
         <Route path="/message-templates" element={<RequireRole path="/message-templates"><MessageTemplatesPage /></RequireRole>} />
         <Route path="/exports" element={<RequireRole path="/exports"><ExportsPage /></RequireRole>} />
@@ -77,6 +80,7 @@ function Root() {
           <Route path="staff" element={<SchoolStaffTab />} />
           <Route path="academics" element={<SchoolAcademicsTab />} />
           <Route path="templates" element={<SchoolTemplatesTab />} />
+          <Route path="subjects" element={<SchoolSubjectsTab />} />
         </Route>
         <Route path="*" element={<Navigate to="/overview" replace />} />
       </Route>

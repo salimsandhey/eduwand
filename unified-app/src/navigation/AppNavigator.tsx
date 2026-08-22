@@ -20,6 +20,7 @@ import { TopicListScreen } from "../screens/studio/TopicListScreen";
 import { TopicDetailScreen } from "../screens/studio/TopicDetailScreen";
 import { GenerationSetupScreen } from "../screens/studio/GenerationSetupScreen";
 import { GenerationReviewScreen } from "../screens/studio/GenerationReviewScreen";
+import { LessonWithAiTestScreen } from "../screens/studio/LessonWithAiTestScreen";
 import { AnswerKeyReviewScreen } from "../screens/studio/AnswerKeyReviewScreen";
 import { AttainmentReportScreen } from "../screens/analytics/AttainmentReportScreen";
 import { CommunicationHubScreen } from "../screens/enrolment/CommunicationHubScreen";
@@ -90,11 +91,12 @@ export function AppNavigator() {
         <Stack.Screen
           name="TopicList"
           component={TopicListScreen}
-          options={({ route }) => ({ title: `${route.params.className} ${route.params.sectionName}` })}
+          options={{ headerShown: false }}
         />
-        <Stack.Screen name="TopicDetail" component={TopicDetailScreen} options={{ title: "Topic" }} />
-        <Stack.Screen name="GenerationSetup" component={GenerationSetupScreen} options={{ title: "Generate" }} />
-        <Stack.Screen name="GenerationReview" component={GenerationReviewScreen} options={{ title: "Review" }} />
+        <Stack.Screen name="TopicDetail" component={TopicDetailScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="GenerationSetup" component={GenerationSetupScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="GenerationReview" component={GenerationReviewScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="LessonWithAiTest" component={LessonWithAiTestScreen} options={{ headerShown: false }} />
         <Stack.Screen name="AnswerKeyReview" component={AnswerKeyReviewScreen} options={{ title: "Answer Key" }} />
         <Stack.Screen name="AttainmentReport" component={AttainmentReportScreen} options={{ title: "Attainment Report" }} />
         <Stack.Screen name="CommunicationHub" component={CommunicationHubScreen} options={{ title: "Communication Hub" }} />

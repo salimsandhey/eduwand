@@ -365,6 +365,13 @@ export interface ClassSection {
   sectionName: string;
 }
 
+// The per-school gateway for Topic.subject - admin-managed, read-only here.
+export interface Subject {
+  id: string;
+  schoolId: string;
+  name: string;
+}
+
 export interface StudentStub {
   id: string;
   fullName: string;
@@ -431,7 +438,7 @@ export interface Observation {
   recordedAt: string;
 }
 
-export type GenerationOutputType = "lesson_plan" | "custom_activity_report" | "flashcards" | "presentation" | "explanatory_video";
+export type GenerationOutputType = "lesson_plan" | "custom_activity_report" | "flashcards" | "presentation";
 
 export interface Generation {
   id: string;
@@ -448,6 +455,7 @@ export interface Generation {
   generationStatus: "pending" | "succeeded" | "failed";
   generatedAt: string;
   contextSources: ContextSource[];
+  topic?: { name: string; subject: string; board: string; classSection: { className: string; sectionName: string } };
 }
 
 export interface TopicDetail extends Topic {
@@ -558,6 +566,27 @@ export interface StudentAnalytics {
   fullName: string;
   averageScore: number | null;
   history: { assignmentTitle: string; score: number | null; submittedAt: string }[];
+}
+
+// ---- Teacher Dashboard ----
+
+export interface TeacherDashboardActivityItem {
+  type: "generation" | "observation" | "assignment_published";
+  id: string;
+  topicId: string | null;
+  label: string;
+  timestamp: string;
+}
+
+export interface TeacherDashboardSummary {
+  topicCount: number;
+  topicsUpdatedThisWeek: number;
+  continueTopic: { id: string; name: string; subject: string; classSectionId: string; updatedAt: string } | null;
+  assignmentCount: number;
+  draftAssignmentCount: number;
+  publishedAssignmentCount: number;
+  ungradedSubmissionCount: number;
+  recentActivity: TeacherDashboardActivityItem[];
 }
 
 // ---- Documents (FR-EG-6) ----
@@ -704,6 +733,7 @@ export const api = {
     request<FollowUpTask>(`/follow-up-tasks/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
 
   listClassSections: (token: string) => request<ClassSection[]>("/class-sections", {}, token),
+  listSubjects: (token: string) => request<Subject[]>("/subjects", {}, token),
 
   listPipelineStages: (token: string) => request<PipelineStage[]>("/pipeline-stages", {}, token),
 
@@ -794,6 +824,8 @@ export const api = {
     request<ClassAnalytics>(`/analytics/ai/class/${classSectionId}`, {}, token),
   getStudentAnalytics: (token: string, studentStubId: string) =>
     request<StudentAnalytics>(`/analytics/ai/student/${studentStubId}`, {}, token),
+  getTeacherDashboardSummary: (token: string) =>
+    request<TeacherDashboardSummary>("/dashboard/teacher-summary", {}, token),
 
   // ---- Communication Hub (teacher side) ----
   listCommunicationsWithStudent: (token: string, studentStubId: string) =>

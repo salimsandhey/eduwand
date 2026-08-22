@@ -16,6 +16,7 @@ import { exportRoutes } from "./routes/exports";
 import { analyticsRoutes } from "./routes/analytics";
 import { publicEnquiryRoutes } from "./routes/public-enquiries";
 import { classSectionRoutes } from "./routes/class-sections";
+import { subjectRoutes } from "./routes/subjects";
 import { academicStructureRoutes } from "./routes/academic-structure";
 import { schoolFormatTemplateRoutes } from "./routes/school-format-templates";
 import { userRoutes } from "./routes/users";
@@ -30,9 +31,11 @@ import { generationRoutes } from "./routes/generations";
 import { communicationRoutes } from "./routes/communications";
 import { attainmentReportRoutes } from "./routes/attainment-reports";
 import { assignmentRoutes } from "./routes/assignments";
+import { teacherDashboardRoutes } from "./routes/teacher-dashboard";
 import { submissionRoutes } from "./routes/submissions";
 import { aiAnalyticsRoutes } from "./routes/ai-analytics";
 import { auditLogRoutes } from "./routes/audit-log";
+import { aiPromptRoutes } from "./routes/ai-prompts";
 
 const app = Fastify({ logger: true });
 
@@ -55,6 +58,7 @@ app.register(exportRoutes, { prefix: "/api/v1" });
 app.register(analyticsRoutes, { prefix: "/api/v1" });
 app.register(publicEnquiryRoutes, { prefix: "/api/v1" });
 app.register(classSectionRoutes, { prefix: "/api/v1" });
+app.register(subjectRoutes, { prefix: "/api/v1" });
 app.register(academicStructureRoutes, { prefix: "/api/v1" });
 app.register(schoolFormatTemplateRoutes, { prefix: "/api/v1" });
 app.register(userRoutes, { prefix: "/api/v1" });
@@ -69,9 +73,11 @@ app.register(generationRoutes, { prefix: "/api/v1" });
 app.register(communicationRoutes, { prefix: "/api/v1" });
 app.register(attainmentReportRoutes, { prefix: "/api/v1" });
 app.register(assignmentRoutes, { prefix: "/api/v1" });
+app.register(teacherDashboardRoutes, { prefix: "/api/v1" });
 app.register(submissionRoutes, { prefix: "/api/v1" });
 app.register(aiAnalyticsRoutes, { prefix: "/api/v1" });
 app.register(auditLogRoutes, { prefix: "/api/v1" });
+app.register(aiPromptRoutes, { prefix: "/api/v1" });
 
 const port = Number(process.env.PORT) || 4000;
 

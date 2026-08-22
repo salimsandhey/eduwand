@@ -17,8 +17,47 @@ export type GenerationOutputType =
   | "lesson_plan"
   | "custom_activity_report"
   | "flashcards"
-  | "presentation"
-  | "explanatory_video";
+  | "presentation";
+
+// Structured content shapes for Lesson Studio generations (one per
+// GenerationOutputType). Generation.aiOutput/
+// editedOutput remain plain String columns in the DB - these shapes are
+// JSON.stringify'd into that column, not a schema change. Older rows
+// (generated before this existed) are plain Markdown text, not JSON - callers
+// must treat a JSON.parse failure as "legacy content" and fall back to
+// rendering the raw string, never throw.
+export interface LessonPlanContent {
+  type: "lesson_plan";
+  overview: string;
+  durationMinutes: number;
+  objectives: string[];
+  lessonFlow: { label: string; durationMinutes: number }[];
+  activities: { title: string; description: string; durationMinutes: number; materials: string[] }[];
+  assessment: string;
+}
+
+export interface CustomActivityContent {
+  type: "custom_activity_report";
+  objective: string;
+  activities: { title: string; description: string; durationMinutes: number; materials: string[] }[];
+  reportFormat: string;
+}
+
+export interface FlashcardsContent {
+  type: "flashcards";
+  cards: { front: string; back: string }[];
+}
+
+export interface PresentationContent {
+  type: "presentation";
+  slides: { title: string; bullets: string[] }[];
+}
+
+export type StructuredGenerationContent =
+  | LessonPlanContent
+  | CustomActivityContent
+  | FlashcardsContent
+  | PresentationContent;
 
 export interface GenerationInput {
   topicName: string;
@@ -236,8 +275,8 @@ class StubAiProvider implements AiProvider {
 
   // Phase 2: replaces generateLessonPlan/generateResearchReport for new
   // Topic-scoped generations. Follows the same "real structured content from
-  // real inputs" pattern as the methods above, extended to flashcards,
-  // presentation, and explanatory_video output types.
+  // real inputs" pattern as the methods above, extended to flashcards and
+  // presentation output types.
   async generateContent({
     topicName,
     subject,
@@ -250,64 +289,85 @@ class StubAiProvider implements AiProvider {
     classLabel,
   }: GenerationInput) {
     const audience = classLabel ? `${classLabel} students` : "students";
-    const custom = customPrompt ? `\n\n## Teacher's custom instructions\n${customPrompt}` : "";
-    const header = `# ${topicName} (${subject}, ${board})\n**Language:** ${language}  |  **Classes covered:** ${classCount}  |  **Minutes per class:** ${minutesPerClass}`;
+    const custom = customPrompt ? ` Custom instructions: ${customPrompt}` : "";
+    const durationMinutes = minutesPerClass * classCount;
 
-    let body: string;
+    let content: StructuredGenerationContent;
     switch (outputType) {
       case "flashcards":
-        body = [
-          "## Flashcards",
-          `1. **Front:** What is ${topicName}? **Back:** A core concept in ${subject} for ${board}.`,
-          `2. **Front:** Why does ${topicName} matter? **Back:** It underpins later ${subject} topics.`,
-          `3. **Front:** Common mistake with ${topicName}? **Back:** Confusing it with a related but distinct idea.`,
-        ].join("\n");
+        content = {
+          type: "flashcards",
+          cards: [
+            { front: `What is ${topicName}?`, back: `A core concept in ${subject} for ${board}.` },
+            { front: `Why does ${topicName} matter?`, back: `It underpins later ${subject} topics.` },
+            { front: `Common mistake with ${topicName}?`, back: "Confusing it with a related but distinct idea." },
+          ],
+        };
         break;
       case "presentation":
-        body = [
-          "## Presentation Outline",
-          `**Slide 1:** Introducing ${topicName}`,
-          `**Slide 2:** Key ideas ${audience} need to know`,
-          `**Slide 3:** Worked example`,
-          `**Slide 4:** Practice question for ${audience}`,
-          "**Slide 5:** Summary and next steps",
-        ].join("\n");
-        break;
-      case "explanatory_video":
-        body = [
-          "## Explanatory Video Script",
-          `**Hook (0:00):** Why ${topicName} matters to ${audience}.`,
-          `**Explanation (0:20):** Walk through ${topicName} step by step.`,
-          `**Example (1:00):** Apply ${topicName} to a ${board}-relevant scenario.`,
-          "**Recap (1:40):** Restate the key takeaway.",
-        ].join("\n");
+        content = {
+          type: "presentation",
+          slides: [
+            { title: `Introducing ${topicName}`, bullets: [`What ${topicName} is`, `Why it matters in ${subject}`] },
+            { title: "Key ideas", bullets: [`The core concepts ${audience} need to know`] },
+            { title: "Worked example", bullets: [`A step-by-step ${topicName} example`] },
+            { title: "Practice", bullets: [`A question for ${audience} to try`] },
+            { title: "Summary", bullets: ["Recap of the key takeaway", "Next steps"] },
+          ],
+        };
         break;
       case "custom_activity_report":
-        body = [
-          "## Custom Activity",
-          `**Objective:** [Apply] ${audience} demonstrate understanding of ${topicName}.`,
-          `**Activity:** A ${minutesPerClass}-minute in-class task applying ${topicName}.`,
-          "**Report format:** what was attempted, what was observed, what to reinforce next class.",
-        ].join("\n");
+        content = {
+          type: "custom_activity_report",
+          objective: `[Apply] ${audience} demonstrate understanding of ${topicName}.${custom}`,
+          activities: [
+            {
+              title: `${topicName} in practice`,
+              description: `A ${minutesPerClass}-minute in-class task applying ${topicName}.`,
+              durationMinutes,
+              materials: [],
+            },
+          ],
+          reportFormat: "What was attempted, what was observed, what to reinforce next class.",
+        };
         break;
       case "lesson_plan":
       default:
-        body = [
-          "## Learning Objectives",
-          `- [Understand] Understand the core principles of ${topicName}`,
-          `- [Apply] Apply ${topicName} concepts to examples appropriate for ${board}`,
-          "",
-          `## Lesson Structure (${minutesPerClass} minutes x ${classCount} class(es))`,
-          `1. **Warm-up** — Ask ${audience} what they already know about ${topicName}`,
-          "2. **Direct instruction** — Introduce the topic with guided notes",
-          "3. **Guided practice** — Work through examples together",
-          "4. **Independent practice** — Short worksheet",
-          "5. **Wrap-up** — Exit ticket",
-        ].join("\n");
+        content = {
+          type: "lesson_plan",
+          overview: `${audience} explore ${topicName} through guided and independent practice.${custom}`,
+          durationMinutes,
+          objectives: [
+            `[Understand] Understand the core principles of ${topicName}`,
+            `[Apply] Apply ${topicName} concepts to examples appropriate for ${board}`,
+          ],
+          lessonFlow: [
+            { label: "Engage", durationMinutes: Math.round(durationMinutes * 0.1) },
+            { label: "Explore", durationMinutes: Math.round(durationMinutes * 0.25) },
+            { label: "Explain", durationMinutes: Math.round(durationMinutes * 0.3) },
+            { label: "Elaborate", durationMinutes: Math.round(durationMinutes * 0.25) },
+            { label: "Evaluate", durationMinutes: Math.round(durationMinutes * 0.1) },
+          ],
+          activities: [
+            {
+              title: "Warm-up",
+              description: `Ask ${audience} what they already know about ${topicName}`,
+              durationMinutes: 5,
+              materials: [],
+            },
+            {
+              title: "Guided practice",
+              description: "Work through examples together",
+              durationMinutes: Math.max(10, durationMinutes - 20),
+              materials: ["Whiteboard or projector"],
+            },
+          ],
+          assessment: "Exit ticket: one question on today's topic.",
+        };
         break;
     }
 
-    return { content: `${header}\n\n${body}${custom}`, model: MODEL_SONNET };
+    return { content: JSON.stringify(content), model: MODEL_SONNET };
   }
 
   async generateAnswerKey(questions: AnswerKeyQuestionInput[]) {
@@ -344,25 +404,54 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
 
 const OCR_NO_TEXT_SENTINEL = "NO_TEXT_FOUND";
 
-const OUTPUT_TYPE_INSTRUCTIONS: Record<GenerationOutputType, string> = {
+// Each entry describes the exact JSON object the model must return for that
+// outputType - the app renders these as native step/card views (not
+// Markdown), so the shape has to be reliable, not just plausible-looking
+// text. These are the built-in fallback - platform_admin can override any of
+// them at runtime via the AiPromptTemplate table (backend/src/routes/ai-prompts.ts);
+// getPromptInstructions() below checks that table first. Editing an override
+// doesn't change the required JSON shape - only the wording/emphasis of the
+// instruction - so a change here (adding a new field to a content shape)
+// must still be reflected in these defaults even if a school never sees them
+// directly.
+export const DEFAULT_OUTPUT_TYPE_INSTRUCTIONS: Record<GenerationOutputType, string> = {
   lesson_plan:
-    "Produce a full lesson plan in Markdown: learning objectives, materials needed, a " +
-    "step-by-step lesson structure with timing that fits the given number of classes and " +
-    "minutes per class, and an assessment/exit-ticket section.",
+    'Respond with ONLY a JSON object of this exact shape (no prose, no markdown fences): ' +
+    '{"overview": string (2-3 sentences summarising the lesson), ' +
+    '"durationMinutes": number, ' +
+    '"objectives": string[] (each labelled with its Bloom\'s Taxonomy level in square brackets, e.g. "[Understand] ..."), ' +
+    '"lessonFlow": {"label": string, "durationMinutes": number}[] (the 5E model stages - Engage, Explore, Explain, Elaborate, Evaluate - durations summing to durationMinutes), ' +
+    '"activities": {"title": string, "description": string, "durationMinutes": number, "materials": string[]}[] (classroom activities, durations summing to durationMinutes), ' +
+    '"assessment": string (how understanding is checked, e.g. an exit ticket)}',
   custom_activity_report:
-    "Produce a custom classroom activity in Markdown: the objective, the activity itself " +
-    "(sized to the minutes per class), and a report format the teacher can fill in afterwards " +
-    "covering what was attempted, what was observed, and what to reinforce next class.",
+    'Respond with ONLY a JSON object of this exact shape (no prose, no markdown fences): ' +
+    '{"objective": string (labelled with its Bloom\'s Taxonomy level in square brackets), ' +
+    '"activities": {"title": string, "description": string, "durationMinutes": number, "materials": string[]}[] (sized to fit the given minutes per class), ' +
+    '"reportFormat": string (what the teacher should record afterwards: what was attempted, what was observed, what to reinforce next class)}',
   flashcards:
-    "Produce a set of at least 8 flashcards in Markdown as a numbered list, each with a " +
-    "**Front:** question and **Back:** answer, covering the key concepts of the topic.",
+    'Respond with ONLY a JSON object of this exact shape (no prose, no markdown fences): ' +
+    '{"cards": {"front": string, "back": string}[]} with at least 8 cards covering the key concepts of the topic.',
   presentation:
-    "Produce a slide-by-slide presentation outline in Markdown, each slide labelled " +
-    "**Slide N:** with a short title and the key points/notes for that slide.",
-  explanatory_video:
-    "Produce an explanatory video script in Markdown with timestamped sections: a hook, the " +
-    "main explanation broken into clear steps, a worked example, and a recap.",
+    'Respond with ONLY a JSON object of this exact shape (no prose, no markdown fences): ' +
+    '{"slides": {"title": string, "bullets": string[]}[]} - a slide-by-slide outline, each slide with a short title and 2-4 bullet points.',
 };
+
+// Looked up on every generation call rather than cached - prompt edits are
+// rare (an admin action, not a hot path) and this keeps an edit visible
+// immediately, with no cache-invalidation to get wrong.
+async function getPromptInstructions(outputType: GenerationOutputType): Promise<string> {
+  const override = await prisma.aiPromptTemplate.findUnique({ where: { outputType } });
+  return override?.promptBody ?? DEFAULT_OUTPUT_TYPE_INSTRUCTIONS[outputType];
+}
+
+// Model responses are occasionally wrapped in ```json fences despite being
+// told not to - stripped defensively before JSON.parse rather than trusting
+// the instruction alone.
+function stripJsonFence(raw: string): string {
+  const trimmed = raw.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return fenced ? fenced[1] : trimmed;
+}
 
 // Real Gemini-backed generation for Lesson Studio (backend/src/routes/generations.ts)
 // and image OCR for Lesson Studio context sources (backend/src/routes/topics.ts).
@@ -432,7 +521,7 @@ class GeminiAiProvider implements AiProvider {
     schoolFormatInstructions,
   }: GenerationInput): Promise<{ content: string; model: string }> {
     const audience = classLabel ? `${classLabel} students` : "students";
-    const instructions = OUTPUT_TYPE_INSTRUCTIONS[outputType] ?? OUTPUT_TYPE_INSTRUCTIONS.lesson_plan;
+    const instructions = await getPromptInstructions(outputType);
     const prompt = [
       `You are an experienced ${board} curriculum teacher writing material for ${audience}.`,
       `Topic: ${topicName}`,
@@ -444,10 +533,9 @@ class GeminiAiProvider implements AiProvider {
       "",
       instructions,
       "",
-      "Write in Markdown. Start with a level-1 heading naming the topic. Do not include any " +
-        "preamble or closing remarks outside the material itself.",
-      "Wherever you state learning objectives or outcomes, label each one with its Bloom's " +
-        "Taxonomy level in square brackets immediately before the objective (e.g., " +
+      "Return raw JSON only - no preamble, no closing remarks, no markdown code fences around it.",
+      "Wherever the shape includes an objective or outcome, label it with its Bloom's " +
+        "Taxonomy level in square brackets immediately before the text (e.g., " +
         "\"[Understand] Explain why...\"). Use only these levels: Remember, Understand, Apply, " +
         "Analyze, Evaluate, Create.",
       customPrompt ? `\nAdditional instructions from the teacher: ${customPrompt}` : "",
@@ -482,7 +570,27 @@ class GeminiAiProvider implements AiProvider {
       throw new Error("Gemini API returned no generated text");
     }
 
-    return { content: text, model: MODEL_GEMINI_FLASH };
+    // The app renders this per-type as native cards/steps, not Markdown -
+    // an unparseable response must fail the generation (existing failed-row
+    // + retry flow in generations.ts) rather than silently be stored as text
+    // and shown broken.
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stripJsonFence(text));
+    } catch {
+      throw new Error(`Gemini returned non-JSON content for outputType "${outputType}": ${text.slice(0, 200)}`);
+    }
+
+    // The model sometimes ignores the "wrap in an object" instruction and
+    // returns a bare array for the list-shaped types (seen in practice for
+    // flashcards) - normalized back into the documented shape rather than
+    // rejecting an otherwise-usable response.
+    if (Array.isArray(parsed)) {
+      if (outputType === "flashcards") parsed = { cards: parsed };
+      else if (outputType === "presentation") parsed = { slides: parsed };
+    }
+
+    return { content: JSON.stringify(parsed), model: MODEL_GEMINI_FLASH };
   }
 }
 

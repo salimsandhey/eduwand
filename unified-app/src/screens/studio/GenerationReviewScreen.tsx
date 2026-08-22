@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator } from "react-native";
 import Markdown, { MarkdownIt } from "react-native-markdown-display";
 import { useFocusEffect } from "@react-navigation/native";
@@ -10,6 +10,11 @@ import { useTheme } from "../../theme/ThemeContext";
 import { ThemeColors, typography, spacing, radius } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { api, Generation } from "../../api/client";
+import { parseGenerationContent, StructuredGenerationContent } from "./generation/content";
+import { LessonPlanView } from "./generation/LessonPlanView";
+import { CustomActivityView } from "./generation/CustomActivityView";
+import { FlashcardsView } from "./generation/FlashcardsView";
+import { PresentationView } from "./generation/PresentationView";
 
 type Props = NativeStackScreenProps<RootStackParamList, "GenerationReview">;
 
@@ -18,8 +23,20 @@ const OUTPUT_TYPE_LABELS: Record<string, string> = {
   custom_activity_report: "Custom Activity",
   flashcards: "Flashcards",
   presentation: "Presentation",
-  explanatory_video: "Explanatory Video",
 };
+
+const OUTPUT_TYPE_ICONS: Record<Generation["outputType"], keyof typeof Ionicons.glyphMap> = {
+  lesson_plan: "book-outline",
+  custom_activity_report: "clipboard-outline",
+  flashcards: "albums-outline",
+  presentation: "easel-outline",
+};
+
+// Structured content auto-saves per-item (each card's own Done button), so
+// there's no reason to make the teacher hit a separate global Save - but
+// rapid successive edits (e.g. several cards in a row) shouldn't each fire
+// their own request, so saves are debounced.
+const AUTOSAVE_DEBOUNCE_MS = 600;
 
 function buildMarkdownStyles(colors: ThemeColors) {
   const heading = { color: colors.textPrimary, fontFamily: typography.bold };
@@ -67,12 +84,18 @@ const markdownRules = { markdownit: MarkdownIt({ typographer: false }) };
 // saves and flows into the attainment report - client doc acceptance
 // criterion 3. Distribution is a stub until the Communication Hub has a real
 // delivery channel (Docs/Dev/AI_Module_Rebuild_Plan.md Phase 4 note).
-export function GenerationReviewScreen({ route }: Props) {
+//
+// Structured output types (lesson_plan, custom_activity_report, flashcards,
+// presentation) render as native step/card views instead of Markdown, with
+// per-item inline editing that autosaves. A legacy pre-JSON generation falls
+// back to the original whole-document Markdown view + free-text editor.
+export function GenerationReviewScreen({ route, navigation }: Props) {
   const { generationId } = route.params;
   const { accessToken } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
 
   const [generation, setGeneration] = useState<Generation | null>(null);
+  const [structuredContent, setStructuredContent] = useState<StructuredGenerationContent | null>(null);
   const [draft, setDraft] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -80,6 +103,7 @@ export function GenerationReviewScreen({ route }: Props) {
   const [isRetrying, setIsRetrying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState(false);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -88,7 +112,9 @@ export function GenerationReviewScreen({ route }: Props) {
     try {
       const g = await api.getGeneration(accessToken, generationId);
       setGeneration(g);
-      setDraft(g.editedOutput ?? g.aiOutput);
+      const raw = g.editedOutput ?? g.aiOutput;
+      setStructuredContent(parseGenerationContent(g.outputType, raw));
+      setDraft(raw);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load generation");
     } finally {
@@ -101,6 +127,12 @@ export function GenerationReviewScreen({ route }: Props) {
       load();
     }, [load])
   );
+
+  useEffect(() => {
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, []);
 
   function startEditing() {
     setError(null);
@@ -130,6 +162,26 @@ export function GenerationReviewScreen({ route }: Props) {
     }
   }
 
+  function handleStructuredChange(next: StructuredGenerationContent) {
+    setStructuredContent(next);
+    setError(null);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      if (!accessToken) return;
+      setIsSaving(true);
+      try {
+        const updated = await api.editGeneration(accessToken, generationId, JSON.stringify(next));
+        setGeneration(updated);
+        setSavedNotice(true);
+        setTimeout(() => setSavedNotice(false), 2000);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to save");
+      } finally {
+        setIsSaving(false);
+      }
+    }, AUTOSAVE_DEBOUNCE_MS);
+  }
+
   async function retry() {
     if (!accessToken) return;
     setIsRetrying(true);
@@ -137,7 +189,9 @@ export function GenerationReviewScreen({ route }: Props) {
     try {
       const updated = await api.retryGeneration(accessToken, generationId);
       setGeneration(updated);
-      setDraft(updated.editedOutput ?? updated.aiOutput);
+      const raw = updated.editedOutput ?? updated.aiOutput;
+      setStructuredContent(parseGenerationContent(updated.outputType, raw));
+      setDraft(raw);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Retry failed");
     } finally {
@@ -162,20 +216,21 @@ export function GenerationReviewScreen({ route }: Props) {
 
   if (generation.generationStatus === "failed") {
     return (
-      <Screen style={styles.centered}>
-        <Ionicons name="alert-circle-outline" size={32} color={colors.danger} />
-        <Text style={[styles.failedText, { color: colors.textPrimary }]}>Generation failed</Text>
-        <Text style={[styles.meta, { color: colors.textMuted, textAlign: "center", marginBottom: 16 }]}>
-          Your inputs were preserved. Try again below.
-        </Text>
-        <Pressable
-          style={({ pressed }) => [styles.retryButton, { backgroundColor: colors.accent }, (isRetrying || pressed) && { opacity: pressedOpacity }]}
-          onPress={retry}
-          disabled={isRetrying}
-          accessibilityRole="button"
-        >
-          {isRetrying ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.retryButtonText, { color: colors.accentOn }]}>Retry</Text>}
-        </Pressable>
+      <Screen edges={["top", "bottom"]}>
+        <View style={styles.screenHeader}>
+          <View style={styles.topBar}>
+            <Pressable style={[styles.backButton, { backgroundColor: colors.surface, borderColor: colors.border }]} onPress={() => navigation.goBack()} accessibilityRole="button" accessibilityLabel="Go back"><Ionicons name="arrow-back" size={22} color={colors.textPrimary} /></Pressable>
+            <Text style={[styles.topBarTitle, { color: colors.textPrimary, marginLeft: 14, flex: 1 }]}>Lesson with AI</Text>
+          </View>
+        </View>
+        <View style={styles.centered}>
+          <Ionicons name="alert-circle-outline" size={32} color={colors.danger} />
+          <Text style={[styles.failedText, { color: colors.textPrimary }]}>Generation failed</Text>
+          <Text style={[styles.meta, { color: colors.textMuted, textAlign: "center", marginBottom: 16 }]}>Your inputs were preserved. Try again below.</Text>
+          <Pressable style={({ pressed }) => [styles.retryButton, { backgroundColor: colors.accent }, (isRetrying || pressed) && { opacity: pressedOpacity }]} onPress={retry} disabled={isRetrying} accessibilityRole="button">
+            {isRetrying ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.retryButtonText, { color: colors.accentOn }]}>Retry</Text>}
+          </Pressable>
+        </View>
       </Screen>
     );
   }
@@ -183,26 +238,84 @@ export function GenerationReviewScreen({ route }: Props) {
   const markdownStyles = buildMarkdownStyles(colors);
 
   return (
-    <Screen edges={["bottom"]}>
+    <Screen edges={["top", "bottom"]}>
+      <View style={styles.screenHeader}>
+        <View style={styles.topBar}>
+          <Pressable style={({ pressed }) => [styles.backButton, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.goBack()} accessibilityRole="button" accessibilityLabel="Go back">
+            <Ionicons name="arrow-back" size={22} color={colors.textPrimary} />
+          </Pressable>
+          <View style={styles.topBarCopy}>
+            <Text style={[styles.topBarTitle, { color: colors.textPrimary }]}>Lesson with AI</Text>
+            <Text style={[styles.topBarSubtitle, { color: colors.textMuted }]}>Review and refine your content.</Text>
+          </View>
+          <View style={[styles.aiCircle, { backgroundColor: colors.accent }]}><Ionicons name="sparkles" size={17} color={colors.accentOn} /></View>
+        </View>
+
+        <View style={[styles.generationHero, { backgroundColor: colors.surfaceAccent }]}>
+          <View style={[styles.outputIcon, { backgroundColor: colors.accent }]}><Ionicons name={OUTPUT_TYPE_ICONS[generation.outputType]} size={22} color={colors.accentOn} /></View>
+          <View style={styles.generationHeroCopy}>
+            <Text style={[styles.generationHeroTitle, { color: colors.textPrimary }]} numberOfLines={2}>
+              {generation.topic?.name ?? OUTPUT_TYPE_LABELS[generation.outputType] ?? generation.outputType}
+            </Text>
+            <Text style={[styles.generationHeroMeta, { color: colors.textMuted }]}>
+              {generation.topic
+                ? `${generation.topic.classSection.className} ${generation.topic.classSection.sectionName} • ${generation.topic.subject} • ${generation.topic.board}`
+                : `${generation.language}${generation.minutesPerClass ? ` • ${generation.minutesPerClass} min` : ""}${generation.classCount ? ` • ${generation.classCount} class${generation.classCount === 1 ? "" : "es"}` : ""}`}
+            </Text>
+            <View style={styles.heroBadgeRow}>
+              <View style={[styles.aiBadge, { backgroundColor: colors.accentSoft }]}><Ionicons name="sparkles" size={12} color={colors.accent} /><Text style={[styles.aiBadgeText, { color: colors.accent }]}>AI generated</Text></View>
+              <View style={[styles.outputTypePill, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Text style={[styles.outputTypePillText, { color: colors.textSecondary }]}>{OUTPUT_TYPE_LABELS[generation.outputType] ?? generation.outputType}</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+      </View>
       <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        {structuredContent ? (
+          <View>
+            <View style={styles.structuredReviewHeader}>
+              <View>
+                <Text style={[styles.outputTypeLabel, { color: colors.textPrimary }]}>Content review</Text>
+                <Text style={[styles.meta, { color: colors.textMuted }]}>
+                  {new Date(generation.generatedAt).toLocaleDateString()}
+                  {generation.editedOutput ? " / edited" : ""}
+                  {isSaving ? " / saving..." : savedNotice ? " / saved" : ""}
+                </Text>
+              </View>
+              <View style={[styles.reviewStatus, { backgroundColor: colors.accentSoft }]}><Ionicons name={isSaving ? "sync" : "checkmark"} size={13} color={colors.accent} /><Text style={[styles.reviewStatusText, { color: colors.accent }]}>{isSaving ? "Saving" : "Editable"}</Text></View>
+            </View>
+            {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
+            {structuredContent.type === "lesson_plan" ? (
+              <LessonPlanView content={structuredContent} editable onChange={handleStructuredChange} />
+            ) : structuredContent.type === "custom_activity_report" ? (
+              <CustomActivityView content={structuredContent} editable onChange={handleStructuredChange} />
+            ) : structuredContent.type === "flashcards" ? (
+              <FlashcardsView content={structuredContent} editable onChange={handleStructuredChange} />
+            ) : (
+              <PresentationView content={structuredContent} editable onChange={handleStructuredChange} />
+            )}
+          </View>
+        ) : (
         <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
           <View style={styles.headerRow}>
             <View style={{ flex: 1 }}>
-              <Text style={[styles.outputTypeLabel, { color: colors.textPrimary }]}>
-                {OUTPUT_TYPE_LABELS[generation.outputType] ?? generation.outputType}
-              </Text>
+              <Text style={[styles.outputTypeLabel, { color: colors.textPrimary }]}>Content review</Text>
               <Text style={[styles.meta, { color: colors.textMuted }]}>
                 {new Date(generation.generatedAt).toLocaleDateString()}
-                {generation.editedOutput ? " · edited" : ""}
+                {generation.editedOutput ? " / edited" : ""}
+                {isSaving ? " / saving..." : savedNotice ? " / saved" : ""}
               </Text>
             </View>
-            {!isEditing ? (
+            {!structuredContent && !isEditing ? (
               <Pressable style={({ pressed }) => [styles.editButton, pressed && { opacity: pressedOpacity }]} onPress={startEditing} hitSlop={8} accessibilityRole="button">
                 <Ionicons name="create-outline" size={14} color={colors.accent} />
                 <Text style={[styles.editButtonText, { color: colors.accent }]}>Edit</Text>
               </Pressable>
             ) : null}
           </View>
+
+          {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
           {isEditing ? (
             <>
@@ -217,8 +330,6 @@ export function GenerationReviewScreen({ route }: Props) {
                 textAlignVertical="top"
                 autoFocus
               />
-
-              {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
               <View style={styles.editActionRow}>
                 <Pressable
@@ -244,16 +355,14 @@ export function GenerationReviewScreen({ route }: Props) {
               </View>
             </>
           ) : (
-            <>
-              <View style={{ marginTop: 10 }}>
-                <Markdown style={markdownStyles} markdownit={markdownRules.markdownit}>
-                  {draft}
-                </Markdown>
-              </View>
-              {savedNotice ? <Text style={[styles.saved, { color: colors.accent }]}>Saved</Text> : null}
-            </>
+            <View style={{ marginTop: 10 }}>
+              <Markdown style={markdownStyles} markdownit={markdownRules.markdownit}>
+                {draft}
+              </Markdown>
+            </View>
           )}
         </View>
+        )}
 
         {generation.contextSources.length > 0 ? (
           <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow, { marginTop: 14 }]}>
@@ -278,18 +387,37 @@ export function GenerationReviewScreen({ route }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  content: { padding: 16, paddingBottom: 40 },
+  content: { paddingHorizontal: 24, paddingTop: 18, paddingBottom: 40 },
   centered: { justifyContent: "center", alignItems: "center", padding: 24 },
-  card: { borderWidth: 1, borderRadius: radius.lg, padding: spacing.lg },
+  screenHeader: { paddingHorizontal: 24, paddingTop: 8 },
+  topBar: { height: 50, flexDirection: "row", alignItems: "center" },
+  backButton: { width: 40, height: 40, borderRadius: 20, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  topBarCopy: { flex: 1, marginLeft: 14 },
+  topBarTitle: { fontSize: 19, lineHeight: 24, fontWeight: "800", letterSpacing: -0.4 },
+  topBarSubtitle: { marginTop: 1, fontSize: 12, lineHeight: 16, fontWeight: "500" },
+  aiCircle: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
+  generationHero: { flexDirection: "row", alignItems: "center", borderRadius: 20, padding: 18, marginTop: 16 },
+  outputIcon: { width: 48, height: 48, borderRadius: 15, alignItems: "center", justifyContent: "center" },
+  generationHeroCopy: { flex: 1, marginLeft: 13 },
+  generationHeroTitle: { fontSize: 22, lineHeight: 27, fontWeight: "800", letterSpacing: -0.5 },
+  generationHeroMeta: { marginTop: 2, fontSize: 12, lineHeight: 17, fontWeight: "500" },
+  heroBadgeRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 9 },
+  aiBadge: { flexDirection: "row", alignItems: "center", gap: 4, borderRadius: radius.pill, paddingHorizontal: 9, paddingVertical: 4 },
+  aiBadgeText: { fontSize: 11, fontWeight: "700" },
+  outputTypePill: { borderWidth: 1, borderRadius: radius.pill, paddingHorizontal: 9, paddingVertical: 4 },
+  outputTypePillText: { fontSize: 11, fontWeight: "700" },
+  card: { borderWidth: 1, borderRadius: 18, padding: spacing.lg },
+  structuredReviewHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
+  reviewStatus: { flexDirection: "row", alignItems: "center", gap: 5, borderRadius: radius.pill, paddingHorizontal: 10, paddingVertical: 6 },
+  reviewStatusText: { fontSize: 11, fontWeight: "700" },
   headerRow: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 8 },
-  outputTypeLabel: { fontSize: 16, fontWeight: "800" },
+  outputTypeLabel: { fontSize: 17, fontWeight: "800", letterSpacing: -0.2 },
   editButton: { flexDirection: "row", alignItems: "center", gap: 4, paddingVertical: 4, paddingHorizontal: 2 },
   editButtonText: { fontSize: 13, fontWeight: "700" },
   label: { fontSize: 12, fontWeight: "700" },
   meta: { fontSize: 12, marginTop: 2 },
-  editor: { borderWidth: 1, borderRadius: 8, padding: 12, minHeight: 320, fontSize: 13, lineHeight: 19 },
+  editor: { borderWidth: 1, borderRadius: 12, padding: 12, minHeight: 320, fontSize: 13, lineHeight: 19 },
   error: { textAlign: "center", marginTop: 12 },
-  saved: { textAlign: "center", marginTop: 12, fontWeight: "700" },
   editActionRow: { flexDirection: "row", gap: 10, marginTop: 14 },
   cancelButton: { borderRadius: 10, height: 46, paddingHorizontal: 20, alignItems: "center", justifyContent: "center", borderWidth: 1 },
   cancelButtonText: { fontSize: 14, fontWeight: "700" },
@@ -303,7 +431,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.sm,
     borderWidth: 1,
-    borderRadius: radius.md,
+    borderRadius: 12,
     padding: spacing.md,
     marginTop: spacing.sm,
   },

@@ -73,8 +73,25 @@ model School {
   schoolFormatTemplates SchoolFormatTemplate[]
   classBandConfig   ClassBandConfig?
   communicationMessages CommunicationMessage[]
+  subjects          Subject[]
 
   @@map("school")
+}
+
+// Per-school gateway for Topic.subject - previously free text with no source
+// of truth, which fragmented (case/spelling variants) and undermined
+// filtering by subject in Lesson Studio. Admin-managed, teacher-facing as a
+// closed picker - same "fixed set, not free text" pattern School.board's
+// hardcoded options already use.
+model Subject {
+  id        String   @id @default(uuid()) @db.Uuid
+  schoolId  String   @map("school_id") @db.Uuid
+  school    School   @relation(fields: [schoolId], references: [id])
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([schoolId, name])
+  @@map("subject")
 }
 
 model AcademicYear {
@@ -509,6 +526,23 @@ model SchoolFormatTemplate {
   @@map("school_format_template")
 }
 
+// Platform-wide (not per-school) override of the instruction text sent to
+// the model for a given Generation.outputType - lets platform_admin tune
+// prompts without a code deploy. A missing row for an outputType means "use
+// the hardcoded default" (backend/src/lib/ai.ts DEFAULT_OUTPUT_TYPE_INSTRUCTIONS) -
+// this table only ever holds overrides, never seeded with defaults, so
+// resetting to default is just deleting the row.
+model AiPromptTemplate {
+  id              String   @id @default(uuid()) @db.Uuid
+  outputType      String   @unique @map("output_type")
+  promptBody      String   @map("prompt_body")
+  updatedByUserId String?  @map("updated_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("ai_prompt_template")
+}
+
 model Observation {
   id           String   @id @default(uuid()) @db.Uuid
   topicId      String   @map("topic_id") @db.Uuid
@@ -523,8 +557,8 @@ model Observation {
 }
 
 // Phase 2: supersedes LessonPlan/ResearchReport. outputType is one of:
-// lesson_plan, custom_activity_report, flashcards, presentation,
-// explanatory_video. mode is one of: plan, generate.
+// lesson_plan, custom_activity_report, flashcards, presentation.
+// mode is one of: plan, generate.
 // editedOutput, once set, is authoritative everywhere this generation is
 // read (distribution, attainment report) - never aiOutput once edited.
 model Generation {

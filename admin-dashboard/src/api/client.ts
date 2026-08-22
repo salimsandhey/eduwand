@@ -229,6 +229,15 @@ export interface SchoolFormatTemplates {
   attainmentReport: SchoolFormatTemplate | null;
 }
 
+// ---- Subjects (per-school gateway for Topic.subject) ----
+
+export interface Subject {
+  id: string;
+  schoolId: string;
+  name: string;
+  createdAt: string;
+}
+
 // ---- Audit log ----
 
 export interface AuditLogEntry {
@@ -247,6 +256,16 @@ export interface AuditLogEntry {
 // ---- Message templates ----
 
 export type MessageChannel = "sms" | "email";
+
+export type GenerationOutputType = "lesson_plan" | "custom_activity_report" | "flashcards" | "presentation";
+
+export interface AiPromptTemplate {
+  outputType: GenerationOutputType;
+  promptBody: string;
+  defaultPromptBody: string;
+  isCustom: boolean;
+  updatedAt: string | null;
+}
 
 export interface MessageTemplate {
   id: string;
@@ -466,6 +485,13 @@ export const api = {
   deleteSchoolFormatTemplate: (token: string, schoolId: string, appliesTo: SchoolFormatTemplateAppliesTo) =>
     request<{ deleted: boolean }>(`/schools/${schoolId}/format-templates/${appliesTo}`, { method: "DELETE" }, token),
 
+  listSubjectsForSchool: (token: string, schoolId: string) =>
+    request<Subject[]>(`/schools/${schoolId}/subjects`, {}, token),
+  createSubject: (token: string, schoolId: string, name: string) =>
+    request<Subject>(`/schools/${schoolId}/subjects`, { method: "POST", body: JSON.stringify({ name }) }, token),
+  deleteSubject: (token: string, schoolId: string, subjectId: string) =>
+    request<{ deleted: boolean }>(`/schools/${schoolId}/subjects/${subjectId}`, { method: "DELETE" }, token),
+
   listAuditLog: (token: string, params: { schoolId?: string; page?: number; pageSize?: number } = {}) =>
     requestEnvelope<AuditLogEntry[]>(
       `/audit-log${toQueryString({
@@ -476,6 +502,12 @@ export const api = {
       {},
       token
     ),
+
+  listAiPrompts: (token: string) => request<AiPromptTemplate[]>("/ai-prompts", {}, token),
+  updateAiPrompt: (token: string, outputType: GenerationOutputType, promptBody: string) =>
+    request<AiPromptTemplate>(`/ai-prompts/${outputType}`, { method: "PUT", body: JSON.stringify({ promptBody }) }, token),
+  resetAiPrompt: (token: string, outputType: GenerationOutputType) =>
+    request<AiPromptTemplate>(`/ai-prompts/${outputType}`, { method: "DELETE" }, token),
 
   listMessageTemplates: (token: string, params: { channel?: MessageChannel; schoolId?: string } = {}) =>
     request<MessageTemplate[]>(`/message-templates${toQueryString(params)}`, {}, token),

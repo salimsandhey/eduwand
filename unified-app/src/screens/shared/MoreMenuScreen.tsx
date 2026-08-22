@@ -86,6 +86,12 @@ export function MoreMenuScreen() {
             icon: "chatbubbles-outline",
             onPress: () => root?.navigate("CommunicationHub"),
           },
+          {
+            title: "Lesson with AI test",
+            caption: "Figma visual prototype",
+            icon: "flask-outline",
+            onPress: () => parentTabs?.navigate("LessonWithAiTest"),
+          },
         ]
       : [];
 

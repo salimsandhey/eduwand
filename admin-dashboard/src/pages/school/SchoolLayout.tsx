@@ -153,6 +153,14 @@ export function SchoolLayout() {
             Format template
           </NavLink>
         ) : null}
+        {canManageAcademics ? (
+          <NavLink
+            to={`/schools/${id}/subjects`}
+            style={({ isActive }) => ({ ...styles.tabLink, ...(isActive ? styles.tabLinkActive : {}) })}
+          >
+            Subjects
+          </NavLink>
+        ) : null}
       </nav>
 
       <Outlet context={context} />

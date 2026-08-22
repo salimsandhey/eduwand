@@ -26,10 +26,10 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: 16,
-    marginBottom: 24,
+    marginBottom: 30,
     flexWrap: "wrap",
   },
-  title: { fontSize: 28, fontWeight: 800, margin: 0, color: "var(--text-primary)", letterSpacing: "-0.5px" },
-  subtitle: { fontSize: 14, color: "var(--text-secondary)", marginTop: 6, marginBottom: 0 },
+  title: { fontSize: 32, lineHeight: 1.1, fontWeight: 800, margin: 0, color: "var(--text-primary)", letterSpacing: "-1px" },
+  subtitle: { fontSize: 14, lineHeight: 1.5, color: "var(--text-muted)", marginTop: 8, marginBottom: 0, fontWeight: 500 },
   action: { flexShrink: 0 },
 };

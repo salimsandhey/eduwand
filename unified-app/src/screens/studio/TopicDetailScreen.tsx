@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Linking, Image, RefreshControl, Modal } from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Linking, Image, RefreshControl, Modal, KeyboardAvoidingView, Platform } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import { useFocusEffect } from "@react-navigation/native";
@@ -10,8 +10,8 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { spacing, radius } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
-import { SegmentedControl } from "../../components/SegmentedControl";
 import { api, TopicDetail, ContextSource, Generation, GenerationOutputType } from "../../api/client";
+import { parseGenerationContent } from "./generation/content";
 
 type Props = NativeStackScreenProps<RootStackParamList, "TopicDetail">;
 
@@ -22,7 +22,6 @@ const OUTPUT_TYPE_LABELS: Record<string, string> = {
   custom_activity_report: "Custom Activity",
   flashcards: "Flashcards",
   presentation: "Presentation",
-  explanatory_video: "Explanatory Video",
 };
 
 const OUTPUT_TYPE_ICONS: Record<GenerationOutputType, keyof typeof Ionicons.glyphMap> = {
@@ -30,7 +29,6 @@ const OUTPUT_TYPE_ICONS: Record<GenerationOutputType, keyof typeof Ionicons.glyp
   custom_activity_report: "clipboard-outline",
   flashcards: "albums-outline",
   presentation: "easel-outline",
-  explanatory_video: "play-circle-outline",
 };
 
 const OUTPUT_TYPE_ORDER: GenerationOutputType[] = [
@@ -38,7 +36,6 @@ const OUTPUT_TYPE_ORDER: GenerationOutputType[] = [
   "custom_activity_report",
   "flashcards",
   "presentation",
-  "explanatory_video",
 ];
 
 const SOURCE_TYPE_ICONS: Record<ContextSource["sourceType"], keyof typeof Ionicons.glyphMap> = {
@@ -63,15 +60,36 @@ function groupGenerationsByOutputType(generations: Generation[]): { outputType: 
   })).filter((group) => group.items.length > 0);
 }
 
-// First real content line after the title heading, stripped of Markdown
-// bullet/bold markers - a short "what's actually in here" preview under each
-// generation row instead of just a date.
+function truncate(text: string, max = 110): string {
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+// A short "what's actually in here" preview under each generation row.
+// Structured content (backend/src/lib/ai.ts) is stored as a single-line JSON
+// string - falling through to the Markdown-line-splitting logic below would
+// just show the raw JSON blob, so each type gets a real human-readable
+// summary line first. Only a legacy pre-JSON generation reaches the Markdown
+// fallback path.
 function generationPreview(g: Generation): string {
   const text = g.editedOutput ?? g.aiOutput;
+  const content = parseGenerationContent(g.outputType, text);
+  if (content) {
+    switch (content.type) {
+      case "lesson_plan":
+        return truncate(content.overview);
+      case "custom_activity_report":
+        return truncate(content.objective);
+      case "flashcards":
+        return `${content.cards.length} flashcard${content.cards.length === 1 ? "" : "s"}`;
+      case "presentation":
+        return `${content.slides.length} slide${content.slides.length === 1 ? "" : "s"}`;
+    }
+  }
+
   const lines = text.split("\n").map((l) => l.trim());
   const contentLine = lines.find((l, i) => i > 0 && l.length > 0 && !l.startsWith("#")) ?? lines[0] ?? "";
   const cleaned = contentLine.replace(/^#+\s*/, "").replace(/^[-*]\s*/, "").replace(/\*\*/g, "");
-  return cleaned.length > 110 ? `${cleaned.slice(0, 110)}…` : cleaned;
+  return truncate(cleaned);
 }
 
 // Matches the local (non-exported) helper in unified-app/src/screens/shared/HomeScreen.tsx.
@@ -110,6 +128,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
   const [isAddingObservation, setIsAddingObservation] = useState(false);
 
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [imageRatios, setImageRatios] = useState<Record<string, number>>({});
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -240,27 +259,56 @@ export function TopicDetailScreen({ route, navigation }: Props) {
   }
 
   return (
-    <Screen edges={["bottom"]}>
+    <Screen edges={["top", "bottom"]}>
       <View style={styles.headArea}>
-        <View style={styles.titleSection}>
-          <Text style={[styles.title, { color: colors.textPrimary }]}>{topic.name}</Text>
-          <Text style={[styles.meta, { color: colors.textMuted }]}>
-            {topic.subject} · {topic.board}
-          </Text>
+        <View style={styles.topBar}>
+          <Pressable
+            style={({ pressed }) => [styles.backButton, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+            onPress={() => navigation.goBack()}
+            accessibilityRole="button"
+            accessibilityLabel="Go back to topics"
+          >
+            <Ionicons name="arrow-back" size={22} color={colors.textPrimary} />
+          </Pressable>
+          <Text style={[styles.topBarTitle, { color: colors.textPrimary }]}>Studio</Text>
+          <Pressable
+            style={({ pressed }) => [styles.addButton, { backgroundColor: colors.accent }, cardShadow, pressed && { opacity: pressedOpacity }]}
+            onPress={() => {
+              setShowUrlInput(false);
+              setShowAddContext(true);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Add topic source"
+          >
+            <Ionicons name="add" size={23} color={colors.accentOn} />
+          </Pressable>
         </View>
 
-        <Pressable
-          style={({ pressed }) => [styles.generateButton, { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]}
-          onPress={() => navigation.navigate("GenerationSetup", { topicId })}
-          accessibilityRole="button"
-        >
-          <Ionicons name="sparkles-outline" size={18} color={colors.accentOn} />
+        <View style={[styles.topicHero, { backgroundColor: colors.surfaceAccent }]}>
+          <View style={[styles.topicIcon, { backgroundColor: colors.accent }]}>
+            <Ionicons name="sparkles-outline" size={22} color={colors.accentOn} />
+          </View>
+          <View style={styles.topicHeroCopy}>
+            <Text style={[styles.title, { color: colors.textPrimary }]} numberOfLines={2}>{topic.name}</Text>
+            <Text style={[styles.meta, { color: colors.textMuted }]}>{topic.subject} / {topic.board}</Text>
+          </View>
+        </View>
+
+        <View style={styles.summaryRow}>
+          <View style={[styles.summaryChip, { backgroundColor: colors.surfaceRaised }]}><Text style={[styles.summaryValue, { color: colors.accent }]}>{topic.contextSources.length}</Text><Text style={[styles.summaryLabel, { color: colors.textMuted }]}>Sources</Text></View>
+          <View style={[styles.summaryChip, { backgroundColor: colors.surfaceRaised }]}><Text style={[styles.summaryValue, { color: colors.accent }]}>{topic.generations.length}</Text><Text style={[styles.summaryLabel, { color: colors.textMuted }]}>Generated</Text></View>
+          <View style={[styles.summaryChip, { backgroundColor: colors.surfaceRaised }]}><Text style={[styles.summaryValue, { color: colors.accent }]}>{topic.observations.length}</Text><Text style={[styles.summaryLabel, { color: colors.textMuted }]}>Notes</Text></View>
+        </View>
+
+        <Pressable style={({ pressed }) => [styles.generateButton, { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.navigate("GenerationSetup", { topicId })} accessibilityRole="button">
+          <Ionicons name="sparkles-outline" size={19} color={colors.accentOn} />
           <Text style={[styles.generateButtonText, { color: colors.accentOn }]}>Generate content</Text>
+          <Ionicons name="arrow-forward" size={18} color={colors.accentOn} style={styles.generateArrow} />
         </Pressable>
 
         <View style={styles.linkRow}>
           <Pressable
-            style={({ pressed }) => [styles.secondaryLink, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+            style={({ pressed }) => [styles.secondaryLink, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow, pressed && { opacity: pressedOpacity }]}
             onPress={() => navigation.navigate("CreateAssignment", { topicId })}
             accessibilityRole="button"
           >
@@ -268,7 +316,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
             <Text style={[styles.secondaryLinkText, { color: colors.textSecondary }]}>New assignment</Text>
           </Pressable>
           <Pressable
-            style={({ pressed }) => [styles.secondaryLink, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+            style={({ pressed }) => [styles.secondaryLink, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow, pressed && { opacity: pressedOpacity }]}
             onPress={() => navigation.navigate("AttainmentReport", { topicId })}
             accessibilityRole="button"
           >
@@ -279,15 +327,21 @@ export function TopicDetailScreen({ route, navigation }: Props) {
 
         {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
-        <SegmentedControl
-          options={[
-            { key: "context", label: "Context" },
-            { key: "generations", label: "Generations" },
-            { key: "observations", label: "Observations" },
-          ]}
-          activeKey={activeTab}
-          onChange={(key) => setActiveTab(key as DetailTab)}
-        />
+        <View style={[styles.tabBar, { backgroundColor: colors.surfaceRaised }]}>
+          {(["context", "generations", "observations"] as DetailTab[]).map((tab) => {
+            const active = activeTab === tab;
+            const label = tab === "context" ? "Context" : tab === "generations" ? "Generated" : "Notes";
+            const icon: keyof typeof Ionicons.glyphMap = tab === "context" ? "folder-open-outline" : tab === "generations" ? "sparkles-outline" : "chatbubble-ellipses-outline";
+            const count = tab === "context" ? topic.contextSources.length : tab === "generations" ? topic.generations.length : topic.observations.length;
+            return (
+              <Pressable key={tab} style={({ pressed }) => [styles.tab, active && { backgroundColor: colors.surface }, pressed && { opacity: pressedOpacity }]} onPress={() => setActiveTab(tab)} accessibilityRole="tab" accessibilityState={{ selected: active }}>
+                <Ionicons name={icon} size={14} color={active ? colors.accent : colors.textMuted} />
+                <Text style={[styles.tabText, { color: active ? colors.accent : colors.textMuted }]}>{label}</Text>
+                <View style={[styles.tabCount, { backgroundColor: active ? colors.accentSoft : colors.backgroundMuted }]}><Text style={[styles.tabCountText, { color: active ? colors.accent : colors.textMuted }]}>{count}</Text></View>
+              </Pressable>
+            );
+          })}
+        </View>
       </View>
 
       <ScrollView
@@ -299,85 +353,21 @@ export function TopicDetailScreen({ route, navigation }: Props) {
         {activeTab === "context" ? (
           <View>
             <View style={styles.cardHeader}>
-              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Context</Text>
+              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Learning sources</Text>
               <Pressable
                 onPress={() => {
-                  setShowAddContext((v) => !v);
                   setShowUrlInput(false);
+                  setShowAddContext(true);
                 }}
                 hitSlop={8}
                 accessibilityRole="button"
               >
-                <Text style={[styles.link, { color: colors.accent }]}>{showAddContext ? "Cancel" : "+ Add source"}</Text>
+                <Text style={[styles.link, { color: colors.accent }]}>+ Add source</Text>
               </Pressable>
             </View>
             <Text style={[styles.meta, { color: colors.textMuted, marginTop: 2 }]}>
               Upload a textbook chapter, presentation, or link — it's used as the basis for generation.
             </Text>
-            {showAddContext ? (
-              <View style={{ marginTop: 10 }}>
-                <View style={styles.sourceChipRow}>
-                  <Pressable
-                    onPress={pickContextPhoto}
-                    disabled={isAddingContext}
-                    style={({ pressed }) => [styles.sourceChip, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, (isAddingContext || pressed) && { opacity: pressedOpacity }]}
-                    accessibilityRole="button"
-                  >
-                    <Ionicons name="camera-outline" size={13} color={colors.accent} />
-                    <Text style={[styles.sourceChipText, { color: colors.textSecondary }]}>Camera</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={pickContextGalleryImage}
-                    disabled={isAddingContext}
-                    style={({ pressed }) => [styles.sourceChip, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, (isAddingContext || pressed) && { opacity: pressedOpacity }]}
-                    accessibilityRole="button"
-                  >
-                    <Ionicons name="image-outline" size={13} color={colors.accent} />
-                    <Text style={[styles.sourceChipText, { color: colors.textSecondary }]}>Gallery</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={pickContextDocument}
-                    disabled={isAddingContext}
-                    style={({ pressed }) => [styles.sourceChip, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, (isAddingContext || pressed) && { opacity: pressedOpacity }]}
-                    accessibilityRole="button"
-                  >
-                    <Ionicons name="document-attach-outline" size={13} color={colors.accent} />
-                    <Text style={[styles.sourceChipText, { color: colors.textSecondary }]}>Files</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => setShowUrlInput((v) => !v)}
-                    disabled={isAddingContext}
-                    style={({ pressed }) => [styles.sourceChip, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, (isAddingContext || pressed) && { opacity: pressedOpacity }]}
-                    accessibilityRole="button"
-                  >
-                    <Ionicons name="link-outline" size={13} color={colors.accent} />
-                    <Text style={[styles.sourceChipText, { color: colors.textSecondary }]}>URL</Text>
-                  </Pressable>
-                </View>
-                {isAddingContext ? <ActivityIndicator color={colors.accent} style={{ marginTop: 10 }} /> : null}
-                {showUrlInput ? (
-                  <View style={{ marginTop: 8 }}>
-                    <TextInput
-                      style={[styles.input, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
-                      value={contextUrl}
-                      onChangeText={setContextUrl}
-                      placeholder="https://..."
-                      placeholderTextColor={colors.textMuted}
-                      autoCapitalize="none"
-                      keyboardType="url"
-                    />
-                    <Pressable
-                      style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent }, (isAddingContext || pressed) && { opacity: pressedOpacity }]}
-                      onPress={addContextUrl}
-                      disabled={isAddingContext || !contextUrl.trim()}
-                      accessibilityRole="button"
-                    >
-                      {isAddingContext ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Add</Text>}
-                    </Pressable>
-                  </View>
-                ) : null}
-              </View>
-            ) : null}
             {topic.contextSources.length === 0 ? (
               <Text style={[styles.meta, { color: colors.textMuted, marginTop: 8 }]}>No context added yet.</Text>
             ) : (
@@ -435,11 +425,20 @@ export function TopicDetailScreen({ route, navigation }: Props) {
                       </View>
                     </View>
                     {c.sourceType === "image" ? (
-                      <Image
-                        source={{ uri: accessToken ? api.contextSourceFileUrl(topicId, c.id, accessToken) : undefined }}
-                        style={styles.sourceThumbnail}
-                        resizeMode="cover"
-                      />
+                      <View style={[styles.sourcePreview, { backgroundColor: colors.surfaceRaised, aspectRatio: imageRatios[c.id] ?? 4 / 3 }]}>
+                        <Image
+                          source={{ uri: accessToken ? api.contextSourceFileUrl(topicId, c.id, accessToken) : undefined }}
+                          style={styles.sourceThumbnail}
+                          resizeMode="contain"
+                          onLoad={({ nativeEvent }) => {
+                            const { width, height } = nativeEvent.source;
+                            if (width > 0 && height > 0) {
+                              const ratio = width / height;
+                              setImageRatios((current) => current[c.id] === ratio ? current : { ...current, [c.id]: ratio });
+                            }
+                          }}
+                        />
+                      </View>
                     ) : snippet ? (
                       <Text style={[styles.snippet, { color: colors.textMuted }]} numberOfLines={3}>
                         {snippet}
@@ -454,6 +453,10 @@ export function TopicDetailScreen({ route, navigation }: Props) {
 
         {activeTab === "generations" ? (
           <View>
+            <View style={styles.cardHeader}>
+              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Generated materials</Text>
+              <Text style={[styles.sectionCount, { color: colors.textMuted }]}>{topic.generations.length} total</Text>
+            </View>
             {topic.generations.length === 0 ? (
               <Text style={[styles.meta, { color: colors.textMuted }]}>Nothing generated for this topic yet.</Text>
             ) : (
@@ -503,31 +506,11 @@ export function TopicDetailScreen({ route, navigation }: Props) {
         {activeTab === "observations" ? (
           <View>
             <View style={styles.cardHeader}>
-              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Observations</Text>
-              <Pressable onPress={() => setShowAddObservation((v) => !v)} hitSlop={8} accessibilityRole="button">
-                <Text style={[styles.link, { color: colors.accent }]}>{showAddObservation ? "Cancel" : "+ Add"}</Text>
+              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Teaching notes</Text>
+              <Pressable onPress={() => setShowAddObservation(true)} hitSlop={8} accessibilityRole="button">
+                <Text style={[styles.link, { color: colors.accent }]}>+ Add note</Text>
               </Pressable>
             </View>
-            {showAddObservation ? (
-              <View style={{ marginTop: 8 }}>
-                <TextInput
-                  style={[styles.input, styles.multilineInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
-                  value={observationText}
-                  onChangeText={setObservationText}
-                  placeholder="What happened in class..."
-                  placeholderTextColor={colors.textMuted}
-                  multiline
-                />
-                <Pressable
-                  style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent }, (isAddingObservation || pressed) && { opacity: pressedOpacity }]}
-                  onPress={addObservation}
-                  disabled={isAddingObservation || !observationText.trim()}
-                  accessibilityRole="button"
-                >
-                  {isAddingObservation ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Save observation</Text>}
-                </Pressable>
-              </View>
-            ) : null}
             {topic.observations.length === 0 ? (
               <Text style={[styles.meta, { color: colors.textMuted, marginTop: 8 }]}>Nothing recorded yet.</Text>
             ) : (
@@ -548,6 +531,61 @@ export function TopicDetailScreen({ route, navigation }: Props) {
         ) : null}
       </ScrollView>
 
+      <Modal transparent animationType="slide" visible={showAddContext} onRequestClose={() => setShowAddContext(false)}>
+        <KeyboardAvoidingView style={styles.modalRoot} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+          <Pressable style={styles.modalBackdrop} onPress={() => setShowAddContext(false)} accessibilityRole="button" accessibilityLabel="Close add source" />
+          <View style={[styles.modalSheet, { backgroundColor: colors.surface }]}>
+            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
+            <View style={styles.modalHeader}>
+              <View><Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Add context</Text><Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>Give your generation reliable source material.</Text></View>
+              <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setShowAddContext(false)} accessibilityRole="button"><Ionicons name="close" size={20} color={colors.textPrimary} /></Pressable>
+            </View>
+            {!showUrlInput ? (
+              <View style={styles.sourceActionGrid}>
+                {[
+                  ["camera-outline", "Camera", pickContextPhoto],
+                  ["image-outline", "Gallery", pickContextGalleryImage],
+                  ["document-attach-outline", "File", pickContextDocument],
+                  ["link-outline", "Web link", () => setShowUrlInput(true)],
+                ].map(([icon, label, onPress]) => (
+                  <Pressable key={String(label)} style={({ pressed }) => [styles.sourceAction, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, (isAddingContext || pressed) && { opacity: pressedOpacity }]} onPress={onPress as () => void} disabled={isAddingContext} accessibilityRole="button">
+                    <Ionicons name={icon as keyof typeof Ionicons.glyphMap} size={22} color={colors.accent} />
+                    <Text style={[styles.sourceActionText, { color: colors.textPrimary }]}>{String(label)}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            ) : (
+              <View>
+                <Pressable style={styles.backToSources} onPress={() => setShowUrlInput(false)} accessibilityRole="button"><Ionicons name="arrow-back" size={16} color={colors.accent} /><Text style={[styles.backToSourcesText, { color: colors.accent }]}>Choose another source</Text></Pressable>
+                <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Source URL</Text>
+                <TextInput style={[styles.input, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]} value={contextUrl} onChangeText={setContextUrl} placeholder="https://..." placeholderTextColor={colors.textMuted} autoCapitalize="none" keyboardType="url" autoFocus />
+                <Pressable style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent }, (isAddingContext || !contextUrl.trim() || pressed) && { opacity: pressedOpacity }]} onPress={addContextUrl} disabled={isAddingContext || !contextUrl.trim()} accessibilityRole="button">
+                  {isAddingContext ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Add link</Text>}
+                </Pressable>
+              </View>
+            )}
+            {isAddingContext && !showUrlInput ? <ActivityIndicator color={colors.accent} style={styles.modalLoader} /> : null}
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal transparent animationType="slide" visible={showAddObservation} onRequestClose={() => setShowAddObservation(false)}>
+        <KeyboardAvoidingView style={styles.modalRoot} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+          <Pressable style={styles.modalBackdrop} onPress={() => setShowAddObservation(false)} accessibilityRole="button" accessibilityLabel="Close new note" />
+          <View style={[styles.modalSheet, { backgroundColor: colors.surface }]}>
+            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
+            <View style={styles.modalHeader}>
+              <View><Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Add teaching note</Text><Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>Capture what happened while it is fresh.</Text></View>
+              <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setShowAddObservation(false)} accessibilityRole="button"><Ionicons name="close" size={20} color={colors.textPrimary} /></Pressable>
+            </View>
+            <TextInput style={[styles.input, styles.multilineInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]} value={observationText} onChangeText={setObservationText} placeholder="What happened in class?" placeholderTextColor={colors.textMuted} multiline autoFocus />
+            <Pressable style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent }, (isAddingObservation || !observationText.trim() || pressed) && { opacity: pressedOpacity }]} onPress={addObservation} disabled={isAddingObservation || !observationText.trim()} accessibilityRole="button">
+              {isAddingObservation ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Save note</Text>}
+            </Pressable>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
       <Modal visible={lightboxUrl !== null} transparent animationType="fade" onRequestClose={() => setLightboxUrl(null)}>
         <Pressable style={styles.lightboxBackdrop} onPress={() => setLightboxUrl(null)}>
           {lightboxUrl ? <Image source={{ uri: lightboxUrl }} style={styles.lightboxImage} resizeMode="contain" /> : null}
@@ -561,25 +599,42 @@ export function TopicDetailScreen({ route, navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  headArea: { paddingHorizontal: 16, paddingTop: 16 },
+  headArea: { paddingHorizontal: 24, paddingTop: 8 },
   container: { flex: 1 },
-  content: { padding: 16, paddingTop: 14, paddingBottom: 40 },
+  content: { paddingHorizontal: 24, paddingTop: 18, paddingBottom: 40 },
   centered: { justifyContent: "center", alignItems: "center" },
-  titleSection: { marginBottom: 16 },
-  title: { fontSize: 22, fontWeight: "800", letterSpacing: -0.5 },
-  meta: { fontSize: 12 },
-  generateButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, borderRadius: 10, height: 46, marginBottom: 10 },
-  generateButtonText: { fontSize: 14, fontWeight: "700" },
-  linkRow: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.lg },
-  secondaryLink: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: 1, borderRadius: 10, height: 40 },
+  topBar: { height: 48, flexDirection: "row", alignItems: "center" },
+  backButton: { width: 40, height: 40, borderRadius: 20, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  topBarTitle: { flex: 1, marginLeft: 16, fontSize: 24, lineHeight: 30, fontWeight: "800", letterSpacing: -0.5 },
+  addButton: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
+  topicHero: { flexDirection: "row", alignItems: "center", borderRadius: 20, padding: 18, marginTop: 14 },
+  topicIcon: { width: 46, height: 46, borderRadius: 15, alignItems: "center", justifyContent: "center" },
+  topicHeroCopy: { flex: 1, marginLeft: 13 },
+  title: { fontSize: 22, lineHeight: 28, fontWeight: "800", letterSpacing: -0.5 },
+  meta: { fontSize: 12, lineHeight: 18, fontWeight: "500" },
+  summaryRow: { flexDirection: "row", gap: 8, marginTop: 12, marginBottom: 14 },
+  summaryChip: { flex: 1, minHeight: 57, borderRadius: 13, alignItems: "center", justifyContent: "center" },
+  summaryValue: { fontSize: 17, lineHeight: 22, fontWeight: "800" },
+  summaryLabel: { marginTop: 1, fontSize: 10, lineHeight: 14, fontWeight: "600" },
+  generateButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, borderRadius: 14, height: 54, marginBottom: 10 },
+  generateButtonText: { fontSize: 15, fontWeight: "800" },
+  generateArrow: { position: "absolute", right: 18 },
+  linkRow: { flexDirection: "row", gap: spacing.sm, marginBottom: 16 },
+  secondaryLink: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: 1, borderRadius: 13, height: 44 },
   secondaryLinkText: { fontSize: 12, fontWeight: "700" },
   error: { textAlign: "center", marginBottom: 12 },
+  tabBar: { flexDirection: "row", borderRadius: 14, padding: 4, marginBottom: 2 },
+  tab: { flex: 1, minHeight: 40, borderRadius: 10, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4 },
+  tabText: { fontSize: 11, fontWeight: "700" },
+  tabCount: { minWidth: 17, height: 17, borderRadius: 9, alignItems: "center", justifyContent: "center", paddingHorizontal: 4 },
+  tabCountText: { fontSize: 9, lineHeight: 12, fontWeight: "800" },
   cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   cardTitle: { fontSize: 14, fontWeight: "800" },
+  sectionCount: { fontSize: 12, fontWeight: "600" },
   link: { fontWeight: "700", fontSize: 13 },
-  input: { borderWidth: 1, borderRadius: radius.sm, padding: 10, height: 44, fontSize: 14 },
-  multilineInput: { height: 80, textAlignVertical: "top" },
-  smallButton: { borderRadius: radius.sm, height: 40, alignItems: "center", justifyContent: "center", marginTop: spacing.sm },
+  input: { borderWidth: 1, borderRadius: 12, padding: 12, height: 48, fontSize: 14 },
+  multilineInput: { height: 120, textAlignVertical: "top", marginTop: 18 },
+  smallButton: { borderRadius: 12, height: 50, alignItems: "center", justifyContent: "center", marginTop: 12 },
   smallButtonText: { fontSize: 13, fontWeight: "700" },
   listRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, borderWidth: 1, borderRadius: radius.lg, padding: spacing.lg, marginTop: spacing.sm },
   sourceChipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
@@ -591,8 +646,24 @@ const styles = StyleSheet.create({
   groupHeading: { fontSize: 11, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.3 },
   sourceCard: { borderWidth: 1, borderRadius: radius.lg, padding: spacing.lg, marginTop: spacing.sm },
   sourceCardHeader: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  sourceThumbnail: { width: "100%", height: 140, borderRadius: radius.sm, marginTop: spacing.sm },
+  sourcePreview: { width: "100%", borderRadius: radius.sm, marginTop: spacing.sm, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+  sourceThumbnail: { width: "100%", height: "100%" },
   snippet: { fontSize: 12, lineHeight: 17, marginTop: spacing.sm },
+  modalRoot: { flex: 1, justifyContent: "flex-end" },
+  modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(22, 15, 20, 0.5)" },
+  modalSheet: { borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 24, paddingBottom: 28 },
+  modalHandle: { width: 42, height: 4, borderRadius: 2, alignSelf: "center", marginTop: 10, marginBottom: 16 },
+  modalHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between" },
+  modalTitle: { fontSize: 24, lineHeight: 30, fontWeight: "800", letterSpacing: -0.5 },
+  modalSubtitle: { marginTop: 3, maxWidth: 270, fontSize: 13, lineHeight: 19, fontWeight: "500" },
+  closeButton: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
+  sourceActionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 22 },
+  sourceAction: { width: "48%", minHeight: 86, borderWidth: 1, borderRadius: 14, padding: 14, justifyContent: "space-between" },
+  sourceActionText: { marginTop: 12, fontSize: 14, fontWeight: "700" },
+  backToSources: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 20, marginBottom: 2 },
+  backToSourcesText: { fontSize: 13, fontWeight: "700" },
+  fieldLabel: { marginTop: 18, marginBottom: 6, fontSize: 13, fontWeight: "600" },
+  modalLoader: { marginTop: 18 },
   lightboxBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.92)", alignItems: "center", justifyContent: "center" },
   lightboxImage: { width: "100%", height: "80%" },
   lightboxClose: { position: "absolute", top: 50, right: 20, width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.15)" },
