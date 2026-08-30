@@ -12,8 +12,6 @@ interface Props {
   onChange: (content: FlashcardsContent) => void;
 }
 
-// Each card is tap-to-flip (front/back) when not editing, matching how a
-// physical flashcard is used - not just two lines of text stacked.
 export function FlashcardsView({ content, editable, onChange }: Props) {
   const { colors } = useTheme();
 

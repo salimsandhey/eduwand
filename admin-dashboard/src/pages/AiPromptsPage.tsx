@@ -12,11 +12,6 @@ const OUTPUT_TYPE_LABELS: Record<GenerationOutputType, string> = {
   presentation: "Presentation",
 };
 
-// Platform-wide - not school-scoped, so no SchoolPicker/needsSchoolPicker
-// dance like MessageTemplatesPage. Editing here changes what every school's
-// Gemini calls for that outputType actually receive as instructions
-// (backend/src/lib/ai.ts getPromptInstructions) - takes effect on the very
-// next generation, no deploy needed.
 export function AiPromptsPage() {
   const { accessToken } = useAuth();
   const [prompts, setPrompts] = useState<AiPromptTemplate[] | null>(null);

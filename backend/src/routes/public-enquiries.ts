@@ -11,10 +11,6 @@ interface PublicEnquiryBody {
   consentCaptured: boolean;
 }
 
-// Open, unauthenticated endpoint for the embeddable public website form (FR-EG-2, FR-EG-10).
-// school_id necessarily comes from the request body here (the embed widget is configured
-// per school) - this is the one legitimate exception to "never trust a client-supplied
-// school_id", since there is no logged-in user/token to derive it from.
 export async function publicEnquiryRoutes(app: FastifyInstance) {
   app.post<{ Body: PublicEnquiryBody }>(
     "/public/enquiries",
@@ -45,9 +41,21 @@ export async function publicEnquiryRoutes(app: FastifyInstance) {
         return reply.code(404).send({ data: null, error: { code: "not_found", message: "School not found" } });
       }
 
+      const academicYear = await prisma.academicYear.findFirst({
+        where: { schoolId: school.id, isCurrent: true },
+        orderBy: { updatedAt: "desc" },
+      });
+      if (!academicYear) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "academic_year_required", message: "This school is not accepting enquiries until a current academic year is set" },
+        });
+      }
+
       const enquiry = await prisma.enquiry.create({
         data: {
           schoolId: school.id,
+          academicYearId: academicYear.id,
           contactName: body.contactName,
           contactPhone: body.contactPhone,
           contactEmail: body.contactEmail,
@@ -58,7 +66,6 @@ export async function publicEnquiryRoutes(app: FastifyInstance) {
         },
       });
 
-      // System-attributed history entry: there is no authenticated user on a public submission.
       await prisma.enquiryStageHistory.create({
         data: {
           enquiryId: enquiry.id,

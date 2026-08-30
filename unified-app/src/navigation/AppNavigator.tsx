@@ -1,5 +1,7 @@
+import { Pressable } from "react-native";
 import { NavigationContainer, DefaultTheme, DarkTheme } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
+import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "./types";
 import { useTheme } from "../theme/ThemeContext";
 import { useAuth } from "../context/AuthContext";
@@ -25,14 +27,27 @@ import { AnswerKeyReviewScreen } from "../screens/studio/AnswerKeyReviewScreen";
 import { AttainmentReportScreen } from "../screens/analytics/AttainmentReportScreen";
 import { CommunicationHubScreen } from "../screens/enrolment/CommunicationHubScreen";
 import { NotificationScreen } from "../screens/shared/NotificationScreen";
+import { ProfileScreen } from "../screens/shared/ProfileScreen";
 import { StudentAssignmentSubmitScreen } from "../screens/student/StudentAssignmentSubmitScreen";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 const ENROLMENT_MOBILE_ROLES = ["front_desk", "counsellor"];
 
-// admin/leadership/platform_admin belong on the web Admin Dashboard, not this app -
-// see the "Use the Admin Dashboard" screen. parent has no screens yet.
+function HomeHeaderButton({ navigation, colors, pressedOpacity }: { navigation: any; colors: ReturnType<typeof useTheme>["colors"]; pressedOpacity: number }) {
+  return (
+    <Pressable
+      onPress={() => navigation.navigate("MainTabs", { screen: "Home" })}
+      hitSlop={10}
+      style={({ pressed }) => [{ opacity: pressed ? pressedOpacity : 1 }]}
+      accessibilityRole="button"
+      accessibilityLabel="Go to home"
+    >
+      <Ionicons name="home-outline" size={22} color={colors.accent} />
+    </Pressable>
+  );
+}
+
 function MainTabs() {
   const { user } = useAuth();
   if (user?.role === "teacher") return <TeacherTabNavigator />;
@@ -42,7 +57,7 @@ function MainTabs() {
 }
 
 export function AppNavigator() {
-  const { colors, mode } = useTheme();
+  const { colors, mode, pressedOpacity } = useTheme();
 
   const navTheme = {
     ...(mode === "dark" ? DarkTheme : DefaultTheme),
@@ -59,16 +74,13 @@ export function AppNavigator() {
   return (
     <NavigationContainer theme={navTheme}>
       <Stack.Navigator
-        screenOptions={{
+        screenOptions={({ navigation }) => ({
           headerStyle: { backgroundColor: colors.surface },
           headerTintColor: colors.textPrimary,
           headerTitleStyle: { fontWeight: "700" },
-          // Without this, iOS falls back to the previous screen's route name
-          // as the back button's label - e.g. "MainTabs" showing on the New
-          // Enquiry screen's back button, since MainTabs has no title (it's
-          // headerShown: false). "minimal" always renders just the chevron.
           headerBackButtonDisplayMode: "minimal",
-        }}
+          headerRight: () => <HomeHeaderButton navigation={navigation} colors={colors} pressedOpacity={pressedOpacity} />,
+        })}
       >
         <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false }} />
         <Stack.Screen name="EnquiryDetail" component={EnquiryDetailScreen} options={{ title: "Enquiry" }} />
@@ -81,7 +93,7 @@ export function AppNavigator() {
         />
         <Stack.Screen name="BulkUpload" component={BulkUploadScreen} options={{ title: "Bulk Upload" }} />
         <Stack.Screen name="CreateAssignment" component={CreateAssignmentScreen} options={{ title: "New Assignment" }} />
-        <Stack.Screen name="AssignmentDetail" component={AssignmentDetailScreen} options={{ title: "Assignment" }} />
+        <Stack.Screen name="AssignmentDetail" component={AssignmentDetailScreen} options={{ headerShown: false }} />
         <Stack.Screen
           name="PersonalisationReview"
           component={PersonalisationReviewScreen}
@@ -98,9 +110,10 @@ export function AppNavigator() {
         <Stack.Screen name="GenerationReview" component={GenerationReviewScreen} options={{ headerShown: false }} />
         <Stack.Screen name="LessonWithAiTest" component={LessonWithAiTestScreen} options={{ headerShown: false }} />
         <Stack.Screen name="AnswerKeyReview" component={AnswerKeyReviewScreen} options={{ title: "Answer Key" }} />
-        <Stack.Screen name="AttainmentReport" component={AttainmentReportScreen} options={{ title: "Attainment Report" }} />
+        <Stack.Screen name="AttainmentReport" component={AttainmentReportScreen} options={{ headerShown: false }} />
         <Stack.Screen name="CommunicationHub" component={CommunicationHubScreen} options={{ title: "Communication Hub" }} />
         <Stack.Screen name="Notifications" component={NotificationScreen} options={{ title: "Notifications" }} />
+        <Stack.Screen name="Profile" component={ProfileScreen} options={{ title: "Edit Profile" }} />
         <Stack.Screen
           name="StudentAssignmentSubmit"
           component={StudentAssignmentSubmitScreen}

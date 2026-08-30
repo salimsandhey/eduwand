@@ -1,22 +1,127 @@
-import { FastifyInstance } from "fastify";
+import { FastifyInstance, FastifyRequest } from "fastify";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { findPossibleDuplicates, buildActivityFeed, admissionCompletionPercent } from "../lib/enquiries";
-import { requireRoles } from "../lib/rbac";
+import { requireRoles, hasAnyRole } from "../lib/rbac";
 import { storage } from "../lib/storage";
+import { PLATFORM_ADMIN_ROLE } from "../lib/roles";
 
 const VALID_SOURCES = ["phone", "walk_in", "website", "referral", "event", "social"];
 const VALID_NOTE_TYPES = ["lead_note", "admission_note", "system_note"];
 const VALID_GUARDIAN_RELATIONS = ["mother", "father", "guardian", "other"];
-// Mirrors the unified-app EnquiryDetailScreen's Admission-tab unlock gate -
-// see the ADMISSION_STAGE_KEYS comment in lib/enquiries.ts for the caveat
-// about custom per-school stage keys.
 const ADMISSION_UNLOCKED_STATUSES = new Set(["application", "admitted", "enrolled"]);
 
-// Pipeline stages are configurable per school (FR-EG-3, backend/src/routes/pipeline-stages.ts)
-// rather than a fixed enum, so status validation looks up the school's own stage keys.
 async function validStatusKeys(schoolId: string): Promise<Set<string>> {
   const stages = await prisma.pipelineStage.findMany({ where: { schoolId }, select: { key: true } });
   return new Set(stages.map((s) => s.key));
+}
+
+// The school's active admission_detail FormDefinition's fields - fetched at
+// each call site (kept out of lib/enquiries.ts's pure admissionCompletionPercent
+// and the validation helpers below) so those stay easy to unit test.
+async function activeFormFields(schoolId: string, purpose: string) {
+  const definition = await prisma.formDefinition.findFirst({
+    where: { schoolId, purpose, isActive: true },
+    include: { fields: true },
+  });
+  return definition?.fields ?? [];
+}
+
+function requiredDynamicFieldsForStage(fields: { key: string; isRequired: boolean; requiredAtStage: string | null }[], stage: string) {
+  return fields.filter((f) => f.isRequired && (f.requiredAtStage === null || f.requiredAtStage === stage));
+}
+
+// Enforces the plan's Phase 2 verification criterion: "a required-at-stage
+// field blocks status progression past that stage until filled (validated
+// server-side, not just client-side)". Uses PipelineStage.order (not a
+// hardcoded stage-name list) so a school's custom pipeline - e.g. one with an
+// extra "interview" stage inserted between "application" and "admitted" - is
+// still covered by order comparison rather than needing an exact status-key
+// Only enforce once the target stage reaches "application" or later. If this
+// school's pipeline has no stage literally keyed "application" (a fully
+// custom pipeline), fall back to the same fixed status set the
+// admission-tab-unlock logic historically relied on (ADMISSION_UNLOCKED_STATUSES)
+// rather than silently skipping validation.
+function isAtOrAfterApplicationOrder(
+  orderByKey: Map<string, number>,
+  targetOrder: number | undefined,
+  targetStatus: string
+): boolean {
+  const applicationOrder = orderByKey.get("application");
+  return targetOrder !== undefined && applicationOrder !== undefined
+    ? targetOrder >= applicationOrder
+    : ADMISSION_UNLOCKED_STATUSES.has(targetStatus);
+}
+
+// match. Returns the admission_detail fields that are required-and-missing
+// for the given target status; an empty array means either nothing is
+// missing or the target status doesn't reach the "application" threshold yet.
+async function missingRequiredAdmissionFields(
+  schoolId: string,
+  targetStatus: string,
+  admissionDraft: Record<string, unknown> | null
+): Promise<{ key: string; label: string }[]> {
+  const [fields, stages] = await Promise.all([
+    activeFormFields(schoolId, "admission_detail"),
+    prisma.pipelineStage.findMany({ where: { schoolId }, select: { key: true, order: true } }),
+  ]);
+
+  const orderByKey = new Map(stages.map((s) => [s.key, s.order]));
+  const targetOrder = orderByKey.get(targetStatus);
+  if (!isAtOrAfterApplicationOrder(orderByKey, targetOrder, targetStatus)) return [];
+
+  const draft = admissionDraft ?? {};
+  const missing: { key: string; label: string }[] = [];
+  for (const field of fields) {
+    if (!field.isRequired) continue;
+    if (field.requiredAtStage !== null) {
+      const requiredOrder = orderByKey.get(field.requiredAtStage);
+      // Field is gated to a specific stage - skip it if the target status
+      // hasn't reached that stage yet. If either order is unknown (stage key
+      // renamed/removed), default to enforcing rather than skipping.
+      if (requiredOrder !== undefined && targetOrder !== undefined && targetOrder < requiredOrder) {
+        continue;
+      }
+    }
+    const value = draft[field.key];
+    const filled = typeof value === "string" ? value.trim().length > 0 : value != null;
+    if (!filled) missing.push({ key: field.key, label: field.label });
+  }
+  return missing;
+}
+
+// Rejects any key not in the FormField set - shared by every dynamic-field
+// entry point (formResponses, admission-draft's dynamic keys).
+function validateUnknownKeys(responses: Record<string, unknown>, fields: { key: string }[]): string | null {
+  const validKeys = new Set(fields.map((f) => f.key));
+  for (const key of Object.keys(responses)) {
+    if (!validKeys.has(key)) {
+      return `Unknown field "${key}"`;
+    }
+  }
+  return null;
+}
+
+// Rejects unknown keys and enforces presence of any field required at the
+// given lifecycle stage (Docs/Dev/GrowthEngine_Rebuild_Plan.md Phase 2). Used
+// for formResponses (enquiry_intake), where the full response set is
+// resubmitted/merged each time - NOT for admission-draft's incremental
+// per-field saves, which only need the unknown-key check above.
+function validateFormResponses(
+  responses: Record<string, unknown>,
+  fields: { key: string; isRequired: boolean; requiredAtStage: string | null }[],
+  stage: string
+): string | null {
+  const unknownKeyError = validateUnknownKeys(responses, fields);
+  if (unknownKeyError) return unknownKeyError;
+  for (const field of requiredDynamicFieldsForStage(fields, stage)) {
+    const value = responses[field.key];
+    const filled = typeof value === "string" ? value.trim().length > 0 : value != null;
+    if (!filled) {
+      return `${field.key} is required`;
+    }
+  }
+  return null;
 }
 
 interface CreateEnquiryBody {
@@ -30,6 +135,9 @@ interface CreateEnquiryBody {
   studentName?: string;
   studentDateOfBirth?: string;
   guardianRelation?: string;
+  formResponses?: Record<string, unknown>;
+  academicYearId?: string;
+  familyId?: string;
 }
 
 interface UpdateEnquiryBody {
@@ -45,6 +153,8 @@ interface UpdateEnquiryBody {
   studentName?: string;
   studentDateOfBirth?: string;
   guardianRelation?: string;
+  formResponses?: Record<string, unknown>;
+  feePlanId?: string | null;
 }
 
 interface CreateNoteBody {
@@ -61,16 +171,31 @@ interface AdmissionDraftBody {
   admissionDate?: string;
 }
 
+const ADMISSION_DRAFT_FIXED_KEYS = new Set<string>([
+  "fullName",
+  "dateOfBirth",
+  "classSectionId",
+  "guardianName",
+  "guardianContact",
+  "admissionDate",
+]);
+
 interface ListQuery {
   status?: string;
   source?: string;
   ownerUserId?: string;
+  academicYearId?: string;
   page?: string;
   pageSize?: string;
 }
 
 interface MergeBody {
   sourceEnquiryId: string;
+}
+
+interface LinkFamilyBody {
+  familyId?: string;
+  sourceEnquiryId?: string;
 }
 
 interface ConfirmAdmissionBody {
@@ -82,14 +207,48 @@ interface ConfirmAdmissionBody {
   admissionDate: string;
 }
 
-const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope];
+const scoped = (app: FastifyInstance) => [
+  app.authenticate,
+  app.requireSchoolScope,
+  requireRoles("front_desk", "admin", "principal", "counsellor", "teacher", "leadership", PLATFORM_ADMIN_ROLE),
+];
+
+// counsellor/teacher see only their own leads unless a UserRoleGrant also gives
+// them admin/front_desk/principal-level access (grants are additive - see
+// hasAnyRole in lib/rbac.ts and D-5 in the Growth Engine plan).
+async function isOwnershipRestricted(user: FastifyRequest["user"]): Promise<boolean> {
+  const isCounsellorOrTeacher = await hasAnyRole(user, "counsellor", "teacher");
+  if (!isCounsellorOrTeacher) return false;
+  const hasBroaderAccess = await hasAnyRole(user, "admin", "front_desk", "principal");
+  return !hasBroaderAccess;
+}
+
+async function canChangeEnquiryStatus(user: FastifyRequest["user"], ownerUserId: string | null): Promise<boolean> {
+  return (
+    ownerUserId === user.sub ||
+    hasAnyRole(user, "admin", "principal", "front_desk", "leadership", PLATFORM_ADMIN_ROLE)
+  );
+}
+
+async function resolveAcademicYearId(schoolId: string, requestedId?: string): Promise<string | null> {
+  if (requestedId) {
+    const year = await prisma.academicYear.findFirst({ where: { id: requestedId, schoolId }, select: { id: true } });
+    return year?.id ?? null;
+  }
+  const currentYear = await prisma.academicYear.findFirst({
+    where: { schoolId, isCurrent: true },
+    orderBy: { updatedAt: "desc" },
+    select: { id: true },
+  });
+  return currentYear?.id ?? null;
+}
 
 export async function enquiryRoutes(app: FastifyInstance) {
   app.get<{ Querystring: ListQuery }>(
     "/enquiries",
     { onRequest: scoped(app) },
     async (request, reply) => {
-      const { status, source, ownerUserId } = request.query;
+      const { status, source, ownerUserId, academicYearId } = request.query;
       const page = Math.max(1, Number(request.query.page) || 1);
       const pageSize = Math.min(100, Math.max(1, Number(request.query.pageSize) || 20));
 
@@ -108,6 +267,15 @@ export async function enquiryRoutes(app: FastifyInstance) {
           error: { code: "validation_error", message: `source must be one of ${VALID_SOURCES.join(", ")}` },
         });
       }
+      if (academicYearId) {
+        const year = await prisma.academicYear.findFirst({ where: { id: academicYearId, schoolId: request.schoolId } });
+        if (!year) {
+          return reply.code(400).send({
+            data: null,
+            error: { code: "validation_error", message: "academicYearId must belong to this school" },
+          });
+        }
+      }
 
       const where = {
         schoolId: request.schoolId,
@@ -115,7 +283,13 @@ export async function enquiryRoutes(app: FastifyInstance) {
         ...(status ? { status } : {}),
         ...(source ? { source } : {}),
         ...(ownerUserId ? { ownerUserId } : {}),
+        ...(academicYearId ? { academicYearId } : {}),
       };
+
+      if (await isOwnershipRestricted(request.user)) {
+        // Own leads only - overrides any ownerUserId the caller tried to pass.
+        where.ownerUserId = request.user.sub;
+      }
 
       const [items, totalCount] = await Promise.all([
         prisma.enquiry.findMany({
@@ -154,6 +328,29 @@ export async function enquiryRoutes(app: FastifyInstance) {
         });
       }
 
+      const academicYearId = await resolveAcademicYearId(request.schoolId, body.academicYearId);
+      if (!academicYearId) {
+        return reply.code(400).send({
+          data: null,
+          error: {
+            code: "academic_year_required",
+            message: body.academicYearId
+              ? "The selected academic year does not belong to this school"
+              : "Set a current academic year before creating enquiries",
+          },
+        });
+      }
+
+      if (body.familyId) {
+        const family = await prisma.family.findFirst({ where: { id: body.familyId, schoolId: request.schoolId } });
+        if (!family) {
+          return reply.code(400).send({
+            data: null,
+            error: { code: "validation_error", message: "familyId must belong to this school" },
+          });
+        }
+      }
+
       if (body.guardianRelation && !VALID_GUARDIAN_RELATIONS.includes(body.guardianRelation)) {
         return reply.code(400).send({
           data: null,
@@ -161,9 +358,19 @@ export async function enquiryRoutes(app: FastifyInstance) {
         });
       }
 
+      if (body.formResponses) {
+        const intakeFields = await activeFormFields(request.schoolId, "enquiry_intake");
+        const validationError = validateFormResponses(body.formResponses, intakeFields, "new");
+        if (validationError) {
+          return reply.code(400).send({ data: null, error: { code: "validation_error", message: validationError } });
+        }
+      }
+
       const enquiry = await prisma.enquiry.create({
         data: {
           schoolId: request.schoolId,
+          academicYearId,
+          familyId: body.familyId,
           contactName: body.contactName,
           contactPhone: body.contactPhone,
           contactEmail: body.contactEmail,
@@ -174,6 +381,7 @@ export async function enquiryRoutes(app: FastifyInstance) {
           studentName: body.studentName,
           studentDateOfBirth: body.studentDateOfBirth ? new Date(body.studentDateOfBirth) : undefined,
           guardianRelation: body.guardianRelation,
+          formResponses: body.formResponses as Prisma.InputJsonValue | undefined,
           status: "new",
         },
       });
@@ -193,9 +401,6 @@ export async function enquiryRoutes(app: FastifyInstance) {
     }
   );
 
-  // Bulk intake for event/expo enquiries (FR-EG-2). The client parses the
-  // picked CSV into rows itself and posts them as JSON - per-row errors are
-  // reported back rather than failing the whole batch on one bad row.
   app.post<{ Body: { rows: CreateEnquiryBody[] } }>(
     "/enquiries/bulk",
     { onRequest: scoped(app) },
@@ -216,6 +421,13 @@ export async function enquiryRoutes(app: FastifyInstance) {
 
       const errors: { row: number; message: string }[] = [];
       let createdCount = 0;
+      const defaultAcademicYearId = await resolveAcademicYearId(request.schoolId);
+      if (!defaultAcademicYearId) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "academic_year_required", message: "Set a current academic year before importing enquiries" },
+        });
+      }
 
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i] ?? ({} as CreateEnquiryBody);
@@ -229,10 +441,18 @@ export async function enquiryRoutes(app: FastifyInstance) {
           errors.push({ row: rowNumber, message: `source must be one of ${VALID_SOURCES.join(", ")}` });
           continue;
         }
+        const academicYearId = row.academicYearId
+          ? await resolveAcademicYearId(request.schoolId, row.academicYearId)
+          : defaultAcademicYearId;
+        if (!academicYearId) {
+          errors.push({ row: rowNumber, message: "academicYearId must belong to this school" });
+          continue;
+        }
 
         const enquiry = await prisma.enquiry.create({
           data: {
             schoolId: request.schoolId,
+            academicYearId,
             contactName: row.contactName,
             contactPhone: row.contactPhone,
             contactEmail: row.contactEmail,
@@ -274,6 +494,15 @@ export async function enquiryRoutes(app: FastifyInstance) {
         });
       }
 
+      // 404 (not 403) for a lead a counsellor/teacher doesn't own, so existence
+      // isn't leaked to someone who shouldn't see it at all.
+      if ((await isOwnershipRestricted(request.user)) && enquiry.ownerUserId !== request.user.sub) {
+        return reply.code(404).send({
+          data: null,
+          error: { code: "not_found", message: "Enquiry not found" },
+        });
+      }
+
       const possibleDuplicates = enquiry.duplicateOfEnquiryId
         ? []
         : await findPossibleDuplicates(request.schoolId, enquiry.contactPhone, enquiry.id);
@@ -297,13 +526,24 @@ export async function enquiryRoutes(app: FastifyInstance) {
         overdue: enquiry.followUpTasks.filter((t) => t.status === "pending" && t.dueAt < new Date()).length,
       };
 
+      const admissionDetailFields = await activeFormFields(request.schoolId, "admission_detail");
       const admissionSummary = {
-        unlocked: ADMISSION_UNLOCKED_STATUSES.has(enquiry.status),
+        // Always unlocked: admission-detail prep is meant to happen
+        // progressively from the first walk-in, not gated behind reaching
+        // Application - the actual stage-progression gate is the
+        // missingRequiredAdmissionFields check on the status PATCH itself.
+        // Gating this screen behind ADMISSION_UNLOCKED_STATUSES would create
+        // a deadlock: you couldn't fill the fields needed to reach
+        // Application without first being at Application.
+        unlocked: true,
         confirmed: enquiry.studentStub !== null,
         studentStubId: enquiry.studentStub?.id ?? null,
         startedAt: enquiry.admissionStartedAt,
         completedAt: enquiry.admissionCompletedAt,
-        completionPercent: admissionCompletionPercent(enquiry.admissionDraft as Record<string, unknown> | null),
+        completionPercent: admissionCompletionPercent(
+          enquiry.admissionDraft as Record<string, unknown> | null,
+          admissionDetailFields.filter((f) => f.isRequired)
+        ),
       };
 
       return { data: { ...enquiry, activity, pipeline, followUpSummary, admissionSummary }, meta: { possibleDuplicates } };
@@ -327,7 +567,7 @@ export async function enquiryRoutes(app: FastifyInstance) {
 
       const body = request.body ?? {};
 
-      if (body.status) {
+      if (body.status !== undefined) {
         const validStatuses = await validStatusKeys(request.schoolId);
         if (!validStatuses.has(body.status)) {
           return reply.code(400).send({
@@ -337,11 +577,48 @@ export async function enquiryRoutes(app: FastifyInstance) {
         }
       }
 
+      const statusChanged = body.status !== undefined && body.status !== existing.status;
+      if (statusChanged && !(await canChangeEnquiryStatus(request.user, existing.ownerUserId))) {
+        return reply.code(403).send({
+          data: null,
+          error: { code: "forbidden", message: "Only the assigned owner or an admissions administrator can change this lead's stage" },
+        });
+      }
+
       if (body.status === "lost" && !body.lostReason && !existing.lostReason) {
         return reply.code(400).send({
           data: null,
           error: { code: "validation_error", message: "lostReason is required when status is lost" },
         });
+      }
+
+      if (body.status === "admitted" && existing.status === "application") {
+        return reply.code(400).send({ data: null, error: { code: "approval_required", message: "Use the approval chain to move an application to Admitted" } });
+      }
+
+      if (body.feePlanId !== undefined && body.feePlanId !== null) {
+        const feePlan = await prisma.feePlan.findFirst({ where: { id: body.feePlanId, schoolId: request.schoolId, academicYearId: existing.academicYearId, isActive: true } });
+        if (!feePlan) return reply.code(400).send({ data: null, error: { code: "validation_error", message: "feePlanId must be an active plan for this enquiry's academic year" } });
+      }
+
+      // PATCH doesn't accept admissionDraft fields (only /admission-draft
+      // does - see UpdateEnquiryBody), so no merge is needed here: check
+      // against the draft as already persisted.
+      if (body.status !== undefined) {
+        const missingFields = await missingRequiredAdmissionFields(
+          request.schoolId,
+          body.status,
+          existing.admissionDraft as Record<string, unknown> | null
+        );
+        if (missingFields.length > 0) {
+          return reply.code(400).send({
+            data: null,
+            error: {
+              code: "validation_error",
+              message: `Cannot move to this stage - required admission fields are missing: ${missingFields.map((f) => f.label).join(", ")}`,
+            },
+          });
+        }
       }
 
       if (body.guardianRelation && !VALID_GUARDIAN_RELATIONS.includes(body.guardianRelation)) {
@@ -351,7 +628,16 @@ export async function enquiryRoutes(app: FastifyInstance) {
         });
       }
 
-      const statusChanged = body.status !== undefined && body.status !== existing.status;
+      let mergedFormResponses: Record<string, unknown> | undefined;
+      if (body.formResponses) {
+        const intakeFields = await activeFormFields(request.schoolId, "enquiry_intake");
+        const validationError = validateFormResponses(body.formResponses, intakeFields, "new");
+        if (validationError) {
+          return reply.code(400).send({ data: null, error: { code: "validation_error", message: validationError } });
+        }
+        const existingResponses = (existing.formResponses as Record<string, unknown> | null) ?? {};
+        mergedFormResponses = { ...existingResponses, ...body.formResponses };
+      }
 
       const updated = await prisma.enquiry.update({
         where: { id: existing.id },
@@ -368,6 +654,8 @@ export async function enquiryRoutes(app: FastifyInstance) {
           studentName: body.studentName,
           studentDateOfBirth: body.studentDateOfBirth ? new Date(body.studentDateOfBirth) : undefined,
           guardianRelation: body.guardianRelation,
+          feePlanId: body.feePlanId,
+          formResponses: mergedFormResponses as Prisma.InputJsonValue | undefined,
         },
       });
 
@@ -487,10 +775,69 @@ export async function enquiryRoutes(app: FastifyInstance) {
     }
   );
 
-  // DPDP right-to-erasure (FR-EG-9) - anonymize, don't hard-delete: status,
-  // source, timestamps, and stage history are untouched so funnel/counsellor
-  // analytics counts stay historically accurate. Uploaded documents are the
-  // one thing actually deleted (they're the highest-sensitivity PII on file).
+  app.post<{ Params: { id: string }; Body: LinkFamilyBody }>(
+    "/enquiries/:id/link-family",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const { familyId, sourceEnquiryId } = request.body ?? {};
+      if ((familyId ? 1 : 0) + (sourceEnquiryId ? 1 : 0) !== 1) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "Provide exactly one of familyId or sourceEnquiryId" },
+        });
+      }
+
+      if (sourceEnquiryId === request.params.id) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "An enquiry cannot be linked to itself as family" },
+        });
+      }
+
+      const target = await prisma.enquiry.findFirst({ where: { id: request.params.id, schoolId: request.schoolId } });
+      if (!target) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Enquiry not found" } });
+      }
+
+      let resolvedFamilyId = familyId;
+      if (sourceEnquiryId) {
+        const source = await prisma.enquiry.findFirst({ where: { id: sourceEnquiryId, schoolId: request.schoolId } });
+        if (!source) {
+          return reply.code(404).send({ data: null, error: { code: "not_found", message: "Source enquiry not found" } });
+        }
+        if (source.duplicateOfEnquiryId || target.duplicateOfEnquiryId) {
+          return reply.code(400).send({
+            data: null,
+            error: { code: "validation_error", message: "Merged enquiries cannot be linked as a family" },
+          });
+        }
+        const updatedTarget = await prisma.$transaction(async (tx) => {
+          const family = source.familyId
+            ? await tx.family.findFirst({ where: { id: source.familyId, schoolId: request.schoolId } })
+            : await tx.family.create({
+                data: {
+                  schoolId: request.schoolId,
+                  primaryContactName: source.contactName,
+                  primaryContactPhone: source.contactPhone,
+                },
+              });
+          if (!family) throw new Error("Family not found");
+          resolvedFamilyId = family.id;
+          await tx.enquiry.update({ where: { id: source.id }, data: { familyId: family.id } });
+          return tx.enquiry.update({ where: { id: target.id }, data: { familyId: family.id } });
+        });
+        return { data: updatedTarget, meta: {} };
+      }
+
+      const family = await prisma.family.findFirst({ where: { id: resolvedFamilyId, schoolId: request.schoolId } });
+      if (!family) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Family not found" } });
+      }
+      const updated = await prisma.enquiry.update({ where: { id: target.id }, data: { familyId: family.id } });
+      return { data: updated, meta: {} };
+    }
+  );
+
   app.post<{ Params: { id: string } }>(
     "/enquiries/:id/erase",
     { onRequest: [...scoped(app), requireRoles("admin", "leadership")] },
@@ -536,9 +883,6 @@ export async function enquiryRoutes(app: FastifyInstance) {
     }
   );
 
-  // Admission-in-progress state, read before the final confirm-admission call
-  // that creates the StudentStub. completionPercent scores the draft against
-  // the fields the Admission tab's form collects (lib/enquiries.ts).
   app.get<{ Params: { id: string } }>(
     "/enquiries/:id/admission",
     { onRequest: scoped(app) },
@@ -553,27 +897,27 @@ export async function enquiryRoutes(app: FastifyInstance) {
       }
 
       const draft = enquiry.admissionDraft as Record<string, unknown> | null;
+      const admissionDetailFields = await activeFormFields(request.schoolId, "admission_detail");
 
       return {
         data: {
-          unlocked: ADMISSION_UNLOCKED_STATUSES.has(enquiry.status),
+          // See the matching comment on GET /enquiries/:id's admissionSummary
+          // - always unlocked, prep can start any time.
+          unlocked: true,
           confirmed: enquiry.studentStub !== null,
           draft,
           studentStub: enquiry.studentStub,
           startedAt: enquiry.admissionStartedAt,
           completedAt: enquiry.admissionCompletedAt,
-          completionPercent: admissionCompletionPercent(draft),
+          completionPercent: admissionCompletionPercent(draft, admissionDetailFields.filter((f) => f.isRequired)),
+          fields: admissionDetailFields,
         },
         meta: {},
       };
     }
   );
 
-  // Merges partial admission-form fields into the draft as the counsellor fills
-  // them in, ahead of the final POST confirm-admission. Rejects once admission
-  // is already confirmed - the StudentStub, not the draft, is authoritative past
-  // that point.
-  app.patch<{ Params: { id: string }; Body: AdmissionDraftBody }>(
+  app.patch<{ Params: { id: string }; Body: AdmissionDraftBody & { [key: string]: unknown } }>(
     "/enquiries/:id/admission-draft",
     { onRequest: scoped(app) },
     async (request, reply) => {
@@ -593,14 +937,28 @@ export async function enquiryRoutes(app: FastifyInstance) {
         });
       }
 
-      const body = request.body ?? ({} as AdmissionDraftBody);
+      const body = request.body ?? ({} as AdmissionDraftBody & { [key: string]: unknown });
+      const admissionDetailFields = await activeFormFields(request.schoolId, "admission_detail");
+
+      // Only the NEW dynamic keys (anything beyond the fixed AdmissionDraftBody
+      // fields) are validated against the FormField set - the fixed fields stay
+      // accepted as before.
+      const dynamicKeys = Object.keys(body).filter((k) => !ADMISSION_DRAFT_FIXED_KEYS.has(k));
+      const dynamicResponses: Record<string, unknown> = {};
+      for (const key of dynamicKeys) dynamicResponses[key] = body[key];
+
+      const validationError = validateUnknownKeys(dynamicResponses, admissionDetailFields);
+      if (validationError) {
+        return reply.code(400).send({ data: null, error: { code: "validation_error", message: validationError } });
+      }
+
       const existingDraft = (enquiry.admissionDraft as Record<string, unknown> | null) ?? {};
       const mergedDraft = { ...existingDraft, ...body };
 
       const updated = await prisma.enquiry.update({
         where: { id: enquiry.id },
         data: {
-          admissionDraft: mergedDraft,
+          admissionDraft: mergedDraft as Prisma.InputJsonValue,
           admissionStartedAt: enquiry.admissionStartedAt ?? new Date(),
         },
       });
@@ -609,19 +967,16 @@ export async function enquiryRoutes(app: FastifyInstance) {
         data: {
           draft: updated.admissionDraft,
           startedAt: updated.admissionStartedAt,
-          completionPercent: admissionCompletionPercent(updated.admissionDraft as Record<string, unknown> | null),
+          completionPercent: admissionCompletionPercent(
+            updated.admissionDraft as Record<string, unknown> | null,
+            admissionDetailFields.filter((f) => f.isRequired)
+          ),
         },
         meta: {},
       };
     }
   );
 
-  // Hard delete (distinct from /erase, which anonymizes PII but keeps the
-  // record for analytics/history). Restricted to admin/leadership since it's
-  // destructive and, unlike erase, removes the row itself. Blocked once a
-  // StudentStub exists - a confirmed admission is a real student record, not
-  // a lead to discard - and blocked if other enquiries were merged into this
-  // one (their duplicateOfEnquiryId FK would otherwise orphan).
   app.delete<{ Params: { id: string } }>(
     "/enquiries/:id",
     { onRequest: [...scoped(app), requireRoles("admin", "leadership")] },
@@ -679,8 +1034,6 @@ export async function enquiryRoutes(app: FastifyInstance) {
         include: { studentStub: true },
       });
 
-      // dateOfBirth can come from the intake-time studentDateOfBirth field
-      // instead of being re-typed at confirm time, if it was captured there.
       const dateOfBirth = body.dateOfBirth ?? (enquiry?.studentDateOfBirth ? enquiry.studentDateOfBirth.toISOString().slice(0, 10) : undefined);
 
       if (!dateOfBirth || !body.classSectionId || !body.admissionDate) {
@@ -701,10 +1054,50 @@ export async function enquiryRoutes(app: FastifyInstance) {
         });
       }
 
+      if (!(await canChangeEnquiryStatus(request.user, enquiry.ownerUserId))) {
+        return reply.code(403).send({
+          data: null,
+          error: { code: "forbidden", message: "Only the assigned owner or an admissions administrator can confirm admission" },
+        });
+      }
+
       if (enquiry.studentStub) {
         return reply.code(400).send({
           data: null,
           error: { code: "validation_error", message: "This enquiry has already been admitted" },
+        });
+      }
+
+      // The client's flow treats Application as a real, distinct CRM stage
+      // ("the move happens as and when the application status is updated,
+      // same as in any CRM tool") - confirm-admission must not be usable to
+      // jump an enquiry straight from an earlier status (e.g. New) to
+      // Admitted, skipping Contacted/Visit/Application entirely.
+      const stages = await prisma.pipelineStage.findMany({ where: { schoolId: request.schoolId }, select: { key: true, order: true } });
+      const orderByKey = new Map(stages.map((s) => [s.key, s.order]));
+      if (enquiry.status !== "admitted" && enquiry.status !== "enrolled") {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "approval_required", message: "Complete the approval chain before confirming admission" },
+        });
+      }
+
+      // Belt-and-braces: also re-check required admission fields here, since
+      // this is what actually creates the StudentStub (Docs/Dev/GrowthEngine_Rebuild_Plan.md
+      // Phase 2), even though the PATCH /enquiries/:id status-change check
+      // above should already have enforced this on the way to Application.
+      const missingFields = await missingRequiredAdmissionFields(
+        request.schoolId,
+        "admitted",
+        enquiry.admissionDraft as Record<string, unknown> | null
+      );
+      if (missingFields.length > 0) {
+        return reply.code(400).send({
+          data: null,
+          error: {
+            code: "validation_error",
+            message: `Cannot confirm admission - required admission fields are missing: ${missingFields.map((f) => f.label).join(", ")}`,
+          },
         });
       }
 
@@ -731,19 +1124,7 @@ export async function enquiryRoutes(app: FastifyInstance) {
         }),
         prisma.enquiry.update({
           where: { id: enquiry.id },
-          data: {
-            status: "admitted",
-            admissionStartedAt: enquiry.admissionStartedAt ?? new Date(),
-            admissionCompletedAt: new Date(),
-          },
-        }),
-        prisma.enquiryStageHistory.create({
-          data: {
-            enquiryId: enquiry.id,
-            fromStatus: enquiry.status,
-            toStatus: "admitted",
-            changedByUserId: request.user.sub,
-          },
+          data: { admissionStartedAt: enquiry.admissionStartedAt ?? new Date(), admissionCompletedAt: new Date() },
         }),
       ]);
 

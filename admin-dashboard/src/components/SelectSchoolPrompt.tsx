@@ -1,10 +1,6 @@
 import type { CSSProperties } from "react";
 import { useSchoolContext } from "../context/SchoolContext";
 
-// Shown on school-scoped pages (Funnel, Sources, Counsellors, Users) for a
-// leadership user before a school is resolved - in practice only when their
-// trust has no schools yet, since SchoolContext auto-picks the first one
-// otherwise.
 export function SelectSchoolPrompt() {
   const { schools, isLoading } = useSchoolContext();
 

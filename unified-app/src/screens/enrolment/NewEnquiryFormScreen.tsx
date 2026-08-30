@@ -8,10 +8,12 @@ import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { DatePicker } from "../../components/DatePicker";
 import { ProfilePhotoPicker, PickedPhoto } from "../../components/ProfilePhotoPicker";
-import { api, EnquirySource, GuardianRelation, PossibleDuplicate, ClassSection } from "../../api/client";
+import { DynamicFormFields } from "../../components/DynamicFormFields";
+import { api, EnquirySource, GuardianRelation, PossibleDuplicate, ClassSection, FormField } from "../../api/client";
 
 const SOURCES: EnquirySource[] = ["phone", "walk_in", "website", "referral", "event", "social"];
 const GUARDIAN_RELATIONS: GuardianRelation[] = ["mother", "father", "guardian", "other"];
+type IntakeFlow = "walk_in" | "remote";
 
 type Props = NativeStackScreenProps<RootStackParamList, "NewEnquiryForm">;
 
@@ -22,6 +24,7 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
   const [contactPhone, setContactPhone] = useState("");
   const [contactEmail, setContactEmail] = useState("");
   const [source, setSource] = useState<EnquirySource>("phone");
+  const [intakeFlow, setIntakeFlow] = useState<IntakeFlow>("remote");
   const [gradeInterest, setGradeInterest] = useState("");
   const [studentName, setStudentName] = useState("");
   const [studentDateOfBirth, setStudentDateOfBirth] = useState("");
@@ -32,17 +35,24 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [duplicates, setDuplicates] = useState<PossibleDuplicate[]>([]);
   const [classSections, setClassSections] = useState<ClassSection[]>([]);
+  const [intakeFields, setIntakeFields] = useState<FormField[]>([]);
+  const [formResponses, setFormResponses] = useState<Record<string, unknown>>({});
 
   useEffect(() => {
     if (!accessToken) return;
     api.listClassSections(accessToken).then(setClassSections).catch(() => {
-      // Non-fatal - falls back to a free-text grade field below.
     });
+    api
+      .getFormDefinition(accessToken, "enquiry_intake")
+      .then((res) => setIntakeFields(res.fields))
+      .catch(() => {
+      });
   }, [accessToken]);
 
-  // Grade options are the school's real class names (deduped), not free text,
-  // so what's captured here can be matched against ClassSection at Admission
-  // instead of re-typed. Falls back to a text field if no classes are set up yet.
+  function setFormResponse(key: string, value: unknown) {
+    setFormResponses((prev) => ({ ...prev, [key]: value }));
+  }
+
   const gradeOptions = useMemo(() => {
     const seen = new Set<string>();
     const options: string[] = [];
@@ -55,14 +65,12 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
     return options;
   }, [classSections]);
 
-  // Focus states
   const [nameFocused, setNameFocused] = useState(false);
   const [phoneFocused, setPhoneFocused] = useState(false);
   const [emailFocused, setEmailFocused] = useState(false);
   const [gradeFocused, setGradeFocused] = useState(false);
   const [studentNameFocused, setStudentNameFocused] = useState(false);
 
-  // Button scale animation
   const buttonScale = useRef(new Animated.Value(1)).current;
 
   const handlePressIn = () => {
@@ -98,6 +106,7 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
         studentDateOfBirth: studentDateOfBirth || undefined,
         guardianRelation: guardianRelation ?? undefined,
         consentCaptured,
+        formResponses: Object.keys(formResponses).length > 0 ? formResponses : undefined,
       });
       const possibleDuplicates = (res.meta?.possibleDuplicates as PossibleDuplicate[]) ?? [];
       if (possibleDuplicates.length > 0) {
@@ -105,8 +114,6 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
       }
       if (res.data) {
         const enquiryId = res.data.id;
-        // Best-effort - the lead is already saved at this point, so a photo
-        // upload failure shouldn't block the counsellor from moving on.
         try {
           if (photoPick.type === "photo") {
             await api.uploadEnquiryPhoto(accessToken, enquiryId, photoPick);
@@ -114,7 +121,6 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
             await api.setEnquiryAvatar(accessToken, enquiryId, photoPick.avatarKey);
           }
         } catch {
-          // Ignored - photo/avatar can still be set later from Enquiry Detail.
         }
         navigation.replace("EnquiryDetail", { enquiryId });
       }
@@ -128,22 +134,43 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
   return (
     <Screen edges={["bottom"]}>
       <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {/* Title Header Block */}
+        {}
         <View style={styles.titleSection}>
           <Text style={[styles.title, { color: colors.textPrimary }]}>New Enquiry</Text>
           <Text style={[styles.subtitle, { color: colors.textMuted }]}>
-            Enter details to start the lead registration workflow
+            Capture the essentials now, then continue at the right pace for the family.
           </Text>
         </View>
 
-        {/* Profile Photo Card */}
         <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
-          <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Profile photo (optional)</Text>
-          <ProfilePhotoPicker value={photoPick} onChange={setPhotoPick} />
+          <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>How did they enquire?</Text>
+          <View style={styles.chipRow}>
+            <Pressable
+              onPress={() => { setIntakeFlow("walk_in"); setSource("walk_in"); }}
+              style={({ pressed }) => [styles.chip, { backgroundColor: intakeFlow === "walk_in" ? colors.accent : colors.surfaceRaised, borderColor: intakeFlow === "walk_in" ? colors.accent : colors.border }, pressed && { opacity: pressedOpacity }]}
+            >
+              <Text style={[styles.chipText, { color: intakeFlow === "walk_in" ? colors.accentOn : colors.textSecondary }]}>Walk-in</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => { setIntakeFlow("remote"); setSource("phone"); }}
+              style={({ pressed }) => [styles.chip, { backgroundColor: intakeFlow === "remote" ? colors.accent : colors.surfaceRaised, borderColor: intakeFlow === "remote" ? colors.accent : colors.border }, pressed && { opacity: pressedOpacity }]}
+            >
+              <Text style={[styles.chipText, { color: intakeFlow === "remote" ? colors.accentOn : colors.textSecondary }]}>Phone / website</Text>
+            </Pressable>
+          </View>
+          <Text style={[styles.flowHint, { color: colors.textMuted }]}>
+            {intakeFlow === "walk_in" ? "Capture the full intake while the parent is here." : "Name, phone and grade are enough to save this lead and complete it later."}
+          </Text>
         </View>
 
-        {/* Student Details Card */}
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        {}
+        {intakeFlow === "walk_in" ? <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Profile photo (optional)</Text>
+          <ProfilePhotoPicker value={photoPick} onChange={setPhotoPick} />
+        </View> : null}
+
+        {}
+        {intakeFlow === "walk_in" ? <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
           <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Student details</Text>
 
           <Text style={[styles.label, { color: colors.textSecondary }]}>Student name (optional)</Text>
@@ -162,9 +189,9 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
 
           <Text style={[styles.label, { color: colors.textSecondary }]}>Student date of birth (optional)</Text>
           <DatePicker value={studentDateOfBirth} onChange={setStudentDateOfBirth} placeholder="Select date of birth" />
-        </View>
+        </View> : null}
 
-        {/* Lead Details Card */}
+        {}
         <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
           <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Lead details</Text>
 
@@ -235,7 +262,7 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
           </View>
         </View>
 
-        {/* Lead Preferences Card */}
+        {}
         <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
           <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Preferences & Context</Text>
 
@@ -297,7 +324,15 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
           )}
         </View>
 
-        {/* Consent Section */}
+        {}
+        {intakeFlow === "walk_in" && intakeFields.length > 0 ? (
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+            <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Additional details</Text>
+            <DynamicFormFields fields={intakeFields} values={formResponses} onChange={setFormResponse} />
+          </View>
+        ) : null}
+
+        {}
         <Pressable
           style={({ pressed }) => [styles.consentRow, pressed && { opacity: pressedOpacity }]}
           onPress={() => setConsentCaptured((v) => !v)}
@@ -328,7 +363,7 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
 
         {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
-        {/* Animated Action Button */}
+        {}
         <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
           <Pressable
             onPressIn={handlePressIn}
@@ -348,7 +383,7 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
             ) : (
               <View style={styles.buttonInner}>
                 <Ionicons name="checkmark-circle-outline" size={18} color={colors.accentOn} />
-                <Text style={[styles.saveButtonText, { color: colors.accentOn }]}>Save and Assign to Self</Text>
+                <Text style={[styles.saveButtonText, { color: colors.accentOn }]}>{intakeFlow === "walk_in" ? "Save full enquiry" : "Save lead for later"}</Text>
               </View>
             )}
           </Pressable>
@@ -381,6 +416,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   chipText: { textTransform: "capitalize", fontSize: 12, fontWeight: "700" },
+  flowHint: { marginTop: 10, fontSize: 13, lineHeight: 19 },
   consentRow: { flexDirection: "row", alignItems: "center", marginTop: 16, paddingVertical: 6 },
   checkbox: { width: 18, height: 18, borderWidth: 1.5, borderRadius: 4, marginRight: 10, alignItems: "center", justifyContent: "center" },
   consentLabel: { flexShrink: 1, fontSize: 13, fontWeight: "600" },

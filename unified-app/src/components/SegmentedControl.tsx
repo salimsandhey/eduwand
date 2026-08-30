@@ -14,10 +14,6 @@ interface SegmentedControlProps {
   onChange: (key: string) => void;
 }
 
-// Two-way (or more) tab switcher used to split a heavy detail screen into
-// focused sub-views (e.g. EnquiryDetail's Lead / Admission split) instead of
-// one long scroll. A locked option stays tappable - so the user can see why
-// it's locked - but is visually muted and shows a lock glyph.
 export function SegmentedControl({ options, activeKey, onChange }: SegmentedControlProps) {
   const { colors, pressedOpacity } = useTheme();
 

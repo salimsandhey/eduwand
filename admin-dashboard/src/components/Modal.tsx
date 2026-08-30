@@ -43,7 +43,6 @@ export function Modal({
   );
 }
 
-/** Standard footer action row for modal forms - Cancel + primary submit button, pinned to the bottom. */
 export function ModalFooter({ children }: { children: ReactNode }) {
   return <div style={styles.footer}>{children}</div>;
 }

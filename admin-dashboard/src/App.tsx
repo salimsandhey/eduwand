@@ -11,6 +11,7 @@ import { CounsellorsPage } from "./pages/CounsellorsPage";
 import { AiUsagePage } from "./pages/AiUsagePage";
 import { AiPromptsPage } from "./pages/AiPromptsPage";
 import { PipelineStagesPage } from "./pages/PipelineStagesPage";
+import { FormBuilderPage } from "./pages/FormBuilderPage";
 import { MessageTemplatesPage } from "./pages/MessageTemplatesPage";
 import { ExportsPage } from "./pages/ExportsPage";
 import { AuditLogPage } from "./pages/AuditLogPage";
@@ -19,13 +20,12 @@ import { TrustDetailPage } from "./pages/TrustDetailPage";
 import { SchoolLayout } from "./pages/school/SchoolLayout";
 import { SchoolDetailsTab } from "./pages/school/SchoolDetailsTab";
 import { SchoolStaffTab } from "./pages/school/SchoolStaffTab";
+import { SchoolStudentsTab } from "./pages/school/SchoolStudentsTab";
 import { SchoolAcademicsTab } from "./pages/school/SchoolAcademicsTab";
 import { SchoolTemplatesTab } from "./pages/school/SchoolTemplatesTab";
 import { SchoolSubjectsTab } from "./pages/school/SchoolSubjectsTab";
 import { MySchoolRedirect } from "./pages/MySchoolRedirect";
 
-// Routes not shown in the sidebar (drill-in detail pages) still need a role
-// check so a non-permitted role can't reach them by typing the URL directly.
 const EXTRA_ROUTE_ROLES: Record<string, string[]> = {
   "/trusts/:id": ["platform_admin", "leadership"],
   "/schools/:id": ["front_desk", "counsellor", "teacher", "admin", "leadership", "platform_admin"],
@@ -70,6 +70,7 @@ function Root() {
         <Route path="/ai-usage" element={<RequireRole path="/ai-usage"><AiUsagePage /></RequireRole>} />
         <Route path="/ai-prompts" element={<RequireRole path="/ai-prompts"><AiPromptsPage /></RequireRole>} />
         <Route path="/pipeline-stages" element={<RequireRole path="/pipeline-stages"><PipelineStagesPage /></RequireRole>} />
+        <Route path="/form-builder" element={<RequireRole path="/form-builder"><FormBuilderPage /></RequireRole>} />
         <Route path="/message-templates" element={<RequireRole path="/message-templates"><MessageTemplatesPage /></RequireRole>} />
         <Route path="/exports" element={<RequireRole path="/exports"><ExportsPage /></RequireRole>} />
         <Route path="/audit-log" element={<RequireRole path="/audit-log"><AuditLogPage /></RequireRole>} />
@@ -78,6 +79,7 @@ function Root() {
         <Route path="/schools/:id" element={<RequireRole path="/schools/:id"><SchoolLayout /></RequireRole>}>
           <Route index element={<SchoolDetailsTab />} />
           <Route path="staff" element={<SchoolStaffTab />} />
+          <Route path="students" element={<SchoolStudentsTab />} />
           <Route path="academics" element={<SchoolAcademicsTab />} />
           <Route path="templates" element={<SchoolTemplatesTab />} />
           <Route path="subjects" element={<SchoolSubjectsTab />} />

@@ -12,9 +12,6 @@ import { SelectSchoolPrompt } from "../components/SelectSchoolPrompt";
 const SERIES_COLORS = ["var(--series-1)", "var(--series-2)", "var(--series-3)", "var(--series-4)", "var(--series-5)", "var(--series-6)"];
 
 const FEATURE_LABELS: Record<string, string> = {
-  // lesson_plan/research_report kept for historical AiUsageLog rows written
-  // before the Phase 2 rebuild (Docs/Dev/AI_Module_Rebuild_Plan.md) - new
-  // generations log feature:"generation" instead.
   lesson_plan: "Lesson plans (legacy)",
   research_report: "Research reports (legacy)",
   generation: "Generations",

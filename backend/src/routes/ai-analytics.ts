@@ -11,8 +11,6 @@ function scoreOf(grade: { finalScore: number | null; aiScore: number | null } | 
   return grade.finalScore ?? grade.aiScore;
 }
 
-// Teacher Analytics (FR-AI-4). Admin Dashboard usage analytics
-// (GET /analytics/ai/usage) is registered alongside these in server.ts too.
 export async function aiAnalyticsRoutes(app: FastifyInstance) {
   app.get<{ Params: { id: string } }>(
     "/analytics/ai/student/:id",
@@ -84,9 +82,6 @@ export async function aiAnalyticsRoutes(app: FastifyInstance) {
         }))
         .sort((a, b) => a.averageScore - b.averageScore);
 
-      // "Common struggle areas" approximated as the lowest-scoring assignments
-      // in this class - a per-question breakdown would need per-question AI
-      // scoring, which the stub grader doesn't produce yet.
       const byAssignment = new Map<string, { title: string; scores: number[] }>();
       for (const s of graded) {
         const assignment = assignments.find((a) => a.id === s.assignmentId);
@@ -111,9 +106,6 @@ export async function aiAnalyticsRoutes(app: FastifyInstance) {
     }
   );
 
-  // Admin Dashboard's AI Usage Analytics screen (FR-AI-4) - the gap the
-  // original Module 1 audit flagged. admin/leadership only, reuses the same
-  // leadership ?schoolId= scoping path built for Module 1's analytics routes.
   app.get("/analytics/ai/usage", { onRequest: adminScoped(app) }, async (request) => {
     const logs = await prisma.aiUsageLog.findMany({ where: { schoolId: request.schoolId } });
 
@@ -136,9 +128,6 @@ export async function aiAnalyticsRoutes(app: FastifyInstance) {
 
     const featureUsage = [...byFeature.entries()].map(([feature, count]) => ({ feature, count }));
 
-    // Grading turnaround = time between a submission and its Grade row's
-    // status leaving "pending" (Grade.updatedAt at that transition) - no
-    // separate gradedAt column needed, the status transition already marks it.
     const gradedSubmissions = await prisma.submission.findMany({
       where: { assignment: { schoolId: request.schoolId }, grade: { status: { not: "pending" } } },
       include: { grade: true },

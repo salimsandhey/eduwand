@@ -3,7 +3,9 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { PLATFORM_ADMIN_ROLE } from "../lib/roles";
 import { seedDefaultPipelineStages } from "../lib/pipeline-stages";
+import { seedDefaultFormDefinitions } from "../lib/form-definitions";
 import { recordAuditEvent } from "../lib/audit";
+import { seedDefaultApprovalChain } from "../lib/approval-chain";
 
 interface CreateSchoolBody {
   trustId?: string;
@@ -27,10 +29,6 @@ interface UpdateSchoolBody {
   status?: string;
 }
 
-// A school is only really "ready" once it has a current academic year with
-// at least one class section, and at least one admin/leadership account -
-// checked here rather than left silently unenforced (a school could sit at
-// status:"active" with nothing actually configured under it).
 async function computeReadiness(schoolId: string) {
   const [currentYear, staffCount] = await Promise.all([
     prisma.academicYear.findFirst({
@@ -63,10 +61,6 @@ async function requirePlatformAdminOrLeadership(request: FastifyRequest, reply: 
   }
 }
 
-// Only platform_admin may create a school, and must always name the trust
-// explicitly (Docs/Dev/EduWand_Engineering_PRD.md section 4.1: "many buyers run
-// 2 to 5 schools under one trust") - leadership can no longer self-serve a new
-// school into their own trust, by product decision.
 async function requirePlatformAdmin(request: FastifyRequest, reply: FastifyReply) {
   if (request.user.role !== PLATFORM_ADMIN_ROLE) {
     reply.code(403).send({
@@ -101,8 +95,6 @@ export async function schoolRoutes(app: FastifyInstance) {
         return reply.code(404).send({ data: null, error: { code: "not_found", message: "Trust not found" } });
       }
 
-      // Duplicate check scoped to the trust, not global - two different
-      // trusts can each legitimately have a "DPS Main Branch".
       const duplicate = await prisma.school.findFirst({
         where: { trustId: body.trustId, name: { equals: body.name.trim(), mode: "insensitive" } },
       });
@@ -128,15 +120,13 @@ export async function schoolRoutes(app: FastifyInstance) {
       });
 
       await seedDefaultPipelineStages(school.id);
+      await seedDefaultFormDefinitions(school.id);
+      await seedDefaultApprovalChain(school.id);
 
       return reply.code(201).send({ data: school, meta: {} });
     }
   );
 
-  // List schools. platform_admin sees everything (optionally filtered by ?trustId=),
-  // leadership only ever sees their own trust's schools - trustId is forced from the
-  // token, same rule as elsewhere in this route file - and a bare admin sees just
-  // their own single school.
   app.get<{ Querystring: { trustId?: string } }>(
     "/schools",
     { onRequest: [app.authenticate] },
@@ -221,11 +211,6 @@ export async function schoolRoutes(app: FastifyInstance) {
         return reply.code(403).send({ data: null, error: { code: "forbidden", message: "School not in your trust" } });
       }
 
-      // A school can't be marked active until it's actually usable - has a
-      // current academic year with class sections, and at least one
-      // admin/leadership account. Previously this was a free-text status
-      // dropdown with no gate, so a school could sit at "active" while
-      // silently unconfigured.
       if (body.status === "active" && existing.status !== "active") {
         const readiness = await computeReadiness(existing.id);
         if (!readiness.ready) {
@@ -273,10 +258,6 @@ export async function schoolRoutes(app: FastifyInstance) {
     }
   );
 
-  // Hard delete - only safe while the school has no operational data under it
-  // (academic years, enquiries, students, etc. are all ON DELETE RESTRICT to
-  // school_id). app_user.school_id is ON DELETE SET NULL so staff accounts
-  // don't block this - they're just unassigned from the school afterward.
   app.delete<{ Params: { id: string } }>(
     "/schools/:id",
     { onRequest: [app.authenticate, requirePlatformAdmin] },
@@ -318,8 +299,6 @@ export async function schoolRoutes(app: FastifyInstance) {
       try {
         await prisma.school.delete({ where: { id: request.params.id } });
       } catch (err) {
-        // Fallback for relations not covered by the _count check above (e.g.
-        // csvExportSchedule, a 1:1 relation _count can't select).
         if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2003") {
           return reply.code(409).send({
             data: null,

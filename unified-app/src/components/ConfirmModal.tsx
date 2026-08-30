@@ -10,8 +10,6 @@ interface ConfirmModalProps {
   onCancel: () => void;
 }
 
-// RN's Alert.alert has no react-native-web implementation, and this app also
-// builds for web, so confirmations use this modal instead.
 export function ConfirmModal({ visible, title, message, confirmLabel = "Confirm", onConfirm, onCancel }: ConfirmModalProps) {
   const { colors, cardShadow, pressedOpacity } = useTheme();
 

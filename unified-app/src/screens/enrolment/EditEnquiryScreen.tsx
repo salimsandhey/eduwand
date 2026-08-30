@@ -115,7 +115,6 @@ export function EditEnquiryScreen({ route, navigation }: Props) {
         guardianRelation: guardianRelation ?? undefined,
       });
 
-      // Best-effort, same as New Enquiry - the core edit is already saved.
       try {
         if (photoPick.type === "photo") {
           await api.uploadEnquiryPhoto(accessToken, enquiryId, photoPick);
@@ -125,7 +124,6 @@ export function EditEnquiryScreen({ route, navigation }: Props) {
           await api.removeEnquiryPhoto(accessToken, enquiryId);
         }
       } catch {
-        // Ignored - photo can still be changed again from here later.
       }
 
       navigation.replace("EnquiryDetail", { enquiryId });

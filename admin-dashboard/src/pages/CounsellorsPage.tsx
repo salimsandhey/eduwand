@@ -7,9 +7,6 @@ import { Card } from "../components/Card";
 import { PageHeader } from "../components/PageHeader";
 import { SelectSchoolPrompt } from "../components/SelectSchoolPrompt";
 
-// A ranked list is a table, not a chart (dataviz skill, choosing-a-form.md) - the
-// inline bar is a secondary, sequential-hue magnitude cue beside the real numbers,
-// not a substitute for them.
 export function CounsellorsPage() {
   const { accessToken, user } = useAuth();
   const { selectedSchoolId, isLoading: schoolsLoading } = useSchoolContext();

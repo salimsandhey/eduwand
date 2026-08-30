@@ -12,19 +12,17 @@ export interface ChecklistItem {
   required: boolean;
 }
 
-// Fixed admission document checklist (backend/src/routes/documents.ts
-// VALID_DOCUMENT_TYPES) - per-school configurability deferred.
-export const DOCUMENT_CHECKLIST: ChecklistItem[] = [
+// Fallback used only if the school somehow has no active document_checklist
+// FormDefinition to derive a checklist from (see documents.ts's
+// validDocumentTypeKeys comment for why this is a rare, defensive path).
+export const FALLBACK_DOCUMENT_CHECKLIST: ChecklistItem[] = [
   { key: "student_photo", label: "Student photo", required: true },
   { key: "birth_certificate", label: "Birth certificate", required: true },
   { key: "id_proof", label: "ID proof (e.g. Aadhar)", required: true },
-  { key: "transfer_certificate", label: "Transfer certificate", required: false },
-  { key: "previous_marksheet", label: "Previous marksheet / report card", required: false },
-  { key: "address_proof", label: "Address proof", required: false },
 ];
 
-export function requiredDocumentCompletion(documents: EnquiryDocument[]): { done: number; total: number } {
-  const required = DOCUMENT_CHECKLIST.filter((item) => item.required);
+export function requiredDocumentCompletion(documents: EnquiryDocument[], checklist: ChecklistItem[]): { done: number; total: number } {
+  const required = checklist.filter((item) => item.required);
   const done = required.filter((item) => documents.some((d) => d.documentType === item.key)).length;
   return { done, total: required.length };
 }
@@ -37,15 +35,12 @@ interface PickedFile {
 
 interface DocumentChecklistProps {
   documents: EnquiryDocument[];
+  checklist: ChecklistItem[];
   onUpload: (file: PickedFile, documentType: DocumentType) => Promise<void>;
   readOnly?: boolean;
 }
 
-// Per-checklist-item upload control: camera, gallery, or an arbitrary file
-// (PDF, scan, etc. - not every admission document is a photo). Each item
-// uploads directly through onUpload rather than staging locally, since this
-// is only ever shown once the enquiry already exists (Admission step).
-export function DocumentChecklist({ documents, onUpload, readOnly }: DocumentChecklistProps) {
+export function DocumentChecklist({ documents, checklist, onUpload, readOnly }: DocumentChecklistProps) {
   const { colors, pressedOpacity } = useTheme();
   const [expandedKey, setExpandedKey] = useState<DocumentType | null>(null);
   const [uploadingKey, setUploadingKey] = useState<DocumentType | null>(null);
@@ -99,7 +94,7 @@ export function DocumentChecklist({ documents, onUpload, readOnly }: DocumentChe
 
   return (
     <View>
-      {DOCUMENT_CHECKLIST.map((item) => {
+      {checklist.map((item) => {
         const uploaded = [...documents].filter((d) => d.documentType === item.key).sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt));
         const latest = uploaded[0];
         const isExpanded = expandedKey === item.key;

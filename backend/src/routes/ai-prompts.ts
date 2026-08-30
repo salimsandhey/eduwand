@@ -11,12 +11,6 @@ interface UpdatePromptBody {
   promptBody: string;
 }
 
-// Platform-wide (not school-scoped) - only platform_admin can see or change
-// the instruction text sent to Gemini for each Generation.outputType. A
-// missing AiPromptTemplate row means "using the built-in default" - the list
-// endpoint always returns one entry per known outputType regardless of
-// whether an override row exists, so the admin UI never has to reason about
-// a partial/missing set.
 export async function aiPromptRoutes(app: FastifyInstance) {
   app.get("/ai-prompts", { onRequest: [app.authenticate, requireRoles(PLATFORM_ADMIN_ROLE)] }, async () => {
     const overrides = await prisma.aiPromptTemplate.findMany();
@@ -82,8 +76,6 @@ export async function aiPromptRoutes(app: FastifyInstance) {
     }
   );
 
-  // Deletes the override row, not a "revert" - next generation call for this
-  // outputType falls straight back to DEFAULT_OUTPUT_TYPE_INSTRUCTIONS.
   app.delete<{ Params: { outputType: string } }>(
     "/ai-prompts/:outputType",
     { onRequest: [app.authenticate, requireRoles(PLATFORM_ADMIN_ROLE)] },

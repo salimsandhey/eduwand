@@ -15,27 +15,11 @@ import { LessonPlanView } from "./generation/LessonPlanView";
 import { CustomActivityView } from "./generation/CustomActivityView";
 import { FlashcardsView } from "./generation/FlashcardsView";
 import { PresentationView } from "./generation/PresentationView";
+import { OUTPUT_TYPE_LABELS, OUTPUT_TYPE_ICONS } from "./generation/outputTypeMeta";
+import { capitalizeFirst } from "../../utils/text";
 
 type Props = NativeStackScreenProps<RootStackParamList, "GenerationReview">;
 
-const OUTPUT_TYPE_LABELS: Record<string, string> = {
-  lesson_plan: "Lesson Plan",
-  custom_activity_report: "Custom Activity",
-  flashcards: "Flashcards",
-  presentation: "Presentation",
-};
-
-const OUTPUT_TYPE_ICONS: Record<Generation["outputType"], keyof typeof Ionicons.glyphMap> = {
-  lesson_plan: "book-outline",
-  custom_activity_report: "clipboard-outline",
-  flashcards: "albums-outline",
-  presentation: "easel-outline",
-};
-
-// Structured content auto-saves per-item (each card's own Done button), so
-// there's no reason to make the teacher hit a separate global Save - but
-// rapid successive edits (e.g. several cards in a row) shouldn't each fire
-// their own request, so saves are debounced.
 const AUTOSAVE_DEBOUNCE_MS = 600;
 
 function buildMarkdownStyles(colors: ThemeColors) {
@@ -80,15 +64,35 @@ function buildMarkdownStyles(colors: ThemeColors) {
 
 const markdownRules = { markdownit: MarkdownIt({ typographer: false }) };
 
-// Edit-then-persist: the edited version, not the original AI output, is what
-// saves and flows into the attainment report - client doc acceptance
-// criterion 3. Distribution is a stub until the Communication Hub has a real
-// delivery channel (Docs/Dev/AI_Module_Rebuild_Plan.md Phase 4 note).
-//
-// Structured output types (lesson_plan, custom_activity_report, flashcards,
-// presentation) render as native step/card views instead of Markdown, with
-// per-item inline editing that autosaves. A legacy pre-JSON generation falls
-// back to the original whole-document Markdown view + free-text editor.
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+// At-a-glance summary of what was generated, shown in the hero. Source count lives with the
+// content itself (Overview tab for lesson plans, the sources card otherwise) not in this header.
+function contentStats(content: StructuredGenerationContent | null): string[] {
+  const stats: string[] = [];
+  if (content) {
+    switch (content.type) {
+      case "lesson_plan":
+        stats.push(`${content.durationMinutes} min`);
+        stats.push(plural(content.objectives.length, "objective", "objectives"));
+        stats.push(plural(content.activities.length, "activity", "activities"));
+        break;
+      case "custom_activity_report":
+        stats.push(plural(content.activities.length, "activity", "activities"));
+        break;
+      case "flashcards":
+        stats.push(plural(content.cards.length, "card", "cards"));
+        break;
+      case "presentation":
+        stats.push(plural(content.slides.length, "slide", "slides"));
+        break;
+    }
+  }
+  return stats;
+}
+
 export function GenerationReviewScreen({ route, navigation }: Props) {
   const { generationId } = route.params;
   const { accessToken } = useAuth();
@@ -101,6 +105,7 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -199,6 +204,23 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
     }
   }
 
+  async function togglePublish() {
+    if (!accessToken || !generation) return;
+    setIsPublishing(true);
+    setError(null);
+    try {
+      const updated =
+        generation.shareStatus === "published"
+          ? await api.unpublishGeneration(accessToken, generationId)
+          : await api.publishGeneration(accessToken, generationId);
+      setGeneration(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update sharing");
+    } finally {
+      setIsPublishing(false);
+    }
+  }
+
   if (isLoading && !generation) {
     return (
       <Screen style={styles.centered}>
@@ -220,7 +242,8 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
         <View style={styles.screenHeader}>
           <View style={styles.topBar}>
             <Pressable style={[styles.backButton, { backgroundColor: colors.surface, borderColor: colors.border }]} onPress={() => navigation.goBack()} accessibilityRole="button" accessibilityLabel="Go back"><Ionicons name="arrow-back" size={22} color={colors.textPrimary} /></Pressable>
-            <Text style={[styles.topBarTitle, { color: colors.textPrimary, marginLeft: 14, flex: 1 }]}>Lesson with AI</Text>
+            <View style={{ flex: 1 }} />
+            <Pressable style={[styles.backButton, { backgroundColor: colors.surface, borderColor: colors.border }]} onPress={() => navigation.navigate("MainTabs", { screen: "Home" })} accessibilityRole="button" accessibilityLabel="Go to home"><Ionicons name="home-outline" size={20} color={colors.textPrimary} /></Pressable>
           </View>
         </View>
         <View style={styles.centered}>
@@ -236,6 +259,7 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
   }
 
   const markdownStyles = buildMarkdownStyles(colors);
+  const heroStats = contentStats(structuredContent);
 
   return (
     <Screen edges={["top", "bottom"]}>
@@ -245,36 +269,69 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
             <Ionicons name="arrow-back" size={22} color={colors.textPrimary} />
           </Pressable>
           <View style={styles.topBarCopy}>
-            <Text style={[styles.topBarTitle, { color: colors.textPrimary }]}>Lesson with AI</Text>
-            <Text style={[styles.topBarSubtitle, { color: colors.textMuted }]}>Review and refine your content.</Text>
+            <Text style={[styles.generationHeroTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+              {generation.topic?.name ? capitalizeFirst(generation.topic.name) : OUTPUT_TYPE_LABELS[generation.outputType] ?? generation.outputType}
+            </Text>
+            <Text style={[styles.topBarSubtitle, { color: isSaving || savedNotice ? colors.accent : colors.textMuted }]} numberOfLines={1}>
+              {isSaving
+                ? "Saving…"
+                : savedNotice
+                ? "Saved"
+                : generation.editedOutput
+                ? "Edited — your version, not the original"
+                : `${OUTPUT_TYPE_LABELS[generation.outputType]}${
+                    generation.topic
+                      ? ` • ${generation.topic.classSection.className} ${generation.topic.classSection.sectionName} • ${generation.topic.subject}`
+                      : ""
+                  }`}
+            </Text>
           </View>
-          <View style={[styles.aiCircle, { backgroundColor: colors.accent }]}><Ionicons name="sparkles" size={17} color={colors.accentOn} /></View>
+          <Pressable style={[styles.backButton, { backgroundColor: colors.surface, borderColor: colors.border }]} onPress={() => navigation.navigate("MainTabs", { screen: "Home" })} accessibilityRole="button" accessibilityLabel="Go to home"><Ionicons name="home-outline" size={20} color={colors.textPrimary} /></Pressable>
         </View>
 
-        <View style={[styles.generationHero, { backgroundColor: colors.surfaceAccent }]}>
-          <View style={[styles.outputIcon, { backgroundColor: colors.accent }]}><Ionicons name={OUTPUT_TYPE_ICONS[generation.outputType]} size={22} color={colors.accentOn} /></View>
-          <View style={styles.generationHeroCopy}>
-            <Text style={[styles.generationHeroTitle, { color: colors.textPrimary }]} numberOfLines={2}>
-              {generation.topic?.name ?? OUTPUT_TYPE_LABELS[generation.outputType] ?? generation.outputType}
-            </Text>
-            <Text style={[styles.generationHeroMeta, { color: colors.textMuted }]}>
-              {generation.topic
-                ? `${generation.topic.classSection.className} ${generation.topic.classSection.sectionName} • ${generation.topic.subject} • ${generation.topic.board}`
-                : `${generation.language}${generation.minutesPerClass ? ` • ${generation.minutesPerClass} min` : ""}${generation.classCount ? ` • ${generation.classCount} class${generation.classCount === 1 ? "" : "es"}` : ""}`}
-            </Text>
-            <View style={styles.heroBadgeRow}>
-              <View style={[styles.aiBadge, { backgroundColor: colors.accentSoft }]}><Ionicons name="sparkles" size={12} color={colors.accent} /><Text style={[styles.aiBadgeText, { color: colors.accent }]}>AI generated</Text></View>
-              <View style={[styles.outputTypePill, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                <Text style={[styles.outputTypePillText, { color: colors.textSecondary }]}>{OUTPUT_TYPE_LABELS[generation.outputType] ?? generation.outputType}</Text>
-              </View>
-            </View>
+        <View style={styles.generationHero}>
+          <View style={styles.heroFooterRow}>
+            {heroStats.length > 0 ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }} contentContainerStyle={styles.heroStatsRow}>
+                {heroStats.map((stat, i) => (
+                  <View key={i} style={[styles.statChip, { backgroundColor: colors.surfaceRaised }]}>
+                    <Text style={[styles.statChipText, { color: colors.textSecondary }]}>{stat}</Text>
+                  </View>
+                ))}
+              </ScrollView>
+            ) : (
+              <View style={{ flex: 1 }} />
+            )}
+
+            {structuredContent ? (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.editToggle,
+                  isEditing
+                    ? { backgroundColor: colors.accent, borderColor: colors.accent }
+                    : { backgroundColor: colors.surface, borderColor: colors.border },
+                  pressed && { opacity: pressedOpacity },
+                ]}
+                onPress={() => setIsEditing((v) => !v)}
+                accessibilityRole="button"
+              >
+                <Ionicons
+                  name={isEditing ? "checkmark" : "create-outline"}
+                  size={15}
+                  color={isEditing ? colors.accentOn : colors.accent}
+                />
+                <Text style={[styles.editToggleText, { color: isEditing ? colors.accentOn : colors.accent }]}>
+                  {isEditing ? "Done" : "Edit"}
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
         </View>
       </View>
       <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {structuredContent ? (
           <View>
-            <View style={styles.structuredReviewHeader}>
+            {structuredContent.type !== "lesson_plan" ? <View style={styles.structuredReviewHeader}>
               <View>
                 <Text style={[styles.outputTypeLabel, { color: colors.textPrimary }]}>Content review</Text>
                 <Text style={[styles.meta, { color: colors.textMuted }]}>
@@ -283,17 +340,17 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
                   {isSaving ? " / saving..." : savedNotice ? " / saved" : ""}
                 </Text>
               </View>
-              <View style={[styles.reviewStatus, { backgroundColor: colors.accentSoft }]}><Ionicons name={isSaving ? "sync" : "checkmark"} size={13} color={colors.accent} /><Text style={[styles.reviewStatusText, { color: colors.accent }]}>{isSaving ? "Saving" : "Editable"}</Text></View>
-            </View>
+              <View style={[styles.reviewStatus, { backgroundColor: colors.accentSoft }]}><Ionicons name={isSaving ? "sync" : isEditing ? "create-outline" : "eye-outline"} size={13} color={colors.accent} /><Text style={[styles.reviewStatusText, { color: colors.accent }]}>{isSaving ? "Saving" : isEditing ? "Editing" : "Read only"}</Text></View>
+            </View> : null}
             {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
             {structuredContent.type === "lesson_plan" ? (
-              <LessonPlanView content={structuredContent} editable onChange={handleStructuredChange} />
+              <LessonPlanView content={structuredContent} editable={isEditing} onChange={handleStructuredChange} sources={generation.contextSources} />
             ) : structuredContent.type === "custom_activity_report" ? (
-              <CustomActivityView content={structuredContent} editable onChange={handleStructuredChange} />
+              <CustomActivityView content={structuredContent} editable={isEditing} onChange={handleStructuredChange} />
             ) : structuredContent.type === "flashcards" ? (
-              <FlashcardsView content={structuredContent} editable onChange={handleStructuredChange} />
+              <FlashcardsView content={structuredContent} editable={isEditing} onChange={handleStructuredChange} />
             ) : (
-              <PresentationView content={structuredContent} editable onChange={handleStructuredChange} />
+              <PresentationView content={structuredContent} editable={isEditing} onChange={handleStructuredChange} />
             )}
           </View>
         ) : (
@@ -364,7 +421,7 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
         </View>
         )}
 
-        {generation.contextSources.length > 0 ? (
+        {generation.contextSources.length > 0 && structuredContent?.type !== "lesson_plan" ? (
           <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow, { marginTop: 14 }]}>
             <Text style={[styles.label, { color: colors.textSecondary }]}>Sources used</Text>
             {generation.contextSources.map((s) => (
@@ -380,6 +437,18 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
             ))}
           </View>
         ) : null}
+
+        <View style={styles.footer}>
+          <Pressable
+            style={({ pressed }) => [styles.shareButton, { backgroundColor: generation.shareStatus === "published" ? colors.surfaceRaised : colors.accent, borderColor: generation.shareStatus === "published" ? colors.border : colors.accent }, (isPublishing || pressed) && { opacity: pressedOpacity }]}
+            onPress={togglePublish}
+            disabled={isPublishing}
+            accessibilityRole="button"
+          >
+            {isPublishing ? <ActivityIndicator color={generation.shareStatus === "published" ? colors.textPrimary : colors.accentOn} /> : <><Text style={[styles.shareButtonText, { color: generation.shareStatus === "published" ? colors.textPrimary : colors.accentOn }]}>{generation.shareStatus === "published" ? "Unshare from students" : "Share with students"}</Text><Ionicons name="arrow-forward" size={19} color={generation.shareStatus === "published" ? colors.textPrimary : colors.accentOn} /></>}
+          </Pressable>
+          <Text style={[styles.footerNote, { color: colors.textMuted }]}>{generation.shareStatus === "published" ? "Students can see this in their Materials tab." : "Review before students receive it."}</Text>
+        </View>
       </ScrollView>
     </Screen>
   );
@@ -387,26 +456,24 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  content: { paddingHorizontal: 24, paddingTop: 18, paddingBottom: 40 },
+  content: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 34 },
   centered: { justifyContent: "center", alignItems: "center", padding: 24 },
-  screenHeader: { paddingHorizontal: 24, paddingTop: 8 },
-  topBar: { height: 50, flexDirection: "row", alignItems: "center" },
+  screenHeader: { paddingHorizontal: 20, paddingTop: 6 },
+  topBar: { minHeight: 50, flexDirection: "row", alignItems: "center" },
   backButton: { width: 40, height: 40, borderRadius: 20, borderWidth: 1, alignItems: "center", justifyContent: "center" },
-  topBarCopy: { flex: 1, marginLeft: 14 },
-  topBarTitle: { fontSize: 19, lineHeight: 24, fontWeight: "800", letterSpacing: -0.4 },
+  topBarCopy: { flex: 1, marginLeft: 14, marginRight: 10 },
   topBarSubtitle: { marginTop: 1, fontSize: 12, lineHeight: 16, fontWeight: "500" },
-  aiCircle: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
-  generationHero: { flexDirection: "row", alignItems: "center", borderRadius: 20, padding: 18, marginTop: 16 },
-  outputIcon: { width: 48, height: 48, borderRadius: 15, alignItems: "center", justifyContent: "center" },
-  generationHeroCopy: { flex: 1, marginLeft: 13 },
-  generationHeroTitle: { fontSize: 22, lineHeight: 27, fontWeight: "800", letterSpacing: -0.5 },
-  generationHeroMeta: { marginTop: 2, fontSize: 12, lineHeight: 17, fontWeight: "500" },
-  heroBadgeRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 9 },
-  aiBadge: { flexDirection: "row", alignItems: "center", gap: 4, borderRadius: radius.pill, paddingHorizontal: 9, paddingVertical: 4 },
-  aiBadgeText: { fontSize: 11, fontWeight: "700" },
-  outputTypePill: { borderWidth: 1, borderRadius: radius.pill, paddingHorizontal: 9, paddingVertical: 4 },
-  outputTypePillText: { fontSize: 11, fontWeight: "700" },
-  card: { borderWidth: 1, borderRadius: 18, padding: spacing.lg },
+  generationHero: { marginTop: 4 },
+  generationHeroTitle: { fontSize: 18, lineHeight: 23, fontWeight: "800", letterSpacing: -0.4 },
+  heroFooterRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 4 },
+  heroStatsRow: { flexDirection: "row", gap: 8 },
+  statChip: { borderRadius: radius.pill, paddingHorizontal: 11, height: 30, alignItems: "center", justifyContent: "center" },
+  statChipText: { fontSize: 11, fontWeight: "700" },
+  editToggle: { flexDirection: "row", alignItems: "center", gap: 5, borderWidth: 1, borderRadius: radius.pill, paddingHorizontal: 13, height: 34 },
+  editToggleText: { fontSize: 13, fontWeight: "800" },
+  shareButton: { borderWidth: 1, borderRadius: 15, height: 54, flexDirection: "row", gap: 9, alignItems: "center", justifyContent: "center", paddingHorizontal: 16 },
+  shareButtonText: { fontSize: 15, fontWeight: "800" },
+  card: { borderWidth: 1, borderRadius: 20, padding: spacing.lg },
   structuredReviewHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
   reviewStatus: { flexDirection: "row", alignItems: "center", gap: 5, borderRadius: radius.pill, paddingHorizontal: 10, paddingVertical: 6 },
   reviewStatusText: { fontSize: 11, fontWeight: "700" },
@@ -426,6 +493,8 @@ const styles = StyleSheet.create({
   failedText: { fontSize: 16, fontWeight: "800", marginTop: 8, marginBottom: 4 },
   retryButton: { borderRadius: 10, height: 46, paddingHorizontal: 28, alignItems: "center", justifyContent: "center" },
   retryButtonText: { fontSize: 14, fontWeight: "700" },
+  footer: { marginTop: 20 },
+  footerNote: { textAlign: "center", marginTop: 6, fontSize: 10, fontWeight: "500" },
   sourceRow: {
     flexDirection: "row",
     alignItems: "center",

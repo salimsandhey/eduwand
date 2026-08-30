@@ -5,8 +5,6 @@ import type { Subject } from "../../api/client";
 import { Card } from "../../components/Card";
 import type { SchoolOutletContext } from "./SchoolLayout";
 
-// The per-school gateway for Topic.subject (unified-app's Lesson Studio
-// "New topic" form reads this list as a closed picker - no free text).
 export function SchoolSubjectsTab() {
   const { id, accessToken, canManageAcademics } = useOutletContext<SchoolOutletContext>();
 

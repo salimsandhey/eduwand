@@ -16,6 +16,7 @@
       "supportsTablet": true
     },
     "android": {
+      "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#F4F1E8",
         "foregroundImage": "./assets/brand/eduwand-icon.png",
@@ -39,12 +40,64 @@
     "owner": "salimsandhey",
     "plugins": [
       [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts/Poppins-Regular.ttf",
+            "./assets/fonts/Poppins-Medium.ttf",
+            "./assets/fonts/Poppins-SemiBold.ttf",
+            "./assets/fonts/Poppins-Bold.ttf"
+          ],
+          "android": {
+            "fonts": [
+              {
+                "fontFamily": "Poppins-Regular",
+                "fontDefinitions": [
+                  {
+                    "path": "./assets/fonts/Poppins-Regular.ttf",
+                    "weight": 400
+                  }
+                ]
+              },
+              {
+                "fontFamily": "Poppins-Medium",
+                "fontDefinitions": [
+                  {
+                    "path": "./assets/fonts/Poppins-Medium.ttf",
+                    "weight": 500
+                  }
+                ]
+              },
+              {
+                "fontFamily": "Poppins-SemiBold",
+                "fontDefinitions": [
+                  {
+                    "path": "./assets/fonts/Poppins-SemiBold.ttf",
+                    "weight": 600
+                  }
+                ]
+              },
+              {
+                "fontFamily": "Poppins-Bold",
+                "fontDefinitions": [
+                  {
+                    "path": "./assets/fonts/Poppins-Bold.ttf",
+                    "weight": 700
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      [
         "expo-image-picker",
         {
           "photosPermission": "Used to attach a profile photo to a lead from your photo library.",
           "cameraPermission": "Used to take a profile photo of a lead directly in the app."
         }
-      ]
+      ],
+      "expo-secure-store"
     ]
   }
 }

@@ -1,26 +1,16 @@
 import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 
 export interface MessageProvider {
-  send(channel: "sms" | "email", to: string, body: string): Promise<{ success: boolean; providerId?: string; error?: string }>;
+  send(channel: "sms" | "email" | "whatsapp", to: string, body: string): Promise<{ success: boolean; providerId?: string; error?: string }>;
 }
 
-// No SMS gateway (Twilio) or email provider credentials are configured yet
-// (see Docs/Dev/EduWand_Environment_Setup.md section 6). This stub logs the
-// rendered message and reports success so task status transitions can be
-// built and tested end-to-end now. Swap the messageProvider export below for
-// TwilioMessageProvider / SesEmailProvider once credentials are available -
-// callers only depend on the MessageProvider interface, not this implementation.
 class StubMessageProvider implements MessageProvider {
-  async send(channel: "sms" | "email", to: string, body: string) {
+  async send(channel: "sms" | "email" | "whatsapp", to: string, body: string) {
     console.warn(`[stub messaging] would send ${channel} to ${to}: ${body}`);
     return { success: true, providerId: `stub-${Date.now()}` };
   }
 }
 
-// Real SMS via Twilio's plain REST API (Basic Auth + fetch) - no `twilio` SDK
-// dependency needed for a single "send an SMS" call. Needs TWILIO_ACCOUNT_SID,
-// TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER once this is wired in as the active
-// provider - not read from env here, so this class stays testable without them.
 export class TwilioMessageProvider implements MessageProvider {
   constructor(
     private readonly accountSid: string,
@@ -28,9 +18,9 @@ export class TwilioMessageProvider implements MessageProvider {
     private readonly fromNumber: string
   ) {}
 
-  async send(channel: "sms" | "email", to: string, body: string) {
-    if (channel !== "sms") {
-      return { success: false, error: "TwilioMessageProvider only handles the sms channel" };
+  async send(channel: "sms" | "email" | "whatsapp", to: string, body: string) {
+    if (channel !== "sms" && channel !== "whatsapp") {
+      return { success: false, error: "TwilioMessageProvider only handles sms and whatsapp" };
     }
 
     const auth = Buffer.from(`${this.accountSid}:${this.authToken}`).toString("base64");
@@ -40,7 +30,7 @@ export class TwilioMessageProvider implements MessageProvider {
         Authorization: `Basic ${auth}`,
         "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: new URLSearchParams({ To: to, From: this.fromNumber, Body: body }).toString(),
+      body: new URLSearchParams({ To: channel === "whatsapp" ? `whatsapp:${to}` : to, From: channel === "whatsapp" ? `whatsapp:${this.fromNumber}` : this.fromNumber, Body: body }).toString(),
     });
     const result = (await response.json()) as { message?: string; sid?: string };
 
@@ -51,9 +41,6 @@ export class TwilioMessageProvider implements MessageProvider {
   }
 }
 
-// Real email via AWS SES. Credentials/region resolve through the standard AWS
-// SDK chain (env vars, shared config, instance role) - nothing SES-specific to
-// configure here beyond the sender address.
 export class SesEmailProvider implements MessageProvider {
   private readonly client: SESClient;
 
@@ -61,7 +48,7 @@ export class SesEmailProvider implements MessageProvider {
     this.client = new SESClient({ region });
   }
 
-  async send(channel: "sms" | "email", to: string, body: string) {
+  async send(channel: "sms" | "email" | "whatsapp", to: string, body: string) {
     if (channel !== "email") {
       return { success: false, error: "SesEmailProvider only handles the email channel" };
     }
@@ -86,8 +73,6 @@ export class SesEmailProvider implements MessageProvider {
 
 export const messageProvider: MessageProvider = new StubMessageProvider();
 
-// Replaces {{fieldName}} placeholders in a template body with values from data.
-// Unknown placeholders are left as-is rather than erroring.
 export function renderTemplate(body: string, data: Record<string, string | null | undefined>): string {
   return body.replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key) => {
     const value = data[key];

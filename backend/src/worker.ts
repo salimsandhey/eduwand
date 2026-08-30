@@ -1,15 +1,35 @@
-// Background worker (matches the "two production instances plus one worker
-// instance" architecture in Docs/Dev/EduWand_Engineering_PRD.md section 4).
-// Runs as its own process (npm run worker), not inside the request/response
-// server, and ticks on a plain interval - no scheduler dependency needed at
-// this scale. Fires due follow-up tasks (FR-EG-4) and scheduled CSV exports
-// (FR-EG-11), reusing the exact same code paths their manual endpoints use.
+import "dotenv/config";
 import { prisma } from "./lib/prisma";
 import { sendFollowUpTask } from "./lib/follow-up";
 import { runCsvExport } from "./lib/exports";
 
 const TICK_MS = 60_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+async function processAutoFollowUps() {
+  const quietSince = new Date(Date.now() - 7 * DAY_MS);
+  const enquiries = await prisma.enquiry.findMany({
+    where: { duplicateOfEnquiryId: null, ownerUserId: { not: null }, status: { notIn: ["lost", "admitted", "enrolled"] }, updatedAt: { lte: quietSince } },
+    select: { id: true, schoolId: true, ownerUserId: true },
+  });
+  for (const enquiry of enquiries) {
+    const existing = await prisma.followUpTask.findFirst({ where: { enquiryId: enquiry.id, status: "pending" } });
+    const template = await prisma.messageTemplate.findFirst({ where: { schoolId: enquiry.schoolId, channel: "whatsapp" } }) ?? await prisma.messageTemplate.findFirst({ where: { schoolId: enquiry.schoolId, channel: "sms" } });
+    if (!existing && template && enquiry.ownerUserId) await prisma.followUpTask.create({ data: { enquiryId: enquiry.id, assignedToUserId: enquiry.ownerUserId, dueAt: new Date(), channel: template.channel, templateId: template.id, status: "pending" } });
+  }
+}
+
+async function processEscalations() {
+  const overdue = await prisma.followUpTask.findMany({ where: { status: "pending", escalatedAt: null, dueAt: { lte: new Date(Date.now() - 3 * DAY_MS) } }, include: { enquiry: true, template: true } });
+  for (const task of overdue) {
+    const manager = await prisma.appUser.findFirst({ where: { schoolId: task.enquiry.schoolId, role: { in: ["admin", "principal"] }, status: "active" }, select: { id: true } });
+    if (!manager) continue;
+    await prisma.$transaction([
+      prisma.followUpTask.create({ data: { enquiryId: task.enquiryId, assignedToUserId: manager.id, dueAt: new Date(), channel: task.channel, templateId: task.templateId, status: "pending" } }),
+      prisma.followUpTask.update({ where: { id: task.id }, data: { escalatedAt: new Date() } }),
+    ]);
+  }
+}
 
 async function processDueFollowUps() {
   const dueTasks = await prisma.followUpTask.findMany({
@@ -60,6 +80,8 @@ async function processScheduledExports() {
 
 async function tick() {
   await processDueFollowUps();
+  await processAutoFollowUps();
+  await processEscalations();
   await processScheduledExports();
 }
 

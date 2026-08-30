@@ -9,9 +9,6 @@ import { api, ClassSection, StudentStub, CommunicationMessage } from "../../api/
 
 type Section = "student" | "class" | "weekly";
 
-// Communication Hub (client doc section 7) - three channels: teacher-to-
-// student, teacher-to-class, and the automatic weekly parent update (preview
-// + hold only, since delivery is unresolved - PRD Q-08 gap).
 export function CommunicationHubScreen() {
   const { accessToken } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();

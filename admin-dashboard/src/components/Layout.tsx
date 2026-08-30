@@ -80,35 +80,32 @@ interface NavItem {
 }
 
 const ADMIN_LEADERSHIP_PLATFORM = ["admin", "leadership", "platform_admin"];
+const GROWTH_ENGINE_ROLES = [...ADMIN_LEADERSHIP_PLATFORM, "principal"];
+const FORM_BUILDER_ROLES = ["admin", "principal"];
 
-// Keep this list in sync with the per-role guard in App.tsx (ROUTE_ROLES) and
-// with the backend requireRoles(...) calls that actually enforce access -
-// this only controls what's shown in the sidebar / blocked client-side.
 export const NAV_ITEMS: NavItem[] = [
   { to: "/overview", label: "Overview", icon: "home", roles: ["front_desk", "counsellor", "teacher", "admin", "leadership", "platform_admin"] },
   { to: "/trusts", label: "Trusts", icon: "building", roles: ["platform_admin"] },
   { to: "/my-school", label: "My School", icon: "building", roles: ["admin"] },
-  { to: "/funnel", label: "Enrolment Funnel", icon: "filter", roles: ADMIN_LEADERSHIP_PLATFORM },
-  { to: "/sources", label: "Source Breakdown", icon: "chart", roles: ADMIN_LEADERSHIP_PLATFORM },
-  { to: "/counsellors", label: "Counsellor Performance", icon: "users", roles: ADMIN_LEADERSHIP_PLATFORM },
-  { to: "/pipeline-stages", label: "Pipeline Stages", icon: "layers", roles: ADMIN_LEADERSHIP_PLATFORM },
-  { to: "/message-templates", label: "Message Templates", icon: "layers", roles: ADMIN_LEADERSHIP_PLATFORM },
+  { to: "/funnel", label: "Enrolment Funnel", icon: "filter", roles: GROWTH_ENGINE_ROLES },
+  { to: "/sources", label: "Source Breakdown", icon: "chart", roles: GROWTH_ENGINE_ROLES },
+  { to: "/counsellors", label: "Counsellor Performance", icon: "users", roles: GROWTH_ENGINE_ROLES },
+  { to: "/pipeline-stages", label: "Pipeline Stages", icon: "layers", roles: GROWTH_ENGINE_ROLES },
+  { to: "/form-builder", label: "Form Builder", icon: "layers", roles: FORM_BUILDER_ROLES },
+  { to: "/message-templates", label: "Message Templates", icon: "layers", roles: GROWTH_ENGINE_ROLES },
   { to: "/exports", label: "CSV Exports", icon: "chart", roles: ADMIN_LEADERSHIP_PLATFORM },
   { to: "/audit-log", label: "Audit Log", icon: "filter", roles: ADMIN_LEADERSHIP_PLATFORM },
   { to: "/ai-usage", label: "AI Usage Analytics", icon: "sparkle", roles: ADMIN_LEADERSHIP_PLATFORM },
   { to: "/ai-prompts", label: "AI Prompts", icon: "sparkle", roles: ["platform_admin"] },
 ];
 
-// Pages that actually read the SchoolPicker's selected school (school-scoped
-// analytics/config pages) - everywhere else (Overview, Trusts, a specific
-// school's own detail page) the picker would just be a redundant/confusing
-// second "which school" control.
 const SCHOOL_SCOPED_PATHS = new Set([
   "/funnel",
   "/sources",
   "/counsellors",
   "/ai-usage",
   "/pipeline-stages",
+  "/form-builder",
   "/message-templates",
   "/exports",
   "/audit-log",

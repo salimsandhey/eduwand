@@ -4,19 +4,12 @@ import { storage } from "../lib/storage";
 
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope];
 
-// unified-app bundles avatar-01.png..avatar-10.png (unified-app/assets/avatars) -
-// keep this list in sync with that folder.
 const VALID_AVATAR_KEYS = Array.from({ length: 10 }, (_, i) => `avatar-${String(i + 1).padStart(2, "0")}`);
 
 interface SetAvatarBody {
   avatarKey: string;
 }
 
-// <Image> has no cross-platform way to attach an Authorization header
-// (react-native-web renders a plain <img>, which can't send one), so this one
-// GET alone also accepts the access token as ?token= and promotes it to a
-// real Authorization header before running the normal auth chain - everything
-// downstream still requires an authenticate + requireSchoolScope pass.
 function authenticateFromHeaderOrQuery(app: FastifyInstance) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
     if (!request.headers.authorization) {
@@ -28,7 +21,6 @@ function authenticateFromHeaderOrQuery(app: FastifyInstance) {
 }
 
 export async function enquiryPhotoRoutes(app: FastifyInstance) {
-  // Uploaded photo (camera or gallery) - mutually exclusive with avatarKey.
   app.post<{ Params: { id: string } }>(
     "/enquiries/:id/photo",
     { onRequest: scoped(app) },
@@ -66,7 +58,6 @@ export async function enquiryPhotoRoutes(app: FastifyInstance) {
     }
   );
 
-  // Preset avatar pick - mutually exclusive with an uploaded photo.
   app.patch<{ Params: { id: string }; Body: SetAvatarBody }>(
     "/enquiries/:id/avatar",
     { onRequest: scoped(app) },

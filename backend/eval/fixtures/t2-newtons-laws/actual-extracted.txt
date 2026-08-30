@@ -1,0 +1,718 @@
+St.	
+Andrews	
+Scots	
+Sr.	
+Sec.	
+School
+9th
+Avenue,	
+I.P. Extension,	
+Patparganj.	
+Delhi
+–	
+110092.
+Class:	
+IX	
+Ch-9:Force	
+&	
+Laws	
+Of
+Motion
+Topic:	
+Notes
+FORCE
+Force	
+may
+be defined	
+as	
+an
+agency	
+(a
+push
+or	
+pull)
+which
+changes	
+or	
+tends	
+to	
+change
+the	
+state	
+of
+rest	
+or	
+of
+uniform	
+motion	
+or
+the	
+direction	
+of	
+motion	
+of
+a	
+body.
+EFFECTS	
+OF	
+FORCE
+A	
+force	
+applied	
+on	
+an	
+object
+can	
+produce	
+the
+following changes:
+1.
+A
+force	
+can
+change	
+a	
+state of
+rest.
+For
+Example
+-
+If
+we	
+kick
+a	
+football
+kept	
+on	
+the	
+ground,	
+then
+the	
+football starts	
+moving; If
+we	
+push
+a	
+resting	
+table,	
+then	
+the	
+table	
+will	
+start	
+moving.	
+In	
+both	
+the	
+cases,	
+the	
+force	
+applied	
+has	
+changed
+the	
+state	
+of rest.
+2.
+A	
+force	
+can	
+stop	
+a
+moving
+body.
+For	
+Example
+-
+A	
+football	
+moving
+on	
+ground	
+stops	
+after	
+sometime,	
+because of the	
+force	
+of
+friction
+of	
+ground.
+3.
+A	
+force	
+can	
+change
+the	
+speed	
+of
+an	
+object.
+For Example	
+-	
+A	
+speed	
+of	
+a	
+moving	
+car	
+can	
+be	
+increased	
+by	
+accelerating	
+the	
+car	
+or	
+can
+decreased	
+or
+stopped
+by
+applying	
+the	
+brakes.
+be
+4.
+A	
+force	
+can	
+change	
+the
+direction of	
+motion	
+of
+an	
+object.
+For	
+Example	
+-
+A	
+force exerted	
+on
+the	
+steering	
+wheel	
+of	
+a	
+car	
+changes
+the	
+direction
+of
+motion;	
+A
+force	
+exerted	
+by the cricket	
+player's bat	
+changes	
+the	
+direction	
+of
+moving
+cricket
+ball.
+5.
+A
+force	
+can	
+change the
+shape of
+an	
+object.
+For Example
+-
+If
+we	
+pull	
+a	
+spring	
+from
+both	
+the	
+ends,	
+then the	
+shape	
+of
+spring changes.
+BALANCED	
+FORCES
+If
+the
+resultant	
+of	
+all
+the	
+forces	
+acting	
+on	
+a	
+body
+is	
+zero,
+the forces	
+are	
+called	
+balanced	
+forces.
+For Example	
+- A	
+game	
+of tug of
+war
+with	
+equally	
+matched opponents	
+is	
+an	
+example	
+of balanced
+force;
+When
+the	
+man
+pushes	
+against	
+the wall,
+the	
+forces at	
+play	
+balance	
+each	
+other,	
+and	
+as a
+result,
+the wall does not	
+move.
+Ο Scanned with OKEN Scanner
+
+-- 1 of 3 --
+
+BALANCED	
+FORCES
+The
+forces	
+on
+the	
+person
+are
+balanced.
+The
+floor
+pushes
+upward
+on
+the
+person.
+Gravity
+pulls
+dowwvards
+on
+the
+person.
+UNBALANCED	
+FORCES
+If	
+the resultant	
+of	
+all	
+the	
+forces	
+acting	
+on	
+a	
+body	
+is	
+not	
+zero, the	
+forces	
+are	
+called	
+unbalanced
+forces.
+For	
+Example	
+-	
+The	
+ball	
+moves	
+from	
+one	
+place	
+to	
+another	
+after	
+it's	
+kicked.
+INERTIA
+The	
+inherent property	
+or	
+tendency	
+of	
+an	
+object	
+by
+virtue	
+of
+which
+it	
+cannot	
+change	
+its	
+state	
+of
+rest
+or	
+uniform	
+motion	
+in	
+a	
+straight line	
+is called	
+inertia.
+TYPES OF	
+INERTIA
+a)	
+Inertia	
+of rest	
+-	
+The	
+tendency of	
+a	
+body to remain	
+in	
+its	
+state of
+rest	
+is	
+called	
+inertia	
+of
+rest.
+Example	
+-	
+A	
+person	
+standing in	
+a	
+bus	
+falls	
+backward	
+when	
+the	
+bus	
+suddenly	
+starts	
+moving
+forward.	
+When
+the	
+bus moves,	
+the	
+lower
+part	
+of
+his	
+body	
+begins	
+to	
+move	
+along	
+with	
+the bus	
+while
+the	
+upper	
+part	
+of his	
+body continues to remain at rest	
+due to	
+inertia.	
+That	
+is	
+why,	
+a	
+person	
+falls
+backward	
+when	
+the	
+bus	
+starts.
+Ο Scanned with OKEN Scanner
+
+-- 2 of 3 --
+
+b)	
+Inertia	
+of	
+motion	
+-	
+The	
+tendency of	
+a	
+body
+to remain	
+in	
+its	
+state	
+of
+uniform	
+motion	
+in	
+a	
+straight
+line	
+is	
+called inertia	
+of motion.
+Example	
+-	
+When	
+a	
+moving	
+bus	
+suddenly
+stops,	
+a	
+person	
+sitting	
+in	
+it
+falls
+forward.	
+As
+the
+bus	
+stops,
+the	
+lower	
+part	
+of
+the	
+body	
+comes	
+to	
+rest	
+along
+with	
+the	
+bus	
+while the	
+upper	
+part	
+of body
+continues
+to	
+remain	
+in	
+motion	
+due	
+to	
+inertia	
+and	
+falls	
+forward.
+c)	
+Inertia	
+of	
+direction	
+–	
+The	
+inability	
+of
+a	
+body	
+to	
+change	
+its	
+direction	
+of
+motion	
+is	
+called	
+inertia
+of
+direction.
+Example	
+-	
+When	
+a	
+bus	
+takes	
+a	
+sharp	
+turn,	
+a	
+person	
+sitting	
+in	
+the	
+bus	
+experiences	
+a	
+force	
+acting
+away	
+from	
+the	
+centre of
+the	
+curved	
+path	
+due	
+to	
+his	
+tendency	
+to	
+move	
+in	
+the	
+original	
+direction.
+Types	
+ofInertia
+Inertia	
+of Rest Inertia of
+Motion	
+Inertia	
+of	
+Direction
+20
+Pile
+of
+carom
+coins
+Centrifugal
+force
+Centrifugal	
+condition
+Mass	
+as	
+the	
+measure	
+of	
+inertia	
+–	
+Mass	
+is	
+the	
+measure	
+of	
+its	
+inertia.	
+If	
+a	
+body has	
+more
+mass,	
+it	
+has	
+more	
+inertia.	
+And	
+if	
+a	
+body
+has	
+less	
+mass,	
+it	
+has	
+less	
+inertia.
+Example	
+-
+A	
+stone has	
+more	
+inertia	
+than
+a	
+football;	
+A
+truck
+has	
+more	
+inertia	
+than	
+a
+bicycle;
+etc.
+NEWTON'S LAWS	
+OF	
+MOTION
+Sir
+Isaac	
+Newton	
+(1642-1727)	
+made	
+a	
+systematic	
+study	
+of	
+motion	
+and	
+gave	
+three	
+laws which
+describe	
+the	
+motion	
+of
+bodies.	
+These three	
+laws	
+are known	
+as Newton's Laws	
+of Motion.
+1.	
+Newton's	
+First	
+Law	
+Of Motion
+According to	
+Newton's	
+first	
+law	
+of
+motion,	
+a	
+body
+at	
+rest	
+will
+remain	
+at	
+rest,	
+and	
+a
+body	
+in motion
+will continue	
+its	
+uniform motion in	
+a	
+straight	
+line until	
+and	
+unless	
+some	
+external force
+is applied
+to	
+change	
+its	
+state	
+of rest	
+or	
+of uniform	
+motion. This law consists of
+two	
+parts:
+Ο Scanned with OKEN Scanner
+
+-- 3 of 3 --

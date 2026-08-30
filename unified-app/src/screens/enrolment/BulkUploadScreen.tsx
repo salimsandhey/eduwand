@@ -7,8 +7,6 @@ import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, CreateEnquiryInput } from "../../api/client";
 
-// Matches backend/src/lib/csv.ts's fromCsv - duplicated by hand rather than
-// shared, since the mobile app and backend are separate runtimes/packages.
 function parseCsv(text: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];

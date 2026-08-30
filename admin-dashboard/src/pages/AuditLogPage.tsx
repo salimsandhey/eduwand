@@ -62,10 +62,6 @@ export function AuditLogPage() {
     setPage(1);
   }, [schoolId]);
 
-  // Unlike other school-scoped pages, this one never blocks on the picker -
-  // platform_admin without a school selected still sees the unscoped
-  // (all-schools) log, and leadership without one sees their whole trust's
-  // log (both handled server-side in backend/src/routes/audit-log.ts).
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
 
   return (

@@ -8,6 +8,7 @@ interface Question {
   id: string;
   prompt: string;
   type?: string;
+  difficulty?: "easy" | "medium" | "hard";
 }
 
 interface CreateAssignmentBody {
@@ -16,6 +17,12 @@ interface CreateAssignmentBody {
   questions: Question[];
   personalisationEnabled?: boolean;
   topicId?: string;
+}
+
+interface UpdateAssignmentBody {
+  title?: string;
+  questions?: Question[];
+  personalisationEnabled?: boolean;
 }
 
 interface UpdatePersonalisationBody {
@@ -29,16 +36,10 @@ interface UpdateAnswerKeyBody {
 }
 
 const VALID_DECISIONS = ["approved", "overridden", "opted_out"];
-// Client doc, Assignment Lab Personalisation prerequisite: at least two prior
-// assignments on the same topic already distributed and graded.
 const PERSONALISATION_PREREQUISITE_COUNT = 2;
 
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope, requireRoles("teacher")];
 
-// True once a student has at least PERSONALISATION_PREREQUISITE_COUNT graded
-// submissions on assignments belonging to the given topic. Enforced here,
-// server-side, per the client doc's explicit acceptance criterion - the UI
-// must not be the only gate.
 async function personalisationEligible(schoolId: string, topicId: string | null, studentStubId: string): Promise<boolean> {
   if (!topicId) return false;
   const gradedCount = await prisma.grade.count({
@@ -53,11 +54,6 @@ async function personalisationEligible(schoolId: string, topicId: string | null,
   return gradedCount >= PERSONALISATION_PREREQUISITE_COUNT;
 }
 
-// Assignment Lab: create + personalisation review (FR-AI-2). The mandatory
-// teacher-initiated fallback design (PRD section 6.4) means
-// POST .../personalisation-suggestions below ONLY ever creates status:"pending"
-// rows and never touches appliedMix - PATCH /personalisation-suggestions/:id
-// is the single place in this whole codebase allowed to set it.
 export async function assignmentRoutes(app: FastifyInstance) {
   app.post<{ Body: CreateAssignmentBody }>("/assignments", { onRequest: scoped(app) }, async (request, reply) => {
     const body = request.body ?? ({} as CreateAssignmentBody);
@@ -121,6 +117,93 @@ export async function assignmentRoutes(app: FastifyInstance) {
     return { data: assignment, meta: {} };
   });
 
+  // Edit is only allowed pre-publish - once published, students may already
+  // be looking at these questions (and personalised delivery may have
+  // selected a subset of them), so changing them out from under an in-flight
+  // assignment is disallowed. Unpublish first if it truly needs editing.
+  app.patch<{ Params: { id: string }; Body: UpdateAssignmentBody }>("/assignments/:id", { onRequest: scoped(app) }, async (request, reply) => {
+    const body = request.body ?? ({} as UpdateAssignmentBody);
+    const assignment = await prisma.assignment.findFirst({
+      where: { id: request.params.id, schoolId: request.schoolId },
+    });
+    if (!assignment) {
+      return reply.code(404).send({ data: null, error: { code: "not_found", message: "Assignment not found" } });
+    }
+    if (assignment.status !== "draft") {
+      return reply.code(400).send({
+        data: null,
+        error: { code: "validation_error", message: "Only a draft assignment can be edited - unpublish it first" },
+      });
+    }
+    if (body.questions && (!Array.isArray(body.questions) || body.questions.length === 0)) {
+      return reply.code(400).send({ data: null, error: { code: "validation_error", message: "At least one question is required" } });
+    }
+
+    const updated = await prisma.assignment.update({
+      where: { id: assignment.id },
+      data: {
+        title: body.title?.trim() || undefined,
+        questions: body.questions ? (body.questions as unknown as Prisma.InputJsonValue) : undefined,
+        personalisationEnabled: body.personalisationEnabled,
+      },
+    });
+
+    return { data: updated, meta: {} };
+  });
+
+  // Only reachable while nobody has submitted yet - once a student has
+  // submitted against a set of questions, pulling the assignment back to
+  // draft (and potentially editing the questions) would orphan or
+  // invalidate their answer. Delete has the same guard for the same reason.
+  app.post<{ Params: { id: string } }>("/assignments/:id/unpublish", { onRequest: scoped(app) }, async (request, reply) => {
+    const assignment = await prisma.assignment.findFirst({
+      where: { id: request.params.id, schoolId: request.schoolId },
+    });
+    if (!assignment) {
+      return reply.code(404).send({ data: null, error: { code: "not_found", message: "Assignment not found" } });
+    }
+    if (assignment.status !== "published") {
+      return reply.code(400).send({ data: null, error: { code: "validation_error", message: "Assignment is not published" } });
+    }
+    const submissionCount = await prisma.submission.count({ where: { assignmentId: assignment.id } });
+    if (submissionCount > 0) {
+      return reply.code(400).send({
+        data: null,
+        error: { code: "validation_error", message: `Cannot unpublish - ${submissionCount} student submission(s) already exist` },
+      });
+    }
+
+    const updated = await prisma.assignment.update({
+      where: { id: assignment.id },
+      data: { status: "draft", publishedAt: null },
+    });
+
+    return { data: updated, meta: {} };
+  });
+
+  app.delete<{ Params: { id: string } }>("/assignments/:id", { onRequest: scoped(app) }, async (request, reply) => {
+    const assignment = await prisma.assignment.findFirst({
+      where: { id: request.params.id, schoolId: request.schoolId },
+    });
+    if (!assignment) {
+      return reply.code(404).send({ data: null, error: { code: "not_found", message: "Assignment not found" } });
+    }
+    if (assignment.status !== "draft") {
+      return reply.code(400).send({
+        data: null,
+        error: { code: "validation_error", message: "Only a draft assignment can be deleted - unpublish it first" },
+      });
+    }
+
+    await prisma.$transaction([
+      prisma.answerKey.deleteMany({ where: { assignmentId: assignment.id } }),
+      prisma.personalisationSuggestion.deleteMany({ where: { assignmentId: assignment.id } }),
+      prisma.assignment.delete({ where: { id: assignment.id } }),
+    ]);
+
+    return { data: { id: assignment.id }, meta: {} };
+  });
+
   app.post<{ Params: { id: string } }>(
     "/assignments/:id/personalisation-suggestions",
     { onRequest: scoped(app) },
@@ -155,9 +238,6 @@ export async function assignmentRoutes(app: FastifyInstance) {
 
         const eligible = await personalisationEligible(request.schoolId, assignment.topicId, student.id);
         if (!eligible) {
-          // Server-side enforcement: standard assignment generation still
-          // succeeds for these students, only personalisation is withheld,
-          // and the reason is explicit rather than a silent skip.
           skipped.push({
             studentStubId: student.id,
             reason: `Needs ${PERSONALISATION_PREREQUISITE_COUNT} prior graded assignments on this topic before personalisation is available`,
@@ -180,10 +260,9 @@ export async function assignmentRoutes(app: FastifyInstance) {
           studentName: student.fullName,
           avgScore,
           submissionCount: pastGrades.length,
+          questionCount: (assignment.questions as unknown as { id: string }[]).length,
         });
 
-        // status is always "pending" here, appliedMix is never set here - see
-        // the file header comment.
         const suggestion = await prisma.personalisationSuggestion.create({
           data: {
             assignmentId: assignment.id,
@@ -208,9 +287,6 @@ export async function assignmentRoutes(app: FastifyInstance) {
     }
   );
 
-  // GET eligibility, checked independently of generation - the Personalisation
-  // Review screen calls this to show plainly why a student is unavailable
-  // before the teacher even tries to generate for them.
   app.get<{ Params: { id: string } }>(
     "/assignments/:id/personalisation-eligibility",
     { onRequest: scoped(app) },
@@ -238,8 +314,6 @@ export async function assignmentRoutes(app: FastifyInstance) {
     }
   );
 
-  // Draft answer key from the assignment's questions - teacher review step
-  // before distribution (client doc workflow step 18/19).
   app.post<{ Params: { id: string } }>("/assignments/:id/answer-key/generate", { onRequest: scoped(app) }, async (request, reply) => {
     const assignment = await prisma.assignment.findFirst({
       where: { id: request.params.id, schoolId: request.schoolId },
@@ -251,15 +325,15 @@ export async function assignmentRoutes(app: FastifyInstance) {
     const questions = assignment.questions as unknown as { id: string; prompt: string }[];
     const start = Date.now();
     const { answers, model } = await aiProvider.generateAnswerKey(
-      questions.map((q, index) => ({ index, prompt: q.prompt, marks: 1 }))
+      questions.map((q, index) => ({ id: q.id, index, prompt: q.prompt, marks: 1 }))
     );
 
     const rows = await Promise.all(
-      questions.map((_, index) =>
+      questions.map((q, index) =>
         prisma.answerKey.upsert({
-          where: { assignmentId_questionIndex: { assignmentId: assignment.id, questionIndex: index } },
-          create: { assignmentId: assignment.id, questionIndex: index, aiAnswer: answers[index] ?? "" },
-          update: { aiAnswer: answers[index] ?? "" },
+          where: { assignmentId_questionId: { assignmentId: assignment.id, questionId: q.id } },
+          create: { assignmentId: assignment.id, questionId: q.id, questionIndex: index, aiAnswer: answers[q.id] ?? "" },
+          update: { aiAnswer: answers[q.id] ?? "", questionIndex: index },
         })
       )
     );
@@ -289,7 +363,6 @@ export async function assignmentRoutes(app: FastifyInstance) {
     return { data: answerKeys, meta: {} };
   });
 
-  // Teacher-verified version, once set, is authoritative - never aiAnswer.
   app.patch<{ Params: { id: string }; Body: UpdateAnswerKeyBody }>(
     "/answer-key/:id",
     { onRequest: scoped(app) },
@@ -315,8 +388,6 @@ export async function assignmentRoutes(app: FastifyInstance) {
     }
   );
 
-  // The single enforcement point for FR-AI-2 (PRD section 6.4) - no other
-  // route in this codebase may write PersonalisationSuggestion.appliedMix.
   app.patch<{ Params: { id: string }; Body: UpdatePersonalisationBody }>(
     "/personalisation-suggestions/:id",
     { onRequest: scoped(app) },

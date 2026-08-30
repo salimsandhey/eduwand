@@ -34,7 +34,7 @@ export function EnrolmentTabNavigator() {
       <Tab.Screen name="Enquiries" component={EnquiryListScreen} />
       <Tab.Screen name="Pipeline" component={PipelineBoardScreen} />
       <Tab.Screen name="Tasks" component={FollowUpTaskListScreen} />
-      <Tab.Screen name="More" component={MoreStackNavigator} />
+      <Tab.Screen name="More" component={MoreStackNavigator} options={{ title: "Profile" }} />
     </Tab.Navigator>
   );
 }

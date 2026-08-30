@@ -1,11 +1,6 @@
 import { useState } from "react";
 import type { CSSProperties } from "react";
 
-// Trend-over-time, 2 series -> line chart, categorical color, per the dataviz
-// skill (choosing-a-form.md). Mark spec (marks-and-anatomy.md): 2px lines,
-// >=8px end markers with a 2px surface-color ring, a legend for >=2 series,
-// direct end-value labels, hairline recessive gridlines. Hover crosshair +
-// tooltip per interaction.md - a line chart ships interactive by default.
 interface LineChartSeries {
   label: string;
   color: string;

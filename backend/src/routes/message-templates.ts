@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 
-const VALID_CHANNELS = ["sms", "email"];
+const VALID_CHANNELS = ["sms", "email", "whatsapp"];
 
 interface CreateTemplateBody {
   channel: string;

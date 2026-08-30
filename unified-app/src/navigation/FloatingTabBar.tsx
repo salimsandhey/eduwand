@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
-import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { Animated, Image, ImageSourcePropType, LayoutChangeEvent, Pressable, StyleSheet, Text, View } from "react-native";
 import { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -8,15 +8,57 @@ import { typography } from "../theme/tokens";
 
 interface FloatingTabBarProps extends BottomTabBarProps {
   icons: Record<string, keyof typeof Ionicons.glyphMap>;
+  aiAssistIcon?: ImageSourcePropType;
+  onAiAssistPress?: () => void;
 }
 
-export function FloatingTabBar({ state, descriptors, navigation, icons }: FloatingTabBarProps) {
-  const { colors, cardShadow } = useTheme();
+export const TAB_BAR_HEIGHT = 68;
+
+type ItemLayout = { x: number; width: number };
+
+export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssistIcon, onAiAssistPress }: FloatingTabBarProps) {
+  const { colors, cardShadow, pressedOpacity } = useTheme();
   const insets = useSafeAreaInsets();
+
+  const [itemLayouts, setItemLayouts] = useState<Record<number, ItemLayout>>({});
+  const indicatorX = useRef(new Animated.Value(0)).current;
+  const activeLayout = itemLayouts[state.index];
+
+  useEffect(() => {
+    if (!activeLayout) return;
+    Animated.spring(indicatorX, {
+      toValue: activeLayout.x,
+      useNativeDriver: true,
+      tension: 210,
+      friction: 28,
+    }).start();
+  }, [activeLayout, indicatorX]);
+
+  function handleItemLayout(index: number, event: LayoutChangeEvent) {
+    const { x, width } = event.nativeEvent.layout;
+    setItemLayouts((prev) => {
+      const existing = prev[index];
+      if (existing && existing.x === x && existing.width === width) return prev;
+      return { ...prev, [index]: { x, width } };
+    });
+  }
 
   return (
     <View pointerEvents="box-none" style={[styles.wrap, { bottom: Math.max(insets.bottom, 10) }]}>
       <View style={[styles.bar, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        {activeLayout ? (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.slidingIndicator,
+              {
+                backgroundColor: colors.accent,
+                width: activeLayout.width,
+                transform: [{ translateX: indicatorX }],
+              },
+            ]}
+          />
+        ) : null}
         {state.routes.map((route, index) => {
           const descriptor = descriptors[route.key];
           const options = descriptor.options;
@@ -56,10 +98,21 @@ export function FloatingTabBar({ state, descriptors, navigation, icons }: Floati
               accessibilityLabel={options.tabBarAccessibilityLabel}
               onPress={onPress}
               onLongPress={onLongPress}
+              onLayout={(event) => handleItemLayout(index, event)}
             />
           );
         })}
       </View>
+      {onAiAssistPress ? (
+        <Pressable
+          onPress={onAiAssistPress}
+          style={({ pressed }) => [styles.aiAssistButton, pressed && { opacity: pressedOpacity }]}
+          accessibilityRole="button"
+          accessibilityLabel="Open AI assistant"
+        >
+          {aiAssistIcon ? <Image source={aiAssistIcon} style={styles.aiAssistIcon} resizeMode="contain" /> : null}
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -71,6 +124,7 @@ function AnimatedTabItem({
   accessibilityLabel,
   onPress,
   onLongPress,
+  onLayout,
 }: {
   label: string;
   focused: boolean;
@@ -78,6 +132,7 @@ function AnimatedTabItem({
   accessibilityLabel?: string;
   onPress: () => void;
   onLongPress: () => void;
+  onLayout: (event: LayoutChangeEvent) => void;
 }) {
   const { colors, pressedOpacity } = useTheme();
   const progress = useRef(new Animated.Value(focused ? 1 : 0)).current;
@@ -91,8 +146,6 @@ function AnimatedTabItem({
     }).start();
   }, [focused, progress]);
 
-  const activeOpacity = progress.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
-  const activeScale = progress.interpolate({ inputRange: [0, 1], outputRange: [0.74, 1] });
   const contentLift = progress.interpolate({ inputRange: [0, 1], outputRange: [0, -1] });
   const iconScale = progress.interpolate({ inputRange: [0, 1], outputRange: [1, 0.92] });
   const inactiveDotOpacity = progress.interpolate({ inputRange: [0, 1], outputRange: [1, 0] });
@@ -101,22 +154,12 @@ function AnimatedTabItem({
     <Pressable
       onPress={onPress}
       onLongPress={onLongPress}
+      onLayout={onLayout}
       accessibilityRole="button"
       accessibilityState={focused ? { selected: true } : {}}
       accessibilityLabel={accessibilityLabel}
       style={({ pressed }) => [styles.item, pressed && { opacity: pressedOpacity }]}
     >
-      <Animated.View
-        pointerEvents="none"
-        style={[
-          styles.activePill,
-          {
-            backgroundColor: colors.accent,
-            opacity: activeOpacity,
-            transform: [{ scale: activeScale }],
-          },
-        ]}
-      />
       <Animated.View style={[styles.itemContent, { transform: [{ translateY: contentLift }] }]}>
         <View style={styles.iconWrap}>
           <Animated.View
@@ -159,13 +202,14 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
   },
   bar: {
-    minHeight: 68,
+    minHeight: TAB_BAR_HEIGHT,
     borderRadius: 28,
     borderWidth: 1,
     padding: 7,
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
+    overflow: "hidden",
   },
   item: {
     flex: 1,
@@ -174,11 +218,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 4,
-    overflow: "hidden",
   },
-  activePill: {
-    ...StyleSheet.absoluteFillObject,
-    borderRadius: 21,
+  slidingIndicator: {
+    position: "absolute",
+    left: 0,
+    top: 3,
+    bottom: 3,
+    borderRadius: 19,
+    shadowColor: "#7C005A",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.28,
+    shadowRadius: 10,
+    elevation: 4,
   },
   itemContent: {
     alignItems: "center",
@@ -199,12 +250,25 @@ const styles = StyleSheet.create({
   },
   label: {
     fontFamily: typography.fontFamily,
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: "700",
     letterSpacing: 0,
   },
   activeLabel: {
     fontFamily: typography.fontFamily,
     fontWeight: "800",
+  },
+  aiAssistButton: {
+    position: "absolute",
+    right: 18,
+    bottom: TAB_BAR_HEIGHT - 14,
+    width: 80,
+    height: 80,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  aiAssistIcon: {
+    width: 64,
+    height: 64,
   },
 });

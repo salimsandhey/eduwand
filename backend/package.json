@@ -10,7 +10,12 @@
     "start": "node dist/server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:seed": "tsx prisma/seed.ts"
+    "prisma:seed": "tsx prisma/seed.ts",
+    "test": "node --import tsx --test src/lib/extraction.test.ts src/lib/context-extraction.test.ts src/lib/ai.test.ts src/lib/personalisation.test.ts",
+    "eval:extraction": "tsx eval/run-extraction.ts",
+    "eval:workbook": "tsx eval/build-workbook.ts",
+    "eval:grounding": "tsx eval/run-grounding.ts",
+    "eval:rubric": "tsx eval/run-rubric.ts"
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.1107.0",
@@ -21,6 +26,8 @@
     "@prisma/client": "^6.19.3",
     "bcryptjs": "^2.4.3",
     "cheerio": "^1.2.0",
+    "cloudinary": "^2.11.0",
+    "dotenv": "^17.4.2",
     "fastify": "^5.11.2",
     "fastify-plugin": "^5.0.1",
     "jszip": "^3.10.1",
@@ -30,6 +37,7 @@
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20.14.15",
+    "exceljs": "^4.4.0",
     "prisma": "^6.19.3",
     "tsx": "^4.19.1",
     "typescript": "^5.5.4"

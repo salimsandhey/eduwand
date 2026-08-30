@@ -19,7 +19,6 @@ export function CsvExportScreen() {
   const [schedule, setSchedule] = useState<CsvExportSchedule | null>(null);
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
 
-  // Button Scale Animation
   const buttonScale = useRef(new Animated.Value(1)).current;
 
   const handlePressIn = () => {
@@ -117,7 +116,6 @@ export function CsvExportScreen() {
         link.click();
         URL.revokeObjectURL(url);
       } else {
-        // No file-system/share module installed yet for native - show the CSV inline instead.
         setPreview({ id, content });
       }
     } catch (err) {
@@ -128,7 +126,7 @@ export function CsvExportScreen() {
   return (
     <Screen edges={["bottom"]}>
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-        {/* Title Block */}
+        {}
         <View style={styles.titleSection}>
           <Text style={[styles.title, { color: colors.textPrimary }]}>CSV Export</Text>
           <Text style={[styles.subtitle, { color: colors.textMuted }]}>
@@ -136,7 +134,7 @@ export function CsvExportScreen() {
           </Text>
         </View>
 
-        {/* Animated Button */}
+        {}
         <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
           <Pressable
             onPressIn={handlePressIn}
@@ -162,7 +160,7 @@ export function CsvExportScreen() {
           </Pressable>
         </Animated.View>
 
-        {/* Automatic export (FR-EG-11) */}
+        {}
         <View style={[styles.scheduleCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
           <View style={styles.scheduleRow}>
             <View style={{ flex: 1 }}>

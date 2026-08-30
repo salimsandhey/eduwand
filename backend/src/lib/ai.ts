@@ -2,16 +2,9 @@ import { prisma } from "./prisma";
 import { storage } from "./storage";
 import { MAX_EXTRACTED_CHARS } from "./extraction";
 
-// PRD's model routing (Docs/Dev/EduWand_Engineering_PRD.md section 6.3) -
-// recorded on every usage log even though the stub never calls a real model,
-// so Admin Dashboard usage analytics (FR-AI-4) reflects the intended routing.
-export const MODEL_SONNET = "claude-sonnet"; // lesson plan / research report generation
-export const MODEL_HAIKU = "claude-haiku"; // grading, personalisation suggestion
-export const MODEL_GEMINI_FLASH = "gemini-2.5-flash"; // Lesson Studio content generation
-
-// Model routing here reflects the pre-rebuild scope (Docs/Dev/EduWand_Engineering_PRD.md
-// section 6.3) and has not been reconfirmed against the expanded 7-component
-// AI module - see section 6.7, Q-02/Q-03. Treat as provisional.
+export const MODEL_SONNET = "claude-sonnet";
+export const MODEL_HAIKU = "claude-haiku";
+export const MODEL_GEMINI_FLASH = "gemini-2.5-flash";
 
 export type GenerationOutputType =
   | "lesson_plan"
@@ -19,13 +12,6 @@ export type GenerationOutputType =
   | "flashcards"
   | "presentation";
 
-// Structured content shapes for Lesson Studio generations (one per
-// GenerationOutputType). Generation.aiOutput/
-// editedOutput remain plain String columns in the DB - these shapes are
-// JSON.stringify'd into that column, not a schema change. Older rows
-// (generated before this existed) are plain Markdown text, not JSON - callers
-// must treat a JSON.parse failure as "legacy content" and fall back to
-// rendering the raw string, never throw.
 export interface LessonPlanContent {
   type: "lesson_plan";
   overview: string;
@@ -69,17 +55,12 @@ export interface GenerationInput {
   language: string;
   customPrompt?: string | null;
   classLabel?: string;
-  // Extracted text from the topic's uploaded context sources (backend/src/lib/
-  // extraction.ts), pre-capped by the caller. Only GeminiAiProvider uses this -
-  // StubAiProvider ignores it, since the stub never calls a real model.
   contextText?: string | null;
-  // The school's format/style instructions (SchoolFormatTemplate, appliesTo:
-  // "generation"), free text - e.g. letterhead line, heading conventions, a
-  // closing disclaimer. Only GeminiAiProvider uses this, same as contextText.
   schoolFormatInstructions?: string | null;
 }
 
 export interface AnswerKeyQuestionInput {
+  id: string;
   index: number;
   prompt: string;
   marks: number;
@@ -87,12 +68,18 @@ export interface AnswerKeyQuestionInput {
 
 export interface OcrInput {
   fileLocation: string;
+  // When provided, the OCR pass tries to segment the transcribed text per
+  // question instead of returning one blob for the whole photo - lets a
+  // single photo of a multi-question worksheet be graded question-by-
+  // question instead of every question seeing the same undifferentiated
+  // text. Only honoured by GeminiAiProvider; the stub has no way to segment.
+  questions?: { id: string; prompt: string }[];
 }
 
 export interface LessonPlanInput {
   topic: string;
   board: string;
-  format: string; // "lesson_plan" | "learning_material"
+  format: string;
   classLabel?: string;
 }
 
@@ -105,6 +92,28 @@ export interface PersonalisationInput {
   studentName: string;
   avgScore: number | null;
   submissionCount: number;
+  // The assignment's actual question count - the suggested mix's counts
+  // should sum to roughly this, not a fixed number, so every question in
+  // the assignment can plausibly appear in some student's delivered subset.
+  questionCount: number;
+}
+
+// Scales a difficulty ratio (e.g. {easy:2, medium:2, hard:1}) up/down to sum
+// to the assignment's actual question count, rounding drift absorbed by the
+// medium bucket so the total always matches exactly.
+function scaleMixToQuestionCount(base: Record<string, number>, questionCount: number): Record<string, number> {
+  const baseTotal = base.easy + base.medium + base.hard;
+  if (baseTotal <= 0 || questionCount <= 0) {
+    return { easy: 0, medium: Math.max(0, questionCount), hard: 0 };
+  }
+  const scaled = {
+    easy: Math.round((base.easy / baseTotal) * questionCount),
+    medium: Math.round((base.medium / baseTotal) * questionCount),
+    hard: Math.round((base.hard / baseTotal) * questionCount),
+  };
+  const drift = questionCount - (scaled.easy + scaled.medium + scaled.hard);
+  scaled.medium = Math.max(0, scaled.medium + drift);
+  return scaled;
 }
 
 export interface GradingQuestion {
@@ -112,9 +121,30 @@ export interface GradingQuestion {
   prompt: string;
 }
 
+// A teacher-verified answer key entry, when one exists, is passed into
+// grading so the grader has ground truth to compare against instead of
+// judging an answer's plausibility in isolation.
+export interface AnswerKeyContext {
+  questionId: string;
+  verifiedAnswer: string;
+  marks: number;
+}
+
 export interface GradingInput {
   questions: GradingQuestion[];
   answers: Record<string, string>;
+  answerKey?: AnswerKeyContext[];
+}
+
+// correct is null when the grader can't judge correctness at all (the
+// offline completeness heuristic only measures whether/how much was
+// written, never whether it's right) - callers must treat null as "unknown",
+// not as "incorrect", when aggregating (see submissions.ts class-insight).
+export interface QuestionGradeDetail {
+  questionId: string;
+  correct: boolean | null;
+  marksAwarded: number | null;
+  note: string;
 }
 
 export interface AiProvider {
@@ -123,30 +153,27 @@ export interface AiProvider {
   generatePersonalisationSuggestion(
     input: PersonalisationInput
   ): Promise<{ suggestedMix: Record<string, number>; reasoning: string; model: string }>;
-  gradeSubmission(
-    input: GradingInput
-  ): Promise<{ score: number; feedback: string; flagged: boolean; nextStep: string; model: string }>;
+  gradeSubmission(input: GradingInput): Promise<{
+    score: number;
+    feedback: string;
+    flagged: boolean;
+    nextStep: string;
+    model: string;
+    questionDetails: QuestionGradeDetail[];
+  }>;
 
-  // Phase 2 (Docs/Dev/AI_Module_Rebuild_Plan.md) - Topic-scoped generation
-  // covering all 5 output types the client doc specifies for Lesson Studio.
   generateContent(input: GenerationInput): Promise<{ content: string; model: string }>;
-  // Phase 3 - draft answer key alongside assignment questions. The teacher's
-  // verified version, never this one, is authoritative once reviewed.
-  generateAnswerKey(questions: AnswerKeyQuestionInput[]): Promise<{ answers: Record<number, string>; model: string }>;
-  // Phase 3 - stub OCR. No OCR provider is configured yet (same situation as
-  // Bedrock below) - never fabricate a plausible-looking fake transcription,
-  // always return a clearly-marked placeholder so it can't be mistaken for a
-  // real extraction in testing.
-  extractTextFromPhoto(input: OcrInput): Promise<{ text: string; confidence: number }>;
+  // Keyed by question id (not array position) - AnswerKey rows are id-keyed
+  // so personalised delivery can hand different students a different
+  // subset/order of the same assignment's questions (see lib/personalisation.ts).
+  generateAnswerKey(questions: AnswerKeyQuestionInput[]): Promise<{ answers: Record<string, string>; model: string }>;
+  extractTextFromPhoto(input: OcrInput): Promise<{ text: string; confidence: number; perQuestion?: Record<string, string> }>;
+  // Used only by the Lesson Studio topic-context upload path: transcribes an
+  // image AND describes any diagrams/figures, so the text can be stored once
+  // and reused on every generation without re-sending the image to the model.
+  describeImageForContext(input: OcrInput): Promise<{ text: string; model: string }>;
 }
 
-// No Bedrock/Anthropic credentials are configured yet (same situation as
-// backend/src/lib/messaging.ts). This stub template-generates real, structured
-// content from the actual inputs - not random text - so every Module 2
-// workflow (generate -> review -> approve -> grade -> release) is genuinely
-// exercisable end-to-end. Swap the aiProvider export below for a real
-// BedrockAiProvider once credentials exist - callers only depend on the
-// AiProvider interface, not this implementation.
 class StubAiProvider implements AiProvider {
   async generateLessonPlan({ topic, board, format, classLabel }: LessonPlanInput) {
     const audience = classLabel ? `${classLabel} students` : "students";
@@ -219,26 +246,25 @@ class StubAiProvider implements AiProvider {
     return { content, model: MODEL_SONNET };
   }
 
-  // Recommendation only - nothing here is "applied" to a student. The only
-  // code path that may apply a mix is PATCH /personalisation-suggestions/:id
-  // (backend/src/routes/assignments.ts), per PRD section 6.4.
-  async generatePersonalisationSuggestion({ studentName, avgScore, submissionCount }: PersonalisationInput) {
-    let suggestedMix: Record<string, number>;
+  async generatePersonalisationSuggestion({ studentName, avgScore, submissionCount, questionCount }: PersonalisationInput) {
+    let ratio: Record<string, number>;
     let basis: string;
 
     if (avgScore === null) {
-      suggestedMix = { easy: 2, medium: 2, hard: 1 };
+      ratio = { easy: 2, medium: 2, hard: 1 };
       basis = "no prior graded work yet, so a balanced default mix is suggested";
     } else if (avgScore >= 80) {
-      suggestedMix = { easy: 1, medium: 2, hard: 2 };
+      ratio = { easy: 1, medium: 2, hard: 2 };
       basis = `a strong average of ${avgScore.toFixed(0)}% across ${submissionCount} prior submission(s)`;
     } else if (avgScore >= 50) {
-      suggestedMix = { easy: 2, medium: 2, hard: 1 };
+      ratio = { easy: 2, medium: 2, hard: 1 };
       basis = `a moderate average of ${avgScore.toFixed(0)}% across ${submissionCount} prior submission(s)`;
     } else {
-      suggestedMix = { easy: 3, medium: 2, hard: 0 };
+      ratio = { easy: 3, medium: 2, hard: 0 };
       basis = `an average of ${avgScore.toFixed(0)}% across ${submissionCount} prior submission(s), suggesting more foundational practice first`;
     }
+
+    const suggestedMix = scaleMixToQuestionCount(ratio, questionCount);
 
     return {
       suggestedMix,
@@ -251,13 +277,23 @@ class StubAiProvider implements AiProvider {
     const total = Math.max(1, questions.length);
     let answered = 0;
     let totalLength = 0;
-    for (const q of questions) {
+    const questionDetails: QuestionGradeDetail[] = questions.map((q) => {
       const a = answers[q.id];
-      if (a && a.trim().length > 0) {
+      const trimmed = a?.trim() ?? "";
+      if (trimmed.length > 0) {
         answered += 1;
-        totalLength += a.trim().length;
+        totalLength += trimmed.length;
       }
-    }
+      return {
+        questionId: q.id,
+        // The completeness heuristic can only tell whether something was
+        // written, never whether it's right - correctness is deliberately
+        // unknown here, not false. A real verdict needs GeminiAiProvider.
+        correct: null,
+        marksAwarded: null,
+        note: trimmed.length > 0 ? "Answered - completeness heuristic only, not verified for correctness." : "No answer recorded.",
+      };
+    });
     const completeness = answered / total;
     const avgLength = answered > 0 ? totalLength / answered : 0;
     const depth = Math.min(1, avgLength / 80);
@@ -270,13 +306,9 @@ class StubAiProvider implements AiProvider {
       ? "Revisit the unanswered/brief questions with the student one-to-one before the next assignment on this topic."
       : "Ready for a slightly harder question set on this topic next time.";
 
-    return { score, feedback, flagged, nextStep, model: MODEL_HAIKU };
+    return { score, feedback, flagged, nextStep, model: MODEL_HAIKU, questionDetails };
   }
 
-  // Phase 2: replaces generateLessonPlan/generateResearchReport for new
-  // Topic-scoped generations. Follows the same "real structured content from
-  // real inputs" pattern as the methods above, extended to flashcards and
-  // presentation output types.
   async generateContent({
     topicName,
     subject,
@@ -332,15 +364,16 @@ class StubAiProvider implements AiProvider {
         };
         break;
       case "lesson_plan":
-      default:
+      default: {
+        const objectives = [
+          `[Understand] Understand the core principles of ${topicName}`,
+          `[Apply] Apply ${topicName} concepts to examples appropriate for ${board}`,
+        ];
         content = {
           type: "lesson_plan",
           overview: `${audience} explore ${topicName} through guided and independent practice.${custom}`,
           durationMinutes,
-          objectives: [
-            `[Understand] Understand the core principles of ${topicName}`,
-            `[Apply] Apply ${topicName} concepts to examples appropriate for ${board}`,
-          ],
+          objectives,
           lessonFlow: [
             { label: "Engage", durationMinutes: Math.round(durationMinutes * 0.1) },
             { label: "Explore", durationMinutes: Math.round(durationMinutes * 0.25) },
@@ -362,34 +395,46 @@ class StubAiProvider implements AiProvider {
               materials: ["Whiteboard or projector"],
             },
           ],
-          assessment: "Exit ticket: one question on today's topic.",
+          // One check per objective, not one exit-ticket question covering all
+          // of them - Layer 3 eval judges consistently marked a single question
+          // down for leaving most objectives unassessed.
+          assessment: objectives
+            .map((o, i) => `${i + 1}. Check: ${o.replace(/^\[[^\]]+\]\s*/, "")}`)
+            .join(" "),
         };
         break;
+      }
     }
 
     return { content: JSON.stringify(content), model: MODEL_SONNET };
   }
 
   async generateAnswerKey(questions: AnswerKeyQuestionInput[]) {
-    const answers: Record<number, string> = {};
+    const answers: Record<string, string> = {};
     for (const q of questions) {
-      answers[q.index] = `Draft answer for: "${q.prompt}" — worth ${q.marks} mark(s). Teacher review required before use.`;
+      answers[q.id] = `Draft answer for: "${q.prompt}" — worth ${q.marks} mark(s). Teacher review required before use.`;
     }
     return { answers, model: MODEL_HAIKU };
   }
 
+  // No OCR model without a Gemini key. Return genuinely empty text (not a
+  // placeholder string) - a non-empty "no OCR configured" sentinel used to be
+  // returned here and the grading heuristic then scored that filler text as
+  // if it were a real, moderately-detailed answer, inflating unscoreable
+  // photo submissions with a false score. Empty text correctly reads
+  // downstream as "nothing answered."
   async extractTextFromPhoto(_input: OcrInput) {
-    // Placeholder only - no OCR provider configured. confidence: 0 signals
-    // "not a real extraction" to callers, distinct from a genuine low-confidence
-    // read, so nothing downstream mistakes this for real handwriting OCR.
-    return {
-      text: "[OCR not yet configured — placeholder extraction, do not treat as real submission content]",
-      confidence: 0,
-    };
+    return { text: "", confidence: 0 };
+  }
+
+  async describeImageForContext(_input: OcrInput) {
+    // No vision model without an API key. Return empty so the caller marks the
+    // source "pending" rather than storing a placeholder as if it were content.
+    return { text: "", model: "stub" };
   }
 }
 
-const stubProvider = new StubAiProvider();
+export const stubProvider = new StubAiProvider();
 
 const GEMINI_ENDPOINT =
   "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
@@ -404,16 +449,6 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
 
 const OCR_NO_TEXT_SENTINEL = "NO_TEXT_FOUND";
 
-// Each entry describes the exact JSON object the model must return for that
-// outputType - the app renders these as native step/card views (not
-// Markdown), so the shape has to be reliable, not just plausible-looking
-// text. These are the built-in fallback - platform_admin can override any of
-// them at runtime via the AiPromptTemplate table (backend/src/routes/ai-prompts.ts);
-// getPromptInstructions() below checks that table first. Editing an override
-// doesn't change the required JSON shape - only the wording/emphasis of the
-// instruction - so a change here (adding a new field to a content shape)
-// must still be reflected in these defaults even if a school never sees them
-// directly.
 export const DEFAULT_OUTPUT_TYPE_INSTRUCTIONS: Record<GenerationOutputType, string> = {
   lesson_plan:
     'Respond with ONLY a JSON object of this exact shape (no prose, no markdown fences): ' +
@@ -422,7 +457,9 @@ export const DEFAULT_OUTPUT_TYPE_INSTRUCTIONS: Record<GenerationOutputType, stri
     '"objectives": string[] (each labelled with its Bloom\'s Taxonomy level in square brackets, e.g. "[Understand] ..."), ' +
     '"lessonFlow": {"label": string, "durationMinutes": number}[] (the 5E model stages - Engage, Explore, Explain, Elaborate, Evaluate - durations summing to durationMinutes), ' +
     '"activities": {"title": string, "description": string, "durationMinutes": number, "materials": string[]}[] (classroom activities, durations summing to durationMinutes), ' +
-    '"assessment": string (how understanding is checked, e.g. an exit ticket)}',
+    '"assessment": string (how understanding is checked - MUST include one distinct question or task ' +
+    'for EACH objective listed above, not a single question covering only some of them; format as a ' +
+    'short numbered list, one line per objective, in the same order as the objectives)}',
   custom_activity_report:
     'Respond with ONLY a JSON object of this exact shape (no prose, no markdown fences): ' +
     '{"objective": string (labelled with its Bloom\'s Taxonomy level in square brackets), ' +
@@ -436,47 +473,224 @@ export const DEFAULT_OUTPUT_TYPE_INSTRUCTIONS: Record<GenerationOutputType, stri
     '{"slides": {"title": string, "bullets": string[]}[]} - a slide-by-slide outline, each slide with a short title and 2-4 bullet points.',
 };
 
-// Looked up on every generation call rather than cached - prompt edits are
-// rare (an admin action, not a hot path) and this keeps an edit visible
-// immediately, with no cache-invalidation to get wrong.
 async function getPromptInstructions(outputType: GenerationOutputType): Promise<string> {
   const override = await prisma.aiPromptTemplate.findUnique({ where: { outputType } });
   return override?.promptBody ?? DEFAULT_OUTPUT_TYPE_INSTRUCTIONS[outputType];
 }
 
-// Model responses are occasionally wrapped in ```json fences despite being
-// told not to - stripped defensively before JSON.parse rather than trusting
-// the instruction alone.
 function stripJsonFence(raw: string): string {
   const trimmed = raw.trim();
   const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
   return fenced ? fenced[1] : trimmed;
 }
 
-// Real Gemini-backed generation for Lesson Studio (backend/src/routes/generations.ts)
-// and image OCR for Lesson Studio context sources (backend/src/routes/topics.ts).
-// Every other AiProvider method still delegates to the stub, matching the
-// existing swap-in pattern used in backend/src/lib/messaging.ts. Swap those in
-// one at a time in later passes.
 class GeminiAiProvider implements AiProvider {
   generateLessonPlan = stubProvider.generateLessonPlan.bind(stubProvider);
   generateResearchReport = stubProvider.generateResearchReport.bind(stubProvider);
-  generatePersonalisationSuggestion = stubProvider.generatePersonalisationSuggestion.bind(stubProvider);
-  gradeSubmission = stubProvider.gradeSubmission.bind(stubProvider);
-  generateAnswerKey = stubProvider.generateAnswerKey.bind(stubProvider);
 
-  // Reused by Lesson Studio's image context sources today. Not yet wired into
-  // any grading path (Assignment Lab submissions still use the stub) - the
-  // client doc explicitly flags submission-grading OCR as the higher-risk
-  // piece, since a wrong grade reaches a parent quickly. confidence here is a
-  // binary "the model found and returned text" signal, not a calibrated
-  // accuracy score - real accuracy needs measurement against a labelled
-  // sample before this is trusted for anything grading-adjacent.
-  async extractTextFromPhoto({ fileLocation }: OcrInput): Promise<{ text: string; confidence: number }> {
+  async generatePersonalisationSuggestion(input: PersonalisationInput) {
+    const { studentName, avgScore, submissionCount, questionCount } = input;
+    const prompt = [
+      `Suggest a difficulty mix for ${studentName}'s next assignment on this topic, based on their recent performance.`,
+      avgScore === null
+        ? "They have no prior graded work on this topic yet."
+        : `Their average score across ${submissionCount} prior graded submission(s) on this topic is ${avgScore.toFixed(0)}%.`,
+      "",
+      'Respond with ONLY a JSON object of this exact shape (no prose, no markdown fences): ' +
+        '{"suggestedMix": {"easy": number, "medium": number, "hard": number}, "reasoning": string (one or two sentences, ' +
+        "addressed to the teacher, explaining the recommendation and noting it is a suggestion only)}. " +
+        `Counts should sum to exactly ${questionCount} (the assignment's total question count). A stronger average ` +
+        "should skew toward medium/hard; a weaker or absent average should skew toward easy/medium.",
+    ].join("\n");
+
+    try {
+      const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+      });
+      if (!response.ok) throw new Error(`Gemini request failed (${response.status})`);
+      const data = (await response.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) throw new Error("Gemini returned no text");
+      const parsed = JSON.parse(stripJsonFence(text)) as { suggestedMix?: Record<string, number>; reasoning?: string };
+      if (!parsed.suggestedMix || !parsed.reasoning) throw new Error("Malformed personalisation response");
+      const rawMix = {
+        easy: Math.max(0, Math.round(parsed.suggestedMix.easy ?? 0)),
+        medium: Math.max(0, Math.round(parsed.suggestedMix.medium ?? 0)),
+        hard: Math.max(0, Math.round(parsed.suggestedMix.hard ?? 0)),
+      };
+      // The model is asked to sum to questionCount but isn't guaranteed to -
+      // rescale rather than trust it verbatim, same safety net the stub uses.
+      const suggestedMix = scaleMixToQuestionCount(rawMix, questionCount);
+      return { suggestedMix, reasoning: parsed.reasoning, model: MODEL_GEMINI_FLASH };
+    } catch (err) {
+      // Fall back to the deterministic heuristic rather than failing the
+      // publish flow over a single malformed/failed model response.
+      console.error("[ai] generatePersonalisationSuggestion fell back to heuristic:", err);
+      return stubProvider.generatePersonalisationSuggestion(input);
+    }
+  }
+
+  async gradeSubmission({ questions, answers, answerKey }: GradingInput) {
+    if (questions.every((q) => !answers[q.id]?.trim())) {
+      // Nothing to grade - same "unknown, not zero" contract as the stub,
+      // skip the model call entirely.
+      return stubProvider.gradeSubmission({ questions, answers, answerKey });
+    }
+
+    const keyByQuestion = new Map((answerKey ?? []).map((k) => [k.questionId, k]));
+    const questionBlock = questions
+      .map((q, i) => {
+        const key = keyByQuestion.get(q.id);
+        const lines = [
+          `${i + 1}. [id: ${q.id}] ${q.prompt}`,
+          `   Student's answer: ${answers[q.id]?.trim() || "(no answer given)"}`,
+        ];
+        if (key) lines.push(`   Teacher-verified correct answer (worth ${key.marks} mark(s)): ${key.verifiedAnswer}`);
+        return lines.join("\n");
+      })
+      .join("\n\n");
+
+    const prompt = [
+      "You are grading a student's assignment submission question by question.",
+      "For each question, judge the student's answer against the question (and the teacher-verified answer, when given).",
+      "",
+      questionBlock,
+      "",
+      'Respond with ONLY a JSON object of this exact shape (no prose, no markdown fences): ' +
+        '{"questionDetails": {"questionId": string, "correct": true|false, "marksAwarded": number (0 to the ' +
+        "question's marks, or 0 to 1 if none were given), \"note\": string (one sentence, addressed to the " +
+        'teacher)}[], "overallFeedback": string, "nextStep": string (a concrete suggestion for what to do next ' +
+        "with this student on this topic)}.",
+    ].join("\n");
+
+    try {
+      const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+      });
+      if (!response.ok) throw new Error(`Gemini request failed (${response.status})`);
+      const data = (await response.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) throw new Error("Gemini returned no text");
+      const parsed = JSON.parse(stripJsonFence(text)) as {
+        questionDetails?: { questionId: string; correct: boolean; marksAwarded: number; note: string }[];
+        overallFeedback?: string;
+        nextStep?: string;
+      };
+      if (!parsed.questionDetails || !parsed.overallFeedback) throw new Error("Malformed grading response");
+
+      const questionDetails: QuestionGradeDetail[] = parsed.questionDetails.map((d) => ({
+        questionId: d.questionId,
+        correct: !!d.correct,
+        marksAwarded: Math.max(0, Number(d.marksAwarded) || 0),
+        note: d.note ?? "",
+      }));
+      const totalMarks = questions.reduce((sum, q) => sum + (keyByQuestion.get(q.id)?.marks ?? 1), 0) || 1;
+      const earnedMarks = questionDetails.reduce((sum, d) => sum + (d.marksAwarded ?? 0), 0);
+      const score = Math.round(Math.min(1, earnedMarks / totalMarks) * 100);
+      const flagged = score < 50 || questionDetails.some((d) => !d.correct);
+
+      return {
+        score,
+        feedback: parsed.overallFeedback,
+        flagged,
+        nextStep: parsed.nextStep ?? "Review with the student before releasing.",
+        model: MODEL_GEMINI_FLASH,
+        questionDetails,
+      };
+    } catch (err) {
+      console.error("[ai] gradeSubmission fell back to heuristic:", err);
+      return stubProvider.gradeSubmission({ questions, answers, answerKey });
+    }
+  }
+
+  async generateAnswerKey(questions: AnswerKeyQuestionInput[]) {
+    const questionBlock = questions.map((q, i) => `${i + 1}. [id: ${q.id}] ${q.prompt} (${q.marks} mark(s))`).join("\n");
+    const prompt = [
+      "Draft a model answer for each of these assignment questions, suitable for a teacher to review and correct.",
+      "",
+      questionBlock,
+      "",
+      'Respond with ONLY a JSON object of this exact shape (no prose, no markdown fences): ' +
+        '{"answers": {"<questionId>": string}} - one entry per question id given above.',
+    ].join("\n");
+
+    try {
+      const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+      });
+      if (!response.ok) throw new Error(`Gemini request failed (${response.status})`);
+      const data = (await response.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) throw new Error("Gemini returned no text");
+      const parsed = JSON.parse(stripJsonFence(text)) as { answers?: Record<string, string> };
+      if (!parsed.answers) throw new Error("Malformed answer-key response");
+      const answers: Record<string, string> = {};
+      for (const q of questions) {
+        answers[q.id] = parsed.answers[q.id]?.trim() || `Draft answer for: "${q.prompt}" — teacher review required.`;
+      }
+      return { answers, model: MODEL_GEMINI_FLASH };
+    } catch (err) {
+      console.error("[ai] generateAnswerKey fell back to template:", err);
+      return stubProvider.generateAnswerKey(questions);
+    }
+  }
+
+  async extractTextFromPhoto({
+    fileLocation,
+    questions,
+  }: OcrInput): Promise<{ text: string; confidence: number; perQuestion?: Record<string, string> }> {
     const buffer = await storage.readBuffer(fileLocation);
     const ext = (fileLocation.split(".").pop() ?? "").toLowerCase();
     const mimeType = IMAGE_MIME_TYPES[ext] ?? "image/jpeg";
     const base64 = buffer.toString("base64");
+
+    if (questions && questions.length > 0) {
+      const questionList = questions.map((q, i) => `${i + 1}. [id: ${q.id}] ${q.prompt}`).join("\n");
+      const prompt = [
+        "This image is a photo of a student's handwritten or printed answers to the following assignment questions:",
+        questionList,
+        "",
+        "Transcribe the student's answer to each question exactly as written (do not translate - keep the " +
+          "original language). If you cannot tell which text answers which question, make your best guess from " +
+          "layout and numbering.",
+        "",
+        'Respond with ONLY a JSON object of this exact shape (no prose, no markdown fences): ' +
+          '{"perQuestion": {"<questionId>": string}} - use an empty string for any question you found no answer ' +
+          "for. Omit a question entirely only if the image has no readable text at all.",
+      ].join("\n");
+
+      const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: base64 } }] }],
+        }),
+      });
+      if (!response.ok) {
+        const errBody = await response.text().catch(() => "");
+        throw new Error(`Gemini OCR request failed (${response.status}): ${errBody}`);
+      }
+      const data = (await response.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+      const raw = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      try {
+        const parsed = raw ? (JSON.parse(stripJsonFence(raw)) as { perQuestion?: Record<string, string> }) : null;
+        const perQuestion = parsed?.perQuestion;
+        if (perQuestion && Object.keys(perQuestion).length > 0) {
+          const hasAnyText = Object.values(perQuestion).some((v) => v.trim().length > 0);
+          const combined = Object.values(perQuestion).join("\n").slice(0, MAX_EXTRACTED_CHARS);
+          return hasAnyText ? { text: combined, confidence: 1, perQuestion } : { text: "", confidence: 0 };
+        }
+      } catch {
+        // Fall through to the unsegmented path below if the model didn't
+        // return the requested JSON shape.
+      }
+    }
 
     const prompt =
       "Transcribe all readable text from this image exactly as written, preserving structure " +
@@ -505,6 +719,55 @@ class GeminiAiProvider implements AiProvider {
       return { text: "", confidence: 0 };
     }
     return { text: text.slice(0, MAX_EXTRACTED_CHARS), confidence: 1 };
+  }
+
+  async describeImageForContext({ fileLocation }: OcrInput): Promise<{ text: string; model: string }> {
+    const buffer = await storage.readBuffer(fileLocation);
+    const ext = (fileLocation.split(".").pop() ?? "").toLowerCase();
+    const mimeType = IMAGE_MIME_TYPES[ext] ?? "image/jpeg";
+    const base64 = buffer.toString("base64");
+
+    const prompt =
+      "You are preparing reference material a teacher will use to generate lesson content. " +
+      "First, if there is readable text anywhere in the image, transcribe ALL of it exactly as " +
+      "written, preserving structure (headings, numbered and bulleted lists, and tables) as closely " +
+      "as you can. Do not translate - keep the original language. If there is no readable text, skip " +
+      "this step silently - do not write any placeholder, note, or apology for the missing text. " +
+      "Then, for every diagram, chart, figure, illustration, map, or photo in the image, add a line " +
+      'starting with "[Figure] " that explains what it depicts and the teaching content it carries ' +
+      "(labels, parts, relationships, steps, or data values). " +
+      "Only if the image has NEITHER readable text NOR anything worth describing (e.g. it is blank, " +
+      `corrupted, or unreadable noise), respond with exactly: ${OCR_NO_TEXT_SENTINEL}`;
+
+    const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: base64 } }] }],
+      }),
+    });
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => "");
+      throw new Error(`Gemini image context request failed (${response.status}): ${errBody}`);
+    }
+
+    const data = (await response.json()) as {
+      candidates?: { content?: { parts?: { text?: string }[] } }[];
+    };
+    let text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+
+    if (!text || text === OCR_NO_TEXT_SENTINEL) {
+      return { text: "", model: MODEL_GEMINI_FLASH };
+    }
+    // Defensive: some responses still lead with the sentinel (e.g. "no text
+    // to transcribe") before going on to describe a figure. Strip a stray
+    // leading occurrence rather than storing it as if it were content.
+    text = text.replace(new RegExp(`^${OCR_NO_TEXT_SENTINEL}\\s*`), "").trim();
+    if (!text) {
+      return { text: "", model: MODEL_GEMINI_FLASH };
+    }
+    return { text: text.slice(0, MAX_EXTRACTED_CHARS), model: MODEL_GEMINI_FLASH };
   }
 
   async generateContent({
@@ -570,10 +833,6 @@ class GeminiAiProvider implements AiProvider {
       throw new Error("Gemini API returned no generated text");
     }
 
-    // The app renders this per-type as native cards/steps, not Markdown -
-    // an unparseable response must fail the generation (existing failed-row
-    // + retry flow in generations.ts) rather than silently be stored as text
-    // and shown broken.
     let parsed: unknown;
     try {
       parsed = JSON.parse(stripJsonFence(text));
@@ -581,10 +840,6 @@ class GeminiAiProvider implements AiProvider {
       throw new Error(`Gemini returned non-JSON content for outputType "${outputType}": ${text.slice(0, 200)}`);
     }
 
-    // The model sometimes ignores the "wrap in an object" instruction and
-    // returns a bare array for the list-shaped types (seen in practice for
-    // flashcards) - normalized back into the documented shape rather than
-    // rejecting an otherwise-usable response.
     if (Array.isArray(parsed)) {
       if (outputType === "flashcards") parsed = { cards: parsed };
       else if (outputType === "presentation") parsed = { slides: parsed };
@@ -596,9 +851,6 @@ class GeminiAiProvider implements AiProvider {
 
 export const aiProvider: AiProvider = process.env.GEMINI_API_KEY ? new GeminiAiProvider() : stubProvider;
 
-// Written by every route that calls aiProvider above (API Specification section
-// 7: "All AI generation calls should write to ai_usage_log ... for cost
-// tracking"). Feeds the Admin Dashboard's AI Usage Analytics screen (FR-AI-4).
 export async function logAiUsage(params: {
   schoolId: string;
   teacherUserId: string;

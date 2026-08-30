@@ -29,10 +29,6 @@ const FIELDS: FieldConfig[] = [
   },
 ];
 
-// Free-text formatting/style instructions, not a structured document template
-// - there's no PDF/document-rendering engine to consume a stricter format
-// yet. "generation" is injected into the Gemini prompt
-// (backend/src/routes/generations.ts); "attainment_report" is stored only.
 export function SchoolTemplatesTab() {
   const { id, accessToken, canManageAcademics } = useOutletContext<SchoolOutletContext>();
 

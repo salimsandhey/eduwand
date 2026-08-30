@@ -20,18 +20,16 @@ interface UpdateUserBody {
   schoolId?: string;
 }
 
+interface CreateRoleGrantBody {
+  role: string;
+}
+
 const USER_STATUSES = ["active", "invited", "disabled"];
 
 function generateTempPassword(): string {
-  return crypto.randomBytes(9).toString("base64url"); // 12 chars, url-safe
+  return crypto.randomBytes(9).toString("base64url");
 }
 
-// List for the Admin Dashboard's User and Role Management screen
-// (Docs/Dev/EduWand_UI_Screen_Spec.md section 5). requireSchoolScope now
-// understands platform_admin too (see plugins/scope.ts) - it previously only
-// resolved a school from a JWT schoolId or a leadership + validated query
-// param, so platform_admin always 403'd here even though it's the role most
-// likely to need to browse users across schools.
 export async function userRoutes(app: FastifyInstance) {
   app.get(
     "/users",
@@ -47,13 +45,6 @@ export async function userRoutes(app: FastifyInstance) {
     }
   );
 
-  // Invite flow (FR-EG-9, and the onboarding sub-module). No email delivery exists
-  // yet - same stub pattern as messaging/storage - so the generated temp password is
-  // returned in the response for the caller to relay themselves, and never logged.
-  //   - platform_admin: can invite into any school or trust, explicitly named in the body
-  //   - admin: can only invite into their own school, and only into non-leadership roles
-  //   - leadership: can invite into any school within their own trust (or another
-  //     trust-level user), never into a different trust
   app.post<{ Body: InviteUserBody }>(
     "/users",
     { onRequest: [app.authenticate], config: { rateLimit: { max: 20, timeWindow: "1 minute" } } },
@@ -176,9 +167,6 @@ export async function userRoutes(app: FastifyInstance) {
     }
   );
 
-  // Change role / disable-enable, from the User & Role Management screen. Same scope
-  // rules as invite: platform_admin anyone, admin only within own school (and can't
-  // touch leadership), leadership only within own trust.
   app.patch<{ Params: { id: string }; Body: UpdateUserBody }>(
     "/users/:id",
     { onRequest: [app.authenticate], config: { rateLimit: { max: 40, timeWindow: "1 minute" } } },
@@ -208,10 +196,6 @@ export async function userRoutes(app: FastifyInstance) {
         return reply.code(403).send({ data: null, error: { code: "forbidden", message: "Cannot change your own role or status" } });
       }
 
-      // schoolId reassignment: only platform_admin (anywhere) or leadership
-      // (within their own trust, moving to another school in that same trust).
-      // admin can't reassign - they're single-school scoped, so there's no
-      // destination school they'd have authority over anyway.
       let newSchoolId: string | undefined;
       if (body.schoolId !== undefined) {
         if (caller.role === PLATFORM_ADMIN_ROLE) {
@@ -235,7 +219,6 @@ export async function userRoutes(app: FastifyInstance) {
       }
 
       if (caller.role === PLATFORM_ADMIN_ROLE) {
-        // no additional scope check
       } else if (caller.role === "admin") {
         if (target.schoolId !== caller.schoolId) {
           return reply.code(403).send({ data: null, error: { code: "forbidden", message: "User not in your school" } });
@@ -282,9 +265,6 @@ export async function userRoutes(app: FastifyInstance) {
     }
   );
 
-  // Admin-triggered reset: an invited user who lost their temp password had no
-  // recovery path before this - disable+re-invite doesn't work (POST /users
-  // rejects an email that already exists). Same scope rules as PATCH /users/:id.
   app.post<{ Params: { id: string } }>(
     "/users/:id/reset-password",
     { onRequest: [app.authenticate], config: { rateLimit: { max: 20, timeWindow: "1 minute" } } },
@@ -300,7 +280,6 @@ export async function userRoutes(app: FastifyInstance) {
       }
 
       if (caller.role === PLATFORM_ADMIN_ROLE) {
-        // no additional scope check
       } else if (caller.role === "admin") {
         if (target.schoolId !== caller.schoolId || target.role === "leadership") {
           return reply.code(403).send({ data: null, error: { code: "forbidden", message: "Not authorized for this user" } });
@@ -338,6 +317,183 @@ export async function userRoutes(app: FastifyInstance) {
       });
 
       return { data: user, meta: { tempPassword } };
+    }
+  );
+
+  app.get<{ Params: { id: string } }>(
+    "/users/:id/role-grants",
+    { onRequest: [app.authenticate] },
+    async (request, reply) => {
+      const caller = request.user;
+
+      const target = await prisma.appUser.findUnique({ where: { id: request.params.id } });
+      if (!target) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "User not found" } });
+      }
+
+      if (caller.role === PLATFORM_ADMIN_ROLE) {
+      } else if (caller.role === "admin") {
+        if (target.schoolId !== caller.schoolId) {
+          return reply.code(403).send({ data: null, error: { code: "forbidden", message: "User not in your school" } });
+        }
+        if (target.role === "leadership") {
+          return reply.code(403).send({ data: null, error: { code: "forbidden", message: "admin cannot manage leadership users" } });
+        }
+      } else if (caller.role === "leadership") {
+        if (target.trustId !== caller.trustId) {
+          return reply.code(403).send({ data: null, error: { code: "forbidden", message: "User not in your trust" } });
+        }
+      } else {
+        return reply.code(403).send({
+          data: null,
+          error: { code: "forbidden", message: "Requires role: platform_admin, admin, or leadership" },
+        });
+      }
+
+      const grants = await prisma.userRoleGrant.findMany({
+        where: { userId: target.id },
+        select: { id: true, role: true, createdAt: true },
+        orderBy: { createdAt: "asc" },
+      });
+
+      return { data: grants, meta: {} };
+    }
+  );
+
+  app.post<{ Params: { id: string }; Body: CreateRoleGrantBody }>(
+    "/users/:id/role-grants",
+    { onRequest: [app.authenticate], config: { rateLimit: { max: 40, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      const caller = request.user;
+      const body = request.body ?? ({} as CreateRoleGrantBody);
+
+      if (!body.role || !INVITABLE_ROLES.includes(body.role)) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: `role must be one of ${INVITABLE_ROLES.join(", ")}` },
+        });
+      }
+
+      const target = await prisma.appUser.findUnique({ where: { id: request.params.id } });
+      if (!target) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "User not found" } });
+      }
+
+      if (target.id === caller.sub) {
+        return reply.code(403).send({ data: null, error: { code: "forbidden", message: "Cannot grant yourself an additional role" } });
+      }
+
+      if (caller.role === PLATFORM_ADMIN_ROLE) {
+      } else if (caller.role === "admin") {
+        if (target.schoolId !== caller.schoolId) {
+          return reply.code(403).send({ data: null, error: { code: "forbidden", message: "User not in your school" } });
+        }
+        if (target.role === "leadership" || body.role === "leadership") {
+          return reply.code(403).send({ data: null, error: { code: "forbidden", message: "admin cannot manage leadership users" } });
+        }
+      } else if (caller.role === "leadership") {
+        if (target.trustId !== caller.trustId) {
+          return reply.code(403).send({ data: null, error: { code: "forbidden", message: "User not in your trust" } });
+        }
+      } else {
+        return reply.code(403).send({
+          data: null,
+          error: { code: "forbidden", message: "Requires role: platform_admin, admin, or leadership" },
+        });
+      }
+
+      if (target.role === body.role) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "User already has this role as their primary role" },
+        });
+      }
+
+      const existingGrant = await prisma.userRoleGrant.findFirst({ where: { userId: target.id, role: body.role } });
+      if (existingGrant) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "User already has this role granted" },
+        });
+      }
+
+      const grant = await prisma.userRoleGrant.create({
+        data: { userId: target.id, role: body.role },
+        select: { id: true, role: true, createdAt: true },
+      });
+
+      const actor = await prisma.appUser.findUnique({ where: { id: caller.sub }, select: { email: true } });
+      await recordAuditEvent({
+        actorUserId: caller.sub,
+        actorEmail: actor?.email ?? "unknown",
+        action: "user.role_grant_added",
+        targetType: "AppUser",
+        targetId: target.id,
+        targetLabel: target.email,
+        schoolId: target.schoolId,
+        trustId: target.trustId,
+        metadata: { role: body.role },
+      });
+
+      return reply.code(201).send({ data: grant, meta: {} });
+    }
+  );
+
+  app.delete<{ Params: { id: string; grantId: string } }>(
+    "/users/:id/role-grants/:grantId",
+    { onRequest: [app.authenticate], config: { rateLimit: { max: 40, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      const caller = request.user;
+
+      const target = await prisma.appUser.findUnique({ where: { id: request.params.id } });
+      if (!target) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "User not found" } });
+      }
+
+      if (target.id === caller.sub) {
+        return reply.code(403).send({ data: null, error: { code: "forbidden", message: "Cannot remove your own role grant" } });
+      }
+
+      if (caller.role === PLATFORM_ADMIN_ROLE) {
+      } else if (caller.role === "admin") {
+        if (target.schoolId !== caller.schoolId) {
+          return reply.code(403).send({ data: null, error: { code: "forbidden", message: "User not in your school" } });
+        }
+        if (target.role === "leadership") {
+          return reply.code(403).send({ data: null, error: { code: "forbidden", message: "admin cannot manage leadership users" } });
+        }
+      } else if (caller.role === "leadership") {
+        if (target.trustId !== caller.trustId) {
+          return reply.code(403).send({ data: null, error: { code: "forbidden", message: "User not in your trust" } });
+        }
+      } else {
+        return reply.code(403).send({
+          data: null,
+          error: { code: "forbidden", message: "Requires role: platform_admin, admin, or leadership" },
+        });
+      }
+
+      const grant = await prisma.userRoleGrant.findUnique({ where: { id: request.params.grantId } });
+      if (!grant || grant.userId !== target.id) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Role grant not found" } });
+      }
+
+      await prisma.userRoleGrant.delete({ where: { id: grant.id } });
+
+      const actor = await prisma.appUser.findUnique({ where: { id: caller.sub }, select: { email: true } });
+      await recordAuditEvent({
+        actorUserId: caller.sub,
+        actorEmail: actor?.email ?? "unknown",
+        action: "user.role_grant_removed",
+        targetType: "AppUser",
+        targetId: target.id,
+        targetLabel: target.email,
+        schoolId: target.schoolId,
+        trustId: target.trustId,
+        metadata: { role: grant.role },
+      });
+
+      return { data: { id: grant.id }, meta: {} };
     }
   );
 }

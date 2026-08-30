@@ -11,11 +11,6 @@ import { api, AssignmentQuestion } from "../../api/client";
 
 type Props = NativeStackScreenProps<RootStackParamList, "StudentAssignmentSubmit">;
 
-// Students Dashboard submission flow (client doc section 5). Answers
-// typed here persist in component state until Submit is pressed - true
-// resumability across an app restart (surviving the browser/app closing,
-// per the client doc's acceptance criterion) would need local disk
-// persistence, which isn't built here; this covers the in-session case.
 export function StudentAssignmentSubmitScreen({ route, navigation }: Props) {
   const { assignmentId, questions, title } = route.params;
   const { accessToken } = useAuth();

@@ -1,0 +1,5 @@
+{
+  "canaryFactText": "Teacher's note: in this class's variegated-leaf starch test, the plant used was a coleus specimen tagged GH-19 from the school greenhouse, and the iodine test on the exposed (green) lobe turned blue-black after 90 seconds, while the covered lobe stayed pale.",
+  "checkTokens": ["GH-19", "90 seconds"],
+  "notes": "Specific, checkable, and not something a general-knowledge model would invent verbatim - plausible as a teacher-added observation note, not part of the textbook PDF itself. If both tokens show up in the 'with source' generation and not in the 'without source' one, the source is actually influencing the output."
+}

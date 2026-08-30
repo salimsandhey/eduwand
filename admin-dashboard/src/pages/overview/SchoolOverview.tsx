@@ -8,7 +8,7 @@ import { Card } from "../../components/Card";
 import { StatTile } from "../../components/StatTile";
 import { BarChart } from "../../components/BarChart";
 
-const FUNNEL_STAGES: EnquiryStatus[] = ["new", "contacted", "visit", "application", "admitted", "enrolled"];
+const FUNNEL_STAGES: EnquiryStatus[] = ["new", "contacted", "visit_scheduled", "visit_done", "application", "admitted", "enrolled"];
 const SEQ_COLORS = ["var(--seq-1)", "var(--seq-2)", "var(--seq-3)", "var(--seq-4)", "var(--seq-5)", "var(--seq-6)"];
 
 export function SchoolOverview() {

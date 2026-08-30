@@ -1,20 +1,38 @@
-import { createContext, useContext, useState, ReactNode } from "react";
-import { api, CurrentUser, StudentOtpMatch } from "../api/client";
+import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import * as SecureStore from "expo-secure-store";
+import { api, AuthTokens, CurrentUser, StudentOtpMatch, UpdateProfileInput, setSessionHandlers } from "../api/client";
+
+const ACCESS_TOKEN_KEY = "eduwand_access_token";
+const REFRESH_TOKEN_KEY = "eduwand_refresh_token";
+
+async function persistTokens(tokens: AuthTokens) {
+  await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, tokens.accessToken);
+  await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, tokens.refreshToken);
+}
+
+async function clearPersistedTokens() {
+  await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY);
+  await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
+}
 
 interface AuthContextValue {
   user: CurrentUser | null;
   accessToken: string | null;
   isLoading: boolean;
+  isRestoring: boolean;
   error: string | null;
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
 
-  // Student phone+OTP login is a 3-step flow instead of a single call - a
-  // phone can match more than one StudentStub (siblings), so verifying the
-  // code returns candidates to pick from before a real session is issued.
   requestStudentOtp: (phone: string) => Promise<string | undefined>;
   verifyStudentOtp: (phone: string, code: string) => Promise<{ students: StudentOtpMatch[]; selectionToken: string }>;
   selectStudent: (studentStubId: string, selectionTokenOverride?: string) => Promise<void>;
+
+  updateProfile: (input: UpdateProfileInput) => Promise<void>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
+  uploadProfilePhoto: (file: { uri: string; name: string; mimeType: string }) => Promise<void>;
+  setProfileAvatar: (avatarKey: string) => Promise<void>;
+  removeProfilePhoto: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -22,9 +40,63 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [refreshToken, setRefreshToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectionToken, setSelectionToken] = useState<string | null>(null);
+
+  // Registered once so any API call anywhere in the app can silently refresh
+  // an expired access token, or force a logout if the refresh token itself
+  // is dead - keeps the session alive until the user explicitly logs out.
+  useEffect(() => {
+    setSessionHandlers({
+      getRefreshToken: () => refreshToken,
+      onTokensRefreshed: (tokens) => {
+        setAccessToken(tokens.accessToken);
+        setRefreshToken(tokens.refreshToken);
+        persistTokens(tokens).catch(() => {});
+      },
+      onSessionExpired: () => {
+        setUser(null);
+        setAccessToken(null);
+        setRefreshToken(null);
+        clearPersistedTokens().catch(() => {});
+      },
+    });
+    return () => setSessionHandlers(null);
+  }, [refreshToken]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [storedAccessToken, storedRefreshToken] = await Promise.all([
+          SecureStore.getItemAsync(ACCESS_TOKEN_KEY),
+          SecureStore.getItemAsync(REFRESH_TOKEN_KEY),
+        ]);
+        if (!storedRefreshToken) return;
+
+        setRefreshToken(storedRefreshToken);
+        let me = storedAccessToken ? await api.me(storedAccessToken).catch(() => null) : null;
+
+        if (!me) {
+          const tokens = await api.refresh(storedRefreshToken);
+          setAccessToken(tokens.accessToken);
+          setRefreshToken(tokens.refreshToken);
+          await persistTokens(tokens);
+          me = await api.me(tokens.accessToken);
+        } else {
+          setAccessToken(storedAccessToken!);
+        }
+
+        setUser(me);
+      } catch {
+        await clearPersistedTokens();
+      } finally {
+        setIsRestoring(false);
+      }
+    })();
+  }, []);
 
   async function login(email: string, password: string) {
     setIsLoading(true);
@@ -33,6 +105,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const tokens = await api.login(email, password);
       const me = await api.me(tokens.accessToken);
       setAccessToken(tokens.accessToken);
+      setRefreshToken(tokens.refreshToken);
+      await persistTokens(tokens);
       setUser(me);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
@@ -70,14 +144,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  // selectionTokenOverride lets a caller that JUST got a token back from
-  // verifyStudentOtp() (the single-student auto-select path in
-  // StudentLoginScreen) use it immediately, instead of reading the
-  // `selectionToken` state variable - setSelectionToken() above doesn't take
-  // effect in this closure until the next render, so reading state here would
-  // see the pre-update value and fail with "Session expired" on every first
-  // attempt. The "pick from a list" path still relies on state, since by the
-  // time that Pressable is tapped the component has already re-rendered.
   async function selectStudent(studentStubId: string, selectionTokenOverride?: string) {
     const token = selectionTokenOverride ?? selectionToken;
     if (!token) {
@@ -90,6 +156,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const tokens = await api.selectStudent(token, studentStubId);
       const me = await api.me(tokens.accessToken);
       setAccessToken(tokens.accessToken);
+      setRefreshToken(tokens.refreshToken);
+      await persistTokens(tokens);
       setUser(me);
       setSelectionToken(null);
     } catch (err) {
@@ -102,13 +170,60 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   function logout() {
     setUser(null);
     setAccessToken(null);
+    setRefreshToken(null);
     setError(null);
     setSelectionToken(null);
+    clearPersistedTokens().catch(() => {});
+  }
+
+  async function updateProfile(input: UpdateProfileInput) {
+    if (!accessToken) throw new Error("Not signed in");
+    const updated = await api.updateProfile(accessToken, input);
+    setUser(updated);
+  }
+
+  async function changePassword(currentPassword: string, newPassword: string) {
+    if (!accessToken) throw new Error("Not signed in");
+    await api.changeMyPassword(accessToken, { currentPassword, newPassword });
+  }
+
+  async function uploadProfilePhoto(file: { uri: string; name: string; mimeType: string }) {
+    if (!accessToken) throw new Error("Not signed in");
+    const updated = await api.uploadMyPhoto(accessToken, file);
+    setUser(updated);
+  }
+
+  async function setProfileAvatar(avatarKey: string) {
+    if (!accessToken) throw new Error("Not signed in");
+    const updated = await api.setMyAvatar(accessToken, avatarKey);
+    setUser(updated);
+  }
+
+  async function removeProfilePhoto() {
+    if (!accessToken) throw new Error("Not signed in");
+    const updated = await api.removeMyPhoto(accessToken);
+    setUser(updated);
   }
 
   return (
     <AuthContext.Provider
-      value={{ user, accessToken, isLoading, error, login, logout, requestStudentOtp, verifyStudentOtp, selectStudent }}
+      value={{
+        user,
+        accessToken,
+        isLoading,
+        isRestoring,
+        error,
+        login,
+        logout,
+        requestStudentOtp,
+        verifyStudentOtp,
+        selectStudent,
+        updateProfile,
+        changePassword,
+        uploadProfilePhoto,
+        setProfileAvatar,
+        removeProfilePhoto,
+      }}
     >
       {children}
     </AuthContext.Provider>

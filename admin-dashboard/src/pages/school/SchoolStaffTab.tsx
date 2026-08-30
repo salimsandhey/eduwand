@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { api, ApiError } from "../../api/client";
-import type { AppUserSummary } from "../../api/client";
+import type { AppUserSummary, UserRoleGrant } from "../../api/client";
 import { Card } from "../../components/Card";
 import { Modal, ModalFooter } from "../../components/Modal";
 import type { SchoolOutletContext } from "./SchoolLayout";
 
-const INVITABLE_ROLES = ["front_desk", "counsellor", "teacher", "admin"];
+const INVITABLE_ROLES = ["front_desk", "counsellor", "teacher", "admin", "principal"];
 
 export function SchoolStaffTab() {
   const { id, accessToken, user, canManageStaff, reload } = useOutletContext<SchoolOutletContext>();
@@ -33,6 +33,11 @@ export function SchoolStaffTab() {
   const [staffBulkError, setStaffBulkError] = useState<string | null>(null);
   const [isStaffBulkWorking, setIsStaffBulkWorking] = useState(false);
 
+  const [roleGrants, setRoleGrants] = useState<Record<string, UserRoleGrant[]>>({});
+  const [addRoleValue, setAddRoleValue] = useState<Record<string, string>>({});
+  const [roleGrantError, setRoleGrantError] = useState<Record<string, string>>({});
+  const [roleGrantWorking, setRoleGrantWorking] = useState<Record<string, boolean>>({});
+
   const loadStaff = useCallback(async () => {
     if (!accessToken || !id || !canManageStaff) return;
     setStaffLoading(true);
@@ -41,6 +46,17 @@ export function SchoolStaffTab() {
       const res = await api.listUsers(accessToken, { schoolId: id });
       setStaff(res);
       setSelectedStaffIds(new Set());
+      const grantResults = await Promise.allSettled(
+        res.map(async (u) => [u.id, await api.listUserRoleGrants(accessToken, u.id)] as const)
+      );
+      const grantsMap: Record<string, UserRoleGrant[]> = {};
+      for (const result of grantResults) {
+        if (result.status === "fulfilled") {
+          const [staffId, grants] = result.value;
+          grantsMap[staffId] = grants;
+        }
+      }
+      setRoleGrants(grantsMap);
     } catch (err) {
       setStaffError(err instanceof Error ? err.message : "Failed to load staff");
     } finally {
@@ -133,6 +149,40 @@ export function SchoolStaffTab() {
       setStaffRowError((prev) => ({ ...prev, [u.id]: err instanceof Error ? err.message : "Failed to reset password" }));
     } finally {
       setSavingStaffId(null);
+    }
+  }
+
+  async function addRoleGrant(staffId: string) {
+    if (!accessToken) return;
+    const role = addRoleValue[staffId];
+    if (!role) return;
+    setRoleGrantWorking((prev) => ({ ...prev, [staffId]: true }));
+    setRoleGrantError((prev) => ({ ...prev, [staffId]: "" }));
+    try {
+      const res = await api.addUserRoleGrant(accessToken, staffId, { role });
+      if (res.data) {
+        const grant = res.data;
+        setRoleGrants((prev) => ({ ...prev, [staffId]: [...(prev[staffId] ?? []), grant] }));
+      }
+      setAddRoleValue((prev) => ({ ...prev, [staffId]: "" }));
+    } catch (err) {
+      setRoleGrantError((prev) => ({ ...prev, [staffId]: err instanceof Error ? err.message : "Failed to add role" }));
+    } finally {
+      setRoleGrantWorking((prev) => ({ ...prev, [staffId]: false }));
+    }
+  }
+
+  async function removeRoleGrant(staffId: string, grantId: string) {
+    if (!accessToken) return;
+    setRoleGrantWorking((prev) => ({ ...prev, [staffId]: true }));
+    setRoleGrantError((prev) => ({ ...prev, [staffId]: "" }));
+    try {
+      await api.removeUserRoleGrant(accessToken, staffId, grantId);
+      setRoleGrants((prev) => ({ ...prev, [staffId]: (prev[staffId] ?? []).filter((g) => g.id !== grantId) }));
+    } catch (err) {
+      setRoleGrantError((prev) => ({ ...prev, [staffId]: err instanceof Error ? err.message : "Failed to remove role" }));
+    } finally {
+      setRoleGrantWorking((prev) => ({ ...prev, [staffId]: false }));
     }
   }
 
@@ -250,6 +300,7 @@ export function SchoolStaffTab() {
                 <th style={styles.th}>Name</th>
                 <th style={styles.th}>Email</th>
                 <th style={styles.th}>Role</th>
+                <th style={styles.th}>Extra roles</th>
                 <th style={styles.th}>Status</th>
                 <th style={styles.th}></th>
               </tr>
@@ -291,6 +342,63 @@ export function SchoolStaffTab() {
                       ) : (
                         u.role
                       )}
+                    </td>
+                    <td style={styles.td}>
+                      {(() => {
+                        const grants = roleGrants[u.id] ?? [];
+                        const takenRoles = new Set([u.role, ...grants.map((g) => g.role)]);
+                        const availableRoles = INVITABLE_ROLES.filter((r) => !takenRoles.has(r));
+                        const isWorking = !!roleGrantWorking[u.id];
+                        return (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                              {grants.map((g) => (
+                                <span key={g.id} style={styles.roleChip}>
+                                  {g.role}
+                                  <button
+                                    type="button"
+                                    style={styles.roleChipRemove}
+                                    disabled={isWorking}
+                                    onClick={() => removeRoleGrant(u.id, g.id)}
+                                    aria-label={`Remove ${g.role} role from ${u.fullName}`}
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                            {availableRoles.length > 0 ? (
+                              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                                <select
+                                  style={styles.roleSelect}
+                                  value={addRoleValue[u.id] ?? ""}
+                                  disabled={isWorking}
+                                  onChange={(e) => setAddRoleValue((prev) => ({ ...prev, [u.id]: e.target.value }))}
+                                >
+                                  <option value="">+ add role</option>
+                                  {availableRoles.map((r) => (
+                                    <option key={r} value={r}>
+                                      {r}
+                                    </option>
+                                  ))}
+                                </select>
+                                <button
+                                  style={styles.smallButton}
+                                  disabled={isWorking || !addRoleValue[u.id]}
+                                  onClick={() => addRoleGrant(u.id)}
+                                >
+                                  Add
+                                </button>
+                              </div>
+                            ) : null}
+                            {roleGrantError[u.id] ? (
+                              <p style={{ color: "var(--status-critical)", fontSize: 12, margin: 0 }}>
+                                {roleGrantError[u.id]}
+                              </p>
+                            ) : null}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td style={styles.td}>
                       <span
@@ -503,4 +611,25 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
   },
   formGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 },
+  roleChip: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    padding: "3px 6px 3px 10px",
+    borderRadius: 12,
+    background: "var(--accent-wash)",
+    color: "var(--accent-dark)",
+    fontSize: 12,
+    fontWeight: 600,
+    textTransform: "capitalize",
+  },
+  roleChipRemove: {
+    border: "none",
+    background: "transparent",
+    color: "inherit",
+    cursor: "pointer",
+    fontSize: 14,
+    lineHeight: 1,
+    padding: "0 2px",
+  },
 };

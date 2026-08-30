@@ -28,8 +28,6 @@ export async function exportRoutes(app: FastifyInstance) {
     return reply.code(201).send({ data: log, meta: {} });
   });
 
-  // Recurring export config (FR-EG-11) - the worker (backend/src/worker.ts)
-  // checks lastRunAt against frequency each tick and calls runCsvExport itself.
   app.get(
     "/exports/schedule",
     { onRequest: [...scoped(app), requireRoles("admin", "leadership", "platform_admin")] },

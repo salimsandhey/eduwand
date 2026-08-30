@@ -7,21 +7,9 @@ import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, CommunicationMessage } from "../../api/client";
 
-// FloatingTabBar.tsx's own numbers (it's absolutely positioned, so it doesn't
-// reserve layout space for anyone): bottom offset is Math.max(insets.bottom, 10),
-// bar height is 68. A fixed footer like the composer below only needs to clear
-// that exactly, plus a small gap - unlike a *scrollable* list's paddingBottom
-// (the 132 every sibling student screen uses), which deliberately wants a much
-// more generous buffer at the end of scrollable content. Reusing that 132 here
-// was wrong: it left a large, obviously-too-big empty gap between the composer
-// and the tab bar. This computes the real clearance instead of guessing.
 const TAB_BAR_HEIGHT = 68;
 const COMPOSER_GAP = 12;
 
-// "Reach out to the teacher" (client doc section 5) - routed through the
-// Communication Hub. No teacher-picker: a student's messages go to whichever
-// teacher(s) read their class's thread (see student-portal.ts's note on
-// student_to_teacher routing by class section, not a named teacher).
 export function StudentMessagesScreen() {
   const { accessToken } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
@@ -153,7 +141,6 @@ const styles = StyleSheet.create({
   messageBubble: { borderRadius: 12, padding: 10, marginBottom: 10, maxWidth: "85%" },
   messageText: { fontSize: 13 },
   messageMeta: { fontSize: 10, marginTop: 4 },
-  // marginBottom (tab-bar clearance) is applied inline, conditional on keyboardVisible - see tabBarClearance above.
   composer: { flexDirection: "row", gap: 8, alignItems: "flex-end", borderTopWidth: 1, padding: 12 },
   input: { flex: 1, borderWidth: 1, borderRadius: 8, padding: 10, minHeight: 40, maxHeight: 100, fontSize: 13 },
   sendButton: { borderRadius: 8, height: 40, paddingHorizontal: 16, alignItems: "center", justifyContent: "center" },

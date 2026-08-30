@@ -1,5 +1,5 @@
-import { useCallback, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Linking, Image, RefreshControl, Modal, KeyboardAvoidingView, Platform } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Animated, Easing, View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Linking, Image, RefreshControl, Modal, LayoutAnimation, Platform, UIManager } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import { useFocusEffect } from "@react-navigation/native";
@@ -10,32 +10,19 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { spacing, radius } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
-import { api, TopicDetail, ContextSource, Generation, GenerationOutputType } from "../../api/client";
+import { api, TopicDetail, ContextSource, Generation, GenerationOutputType, Observation } from "../../api/client";
 import { parseGenerationContent } from "./generation/content";
+import { OUTPUT_TYPE_LABELS, OUTPUT_TYPE_ICONS, OUTPUT_TYPE_ORDER } from "./generation/outputTypeMeta";
+import { useKeyboardHeight } from "../../hooks/useKeyboardHeight";
 
 type Props = NativeStackScreenProps<RootStackParamList, "TopicDetail">;
 
 type DetailTab = "context" | "generations" | "observations";
+type SourceFilter = "images" | "files" | "links";
 
-const OUTPUT_TYPE_LABELS: Record<string, string> = {
-  lesson_plan: "Lesson Plan",
-  custom_activity_report: "Custom Activity",
-  flashcards: "Flashcards",
-  presentation: "Presentation",
-};
-
-const OUTPUT_TYPE_ICONS: Record<GenerationOutputType, keyof typeof Ionicons.glyphMap> = {
-  lesson_plan: "book-outline",
-  custom_activity_report: "clipboard-outline",
-  flashcards: "albums-outline",
-  presentation: "easel-outline",
-};
-
-const OUTPUT_TYPE_ORDER: GenerationOutputType[] = [
-  "lesson_plan",
-  "custom_activity_report",
-  "flashcards",
-  "presentation",
+const GENERATION_FILTER_OPTIONS: { key: GenerationOutputType | "all"; label: string }[] = [
+  { key: "all", label: "All" },
+  ...OUTPUT_TYPE_ORDER.map((outputType) => ({ key: outputType, label: OUTPUT_TYPE_LABELS[outputType] })),
 ];
 
 const SOURCE_TYPE_ICONS: Record<ContextSource["sourceType"], keyof typeof Ionicons.glyphMap> = {
@@ -47,9 +34,40 @@ const SOURCE_TYPE_ICONS: Record<ContextSource["sourceType"], keyof typeof Ionico
   idream_k12: "library-outline",
 };
 
+const SOURCE_TYPE_LABELS: Record<ContextSource["sourceType"], string> = {
+  pdf: "PDF",
+  docx: "DOCX",
+  pptx: "PPTX",
+  image: "Image",
+  url: "Link",
+  idream_k12: "K-12",
+};
+
+const SOURCE_TYPE_COLORS: Record<ContextSource["sourceType"], string> = {
+  pdf: "#E4574F",
+  docx: "#4C6FEA",
+  pptx: "#E8952E",
+  image: "#2FAE66",
+  url: "#2AACC9",
+  idream_k12: "#8B5CF6",
+};
+
+const FILE_SOURCE_TYPES: ContextSource["sourceType"][] = ["pdf", "docx", "pptx"];
+
+const STICKY_NOTE_COLORS = ["#FFF3AD", "#FFD3E2", "#CBEFD4", "#CFE4FF", "#FFDFB8"];
+const STICKY_NOTE_ROTATIONS = ["-2.5deg", "2deg", "-1.5deg", "1.5deg"];
+const STICKY_NOTE_INK = "#332E1F";
+const STICKY_NOTE_INK_MUTED = "#7A7359";
+
+const SOURCE_FILTER_OPTIONS: { key: SourceFilter; label: string }[] = [
+  { key: "images", label: "Images" },
+  { key: "files", label: "Files" },
+  { key: "links", label: "Links" },
+];
+
 const EXTRACTION_STATUS_LABELS: Record<ContextSource["extractionStatus"], string> = {
   extracted: "Ready",
-  pending: "Processing",
+  pending: "Not read",
   failed_no_text: "No text found",
 };
 
@@ -64,12 +82,6 @@ function truncate(text: string, max = 110): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
-// A short "what's actually in here" preview under each generation row.
-// Structured content (backend/src/lib/ai.ts) is stored as a single-line JSON
-// string - falling through to the Markdown-line-splitting logic below would
-// just show the raw JSON blob, so each type gets a real human-readable
-// summary line first. Only a legacy pre-JSON generation reaches the Markdown
-// fallback path.
 function generationPreview(g: Generation): string {
   const text = g.editedOutput ?? g.aiOutput;
   const content = parseGenerationContent(g.outputType, text);
@@ -92,7 +104,6 @@ function generationPreview(g: Generation): string {
   return truncate(cleaned);
 }
 
-// Matches the local (non-exported) helper in unified-app/src/screens/shared/HomeScreen.tsx.
 function formatRelativeTime(dateString: string): string {
   const now = new Date();
   const past = new Date(dateString);
@@ -105,30 +116,59 @@ function formatRelativeTime(dateString: string): string {
   return past.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 }
 
-// Hub screen for a Topic - context sources, generations, observations, per
-// Docs/Dev/EduWand_UI_Screen_Spec.md section 4 (Content Library/Context,
-// Generation Review, Observation Capture are reached from here).
 export function TopicDetailScreen({ route, navigation }: Props) {
   const { topicId } = route.params;
   const { accessToken } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
+  const keyboardHeight = useKeyboardHeight();
 
   const [topic, setTopic] = useState<TopicDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<DetailTab>("context");
+  const [tabBarWidth, setTabBarWidth] = useState(0);
+  const tabIndicatorX = useRef(new Animated.Value(0)).current;
 
   const [contextUrl, setContextUrl] = useState("");
   const [showAddContext, setShowAddContext] = useState(false);
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [isAddingContext, setIsAddingContext] = useState(false);
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("images");
 
   const [observationText, setObservationText] = useState("");
   const [showAddObservation, setShowAddObservation] = useState(false);
   const [isAddingObservation, setIsAddingObservation] = useState(false);
 
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
-  const [imageRatios, setImageRatios] = useState<Record<string, number>>({});
+  const [openObservation, setOpenObservation] = useState<Observation | null>(null);
+  const [generationFilter, setGenerationFilter] = useState<GenerationOutputType | "all">("all");
+
+  const [openSource, setOpenSource] = useState<ContextSource | null>(null);
+  const [sourceDraft, setSourceDraft] = useState("");
+  const [isEditingSourceText, setIsEditingSourceText] = useState(false);
+  const [isSavingSource, setIsSavingSource] = useState(false);
+  const [isRetryingSource, setIsRetryingSource] = useState(false);
+
+  useEffect(() => {
+    if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+      UIManager.setLayoutAnimationEnabledExperimental(true);
+    }
+  }, []);
+
+  function selectTab(tab: DetailTab) {
+    if (tab === activeTab) return;
+    const tabIndex = (["context", "generations", "observations"] as DetailTab[]).indexOf(tab);
+    if (tabBarWidth > 0) {
+      Animated.timing(tabIndicatorX, {
+        toValue: (tabBarWidth / 3) * tabIndex,
+        duration: 240,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    }
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setActiveTab(tab);
+  }
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -215,15 +255,53 @@ export function TopicDetailScreen({ route, navigation }: Props) {
     await addContextFile({ uri: asset.uri, name: asset.name, mimeType: asset.mimeType ?? "application/octet-stream" });
   }
 
-  // Files open through the token-authenticated download route; URL sources
-  // (no fileLocation) open the original page directly - previously this only
-  // handled files, so tapping a URL source card silently did nothing.
   function openContextSource(source: ContextSource) {
     if (!accessToken) return;
     if (source.fileLocation) {
       Linking.openURL(api.contextSourceFileUrl(topicId, source.id, accessToken));
     } else if (source.sourceUrl) {
       Linking.openURL(source.sourceUrl);
+    }
+  }
+
+  function openSourceDetail(source: ContextSource) {
+    setOpenSource(source);
+    setSourceDraft(source.extractedText ?? "");
+    setIsEditingSourceText(false);
+    setError(null);
+  }
+
+  async function saveSourceText() {
+    if (!accessToken || !openSource || !sourceDraft.trim()) return;
+    setIsSavingSource(true);
+    setError(null);
+    try {
+      const updated = await api.updateTopicContextText(accessToken, topicId, openSource.id, sourceDraft.trim());
+      setOpenSource(updated);
+      setSourceDraft(updated.extractedText ?? "");
+      setIsEditingSourceText(false);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save text");
+    } finally {
+      setIsSavingSource(false);
+    }
+  }
+
+  async function retrySourceExtraction() {
+    if (!accessToken || !openSource) return;
+    setIsRetryingSource(true);
+    setError(null);
+    try {
+      const updated = await api.retryTopicContextExtraction(accessToken, topicId, openSource.id);
+      setOpenSource(updated);
+      setSourceDraft(updated.extractedText ?? "");
+      setIsEditingSourceText(false);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Re-extraction failed");
+    } finally {
+      setIsRetryingSource(false);
     }
   }
 
@@ -258,10 +336,112 @@ export function TopicDetailScreen({ route, navigation }: Props) {
     );
   }
 
+  const displayedSources = topic.contextSources.filter((source) => {
+    if (sourceFilter === "images") return source.sourceType === "image";
+    if (sourceFilter === "files") return ["pdf", "docx", "pptx"].includes(source.sourceType);
+    return source.sourceType === "url" || source.sourceType === "idream_k12";
+  });
+
+  const displayedGenerationGroups = groupGenerationsByOutputType(
+    generationFilter === "all" ? topic.generations : topic.generations.filter((g) => g.outputType === generationFilter)
+  );
+
+  function sourceStatus(c: ContextSource) {
+    const statusLabel =
+      c.extractionStatus === "failed_no_text"
+        ? c.sourceType === "image"
+          ? "Image"
+          : "Preview only"
+        : EXTRACTION_STATUS_LABELS[c.extractionStatus];
+    const statusColor =
+      c.extractionStatus === "failed_no_text"
+        ? c.sourceType === "image"
+          ? colors.accent
+          : colors.textMuted
+        : c.extractionStatus === "extracted"
+          ? colors.accent
+          : colors.textMuted;
+    return { statusLabel, statusColor };
+  }
+
+  function renderImageCard(c: ContextSource) {
+    const { statusLabel, statusColor } = sourceStatus(c);
+    const typeColor = SOURCE_TYPE_COLORS[c.sourceType];
+    return (
+      <Pressable
+        key={c.id}
+        style={({ pressed }) => [
+          styles.sourceCard,
+          styles.sourceImageCard,
+          { backgroundColor: colors.surface, borderColor: colors.border },
+          cardShadow,
+          pressed && { opacity: pressedOpacity },
+        ]}
+        onPress={() => openSourceDetail(c)}
+        accessibilityRole="button"
+      >
+        <View style={styles.sourceCardTopRow}>
+          <View style={[styles.typeTag, { backgroundColor: `${typeColor}1F` }]}>
+            <Ionicons name={SOURCE_TYPE_ICONS[c.sourceType]} size={11} color={typeColor} />
+            <Text style={[styles.typeTagText, { color: typeColor }]}>{SOURCE_TYPE_LABELS[c.sourceType]}</Text>
+          </View>
+          <View style={[styles.statusBadge, { backgroundColor: colors.surfaceRaised }]}>
+            <Text style={[styles.statusBadgeText, { color: statusColor }]}>{statusLabel}</Text>
+          </View>
+        </View>
+        <View style={[styles.sourcePreview, { backgroundColor: colors.surfaceRaised }]}>
+          <Image
+            source={{ uri: accessToken ? api.contextSourceFileUrl(topicId, c.id, accessToken) : undefined }}
+            style={styles.sourceThumbnail}
+            resizeMode="cover"
+          />
+        </View>
+      </Pressable>
+    );
+  }
+
+  function renderSourceListRow(c: ContextSource) {
+    const label = c.originalFilename ?? c.sourceUrl ?? c.idreamK12ReferenceId ?? c.sourceType;
+    const isFileType = FILE_SOURCE_TYPES.includes(c.sourceType);
+    const snippet =
+      !isFileType && c.extractionStatus === "extracted" && c.extractedText
+        ? c.extractedText.replace(/\s+/g, " ").trim().slice(0, 90)
+        : null;
+    const typeColor = SOURCE_TYPE_COLORS[c.sourceType];
+    const { statusLabel, statusColor } = sourceStatus(c);
+    return (
+      <Pressable
+        key={c.id}
+        style={({ pressed }) => [
+          styles.sourceListRow,
+          { backgroundColor: colors.surface, borderColor: colors.border },
+          cardShadow,
+          pressed && { opacity: pressedOpacity },
+        ]}
+        onPress={() => openSourceDetail(c)}
+        accessibilityRole="button"
+      >
+        <View style={[styles.sourceListIcon, { backgroundColor: `${typeColor}1F` }]}>
+          <Ionicons name={SOURCE_TYPE_ICONS[c.sourceType]} size={16} color={typeColor} />
+        </View>
+        <View style={styles.sourceListCopy}>
+          <Text style={[styles.sourceName, { color: colors.textPrimary, marginTop: 0 }]} numberOfLines={1}>{label}</Text>
+          <View style={styles.sourceListMetaRow}>
+            <Text style={[styles.sourceListTypeText, { color: typeColor }]}>{SOURCE_TYPE_LABELS[c.sourceType]}</Text>
+            {snippet ? <Text style={[styles.sourceListSnippet, { color: colors.textMuted }]} numberOfLines={1}>· {snippet}</Text> : null}
+          </View>
+        </View>
+        <View style={[styles.statusBadge, { backgroundColor: colors.surfaceRaised }]}>
+          <Text style={[styles.statusBadgeText, { color: statusColor }]}>{statusLabel}</Text>
+        </View>
+      </Pressable>
+    );
+  }
+
   return (
     <Screen edges={["top", "bottom"]}>
       <View style={styles.headArea}>
-        <View style={styles.topBar}>
+        <View style={[styles.topBar, { justifyContent: "space-between" }]}>
           <Pressable
             style={({ pressed }) => [styles.backButton, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
             onPress={() => navigation.goBack()}
@@ -270,77 +450,62 @@ export function TopicDetailScreen({ route, navigation }: Props) {
           >
             <Ionicons name="arrow-back" size={22} color={colors.textPrimary} />
           </Pressable>
-          <Text style={[styles.topBarTitle, { color: colors.textPrimary }]}>Studio</Text>
           <Pressable
-            style={({ pressed }) => [styles.addButton, { backgroundColor: colors.accent }, cardShadow, pressed && { opacity: pressedOpacity }]}
-            onPress={() => {
-              setShowUrlInput(false);
-              setShowAddContext(true);
-            }}
+            style={({ pressed }) => [styles.backButton, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+            onPress={() => navigation.navigate("MainTabs", { screen: "Home" })}
             accessibilityRole="button"
-            accessibilityLabel="Add topic source"
+            accessibilityLabel="Go to home"
           >
-            <Ionicons name="add" size={23} color={colors.accentOn} />
+            <Ionicons name="home-outline" size={20} color={colors.textPrimary} />
           </Pressable>
         </View>
 
-        <View style={[styles.topicHero, { backgroundColor: colors.surfaceAccent }]}>
-          <View style={[styles.topicIcon, { backgroundColor: colors.accent }]}>
-            <Ionicons name="sparkles-outline" size={22} color={colors.accentOn} />
-          </View>
+        <View style={[styles.topicHero, { backgroundColor: colors.accent }]}>
+          <View style={styles.topicHeroGlowLarge} />
+          <View style={styles.topicHeroGlowSmall} />
           <View style={styles.topicHeroCopy}>
-            <Text style={[styles.title, { color: colors.textPrimary }]} numberOfLines={2}>{topic.name}</Text>
-            <Text style={[styles.meta, { color: colors.textMuted }]}>{topic.subject} / {topic.board}</Text>
+            <Text style={styles.topicHeroTitle} numberOfLines={2}>{topic.name}</Text>
+            <Text style={styles.topicHeroMeta} numberOfLines={1}>{topic.subject} · {topic.board}</Text>
+            <View style={styles.topicHeroStats}>
+              <View style={styles.topicHeroStat}><Text style={styles.topicHeroStatValue}>{topic.contextSources.length}</Text><Text style={styles.topicHeroStatLabel}>sources</Text></View>
+              <View style={styles.topicHeroStatDivider} />
+              <View style={styles.topicHeroStat}><Text style={styles.topicHeroStatValue}>{topic.generations.length}</Text><Text style={styles.topicHeroStatLabel}>created</Text></View>
+              <View style={styles.topicHeroStatDivider} />
+              <View style={styles.topicHeroStat}><Text style={styles.topicHeroStatValue}>{topic.observations.length}</Text><Text style={styles.topicHeroStatLabel}>notes</Text></View>
+            </View>
+            <View style={styles.heroActions}>
+              <Pressable style={({ pressed }) => [styles.heroGenerateButton, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.navigate("GenerationSetup", { topicId })} accessibilityRole="button">
+                <Ionicons name="color-wand-outline" size={16} color={colors.accent} />
+                <Text style={[styles.heroGenerateButtonText, { color: colors.accent }]}>Generate</Text>
+                <Ionicons name="arrow-forward" size={15} color={colors.accent} />
+              </Pressable>
+              <Pressable style={({ pressed }) => [styles.heroIconAction, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.navigate("CreateAssignment", { topicId })} accessibilityRole="button" accessibilityLabel="Create assignment"><Ionicons name="document-text-outline" size={18} color="#FFFFFF" /></Pressable>
+              <Pressable style={({ pressed }) => [styles.heroIconAction, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.navigate("AttainmentReport", { topicId })} accessibilityRole="button" accessibilityLabel="View attainment report"><Ionicons name="bar-chart-outline" size={18} color="#FFFFFF" /></Pressable>
+            </View>
           </View>
-        </View>
-
-        <View style={styles.summaryRow}>
-          <View style={[styles.summaryChip, { backgroundColor: colors.surfaceRaised }]}><Text style={[styles.summaryValue, { color: colors.accent }]}>{topic.contextSources.length}</Text><Text style={[styles.summaryLabel, { color: colors.textMuted }]}>Sources</Text></View>
-          <View style={[styles.summaryChip, { backgroundColor: colors.surfaceRaised }]}><Text style={[styles.summaryValue, { color: colors.accent }]}>{topic.generations.length}</Text><Text style={[styles.summaryLabel, { color: colors.textMuted }]}>Generated</Text></View>
-          <View style={[styles.summaryChip, { backgroundColor: colors.surfaceRaised }]}><Text style={[styles.summaryValue, { color: colors.accent }]}>{topic.observations.length}</Text><Text style={[styles.summaryLabel, { color: colors.textMuted }]}>Notes</Text></View>
-        </View>
-
-        <Pressable style={({ pressed }) => [styles.generateButton, { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.navigate("GenerationSetup", { topicId })} accessibilityRole="button">
-          <Ionicons name="sparkles-outline" size={19} color={colors.accentOn} />
-          <Text style={[styles.generateButtonText, { color: colors.accentOn }]}>Generate content</Text>
-          <Ionicons name="arrow-forward" size={18} color={colors.accentOn} style={styles.generateArrow} />
-        </Pressable>
-
-        <View style={styles.linkRow}>
-          <Pressable
-            style={({ pressed }) => [styles.secondaryLink, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow, pressed && { opacity: pressedOpacity }]}
-            onPress={() => navigation.navigate("CreateAssignment", { topicId })}
-            accessibilityRole="button"
-          >
-            <Ionicons name="document-text-outline" size={16} color={colors.textSecondary} />
-            <Text style={[styles.secondaryLinkText, { color: colors.textSecondary }]}>New assignment</Text>
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [styles.secondaryLink, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow, pressed && { opacity: pressedOpacity }]}
-            onPress={() => navigation.navigate("AttainmentReport", { topicId })}
-            accessibilityRole="button"
-          >
-            <Ionicons name="bar-chart-outline" size={16} color={colors.textSecondary} />
-            <Text style={[styles.secondaryLinkText, { color: colors.textSecondary }]}>Attainment report</Text>
-          </Pressable>
         </View>
 
         {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
-        <View style={[styles.tabBar, { backgroundColor: colors.surfaceRaised }]}>
+        <View style={[styles.tabBar, { borderBottomColor: colors.border }]} onLayout={(event) => setTabBarWidth(event.nativeEvent.layout.width)}>
           {(["context", "generations", "observations"] as DetailTab[]).map((tab) => {
             const active = activeTab === tab;
             const label = tab === "context" ? "Context" : tab === "generations" ? "Generated" : "Notes";
-            const icon: keyof typeof Ionicons.glyphMap = tab === "context" ? "folder-open-outline" : tab === "generations" ? "sparkles-outline" : "chatbubble-ellipses-outline";
+            const icon: keyof typeof Ionicons.glyphMap = tab === "context" ? "layers-outline" : tab === "generations" ? "documents-outline" : "clipboard-outline";
             const count = tab === "context" ? topic.contextSources.length : tab === "generations" ? topic.generations.length : topic.observations.length;
             return (
-              <Pressable key={tab} style={({ pressed }) => [styles.tab, active && { backgroundColor: colors.surface }, pressed && { opacity: pressedOpacity }]} onPress={() => setActiveTab(tab)} accessibilityRole="tab" accessibilityState={{ selected: active }}>
-                <Ionicons name={icon} size={14} color={active ? colors.accent : colors.textMuted} />
+              <Pressable key={tab} style={({ pressed }) => [styles.tab, active && styles.tabActive, pressed && { opacity: pressedOpacity }]} onPress={() => selectTab(tab)} accessibilityRole="tab" accessibilityState={{ selected: active }}>
+                <View style={[styles.tabIcon, active && { backgroundColor: colors.accentSoft }]}><Ionicons name={icon} size={14} color={active ? colors.accent : colors.textMuted} /></View>
                 <Text style={[styles.tabText, { color: active ? colors.accent : colors.textMuted }]}>{label}</Text>
                 <View style={[styles.tabCount, { backgroundColor: active ? colors.accentSoft : colors.backgroundMuted }]}><Text style={[styles.tabCountText, { color: active ? colors.accent : colors.textMuted }]}>{count}</Text></View>
               </Pressable>
             );
           })}
+          {tabBarWidth > 0 ? (
+            <Animated.View pointerEvents="none" style={[styles.tabActiveIndicator, { width: tabBarWidth / 3, transform: [{ translateX: tabIndicatorX }] }]}>
+              <View style={[styles.tabActiveIndicatorLine, { backgroundColor: colors.accent }]} />
+            </Animated.View>
+          ) : null}
         </View>
       </View>
 
@@ -352,189 +517,204 @@ export function TopicDetailScreen({ route, navigation }: Props) {
       >
         {activeTab === "context" ? (
           <View>
-            <View style={styles.cardHeader}>
-              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Learning sources</Text>
+            <View style={styles.workbenchLead}>
+              <View style={styles.workbenchCopy}>
+                <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Sources</Text>
+              </View>
               <Pressable
                 onPress={() => {
                   setShowUrlInput(false);
                   setShowAddContext(true);
                 }}
-                hitSlop={8}
+                style={({ pressed }) => [styles.workbenchAction, { backgroundColor: colors.accentSoft }, pressed && { opacity: pressedOpacity }]}
                 accessibilityRole="button"
               >
-                <Text style={[styles.link, { color: colors.accent }]}>+ Add source</Text>
+                <Ionicons name="add" size={16} color={colors.accent} />
+                <Text style={[styles.workbenchActionText, { color: colors.accent }]}>Add</Text>
               </Pressable>
             </View>
-            <Text style={[styles.meta, { color: colors.textMuted, marginTop: 2 }]}>
-              Upload a textbook chapter, presentation, or link — it's used as the basis for generation.
-            </Text>
             {topic.contextSources.length === 0 ? (
-              <Text style={[styles.meta, { color: colors.textMuted, marginTop: 8 }]}>No context added yet.</Text>
+              <EmptyWorkbench icon="layers-outline" title="No sources yet" detail="Add context to begin." colors={colors} />
             ) : (
-              topic.contextSources.map((c) => {
-                const label = c.originalFilename ?? c.sourceUrl ?? c.idreamK12ReferenceId ?? c.sourceType;
-                const isImage = c.sourceType === "image" && Boolean(c.fileLocation);
-                const canOpen = isImage || Boolean(c.fileLocation) || (c.sourceType === "url" && Boolean(c.sourceUrl));
-                // Images preview in-app (lightbox) - everything else still
-                // hands off externally (browser/OS viewer), since there's no
-                // reliable in-app renderer for PDF/DOCX/PPTX without a much
-                // heavier addition (native PDF lib needing a custom dev
-                // client, or a WebView+Google-Docs-Viewer trick that only
-                // works for publicly-reachable URLs, not this dev backend).
-                function handlePress() {
-                  if (isImage && accessToken) {
-                    setLightboxUrl(api.contextSourceFileUrl(topicId, c.id, accessToken));
-                  } else {
-                    openContextSource(c);
-                  }
-                }
-                // Collapse whitespace before slicing - raw extracted text can
-                // carry tab/newline-heavy layout artifacts (e.g. from a PDF's
-                // column structure) that look broken when just truncated raw.
-                const snippet =
-                  c.extractionStatus === "extracted" && c.sourceType !== "image" && c.extractedText
-                    ? c.extractedText.replace(/\s+/g, " ").trim().slice(0, 160)
-                    : null;
-                return (
-                  <Pressable
-                    key={c.id}
-                    style={({ pressed }) => [
-                      styles.sourceCard,
-                      { backgroundColor: colors.surface, borderColor: colors.border },
-                      cardShadow,
-                      canOpen && pressed && { opacity: pressedOpacity },
-                    ]}
-                    onPress={canOpen ? handlePress : undefined}
-                    disabled={!canOpen}
-                    accessibilityRole={canOpen ? "button" : undefined}
-                  >
-                    <View style={styles.sourceCardHeader}>
-                      <Ionicons name={SOURCE_TYPE_ICONS[c.sourceType]} size={14} color={colors.textMuted} />
-                      <Text style={[styles.meta, { color: colors.textSecondary, flex: 1 }]} numberOfLines={1}>
-                        {label}
-                      </Text>
-                      <View style={[styles.statusBadge, { backgroundColor: colors.surfaceRaised }]}>
-                        <Text
-                          style={[
-                            styles.statusBadgeText,
-                            { color: c.extractionStatus === "failed_no_text" ? colors.danger : c.extractionStatus === "extracted" ? colors.accent : colors.textMuted },
-                          ]}
+              <>
+                <View style={[styles.filterBar, { borderBottomColor: colors.border }]}>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sourceFilterRow}>
+                    {SOURCE_FILTER_OPTIONS.map((filter) => {
+                      const active = sourceFilter === filter.key;
+                      return (
+                        <Pressable
+                          key={filter.key}
+                          style={({ pressed }) => [styles.sourceFilterChip, { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border }, pressed && { opacity: pressedOpacity }]}
+                          onPress={() => setSourceFilter(filter.key)}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: active }}
                         >
-                          {EXTRACTION_STATUS_LABELS[c.extractionStatus]}
-                        </Text>
-                      </View>
-                    </View>
-                    {c.sourceType === "image" ? (
-                      <View style={[styles.sourcePreview, { backgroundColor: colors.surfaceRaised, aspectRatio: imageRatios[c.id] ?? 4 / 3 }]}>
-                        <Image
-                          source={{ uri: accessToken ? api.contextSourceFileUrl(topicId, c.id, accessToken) : undefined }}
-                          style={styles.sourceThumbnail}
-                          resizeMode="contain"
-                          onLoad={({ nativeEvent }) => {
-                            const { width, height } = nativeEvent.source;
-                            if (width > 0 && height > 0) {
-                              const ratio = width / height;
-                              setImageRatios((current) => current[c.id] === ratio ? current : { ...current, [c.id]: ratio });
-                            }
-                          }}
-                        />
-                      </View>
-                    ) : snippet ? (
-                      <Text style={[styles.snippet, { color: colors.textMuted }]} numberOfLines={3}>
-                        {snippet}
-                      </Text>
-                    ) : null}
-                  </Pressable>
-                );
-              })
+                          <Text style={[styles.sourceFilterText, { color: active ? colors.accentOn : colors.textMuted }]}>{filter.label}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+                {displayedSources.length === 0 ? (
+                  <EmptyWorkbench icon="filter-outline" title={`No ${sourceFilter} here`} detail="Choose another source type." colors={colors} />
+                ) : sourceFilter === "images" ? (
+                  <View style={styles.sourceGrid}>{displayedSources.map(renderImageCard)}</View>
+                ) : (
+                  <View style={styles.sourceList}>{displayedSources.map(renderSourceListRow)}</View>
+                )}
+              </>
             )}
           </View>
         ) : null}
 
         {activeTab === "generations" ? (
           <View>
-            <View style={styles.cardHeader}>
-              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Generated materials</Text>
-              <Text style={[styles.sectionCount, { color: colors.textMuted }]}>{topic.generations.length} total</Text>
+            <View style={styles.workbenchLead}>
+              <View style={styles.workbenchCopy}>
+                <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Generated materials</Text>
+              </View>
+              <Pressable style={({ pressed }) => [styles.workbenchAction, { backgroundColor: colors.accentSoft }, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.navigate("GenerationSetup", { topicId })} accessibilityRole="button">
+                <Ionicons name="add" size={16} color={colors.accent} />
+                <Text style={[styles.workbenchActionText, { color: colors.accent }]}>Create</Text>
+              </Pressable>
             </View>
             {topic.generations.length === 0 ? (
-              <Text style={[styles.meta, { color: colors.textMuted }]}>Nothing generated for this topic yet.</Text>
+              <EmptyWorkbench icon="sparkles-outline" title="Nothing generated yet" detail="Create your first output." colors={colors} />
             ) : (
-              groupGenerationsByOutputType(topic.generations).map((group) => (
+              <>
+                <View style={[styles.filterBar, { borderBottomColor: colors.border }]}>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sourceFilterRow}>
+                    {GENERATION_FILTER_OPTIONS.map((filter) => {
+                      const active = generationFilter === filter.key;
+                      return (
+                        <Pressable
+                          key={filter.key}
+                          style={({ pressed }) => [styles.sourceFilterChip, { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border }, pressed && { opacity: pressedOpacity }]}
+                          onPress={() => setGenerationFilter(filter.key)}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: active }}
+                        >
+                          <Text style={[styles.sourceFilterText, { color: active ? colors.accentOn : colors.textMuted }]}>{filter.label}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+                {displayedGenerationGroups.length === 0 ? (
+                  <EmptyWorkbench icon="filter-outline" title="No matches" detail="Choose another output type." colors={colors} />
+                ) : (
+                  displayedGenerationGroups.map((group) => (
                 <View key={group.outputType} style={{ marginTop: 6 }}>
                   <View style={styles.groupHeadingRow}>
                     <Ionicons name={OUTPUT_TYPE_ICONS[group.outputType]} size={13} color={colors.accent} />
                     <Text style={[styles.groupHeading, { color: colors.textMuted }]}>{OUTPUT_TYPE_LABELS[group.outputType]}</Text>
                   </View>
-                  {group.items.map((g) => (
-                    <Pressable
-                      key={g.id}
-                      style={({ pressed }) => [
-                        styles.listRow,
-                        { backgroundColor: colors.surface, borderColor: colors.border },
-                        cardShadow,
-                        pressed && { opacity: pressedOpacity },
-                      ]}
-                      onPress={() => navigation.navigate("GenerationReview", { generationId: g.id })}
-                      accessibilityRole="button"
-                    >
-                      <View style={{ flex: 1 }}>
+                  <View style={styles.genGrid}>
+                    {group.items.map((g) => (
+                      <Pressable
+                        key={g.id}
+                        style={({ pressed }) => [
+                          styles.genCard,
+                          { backgroundColor: colors.surface, borderColor: colors.border },
+                          cardShadow,
+                          pressed && { opacity: pressedOpacity },
+                        ]}
+                        onPress={() => navigation.navigate("GenerationReview", { generationId: g.id })}
+                        accessibilityRole="button"
+                      >
+                        <View style={styles.genCardTopRow}>
+                          <View style={[styles.genCardIcon, { backgroundColor: colors.accentSoft }]}>
+                            <Ionicons name={OUTPUT_TYPE_ICONS[group.outputType]} size={16} color={colors.accent} />
+                          </View>
+                          {g.shareStatus === "published" ? (
+                            <View style={[styles.genCardSharedBadge, { backgroundColor: colors.accentSoft }]}>
+                              <Ionicons name="people" size={10} color={colors.accent} />
+                              <Text style={[styles.genCardSharedBadgeText, { color: colors.accent }]}>Shared</Text>
+                            </View>
+                          ) : null}
+                        </View>
                         {g.generationStatus === "failed" ? (
-                          <Text style={[styles.meta, { color: colors.danger, marginBottom: 0 }]}>Failed - tap to retry</Text>
+                          <Text style={[styles.genCardPreview, { color: colors.danger }]}>Failed - tap to retry</Text>
                         ) : (
                           <>
-                            <Text style={[styles.meta, { color: colors.textSecondary, marginBottom: 2 }]} numberOfLines={1}>
+                            <Text style={[styles.genCardPreview, { color: colors.textSecondary }]} numberOfLines={3}>
                               {generationPreview(g)}
                             </Text>
-                            <Text style={[styles.meta, { color: colors.textMuted, marginBottom: 0, fontSize: 10 }]}>
+                            <Text style={[styles.genCardMeta, { color: colors.textMuted }]} numberOfLines={1}>
                               {new Date(g.generatedAt).toLocaleDateString()}
                               {g.editedOutput ? " · edited" : ""}
                               {g.contextSources.length > 0 ? ` · ${g.contextSources.length} source(s)` : ""}
                             </Text>
                           </>
                         )}
-                      </View>
-                      <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
-                    </Pressable>
-                  ))}
+                        <View style={[styles.genCardArrow, { backgroundColor: colors.accentSoft }]}>
+                          <Ionicons name="chevron-forward" size={13} color={colors.accent} />
+                        </View>
+                      </Pressable>
+                    ))}
+                  </View>
                 </View>
               ))
+                )}
+              </>
             )}
           </View>
         ) : null}
 
         {activeTab === "observations" ? (
           <View>
-            <View style={styles.cardHeader}>
-              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Teaching notes</Text>
-              <Pressable onPress={() => setShowAddObservation(true)} hitSlop={8} accessibilityRole="button">
-                <Text style={[styles.link, { color: colors.accent }]}>+ Add note</Text>
+            <View style={styles.workbenchLead}>
+              <View style={styles.workbenchCopy}>
+                <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Notes</Text>
+                <Text style={[styles.notesSubtitle, { color: colors.textMuted }]}>Quick teaching reflections for this topic</Text>
+              </View>
+              <Pressable
+                style={({ pressed }) => [styles.workbenchIconAction, { backgroundColor: colors.accentSoft }, pressed && { opacity: pressedOpacity }]}
+                onPress={() => setShowAddObservation(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Add note"
+              >
+                <Ionicons name="add" size={19} color={colors.accent} />
               </Pressable>
             </View>
             {topic.observations.length === 0 ? (
-              <Text style={[styles.meta, { color: colors.textMuted, marginTop: 8 }]}>Nothing recorded yet.</Text>
+              <EmptyWorkbench icon="clipboard-outline" title="No notes yet" detail="Capture a quick reflection." colors={colors} />
             ) : (
-              topic.observations.map((o) => (
-                <View
-                  key={o.id}
-                  style={[styles.listRow, { backgroundColor: colors.surface, borderColor: colors.border, alignItems: "flex-start" }, cardShadow]}
-                >
-                  <Ionicons name="chatbox-ellipses-outline" size={14} color={colors.textMuted} style={{ marginTop: 2 }} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.meta, { color: colors.textSecondary }]}>{o.body}</Text>
-                    <Text style={[styles.meta, { color: colors.textMuted, fontSize: 10 }]}>{formatRelativeTime(o.recordedAt)}</Text>
-                  </View>
-                </View>
-              ))
+              <View style={styles.stickyNoteBoard}>
+                {topic.observations.map((o, index) => (
+                  <Pressable
+                    key={o.id}
+                    style={({ pressed }) => [
+                      styles.stickyNote,
+                      {
+                        backgroundColor: STICKY_NOTE_COLORS[index % STICKY_NOTE_COLORS.length],
+                        transform: [{ rotate: STICKY_NOTE_ROTATIONS[index % STICKY_NOTE_ROTATIONS.length] }],
+                      },
+                      pressed && { opacity: pressedOpacity },
+                    ]}
+                    onPress={() => setOpenObservation(o)}
+                    accessibilityRole="button"
+                  >
+                    <View style={styles.stickyNoteTape} />
+                    <View style={styles.stickyNotePin} />
+                    <View style={styles.stickyNoteFold} />
+                    <Text style={styles.stickyNoteBody} numberOfLines={5}>{o.body}</Text>
+                    <View style={styles.stickyNoteFooter}>
+                      <View style={styles.stickyNoteFooterDot} />
+                      <Text style={styles.stickyNoteTime}>{formatRelativeTime(o.recordedAt)}</Text>
+                    </View>
+                  </Pressable>
+                ))}
+              </View>
             )}
           </View>
         ) : null}
       </ScrollView>
 
       <Modal transparent animationType="slide" visible={showAddContext} onRequestClose={() => setShowAddContext(false)}>
-        <KeyboardAvoidingView style={styles.modalRoot} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <View style={styles.modalRoot}>
           <Pressable style={styles.modalBackdrop} onPress={() => setShowAddContext(false)} accessibilityRole="button" accessibilityLabel="Close add source" />
-          <View style={[styles.modalSheet, { backgroundColor: colors.surface }]}>
+          <View style={[styles.modalSheet, { backgroundColor: colors.surface, marginBottom: keyboardHeight }]}>
             <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
             <View style={styles.modalHeader}>
               <View><Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Add context</Text><Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>Give your generation reliable source material.</Text></View>
@@ -566,13 +746,13 @@ export function TopicDetailScreen({ route, navigation }: Props) {
             )}
             {isAddingContext && !showUrlInput ? <ActivityIndicator color={colors.accent} style={styles.modalLoader} /> : null}
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
 
       <Modal transparent animationType="slide" visible={showAddObservation} onRequestClose={() => setShowAddObservation(false)}>
-        <KeyboardAvoidingView style={styles.modalRoot} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <View style={styles.modalRoot}>
           <Pressable style={styles.modalBackdrop} onPress={() => setShowAddObservation(false)} accessibilityRole="button" accessibilityLabel="Close new note" />
-          <View style={[styles.modalSheet, { backgroundColor: colors.surface }]}>
+          <View style={[styles.modalSheet, { backgroundColor: colors.surface, marginBottom: keyboardHeight }]}>
             <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
             <View style={styles.modalHeader}>
               <View><Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Add teaching note</Text><Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>Capture what happened while it is fresh.</Text></View>
@@ -583,7 +763,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
               {isAddingObservation ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Save note</Text>}
             </Pressable>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
 
       <Modal visible={lightboxUrl !== null} transparent animationType="fade" onRequestClose={() => setLightboxUrl(null)}>
@@ -594,61 +774,337 @@ export function TopicDetailScreen({ route, navigation }: Props) {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <Modal transparent animationType="slide" visible={openObservation !== null} onRequestClose={() => setOpenObservation(null)}>
+        <View style={styles.modalRoot}>
+          <Pressable style={styles.modalBackdrop} onPress={() => setOpenObservation(null)} accessibilityRole="button" accessibilityLabel="Close note" />
+          <View style={[styles.modalSheet, { backgroundColor: colors.surface }]}>
+            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Note</Text>
+                <Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>
+                  {openObservation ? formatRelativeTime(openObservation.recordedAt) : ""}
+                </Text>
+              </View>
+              <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setOpenObservation(null)} accessibilityRole="button">
+                <Ionicons name="close" size={20} color={colors.textPrimary} />
+              </Pressable>
+            </View>
+            <ScrollView style={styles.noteDetailScroll} showsVerticalScrollIndicator={false}>
+              <Text style={[styles.noteDetailBody, { color: colors.textSecondary }]}>{openObservation?.body}</Text>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal transparent animationType="slide" visible={openSource !== null} onRequestClose={() => setOpenSource(null)}>
+        <View style={styles.modalRoot}>
+          <Pressable style={styles.modalBackdrop} onPress={() => setOpenSource(null)} accessibilityRole="button" accessibilityLabel="Close source" />
+          <View style={[styles.modalSheet, { backgroundColor: colors.surface, marginBottom: keyboardHeight }]}>
+            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1, paddingRight: 12 }}>
+                <Text style={[styles.modalTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+                  {openSource?.originalFilename ?? openSource?.sourceUrl ?? openSource?.sourceType ?? "Source"}
+                </Text>
+                <Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>
+                  {openSource ? (openSource.extractionStatus === "extracted" ? "Text ready — used when you generate" : openSource.extractionStatus === "pending" ? "Not read yet — won't be used until it is" : "No text found — won't be used") : ""}
+                </Text>
+              </View>
+              <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setOpenSource(null)} accessibilityRole="button">
+                <Ionicons name="close" size={20} color={colors.textPrimary} />
+              </Pressable>
+            </View>
+
+            {openSource?.extractionError ? (
+              <Text style={[styles.meta, { color: colors.danger, marginTop: 8 }]}>{openSource.extractionError}</Text>
+            ) : null}
+            {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
+
+            <View style={styles.sourceDetailActionRow}>
+              {openSource && (openSource.fileLocation || openSource.sourceUrl) ? (
+                <Pressable
+                  style={({ pressed }) => [styles.sourceGhostButton, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+                  onPress={() => {
+                    if (openSource.sourceType === "image" && openSource.fileLocation && accessToken) {
+                      setLightboxUrl(api.contextSourceFileUrl(topicId, openSource.id, accessToken));
+                    } else {
+                      openContextSource(openSource);
+                    }
+                  }}
+                  accessibilityRole="button"
+                >
+                  <Ionicons name={openSource.sourceType === "image" ? "image-outline" : openSource.sourceType === "url" ? "link-outline" : "document-text-outline"} size={15} color={colors.accent} />
+                  <Text style={[styles.sourceGhostButtonText, { color: colors.accent }]}>
+                    {openSource.sourceType === "image" ? "View image" : openSource.sourceType === "url" ? "Open link" : "Open file"}
+                  </Text>
+                </Pressable>
+              ) : null}
+              {openSource && openSource.sourceType !== "idream_k12" ? (
+                <Pressable
+                  style={({ pressed }) => [styles.sourceGhostButton, { borderColor: colors.border }, (isRetryingSource || pressed) && { opacity: pressedOpacity }]}
+                  onPress={retrySourceExtraction}
+                  disabled={isRetryingSource}
+                  accessibilityRole="button"
+                >
+                  {isRetryingSource ? (
+                    <ActivityIndicator color={colors.accent} size="small" />
+                  ) : (
+                    <>
+                      <Ionicons name="refresh-outline" size={15} color={colors.accent} />
+                      <Text style={[styles.sourceGhostButtonText, { color: colors.accent }]}>
+                        {openSource.sourceType === "image" ? "Re-transcribe" : "Re-extract"}
+                      </Text>
+                    </>
+                  )}
+                </Pressable>
+              ) : null}
+            </View>
+
+            <View style={styles.sourceTextHeaderRow}>
+              <Text style={[styles.fieldLabel, { color: colors.textMuted, marginTop: isEditingSourceText ? 18 : 0 }]}>
+                {isEditingSourceText ? "Edit extracted text" : "Extracted text"}
+              </Text>
+              {!isEditingSourceText ? (
+                <Pressable
+                  style={({ pressed }) => [styles.editTextButton, { backgroundColor: colors.accentSoft }, pressed && { opacity: pressedOpacity }]}
+                  onPress={() => setIsEditingSourceText(true)}
+                  accessibilityRole="button"
+                >
+                  <Ionicons name="pencil-outline" size={13} color={colors.accent} />
+                  <Text style={[styles.editTextButtonText, { color: colors.accent }]}>Edit</Text>
+                </Pressable>
+              ) : null}
+            </View>
+
+            {isEditingSourceText ? (
+              <>
+                <TextInput
+                  style={[styles.input, styles.sourceTextInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
+                  value={sourceDraft}
+                  onChangeText={setSourceDraft}
+                  placeholder="Nothing was pulled from this source. Paste or type the text you want the AI to use."
+                  placeholderTextColor={colors.textMuted}
+                  multiline
+                  textAlignVertical="top"
+                  autoFocus
+                />
+                <View style={styles.sourceEditActionRow}>
+                  <Pressable
+                    style={({ pressed }) => [styles.sourceGhostButton, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+                    onPress={() => {
+                      setSourceDraft(openSource?.extractedText ?? "");
+                      setIsEditingSourceText(false);
+                    }}
+                    accessibilityRole="button"
+                  >
+                    <Text style={[styles.sourceGhostButtonText, { color: colors.textSecondary }]}>Cancel</Text>
+                  </Pressable>
+                  <Pressable
+                    style={({ pressed }) => [styles.smallButton, styles.sourceSaveButton, { backgroundColor: colors.accent }, (isSavingSource || !sourceDraft.trim() || pressed) && { opacity: pressedOpacity }]}
+                    onPress={saveSourceText}
+                    disabled={isSavingSource || !sourceDraft.trim()}
+                    accessibilityRole="button"
+                  >
+                    {isSavingSource ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Save text</Text>}
+                  </Pressable>
+                </View>
+              </>
+            ) : (
+              <ScrollView style={[styles.sourceTextView, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+                <Text style={[styles.sourceTextViewBody, { color: colors.textSecondary }]}>
+                  {sourceDraft.trim() ? sourceDraft : "Nothing was pulled from this source yet. Tap Edit to add text yourself."}
+                </Text>
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
     </Screen>
   );
 }
 
+function EmptyWorkbench({
+  icon,
+  title,
+  detail,
+  colors,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  detail: string;
+  colors: ReturnType<typeof useTheme>["colors"];
+}) {
+  return (
+    <View style={[styles.emptyWorkbench, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+      <View style={[styles.emptyWorkbenchIcon, { backgroundColor: colors.accentSoft }]}>
+        <Ionicons name={icon} size={19} color={colors.accent} />
+      </View>
+      <Text style={[styles.emptyWorkbenchTitle, { color: colors.textPrimary }]}>{title}</Text>
+      <Text style={[styles.emptyWorkbenchDetail, { color: colors.textMuted }]}>{detail}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  headArea: { paddingHorizontal: 24, paddingTop: 8 },
+  headArea: { paddingHorizontal: 16, paddingTop: 8 },
   container: { flex: 1 },
-  content: { paddingHorizontal: 24, paddingTop: 18, paddingBottom: 40 },
+  content: { paddingHorizontal: 16, paddingTop: 18, paddingBottom: 40 },
   centered: { justifyContent: "center", alignItems: "center" },
-  topBar: { height: 48, flexDirection: "row", alignItems: "center" },
+  topBar: { minHeight: 40, flexDirection: "row", alignItems: "center", marginBottom: 12 },
   backButton: { width: 40, height: 40, borderRadius: 20, borderWidth: 1, alignItems: "center", justifyContent: "center" },
-  topBarTitle: { flex: 1, marginLeft: 16, fontSize: 24, lineHeight: 30, fontWeight: "800", letterSpacing: -0.5 },
-  addButton: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
-  topicHero: { flexDirection: "row", alignItems: "center", borderRadius: 20, padding: 18, marginTop: 14 },
-  topicIcon: { width: 46, height: 46, borderRadius: 15, alignItems: "center", justifyContent: "center" },
-  topicHeroCopy: { flex: 1, marginLeft: 13 },
-  title: { fontSize: 22, lineHeight: 28, fontWeight: "800", letterSpacing: -0.5 },
-  meta: { fontSize: 12, lineHeight: 18, fontWeight: "500" },
-  summaryRow: { flexDirection: "row", gap: 8, marginTop: 12, marginBottom: 14 },
-  summaryChip: { flex: 1, minHeight: 57, borderRadius: 13, alignItems: "center", justifyContent: "center" },
-  summaryValue: { fontSize: 17, lineHeight: 22, fontWeight: "800" },
-  summaryLabel: { marginTop: 1, fontSize: 10, lineHeight: 14, fontWeight: "600" },
-  generateButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, borderRadius: 14, height: 54, marginBottom: 10 },
-  generateButtonText: { fontSize: 15, fontWeight: "800" },
-  generateArrow: { position: "absolute", right: 18 },
-  linkRow: { flexDirection: "row", gap: spacing.sm, marginBottom: 16 },
-  secondaryLink: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: 1, borderRadius: 13, height: 44 },
-  secondaryLinkText: { fontSize: 12, fontWeight: "700" },
+  topicHero: { position: "relative", minHeight: 194, borderRadius: 22, padding: 19, marginBottom: 14, overflow: "hidden" },
+  topicHeroGlowLarge: { position: "absolute", width: 196, height: 196, borderRadius: 98, right: -80, top: -91, backgroundColor: "rgba(251,170,10,0.27)" },
+  topicHeroGlowSmall: { position: "absolute", width: 100, height: 100, borderRadius: 50, right: 37, bottom: -64, backgroundColor: "rgba(255,255,255,0.1)" },
+  topicHeroCopy: { width: "100%" },
+  topicHeroTitle: { color: "#FFFFFF", fontSize: 23, lineHeight: 29, fontWeight: "800", letterSpacing: -0.55 },
+  topicHeroMeta: { color: "rgba(255,255,255,0.78)", marginTop: 4, fontSize: 12, lineHeight: 17, fontWeight: "600" },
+  topicHeroStats: { flexDirection: "row", alignItems: "center", marginTop: 13, gap: 9 },
+  topicHeroStat: { flexDirection: "row", alignItems: "baseline", gap: 3 },
+  topicHeroStatValue: { color: "#FFFFFF", fontSize: 14, fontWeight: "800" },
+  topicHeroStatLabel: { color: "rgba(255,255,255,0.72)", fontSize: 10, fontWeight: "700" },
+  topicHeroStatDivider: { width: 1, height: 14, backgroundColor: "rgba(255,255,255,0.32)" },
+  heroActions: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 13 },
+  heroGenerateButton: { flex: 1, minHeight: 38, paddingHorizontal: 13, borderRadius: 11, backgroundColor: "#FFFFFF", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
+  heroGenerateButtonText: { fontSize: 12, fontWeight: "800" },
+  heroIconAction: { width: 38, height: 38, borderRadius: 11, borderWidth: 1, borderColor: "rgba(255,255,255,0.38)", backgroundColor: "rgba(255,255,255,0.13)", alignItems: "center", justifyContent: "center" },
+  title: { fontSize: 20, lineHeight: 26, fontWeight: "800", letterSpacing: -0.4 },
+  meta: { marginTop: 3, fontSize: 12, lineHeight: 17, fontWeight: "500" },
   error: { textAlign: "center", marginBottom: 12 },
-  tabBar: { flexDirection: "row", borderRadius: 14, padding: 4, marginBottom: 2 },
-  tab: { flex: 1, minHeight: 40, borderRadius: 10, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4 },
-  tabText: { fontSize: 11, fontWeight: "700" },
-  tabCount: { minWidth: 17, height: 17, borderRadius: 9, alignItems: "center", justifyContent: "center", paddingHorizontal: 4 },
+  sourceDetailActionRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 14 },
+  sourceGhostButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, minHeight: 38, borderWidth: 1, borderRadius: 11, paddingHorizontal: 14 },
+  sourceGhostButtonText: { fontSize: 12, fontWeight: "700" },
+  sourceTextInput: { height: 200, marginTop: 6 },
+  sourceTextHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  editTextButton: { flexDirection: "row", alignItems: "center", gap: 4, height: 30, borderRadius: 15, paddingHorizontal: 12 },
+  editTextButtonText: { fontSize: 11, fontWeight: "800" },
+  sourceTextView: { maxHeight: 220, minHeight: 90, borderWidth: 1, borderRadius: 12, padding: 12, marginTop: 6 },
+  sourceTextViewBody: { fontSize: 13, lineHeight: 20, fontWeight: "500" },
+  sourceEditActionRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 12 },
+  sourceSaveButton: { flex: 1, marginTop: 0 },
+  tabBar: { flexDirection: "row", borderBottomWidth: 1, marginBottom: 16 },
+  tab: { position: "relative", flex: 1, minHeight: 51, paddingBottom: 7, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4 },
+  tabActive: { marginTop: -1 },
+  tabIcon: { width: 24, height: 24, borderRadius: 9, alignItems: "center", justifyContent: "center" },
+  tabText: { fontSize: 10, fontWeight: "800" },
+  tabCount: { minWidth: 16, height: 16, borderRadius: 8, alignItems: "center", justifyContent: "center", paddingHorizontal: 3 },
   tabCountText: { fontSize: 9, lineHeight: 12, fontWeight: "800" },
-  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  tabActiveIndicator: { position: "absolute", left: 0, bottom: -1, height: 3, paddingHorizontal: 18 },
+  tabActiveIndicatorLine: { flex: 1, height: 3, borderRadius: 3 },
+  folderSheet: { position: "relative", minHeight: 350, borderWidth: 1, borderTopWidth: 0, borderBottomLeftRadius: 20, borderBottomRightRadius: 20, overflow: "hidden" },
+  folderSheetLip: { position: "absolute", top: 0, left: 0, right: 0, height: 5 },
+  folderBinder: { position: "absolute", top: 30, bottom: 24, left: 10, width: 9, alignItems: "center", justifyContent: "space-between" },
+  folderBinderRing: { width: 9, height: 9, borderRadius: 5 },
+  folderContent: { paddingTop: 22, paddingRight: 16, paddingBottom: 20, paddingLeft: 28 },
   cardTitle: { fontSize: 14, fontWeight: "800" },
-  sectionCount: { fontSize: 12, fontWeight: "600" },
-  link: { fontWeight: "700", fontSize: 13 },
+  workbenchLead: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 14 },
+  workbenchCopy: { flex: 1 },
+  workbenchAction: { minWidth: 68, height: 36, borderRadius: radius.pill, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4 },
+  workbenchIconAction: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
+  workbenchActionText: { fontSize: 12, fontWeight: "800" },
+  emptyWorkbench: { minHeight: 150, borderWidth: 1, borderRadius: 18, paddingHorizontal: 24, paddingVertical: 20, alignItems: "center", justifyContent: "center" },
+  emptyWorkbenchIcon: { width: 42, height: 42, borderRadius: 14, alignItems: "center", justifyContent: "center" },
+  emptyWorkbenchTitle: { marginTop: 10, fontSize: 15, fontWeight: "800" },
+  emptyWorkbenchDetail: { maxWidth: 260, marginTop: 4, fontSize: 12, lineHeight: 18, fontWeight: "600", textAlign: "center" },
   input: { borderWidth: 1, borderRadius: 12, padding: 12, height: 48, fontSize: 14 },
   multilineInput: { height: 120, textAlignVertical: "top", marginTop: 18 },
   smallButton: { borderRadius: 12, height: 50, alignItems: "center", justifyContent: "center", marginTop: 12 },
   smallButtonText: { fontSize: 13, fontWeight: "700" },
-  listRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, borderWidth: 1, borderRadius: radius.lg, padding: spacing.lg, marginTop: spacing.sm },
-  sourceChipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-  sourceChip: { flexDirection: "row", alignItems: "center", gap: 4, borderWidth: 1, borderRadius: radius.lg, paddingHorizontal: 10, paddingVertical: 6 },
-  sourceChipText: { fontSize: 11, fontWeight: "700" },
+  genGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 8 },
+  genCard: {
+    position: "relative",
+    width: "47.5%",
+    minHeight: 128,
+    borderWidth: 1,
+    borderRadius: 13,
+    padding: 14,
+    paddingBottom: 38,
+  },
+  genCardTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 9 },
+  genCardIcon: { width: 30, height: 30, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  genCardSharedBadge: { flexDirection: "row", alignItems: "center", gap: 3, borderRadius: 999, paddingHorizontal: 7, paddingVertical: 3 },
+  genCardSharedBadgeText: { fontSize: 9, fontWeight: "800" },
+  genCardPreview: { fontSize: 12, lineHeight: 17, fontWeight: "600" },
+  genCardMeta: { marginTop: 6, fontSize: 10, fontWeight: "600" },
+  genCardArrow: { position: "absolute", right: 12, bottom: 12, width: 26, height: 26, borderRadius: 13, alignItems: "center", justifyContent: "center" },
+  notesSubtitle: { marginTop: 2, fontSize: 11, lineHeight: 16, fontWeight: "500" },
+  stickyNoteBoard: { flexDirection: "row", flexWrap: "wrap", columnGap: 14, rowGap: 21, paddingTop: 10, paddingBottom: 8 },
+  stickyNote: {
+    position: "relative",
+    width: "47.5%",
+    minHeight: 156,
+    borderRadius: 3,
+    paddingHorizontal: 14,
+    paddingTop: 25,
+    paddingBottom: 13,
+    borderWidth: 1,
+    borderColor: "rgba(78, 61, 32, 0.08)",
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 7 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 5,
+    overflow: "hidden",
+  },
+  stickyNoteTape: {
+    position: "absolute",
+    top: 4,
+    left: "50%",
+    width: 42,
+    height: 12,
+    marginLeft: -21,
+    backgroundColor: "rgba(255,255,255,0.4)",
+    transform: [{ rotate: "-3deg" }],
+  },
+  stickyNotePin: {
+    position: "absolute",
+    top: 8,
+    left: "50%",
+    marginLeft: -5,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#C6433D",
+    borderWidth: 1.5,
+    borderColor: "#FFFFFF",
+    shadowColor: "#5C1B18",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.35,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+  stickyNoteFold: { position: "absolute", right: -11, bottom: -11, width: 30, height: 30, backgroundColor: "rgba(255,255,255,0.43)", transform: [{ rotate: "45deg" }] },
+  stickyNoteFooter: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: "auto", paddingTop: 10 },
+  stickyNoteFooterDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: "rgba(51,46,31,0.5)" },
+  stickyNoteBody: { fontSize: 12, lineHeight: 18, fontWeight: "600", color: STICKY_NOTE_INK },
+  stickyNoteTime: { fontSize: 10, fontWeight: "700", color: STICKY_NOTE_INK_MUTED },
+  noteDetailScroll: { maxHeight: 360, marginTop: 4 },
+  noteDetailBody: { fontSize: 15, lineHeight: 23, fontWeight: "500" },
   statusBadge: { paddingHorizontal: spacing.sm, paddingVertical: 3, borderRadius: radius.pill },
   statusBadgeText: { fontSize: 10, fontWeight: "800", textTransform: "uppercase" },
   groupHeadingRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 2 },
   groupHeading: { fontSize: 11, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.3 },
-  sourceCard: { borderWidth: 1, borderRadius: radius.lg, padding: spacing.lg, marginTop: spacing.sm },
-  sourceCardHeader: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  sourcePreview: { width: "100%", borderRadius: radius.sm, marginTop: spacing.sm, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+  sourceGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  filterBar: { marginBottom: 16, paddingBottom: 14, borderBottomWidth: 1 },
+  sourceFilterRow: { flexDirection: "row", gap: 7 },
+  sourceFilterChip: { height: 32, borderWidth: 1, borderRadius: 16, paddingHorizontal: 13, alignItems: "center", justifyContent: "center" },
+  sourceFilterText: { fontSize: 11, fontWeight: "800" },
+  sourceCard: { width: "48%", minHeight: 142, borderWidth: 1, borderRadius: 13, padding: 12, justifyContent: "flex-start" },
+  sourceImageCard: { height: 230 },
+  sourceCardTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 6 },
+  typeTag: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill },
+  typeTagText: { fontSize: 9, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.2 },
+  sourceList: { gap: 8 },
+  sourceListRow: { flexDirection: "row", alignItems: "center", gap: 10, borderWidth: 1, borderRadius: 13, paddingVertical: 10, paddingHorizontal: 12, minHeight: 56 },
+  sourceListIcon: { width: 34, height: 34, borderRadius: 11, alignItems: "center", justifyContent: "center" },
+  sourceListCopy: { flex: 1 },
+  sourceListMetaRow: { flexDirection: "row", alignItems: "center", marginTop: 2 },
+  sourceListTypeText: { fontSize: 10, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.2 },
+  sourceListSnippet: { fontSize: 11, marginLeft: 4, flexShrink: 1, fontWeight: "500" },
+  sourceName: { marginTop: 9, fontSize: 12, lineHeight: 17, fontWeight: "800" },
+  sourcePreview: { flex: 1, width: "100%", borderRadius: radius.sm, marginTop: spacing.sm, overflow: "hidden", alignItems: "center", justifyContent: "center" },
   sourceThumbnail: { width: "100%", height: "100%" },
-  snippet: { fontSize: 12, lineHeight: 17, marginTop: spacing.sm },
   modalRoot: { flex: 1, justifyContent: "flex-end" },
   modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(22, 15, 20, 0.5)" },
   modalSheet: { borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 24, paddingBottom: 28 },

@@ -8,11 +8,6 @@ interface SaveTemplateBody {
   templateBody: string;
 }
 
-// One template per (school, appliesTo) - "standardised across the
-// institution" (client build doc) means a single school-wide format, not a
-// list a teacher picks from. appliesTo: "generation" is consumed by
-// backend/src/routes/generations.ts today; "attainment_report" is stored but
-// not applied anywhere yet, since PDF export doesn't exist (still 501).
 export async function schoolFormatTemplateRoutes(app: FastifyInstance) {
   app.get<{ Params: { schoolId: string } }>(
     "/schools/:schoolId/format-templates",

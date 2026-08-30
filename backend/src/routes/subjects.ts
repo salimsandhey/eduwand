@@ -6,8 +6,6 @@ interface CreateSubjectBody {
   name: string;
 }
 
-// The per-school gateway for Topic.subject - admin manages the list here;
-// teachers only read it (GET /subjects below) to pick from, no free text.
 export async function subjectRoutes(app: FastifyInstance) {
   app.get<{ Params: { schoolId: string } }>(
     "/schools/:schoolId/subjects",
@@ -36,8 +34,6 @@ export async function subjectRoutes(app: FastifyInstance) {
         return reply.code(400).send({ data: null, error: { code: "validation_error", message: "name is required" } });
       }
 
-      // Idempotent - adding an already-existing subject is a no-op, not a
-      // duplicate-key error, same pattern as class-section-teacher assignment.
       const subject = await prisma.subject.upsert({
         where: { schoolId_name: { schoolId: request.params.schoolId, name } },
         create: { schoolId: request.params.schoolId, name },
@@ -67,8 +63,6 @@ export async function subjectRoutes(app: FastifyInstance) {
     }
   );
 
-  // Teacher-facing read - same shape as class-sections.ts's GET /class-sections
-  // (school-scoped from the token, no extra role gate).
   app.get(
     "/subjects",
     { onRequest: [app.authenticate, app.requireSchoolScope] },

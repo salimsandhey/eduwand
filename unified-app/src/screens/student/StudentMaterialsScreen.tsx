@@ -15,9 +15,6 @@ const OUTPUT_TYPE_LABELS: Record<string, string> = {
   presentation: "Presentation",
 };
 
-// Students Dashboard, materials view (client doc section 5). See
-// student-portal.ts's /student/materials note: "distributed" isn't a real
-// gate yet, so this shows every succeeded generation for the student's class.
 export function StudentMaterialsScreen() {
   const { accessToken } = useAuth();
   const { colors, cardShadow } = useTheme();

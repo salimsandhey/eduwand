@@ -1,12 +1,24 @@
 import { FastifyReply, FastifyRequest } from "fastify";
+import { prisma } from "./prisma";
+import { AppJwtPayload } from "../types/fastify-jwt";
 
-// Lightweight role guard for endpoints restricted to specific roles.
-// Full RBAC coverage across every route is a separate, later sub-module (FR-EG-9) -
-// this exists now to satisfy the API spec's explicit 403 example: "a teacher
-// calling an admin-only analytics endpoint".
+// Effective role set for a user = { user.role } union { UserRoleGrant.role for
+// each grant row } (Phase 1 of Growth Engine access control, see D-5 in
+// Docs/Dev/GrowthEngine_Rebuild_Plan.md) - grants are additive, never restrictive.
+export async function hasAnyRole(user: AppJwtPayload, ...roles: string[]): Promise<boolean> {
+  if (roles.includes(user.role)) {
+    return true;
+  }
+  const grants = await prisma.userRoleGrant.findMany({
+    where: { userId: user.sub },
+    select: { role: true },
+  });
+  return grants.some((grant) => roles.includes(grant.role));
+}
+
 export function requireRoles(...roles: string[]) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!roles.includes(request.user.role)) {
+    if (!(await hasAnyRole(request.user, ...roles))) {
       reply.code(403).send({
         data: null,
         error: { code: "forbidden", message: `Requires role: ${roles.join(" or ")}` },

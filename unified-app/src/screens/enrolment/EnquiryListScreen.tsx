@@ -22,7 +22,7 @@ import { Screen } from "../../components/Screen";
 import { PageHeader } from "../../components/PageHeader";
 import { getStatusColor } from "../../theme/statusColors";
 import { usePipelineStages } from "../../hooks/usePipelineStages";
-import { api, Enquiry, EnquiryStatus } from "../../api/client";
+import { api, AcademicYear, Enquiry, EnquiryStatus } from "../../api/client";
 import { resolveEnquiryImageSource } from "../../theme/avatars";
 import { decorativeAssets } from "../../theme/decorativeAssets";
 
@@ -147,7 +147,7 @@ function AnimatedCard({
 
         <View style={[styles.cardInfoBand, { backgroundColor: colors.backgroundMuted }]}>
           <View style={styles.cardInfoItem}>
-            <Ionicons name="sparkles-outline" size={14} color={colors.accent} />
+            <Ionicons name="color-wand-outline" size={14} color={colors.accent} />
             <Text style={[styles.cardInfoText, { color: colors.textSecondary }]}>{formatSource(item.source)}</Text>
           </View>
           <View style={styles.cardInfoItem}>
@@ -183,6 +183,8 @@ export function EnquiryListScreen({ navigation }: Props) {
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<EnquiryStatus | "all">("all");
+  const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
+  const [academicYearId, setAcademicYearId] = useState<string | undefined>();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchFocused, setSearchFocused] = useState(false);
@@ -195,6 +197,7 @@ export function EnquiryListScreen({ navigation }: Props) {
     try {
       const res = await api.listEnquiries(accessToken, {
         status: statusFilter === "all" ? undefined : statusFilter,
+        academicYearId,
       });
       setEnquiries(res.data ?? []);
     } catch (err) {
@@ -202,7 +205,19 @@ export function EnquiryListScreen({ navigation }: Props) {
     } finally {
       setIsLoading(false);
     }
-  }, [accessToken, statusFilter]);
+  }, [accessToken, academicYearId, statusFilter]);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    api
+      .listAcademicYears(accessToken)
+      .then((years) => {
+        setAcademicYears(years);
+        setAcademicYearId((current) => current ?? years.find((year) => year.isCurrent)?.id ?? years[0]?.id);
+      })
+      .catch(() => {
+      });
+  }, [accessToken]);
 
   useFocusEffect(
     useCallback(() => {
@@ -315,6 +330,34 @@ export function EnquiryListScreen({ navigation }: Props) {
                 </Text>
               </View>
             </View>
+
+            {academicYears.length > 0 ? (
+              <>
+                <Text style={[styles.yearLabel, { color: colors.textMuted }]}>Academic year</Text>
+                <FlatList
+                  horizontal
+                  data={academicYears}
+                  keyExtractor={(item) => item.id}
+                  contentContainerStyle={styles.yearRow}
+                  showsHorizontalScrollIndicator={false}
+                  renderItem={({ item }) => {
+                    const active = item.id === academicYearId;
+                    return (
+                      <Pressable
+                        onPress={() => setAcademicYearId(item.id)}
+                        style={({ pressed }) => [
+                          styles.yearChip,
+                          { backgroundColor: active ? colors.accentSoft : colors.surface, borderColor: active ? colors.accent : colors.border },
+                          pressed && { opacity: pressedOpacity },
+                        ]}
+                      >
+                        <Text style={[styles.yearChipText, { color: active ? colors.accent : colors.textSecondary }]}>{item.label}</Text>
+                      </Pressable>
+                    );
+                  }}
+                />
+              </>
+            ) : null}
 
             <FlatList
               horizontal
@@ -452,6 +495,16 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "500",
   },
+  yearLabel: {
+    marginTop: 14,
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  yearRow: { paddingTop: 8, paddingBottom: 2, gap: 8 },
+  yearChip: { borderWidth: 1, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 },
+  yearChipText: { fontSize: 12, fontWeight: "700" },
   filterRow: {
     paddingTop: 12,
     paddingBottom: 8,

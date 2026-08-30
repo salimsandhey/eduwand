@@ -8,8 +8,9 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { DatePicker } from "../../components/DatePicker";
+import { DynamicFormFields } from "../../components/DynamicFormFields";
 import { ConfirmModal } from "../../components/ConfirmModal";
-import { requiredDocumentCompletion } from "../../components/DocumentChecklist";
+import { requiredDocumentCompletion, ChecklistItem, FALLBACK_DOCUMENT_CHECKLIST } from "../../components/DocumentChecklist";
 import { getStatusColor } from "../../theme/statusColors";
 import { usePipelineStages } from "../../hooks/usePipelineStages";
 import { resolveEnquiryImageSource } from "../../theme/avatars";
@@ -24,6 +25,7 @@ import {
   ActivityItem,
   ActivityType,
   EnquiryDocument,
+  FormField,
 } from "../../api/client";
 
 const ACTIVITY_ICON: Record<ActivityType, keyof typeof Ionicons.glyphMap> = {
@@ -208,6 +210,10 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
   const [tasks, setTasks] = useState<FollowUpTask[]>([]);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [documents, setDocuments] = useState<EnquiryDocument[]>([]);
+  const [checklist, setChecklist] = useState<ChecklistItem[]>(FALLBACK_DOCUMENT_CHECKLIST);
+  const [intakeFields, setIntakeFields] = useState<FormField[]>([]);
+  const [intakeResponses, setIntakeResponses] = useState<Record<string, unknown>>({});
+  const [isSavingIntake, setIsSavingIntake] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -235,17 +241,24 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
     setIsLoading(true);
     setError(null);
     try {
-      const [detailRes, enquiryTasks, allTemplates, docs] = await Promise.all([
+      const [detailRes, enquiryTasks, allTemplates, docs, checklistResult, intakeResult] = await Promise.all([
         api.getEnquiry(accessToken, enquiryId),
         api.listFollowUpTasks(accessToken, { enquiryId }),
         api.listMessageTemplates(accessToken),
         api.listDocuments(accessToken, enquiryId),
+        api.getFormDefinition(accessToken, "document_checklist").catch(() => null),
+        api.getFormDefinition(accessToken, "enquiry_intake").catch(() => null),
       ]);
       setEnquiry(detailRes.data);
+      setIntakeResponses(detailRes.data?.formResponses ?? {});
       setDuplicates((detailRes.meta?.possibleDuplicates as PossibleDuplicate[]) ?? []);
       setTasks(enquiryTasks);
       setTemplates(allTemplates);
       setDocuments(docs);
+      if (checklistResult && checklistResult.fields.length > 0) {
+        setChecklist(checklistResult.fields.map((f) => ({ key: f.key, label: f.label, required: f.isRequired })));
+      }
+      setIntakeFields(intakeResult?.fields ?? []);
       if (allTemplates.length > 0 && !taskTemplateId) {
         setTaskTemplateId(allTemplates[0].id);
       }
@@ -284,7 +297,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
     return Math.max(0, Math.floor((Date.now() - since.getTime()) / 86400000));
   }, [enquiry]);
 
-  const docCompletion = useMemo(() => requiredDocumentCompletion(documents), [documents]);
+  const docCompletion = useMemo(() => requiredDocumentCompletion(documents, checklist), [documents, checklist]);
 
   const currentStageIndex = enquiry ? stages.findIndex((stage) => stage.key === enquiry.status) : -1;
   const channelTemplates = templates.filter((template) => template.channel === taskChannel);
@@ -323,9 +336,6 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
     if (!accessToken || !noteBody.trim()) return;
     setIsAddingNote(true);
     try {
-      // Notes are only editable from the Admission tab in this screen, so
-      // they're tagged admission_note (backend/src/lib/enquiries.ts categorizes
-      // activity by note type: lead_note/system_note -> lead, admission_note -> admission).
       await api.addEnquiryNote(accessToken, enquiryId, noteBody.trim(), "admission_note");
       setNoteBody("");
       await load();
@@ -386,6 +396,29 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
     }
   }
 
+  async function linkDuplicateAsFamily(sourceId: string) {
+    if (!accessToken) return;
+    try {
+      await api.linkEnquiryFamily(accessToken, enquiryId, { sourceEnquiryId: sourceId });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to link family");
+    }
+  }
+
+  async function saveIntakeResponses() {
+    if (!accessToken) return;
+    setIsSavingIntake(true);
+    try {
+      await api.updateEnquiry(accessToken, enquiryId, { formResponses: intakeResponses });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save intake details");
+    } finally {
+      setIsSavingIntake(false);
+    }
+  }
+
   async function addFollowUpTask() {
     if (!accessToken || !taskTemplateId || !taskDueAt) return;
     try {
@@ -421,7 +454,6 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
         message: `Lead Details:\nName: ${enquiry.contactName}\nPhone: ${enquiry.contactPhone}\nEmail: ${enquiry.contactEmail || "N/A"}\nSource: ${enquiry.source}\nStatus: ${enquiry.status}`,
       });
     } catch {
-      // ignored
     }
   };
 
@@ -593,6 +625,12 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
                 >
                   <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Merge</Text>
                 </Pressable>
+                <Pressable
+                  onPress={() => linkDuplicateAsFamily(duplicate.id)}
+                  style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.surface, borderColor: colors.accent, borderWidth: 1 }, pressed && { opacity: pressedOpacity }]}
+                >
+                  <Text style={[styles.smallButtonText, { color: colors.accent }]}>Link family</Text>
+                </Pressable>
               </View>
             ))}
           </View>
@@ -715,6 +753,25 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
                 </View>
               </View>
             </View>
+
+            {intakeFields.length > 0 ? (
+              <View style={[styles.inlineForm, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+                <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Complete intake details</Text>
+                <Text style={[styles.emptyHint, { color: colors.textMuted }]}>Add any details captured after the first conversation.</Text>
+                <DynamicFormFields
+                  fields={intakeFields}
+                  values={intakeResponses}
+                  onChange={(key, value) => setIntakeResponses((current) => ({ ...current, [key]: value }))}
+                />
+                <Pressable
+                  onPress={saveIntakeResponses}
+                  disabled={isSavingIntake}
+                  style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent, alignSelf: "flex-start" }, (pressed || isSavingIntake) && { opacity: pressedOpacity }]}
+                >
+                  <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>{isSavingIntake ? "Saving..." : "Save intake details"}</Text>
+                </Pressable>
+              </View>
+            ) : null}
 
             <View style={styles.section}>
               <View style={styles.sectionHeaderRow}>
@@ -845,36 +902,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
                         />
                       ))}
                     </View>
-                    {/*
-                    tasks.map((task) => {
-                      const isOverdue = task.status === "pending" && new Date(task.dueAt).getTime() < Date.now();
-                      return (
-                        <View key={task.id} style={[styles.listRow, { borderBottomColor: colors.border }]}>
-                          <View style={[styles.bullet, isOverdue ? { backgroundColor: colors.warning + "22" } : { backgroundColor: colors.accentSoft }]}>
-                            <Ionicons
-                              name={task.channel === "sms" ? "chatbox-outline" : "mail-outline"}
-                              size={12}
-                              color={isOverdue ? colors.warning : colors.accent}
-                            />
-                          </View>
-                          <View style={styles.listRowText}>
-                            <Text style={[styles.listRowTitle, { color: colors.textPrimary }]}>{task.channel.toUpperCase()} follow-up</Text>
-                            <Text style={[styles.listRowMeta, { color: isOverdue ? colors.warning : colors.textMuted }]}>
-                              {isOverdue ? "Overdue · " : "Due "}
-                              {new Date(task.dueAt).toLocaleDateString("en-IN")} · {task.status}
-                            </Text>
-                          </View>
-                          {task.status === "pending" ? (
-                            <Pressable
-                              onPress={() => sendTask(task.id)}
-                              style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]}
-                            >
-                              <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Send</Text>
-                            </Pressable>
-                          ) : null}
-                        </View>
-                      );
-                    */}
+                    {}
                     </>
                   )}
                 </>

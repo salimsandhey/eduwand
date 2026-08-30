@@ -21,10 +21,6 @@ interface SelectBody {
   studentStubId: string;
 }
 
-// Student login has no password - a guardian's phone number (StudentStub.guardianContact)
-// plus a one-time code is the whole credential. A phone can match more than one
-// StudentStub (siblings), so verify-otp returns the matching students and select
-// picks which one to actually issue a session for.
 export async function studentAuthRoutes(app: FastifyInstance) {
   app.post<{ Body: RequestOtpBody }>(
     "/auth/student/request-otp",
@@ -41,7 +37,6 @@ export async function studentAuthRoutes(app: FastifyInstance) {
     const code = generateOtpCode();
     const otpCodeHash = await hashOtpCode(code);
 
-    // Invalidate any still-live codes for this phone so only the latest one verifies.
     await prisma.studentOtpRequest.updateMany({
       where: { phone, consumedAt: null },
       data: { consumedAt: new Date() },
@@ -56,8 +51,6 @@ export async function studentAuthRoutes(app: FastifyInstance) {
     return {
       data: {
         message: "OTP sent",
-        // Dev-only shortcut so the code can be tested without a real SMS gateway
-        // (StubMessageProvider only logs) - mirrors LoginScreen's __DEV__ quick-fill.
         devOtp: process.env.NODE_ENV !== "production" ? code : undefined,
       },
       meta: {},

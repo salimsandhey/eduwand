@@ -13,6 +13,7 @@ export interface SchoolOutletContext {
   canManageAcademics: boolean;
   canDelete: boolean;
   canManageStaff: boolean;
+  canManageStudents: boolean;
   accessToken: string | null;
   id: string;
   user: ReturnType<typeof useAuth>["user"];
@@ -35,14 +36,14 @@ export function SchoolLayout() {
 
   const canEditSchoolProfile = user?.role === "platform_admin" || user?.role === "leadership";
   const canDelete = user?.role === "platform_admin";
-  // Backend /users routes (see backend/src/routes/users.ts) authorize
-  // platform_admin, leadership, AND admin (scoped to their own school) - so
-  // staff management is gated a notch wider than canEditSchoolProfile, which excludes admin.
   const canManageStaff = user?.role === "platform_admin" || user?.role === "leadership" || user?.role === "admin";
-  // Backend authorizeForSchool() in academic-structure.ts authorizes
-  // platform_admin, leadership, AND admin (scoped to their own school) for
-  // academic years / class sections / teacher assignment.
   const canManageAcademics = user?.role === "platform_admin" || user?.role === "leadership" || user?.role === "admin";
+  const canManageStudents =
+    user?.role === "platform_admin" ||
+    user?.role === "leadership" ||
+    user?.role === "admin" ||
+    user?.role === "front_desk" ||
+    user?.role === "principal";
 
   const load = useCallback(async () => {
     if (!accessToken || !id) return;
@@ -79,6 +80,7 @@ export function SchoolLayout() {
     canManageAcademics,
     canDelete,
     canManageStaff,
+    canManageStudents,
     accessToken,
     id,
     user,
@@ -145,6 +147,14 @@ export function SchoolLayout() {
         >
           Academics
         </NavLink>
+        {canManageStudents ? (
+          <NavLink
+            to={`/schools/${id}/students`}
+            style={({ isActive }) => ({ ...styles.tabLink, ...(isActive ? styles.tabLinkActive : {}) })}
+          >
+            Students
+          </NavLink>
+        ) : null}
         {canManageAcademics ? (
           <NavLink
             to={`/schools/${id}/templates`}

@@ -10,8 +10,6 @@ interface Props {
   features: string[];
 }
 
-// Module 2 (AI Module) has no backend yet - these screens are honest placeholders,
-// not stubs pretending to work. See Docs/Dev/EduWand_Engineering_PRD.md section 6.
 export function ComingSoonScreen({ icon, title, description, features }: Props) {
   const { colors, cardShadow } = useTheme();
 

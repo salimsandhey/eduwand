@@ -23,16 +23,13 @@ const OUTPUT_TYPE_LABELS: Record<string, string> = {
 
 function startOfWeek(): Date {
   const now = new Date();
-  const day = now.getDay(); // 0 = Sunday
-  const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Monday as week start
+  const day = now.getDay();
+  const diff = now.getDate() - day + (day === 0 ? -6 : 1);
   const start = new Date(now.getFullYear(), now.getMonth(), diff);
   start.setHours(0, 0, 0, 0);
   return start;
 }
 
-// One aggregated call for the teacher dashboard (unified-app/src/screens/shared/HomeScreen.tsx)
-// instead of several list calls + client-side counting - a teacher only has
-// their own data, so these are all small, indexed, cheap queries.
 export async function teacherDashboardRoutes(app: FastifyInstance) {
   app.get("/dashboard/teacher-summary", { onRequest: scoped(app) }, async (request) => {
     const schoolId = request.schoolId;
@@ -61,8 +58,6 @@ export async function teacherDashboardRoutes(app: FastifyInstance) {
       prisma.assignment.count({ where: { schoolId, teacherUserId } }),
       prisma.assignment.count({ where: { schoolId, teacherUserId, status: "draft" } }),
       prisma.assignment.count({ where: { schoolId, teacherUserId, status: "published" } }),
-      // A Submission only gets a Grade row once AI grading has run - grade: null
-      // means truly ungraded, not just "not yet released to the student".
       prisma.submission.count({ where: { assignment: { schoolId, teacherUserId }, grade: null } }),
       prisma.generation.findMany({
         where: { topic: { schoolId, teacherUserId } },

@@ -10,9 +10,6 @@ export function toCsv(headers: string[], rows: string[][]): string {
   return lines.join("\n") + "\n";
 }
 
-// Hand-rolled parser matching toCsv's own quoting convention above (quoted
-// fields, "" escaping, embedded commas/newlines inside a quoted field) - no
-// parser dependency added just for the bulk enquiry upload (FR-EG-2).
 export function fromCsv(text: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];

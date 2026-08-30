@@ -7,17 +7,19 @@ interface DateRangeQuery {
   startDate?: string;
   endDate?: string;
   schoolId?: string;
+  academicYearId?: string;
 }
 
 interface TrendQuery {
   months?: string;
   schoolId?: string;
+  academicYearId?: string;
 }
 
 const analyticsGuard = (app: FastifyInstance) => [
   app.authenticate,
   app.requireSchoolScope,
-  requireRoles("admin", "leadership", PLATFORM_ADMIN_ROLE),
+  requireRoles("admin", "principal", "leadership", PLATFORM_ADMIN_ROLE),
 ];
 
 function dateRangeFilter(query: DateRangeQuery) {
@@ -30,12 +32,14 @@ function dateRangeFilter(query: DateRangeQuery) {
   };
 }
 
+function academicYearFilter(academicYearId?: string) {
+  return academicYearId ? { academicYearId } : {};
+}
+
 function monthKey(date: Date): string {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-// Oldest -> newest, always the full window even where a month has no data, so
-// the trend chart never has a gap.
 function buildMonthBuckets(months: number): string[] {
   const now = new Date();
   const buckets: string[] = [];
@@ -45,8 +49,6 @@ function buildMonthBuckets(months: number): string[] {
   return buckets;
 }
 
-// Pipeline stages are configurable per school (FR-EG-3), so "which statuses
-// exist" and "which statuses count as converted" are no longer fixed constants.
 async function getStages(schoolId: string) {
   return prisma.pipelineStage.findMany({ where: { schoolId }, orderBy: { order: "asc" } });
 }
@@ -62,6 +64,7 @@ export async function analyticsRoutes(app: FastifyInstance) {
       const where = {
         schoolId: request.schoolId,
         duplicateOfEnquiryId: null,
+        ...academicYearFilter(request.query.academicYearId),
         ...dateRangeFilter(request.query),
       };
 
@@ -90,6 +93,7 @@ export async function analyticsRoutes(app: FastifyInstance) {
       const where = {
         schoolId: request.schoolId,
         duplicateOfEnquiryId: null,
+        ...academicYearFilter(request.query.academicYearId),
         ...dateRangeFilter(request.query),
       };
 
@@ -115,6 +119,7 @@ export async function analyticsRoutes(app: FastifyInstance) {
         schoolId: request.schoolId,
         duplicateOfEnquiryId: null,
         ownerUserId: { not: null },
+        ...academicYearFilter(request.query.academicYearId),
         ...dateRangeFilter(request.query),
       };
 
@@ -134,9 +139,6 @@ export async function analyticsRoutes(app: FastifyInstance) {
         byOwner.set(ownerId, stats);
       }
 
-      // Response time = elapsed time between an enquiry's 1st stage-history row
-      // (written at creation, "new") and its 2nd (its first move away from
-      // "new") - undefined for an enquiry with no 2nd row yet.
       const history = await prisma.enquiryStageHistory.findMany({
         where: { enquiryId: { in: enquiries.map((e) => e.id) } },
         orderBy: [{ enquiryId: "asc" }, { changedAt: "asc" }],
@@ -194,7 +196,12 @@ export async function analyticsRoutes(app: FastifyInstance) {
       const convertedByPeriod = Object.fromEntries(periods.map((p) => [p, 0])) as Record<string, number>;
 
       const enquiries = await prisma.enquiry.findMany({
-        where: { schoolId: request.schoolId, duplicateOfEnquiryId: null, createdAt: { gte: since } },
+        where: {
+          schoolId: request.schoolId,
+          duplicateOfEnquiryId: null,
+          ...academicYearFilter(request.query.academicYearId),
+          createdAt: { gte: since },
+        },
         select: { createdAt: true },
       });
       for (const enquiry of enquiries) {
@@ -202,13 +209,11 @@ export async function analyticsRoutes(app: FastifyInstance) {
         if (key in newByPeriod) newByPeriod[key] += 1;
       }
 
-      // First crossing into admitted/enrolled per enquiry only - an enquiry that
-      // later moves admitted -> enrolled must not be counted as two conversions.
       const conversions = await prisma.enquiryStageHistory.findMany({
         where: {
           toStatus: { in: convertedKeys },
           changedAt: { gte: since },
-          enquiry: { schoolId: request.schoolId, duplicateOfEnquiryId: null },
+          enquiry: { schoolId: request.schoolId, duplicateOfEnquiryId: null, ...academicYearFilter(request.query.academicYearId) },
         },
         select: { enquiryId: true, changedAt: true },
         orderBy: { changedAt: "asc" },

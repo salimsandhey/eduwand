@@ -1,0 +1,24 @@
+{
+  "sourceType": "image",
+  "expectedStatus": "extracted",
+  "mustContain": [
+    "precipitation",
+    "evaporation",
+    "condensation",
+    "transpiration",
+    "infiltration",
+    "surface runoff",
+    "water table",
+    "percolation",
+    "groundwater",
+    "saltwater intrusion",
+    "soil moisture"
+  ],
+  "figureFacts": [
+    "diagram shows water moving between ocean, land and atmosphere",
+    "cycle includes evaporation from ocean/land/soil/vegetation rising to form clouds",
+    "condensation and precipitation return water to land and ocean",
+    "water also moves underground via infiltration, percolation and groundwater outflow"
+  ],
+  "notes": "Britannica water-cycle diagram - mostly on-image text labels plus one flow diagram. If no vision key is configured, extractionStatus is expected to be 'pending' instead (not a failure)."
+}

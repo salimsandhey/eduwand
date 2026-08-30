@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Image } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import type { CompositeScreenProps } from "@react-navigation/native";
@@ -15,11 +15,14 @@ import { decorativeAssets } from "../../theme/decorativeAssets";
 
 type Props = CompositeScreenProps<BottomTabScreenProps<TeacherTabParamList, "Studio">, NativeStackScreenProps<RootStackParamList>>;
 
-// Purely decorative per-card icon/color cycling - not standing in for any
-// real per-class data (a class section has no single "subject" - subject is
-// chosen per-topic, since more than one teacher can teach the same class).
-const CLASS_CARD_ACCENTS = ["#8B5CF6", "#4F8EF7", "#3DDC97"] as const;
-const CLASS_CARD_ICONS = ["sparkles-outline", "flask-outline", "globe-outline"] as const;
+const CLASS_CARD_ACCENTS = ["#8B5CF6", "#4F8EF7", "#3DDC97", "#F2A93B", "#F4739C"] as const;
+const CLASS_FOLDER_GRAPHICS = [
+  decorativeAssets.classBooks,
+  decorativeAssets.classPaperPlane,
+  decorativeAssets.classBookmark,
+  decorativeAssets.classPencilCup,
+  decorativeAssets.classNotebook,
+] as const;
 
 interface ClassCardStats {
   studentCount: number;
@@ -29,15 +32,10 @@ interface ClassCardStats {
 function getClassCardMeta(index: number) {
   return {
     accent: CLASS_CARD_ACCENTS[index % CLASS_CARD_ACCENTS.length],
-    icon: CLASS_CARD_ICONS[index % CLASS_CARD_ICONS.length],
+    graphic: CLASS_FOLDER_GRAPHICS[index % CLASS_FOLDER_GRAPHICS.length],
   };
 }
 
-// Entry point for Lesson Studio (client build doc, workflow step 1: "teacher
-// logs in and select/filter the class"). Shows only the classes school admin
-// has assigned this teacher to (backend/src/routes/class-sections.ts scopes
-// GET /class-sections by teacherAssignments when the caller is a teacher).
-// Tapping a class drills into TopicListScreen, scoped to that class section.
 export function MyClassesScreen({ navigation }: Props) {
   const { accessToken } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
@@ -46,6 +44,17 @@ export function MyClassesScreen({ navigation }: Props) {
   const [classStats, setClassStats] = useState<Record<string, ClassCardStats>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [expandedClassName, setExpandedClassName] = useState<string | null>(null);
+
+  const groupedClasses = useMemo(() => {
+    const map = new Map<string, ClassSection[]>();
+    for (const cs of classSections) {
+      const list = map.get(cs.className) ?? [];
+      list.push(cs);
+      map.set(cs.className, list);
+    }
+    return Array.from(map.entries()).map(([className, sections]) => ({ className, sections }));
+  }, [classSections]);
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -55,8 +64,6 @@ export function MyClassesScreen({ navigation }: Props) {
       const sections = await api.listClassSections(accessToken);
       setClassSections(sections);
 
-      // A handful of classes per teacher in practice - one parallel call per
-      // class for its real student/topic counts, not a fabricated number.
       const statsEntries = await Promise.all(
         sections.map(async (cs) => {
           const [studentsRes, topics] = await Promise.all([
@@ -99,79 +106,115 @@ export function MyClassesScreen({ navigation }: Props) {
             <Ionicons name="arrow-back" size={22} color={colors.textPrimary} />
           </Pressable>
 
-          <Text style={[styles.topBarTitle, { color: colors.textPrimary }]}>Studio</Text>
+          <Text style={[styles.topBarTitle, { color: colors.textPrimary }]}>My classes</Text>
+          <View style={[styles.topBarAccent, { backgroundColor: colors.accent }]} />
 
-          <Pressable
-            onPress={() => navigation.navigate("Assignment")}
-            style={({ pressed }) => [styles.filledCircleButton, { backgroundColor: colors.accent }, cardShadow, pressed && { opacity: pressedOpacity }]}
-            accessibilityRole="button"
-            accessibilityLabel="Open assignments"
-          >
-            <Ionicons name="document-text-outline" size={20} color={colors.accentOn} />
-          </Pressable>
         </View>
 
-        <View style={styles.heroSection}>
-          <View pointerEvents="none" style={styles.heroImageWrap}>
-            <Image source={decorativeAssets.studioTeacher} style={styles.heroImage} resizeMode="contain" />
+        <View style={styles.classListHeader}>
+          <View style={[styles.classListLabel, { backgroundColor: colors.accentSoft }]}>
+            <View style={[styles.classListLabelDot, { backgroundColor: colors.accent }]} />
+            <Text style={[styles.classListLabelText, { color: colors.accent }]}>Class folders</Text>
           </View>
-          <View style={styles.heroCopy}>
-            <Text style={[styles.heroTitle, { color: colors.textPrimary }]}>My Classes</Text>
-            <Text style={[styles.heroSubtitle, { color: colors.textMuted }]}>Choose a class to continue.</Text>
-          </View>
+          <Text style={[styles.classCount, { color: colors.textMuted }]}>{groupedClasses.length} class{groupedClasses.length === 1 ? "" : "es"}</Text>
         </View>
-
-        <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>Your Classes ({classSections.length})</Text>
 
         {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
         {isLoading ? (
           <ActivityIndicator color={colors.accent} style={styles.loader} />
-        ) : classSections.length === 0 ? null : (
-          classSections.map((cs, index) => {
-            const meta = getClassCardMeta(index);
-            const stats = classStats[cs.id];
-            return (
-              <Pressable
-                key={cs.id}
-                style={({ pressed }) => [
-                  styles.classCard,
-                  { backgroundColor: colors.surface, borderColor: colors.border },
-                  cardShadow,
-                  pressed && { opacity: pressedOpacity },
-                ]}
-                onPress={() =>
-                  navigation.navigate("TopicList", { classSectionId: cs.id, className: cs.className, sectionName: cs.sectionName })
-                }
-                accessibilityRole="button"
-              >
-                <View style={[styles.classAccentBar, { backgroundColor: meta.accent }]} />
-                <View style={[styles.classIconWrap, { backgroundColor: `${meta.accent}12`, borderColor: `${meta.accent}22` }]}>
-                  <Ionicons name={meta.icon} size={20} color={meta.accent} />
-                </View>
-                <View style={styles.classCopy}>
-                  <Text style={[styles.classTitle, { color: colors.textPrimary }]} numberOfLines={1}>
-                    {cs.className.replace("Grade", "Class")} {cs.sectionName}
-                  </Text>
-                  <View style={styles.classMetaRow}>
-                    <View style={styles.studentMetaRow}>
-                      <Ionicons name="people" size={13} color={colors.textMuted} />
-                      <Text style={[styles.studentMetaText, { color: colors.textMuted }]}>
-                        {stats ? `${stats.studentCount} student${stats.studentCount === 1 ? "" : "s"}` : "…"}
+        ) : groupedClasses.length === 0 ? null : (
+          <View style={styles.classList}>
+            {groupedClasses.map((group, index) => {
+              const meta = getClassCardMeta(index);
+              const isMultiSection = group.sections.length > 1;
+              const isExpanded = expandedClassName === group.className;
+              const singleSection = group.sections[0];
+              const singleStats = classStats[singleSection.id];
+              const totalTopics = group.sections.reduce((total, section) => total + (classStats[section.id]?.topicCount ?? 0), 0);
+
+              let metaText: string;
+              if (isMultiSection) {
+                metaText = `${group.sections.length} sections`;
+              } else if (singleStats) {
+                metaText = `${singleStats.studentCount} student${singleStats.studentCount === 1 ? "" : "s"} · ${singleStats.topicCount} topic${singleStats.topicCount === 1 ? "" : "s"}`;
+              } else {
+                metaText = "Loading…";
+              }
+
+              return (
+                <View
+                  key={group.className}
+                  style={[styles.classFolder, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}
+                >
+                  <View style={[styles.folderCover, { backgroundColor: `${meta.accent}18` }]} />
+                  <View style={[styles.folderTab, { backgroundColor: meta.accent }]} />
+                  <Pressable
+                    style={({ pressed }) => [styles.folderHeader, pressed && { opacity: pressedOpacity }]}
+                    onPress={() =>
+                      isMultiSection
+                        ? setExpandedClassName((current) => (current === group.className ? null : group.className))
+                        : navigation.navigate("TopicList", {
+                            classSectionId: singleSection.id,
+                            className: singleSection.className,
+                            sectionName: singleSection.sectionName,
+                          })
+                    }
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: isMultiSection ? isExpanded : undefined }}
+                    >
+                      <View style={[styles.folderIcon, { backgroundColor: `${meta.accent}1F` }]}>
+                        <Image source={meta.graphic} style={styles.folderIllustration} resizeMode="contain" />
+                      </View>
+                    <View style={styles.folderCopy}>
+                      <Text style={[styles.folderTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+                        {isMultiSection ? group.className : `${singleSection.className} · ${singleSection.sectionName}`}
                       </Text>
+                      <Text style={[styles.folderMeta, { color: colors.textMuted }]} numberOfLines={1}>{metaText}</Text>
+                      <View style={styles.topicDots}>
+                        {Array.from({ length: Math.min(Math.max(totalTopics, 1), 8) }, (_, dotIndex) => (
+                          <View key={dotIndex} style={[styles.topicDot, { backgroundColor: meta.accent, opacity: dotIndex < totalTopics ? 1 : 0.22 }]} />
+                        ))}
+                        <Text style={[styles.topicCount, { color: colors.textMuted }]}>{totalTopics} topic{totalTopics === 1 ? "" : "s"}</Text>
+                      </View>
                     </View>
-                    <View style={styles.studentMetaRow}>
-                      <Ionicons name="book-outline" size={13} color={colors.textMuted} />
-                      <Text style={[styles.studentMetaText, { color: colors.textMuted }]}>
-                        {stats ? `${stats.topicCount} topic${stats.topicCount === 1 ? "" : "s"}` : "…"}
-                      </Text>
+                    <View style={[styles.folderAction, { backgroundColor: colors.accent }]}>
+                      <Ionicons name={isMultiSection ? (isExpanded ? "chevron-up" : "chevron-down") : "arrow-forward"} size={15} color={colors.accentOn} />
                     </View>
-                  </View>
+                  </Pressable>
+
+                  {isMultiSection && isExpanded ? (
+                    <View style={[styles.folderSections, { borderTopColor: colors.accentSoftAlt, backgroundColor: colors.surfaceRaised }]}>
+                      {group.sections.map((section, sectionIndex) => {
+                        const stats = classStats[section.id];
+                        return (
+                          <Pressable
+                            key={section.id}
+                            style={({ pressed }) => [
+                              styles.folderSectionRow,
+                              sectionIndex < group.sections.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+                              pressed && { opacity: pressedOpacity },
+                            ]}
+                            onPress={() => navigation.navigate("TopicList", { classSectionId: section.id, className: section.className, sectionName: section.sectionName })}
+                            accessibilityRole="button"
+                          >
+                            <View style={[styles.sectionMarker, { backgroundColor: colors.accent }]} />
+                            <View style={styles.folderSectionCopy}>
+                              <Text style={[styles.folderSectionTitle, { color: colors.textPrimary }]}>Section {section.sectionName}</Text>
+                              <Text style={[styles.folderSectionMeta, { color: colors.textMuted }]}>
+                                {stats ? `${stats.studentCount} student${stats.studentCount === 1 ? "" : "s"} · ${stats.topicCount} topic${stats.topicCount === 1 ? "" : "s"}` : "Loading…"}
+                              </Text>
+                            </View>
+                            <Ionicons name="arrow-forward" size={16} color={colors.accent} />
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  ) : null}
                 </View>
-                <Ionicons name="chevron-forward" size={20} color={colors.accent} />
-              </Pressable>
-            );
-          })
+              );
+            })}
+          </View>
         )}
 
         {!isLoading && classSections.length === 0 ? (
@@ -184,6 +227,7 @@ export function MyClassesScreen({ navigation }: Props) {
           </View>
         ) : null}
       </ScrollView>
+
     </Screen>
   );
 }
@@ -194,13 +238,13 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm,
+    paddingTop: spacing.md,
     paddingBottom: 132,
   },
   topBar: {
+    position: "relative",
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
   },
   circleButton: {
     width: 40,
@@ -210,58 +254,53 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  filledCircleButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   topBarTitle: {
     flex: 1,
     marginLeft: spacing.md,
-    fontSize: 22,
+    fontSize: 20,
+    lineHeight: 25,
     fontWeight: "800",
     letterSpacing: -0.5,
   },
-  heroSection: {
-    position: "relative",
-    marginTop: spacing.sm,
-    justifyContent: "flex-end",
-    paddingBottom: spacing.lg,
-  },
-  heroCopy: {
-    maxWidth: "62%",
-  },
-  heroTitle: {
-    fontSize: 32,
-    lineHeight: 38,
-    fontWeight: "800",
-    letterSpacing: -0.9,
-  },
-  heroSubtitle: {
-    marginTop: 6,
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: "500",
-  },
-  heroImageWrap: {
+  topBarAccent: {
     position: "absolute",
-    right: -28,
-    top: -58,
-    width: 228,
-    height: 228,
-    zIndex: -1,
+    left: 52,
+    bottom: -8,
+    width: 42,
+    height: 3,
+    borderRadius: 3,
   },
-  heroImage: {
-    width: "100%",
-    height: "100%",
+  classListHeader: {
+    marginTop: 20,
+    marginBottom: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
-  sectionLabel: {
-    marginTop: 6,
-    marginBottom: spacing.md,
-    fontSize: 14,
-    fontWeight: "600",
+  classListLabel: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  classListLabelDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  classListLabelText: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+  },
+  classCount: {
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.2,
+    textTransform: "uppercase",
   },
   error: {
     textAlign: "center",
@@ -270,54 +309,118 @@ const styles = StyleSheet.create({
   loader: {
     marginVertical: spacing.lg,
   },
-  classCard: {
+  classList: {
+    gap: 10,
+  },
+  classFolder: {
     position: "relative",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.md,
     borderWidth: 1,
-    borderRadius: radius.lg,
-    paddingVertical: spacing.md,
-    paddingLeft: spacing.lg + 4,
-    paddingRight: spacing.lg,
-    marginBottom: spacing.md,
+    borderRadius: 16,
     overflow: "hidden",
   },
-  classAccentBar: {
+  folderTab: {
     position: "absolute",
-    left: 0,
+    top: 0,
+    left: 18,
+    width: 76,
+    height: 7,
+    borderBottomLeftRadius: 6,
+    borderBottomRightRadius: 6,
+  },
+  folderHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    minHeight: 104,
+    paddingHorizontal: 16,
+    paddingLeft: 88,
+    paddingTop: 14,
+    paddingBottom: 12,
+  },
+  folderCover: {
+    position: "absolute",
     top: 0,
     bottom: 0,
-    width: 5,
+    left: 0,
+    width: 74,
   },
-  classIconWrap: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    borderWidth: 1,
+  folderIcon: {
+    position: "absolute",
+    left: 17,
+    width: 50,
+    height: 50,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
   },
-  classCopy: {
+  folderIllustration: {
+    width: 40,
+    height: 40,
+  },
+  folderCopy: {
     flex: 1,
   },
-  classTitle: {
-    fontSize: 16,
-    lineHeight: 21,
+  folderTitle: {
+    fontSize: 17,
+    lineHeight: 22,
     fontWeight: "800",
+    letterSpacing: -0.35,
   },
-  classMetaRow: {
-    flexDirection: "row",
-    gap: spacing.md,
-    marginTop: 5,
+  folderMeta: {
+    marginTop: 3,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: "500",
   },
-  studentMetaRow: {
+  topicDots: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
+    gap: 4,
+    marginTop: 11,
   },
-  studentMetaText: {
-    fontSize: 12,
+  topicDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+  },
+  topicCount: {
+    marginLeft: 4,
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  folderAction: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  folderSections: {
+    paddingHorizontal: 16,
+    borderTopWidth: 1,
+  },
+  folderSectionRow: {
+    minHeight: 64,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+  },
+  sectionMarker: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  folderSectionCopy: {
+    flex: 1,
+  },
+  folderSectionTitle: {
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: "700",
+  },
+  folderSectionMeta: {
+    marginTop: 2,
+    fontSize: 11,
+    lineHeight: 15,
     fontWeight: "500",
   },
   emptyStateCard: {

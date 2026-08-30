@@ -30,11 +30,6 @@ interface AssignTeacherBody {
   teacherUserId: string;
 }
 
-// A brand-new school (created via POST /schools) has zero academic years and
-// zero class sections, and nothing else in the API could create either - the
-// mobile app's /class-sections is read-only, and admission confirmation
-// requires a class_section_id. These are the only write paths for either, so
-// platform_admin/leadership/admin can actually finish setting up a school.
 export async function authorizeForSchool(request: FastifyRequest, reply: FastifyReply, schoolId: string): Promise<boolean> {
   const caller = request.user;
   if (caller.role === PLATFORM_ADMIN_ROLE) return true;
@@ -53,6 +48,19 @@ export async function authorizeForSchool(request: FastifyRequest, reply: Fastify
 }
 
 export async function academicStructureRoutes(app: FastifyInstance) {
+  app.get(
+    "/academic-years",
+    { onRequest: [app.authenticate, app.requireSchoolScope] },
+    async (request) => {
+      const academicYears = await prisma.academicYear.findMany({
+        where: { schoolId: request.schoolId },
+        select: { id: true, schoolId: true, label: true, startDate: true, endDate: true, isCurrent: true },
+        orderBy: { startDate: "desc" },
+      });
+      return { data: academicYears, meta: {} };
+    }
+  );
+
   app.get<{ Params: { schoolId: string } }>(
     "/schools/:schoolId/academic-years",
     { onRequest: [app.authenticate] },
@@ -94,9 +102,6 @@ export async function academicStructureRoutes(app: FastifyInstance) {
 
       const schoolId = request.params.schoolId;
       const existingCount = await prisma.academicYear.count({ where: { schoolId } });
-      // The very first academic year for a school is automatically "current" -
-      // otherwise a freshly onboarded school still has no usable class sections
-      // for the mobile app's GET /class-sections (isCurrent: true filter).
       const isCurrent = existingCount === 0 ? true : body.isCurrent ?? false;
 
       const academicYear = await prisma.$transaction(async (tx) => {
@@ -113,10 +118,6 @@ export async function academicStructureRoutes(app: FastifyInstance) {
           },
         });
 
-        // Optional copy-forward: bring over the previous year's class-section
-        // structure (className + sectionName only, not teacher assignments,
-        // since teachers are typically reassigned each year). Silently skip
-        // if the source year doesn't belong to this school or has no sections.
         if (body.copyFromAcademicYearId) {
           const sourceYear = await tx.academicYear.findFirst({
             where: { id: body.copyFromAcademicYearId, schoolId },
@@ -203,9 +204,6 @@ export async function academicStructureRoutes(app: FastifyInstance) {
     }
   );
 
-  // Cross-product bulk create: e.g. classNames ["Grade 1","Grade 2"] x
-  // sectionNames ["A","B"] creates up to 4 class sections in one call,
-  // skipping any pair that already exists in this academic year.
   app.post<{ Params: { schoolId: string }; Body: BulkCreateClassSectionsBody }>(
     "/schools/:schoolId/class-sections/bulk",
     { onRequest: [app.authenticate] },
@@ -269,8 +267,6 @@ export async function academicStructureRoutes(app: FastifyInstance) {
     }
   );
 
-  // Which teacher(s) are assigned to a class section - drives the mobile app's
-  // Lesson Studio "My Classes" scoping (GET /class-sections in class-sections.ts).
   app.post<{ Params: { schoolId: string; classSectionId: string }; Body: AssignTeacherBody }>(
     "/schools/:schoolId/class-sections/:classSectionId/teachers",
     { onRequest: [app.authenticate] },
@@ -296,8 +292,6 @@ export async function academicStructureRoutes(app: FastifyInstance) {
         return reply.code(404).send({ data: null, error: { code: "not_found", message: "Teacher not found for this school" } });
       }
 
-      // Idempotent - re-assigning an already-assigned teacher is a no-op, not
-      // a duplicate-key error.
       const assignment = await prisma.classSectionTeacher.upsert({
         where: { classSectionId_teacherUserId: { classSectionId: classSection.id, teacherUserId: teacher.id } },
         create: { classSectionId: classSection.id, teacherUserId: teacher.id },

@@ -12,16 +12,6 @@ declare module "fastify" {
   }
 }
 
-// Derives schoolId strictly from the verified JWT for schoolId-bearing users
-// (unchanged from before, never a client-supplied value for them), per API
-// Specification section 1 and 7. leadership users have a trustId but no single
-// schoolId, so for them alone this accepts a ?schoolId= query param, validated
-// against their own trust before being trusted. platform_admin has neither a
-// schoolId nor a trustId - without this branch every school-scoped route
-// (users, message templates, exports, pipeline stages, ...) 403'd for the one
-// role most likely to need to look at any given school's data. Same
-// ?schoolId= query param, just validated against "does this school exist"
-// instead of trust membership, since platform_admin isn't bound to one trust.
 export const scopePlugin = fp(async (app: FastifyInstance) => {
   app.decorate("requireSchoolScope", async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user;

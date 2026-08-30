@@ -12,11 +12,6 @@ interface NumberedEditCardProps {
   onRemove?: () => void;
 }
 
-// Matches the Figma pattern used across lesson-plan objectives/activities:
-// a numbered badge, a pencil that flips the card into an inline editor with
-// its own Cancel/Done row, and the card border turning accent-colored while
-// editing. Shared by every structured generation view (LessonPlan/
-// CustomActivity/Flashcards/Presentation) so the interaction stays identical.
 export function NumberedEditCard({ index, editable, renderView, renderEditor, onRemove }: NumberedEditCardProps) {
   const { colors, pressedOpacity } = useTheme();
   const [isEditing, setIsEditing] = useState(false);
@@ -50,7 +45,7 @@ export function NumberedEditCard({ index, editable, renderView, renderEditor, on
                 accessibilityRole="button"
                 accessibilityLabel="Edit"
               >
-                <Ionicons name="pencil" size={16} color={colors.textMuted} />
+                <Ionicons name="pencil" size={16} color={colors.accent} />
               </Pressable>
               {onRemove ? (
                 <Pressable
@@ -100,8 +95,8 @@ export function EditActionRow({ onCancel, onDone, doneLabel = "Done" }: EditActi
 }
 
 const styles = StyleSheet.create({
-  card: { borderWidth: 1, borderRadius: radius.lg, padding: spacing.lg, marginBottom: spacing.md },
-  row: { flexDirection: "row", alignItems: "flex-start", gap: spacing.md },
+  card: { borderWidth: 1, borderRadius: 18, padding: spacing.lg, marginBottom: spacing.md },
+  row: { flexDirection: "row", alignItems: "flex-start", gap: 11 },
   badge: {
     width: 34,
     height: 34,
@@ -110,7 +105,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   badgeText: { fontSize: 13, fontFamily: typography.bold },
-  actions: { flexDirection: "row", gap: 14, paddingTop: 2 },
+  actions: { flexDirection: "row", gap: 14, paddingTop: 3 },
   editActionRow: { flexDirection: "row", justifyContent: "flex-end", alignItems: "center", gap: 16, marginTop: 10 },
   cancelText: { fontSize: 14, fontFamily: typography.semiBold },
   doneButton: { paddingHorizontal: 18, paddingVertical: 8, borderRadius: radius.pill },

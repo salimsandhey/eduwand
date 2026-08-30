@@ -1,10 +1,11 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator, Image } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import type { CompositeScreenProps } from "@react-navigation/native";
 import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { TeacherTabParamList, RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
@@ -12,126 +13,52 @@ import { Screen } from "../../components/Screen";
 import { api, Assignment } from "../../api/client";
 import { decorativeAssets } from "../../theme/decorativeAssets";
 
-type Props = CompositeScreenProps<
-  BottomTabScreenProps<TeacherTabParamList, "Assignment">,
-  NativeStackScreenProps<RootStackParamList>
->;
+type Props = CompositeScreenProps<BottomTabScreenProps<TeacherTabParamList, "Assignment">, NativeStackScreenProps<RootStackParamList>>;
+type Filter = "all" | "draft" | "published";
 
 export function AssignmentScreen({ navigation }: Props) {
   const { accessToken } = useAuth();
-  const { colors, cardShadow, pressedOpacity } = useTheme();
+  const { colors, pressedOpacity } = useTheme();
   const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [filter, setFilter] = useState<Filter>("all");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!accessToken) return;
-    setIsLoading(true);
-    setError(null);
-    try {
-      setAssignments(await api.listAssignments(accessToken));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load assignments");
-    } finally {
-      setIsLoading(false);
-    }
+    setIsLoading(true); setError(null);
+    try { setAssignments(await api.listAssignments(accessToken)); }
+    catch (err) { setError(err instanceof Error ? err.message : "Failed to load assignments"); }
+    finally { setIsLoading(false); }
   }, [accessToken]);
 
-  useFocusEffect(
-    useCallback(() => {
-      load();
-    }, [load])
-  );
+  useFocusEffect(useCallback(() => { load(); }, [load]));
+  const visibleAssignments = useMemo(() => filter === "all" ? assignments : assignments.filter((item) => item.status === filter), [assignments, filter]);
 
-  return (
-    <Screen>
-      <View style={styles.titleSection}>
-        <Text style={[styles.title, { color: colors.textPrimary }]}>Assignment Lab</Text>
-        <Text style={[styles.subtitle, { color: colors.textMuted }]}>
-          {assignments.length} assignment{assignments.length === 1 ? "" : "s"}
-        </Text>
-      </View>
-
-      {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
-
-      {isLoading ? (
-        <ActivityIndicator color={colors.accent} style={{ marginTop: 40 }} />
-      ) : (
-        <FlatList
-          data={assignments}
-          keyExtractor={(a) => a.id}
-          contentContainerStyle={styles.list}
-          ListEmptyComponent={
-            <View style={styles.emptyState}>
-              <Image source={decorativeAssets.book} style={styles.emptyGraphic} resizeMode="contain" />
-              <Text style={[styles.empty, { color: colors.textMuted }]}>No assignments yet</Text>
-            </View>
-          }
-          renderItem={({ item }) => (
-            <Pressable
-              style={({ pressed }) => [
-                styles.card,
-                { backgroundColor: colors.surface, borderColor: colors.border, borderLeftColor: colors.accent },
-                cardShadow,
-                pressed && { opacity: pressedOpacity },
-              ]}
-              onPress={() => navigation.navigate("AssignmentDetail", { assignmentId: item.id })}
-              accessibilityRole="button"
-            >
-              <View style={styles.cardHeader}>
-                <Text style={[styles.cardTitle, { color: colors.textPrimary }]} numberOfLines={1}>
-                  {item.title}
-                </Text>
-                <Text
-                  style={[
-                    styles.statusBadge,
-                    { color: item.status === "published" ? colors.accent : colors.textMuted, backgroundColor: colors.surfaceRaised },
-                  ]}
-                >
-                  {item.status}
-                </Text>
-              </View>
-              <View style={styles.cardMetaRow}>
-                <Ionicons name="help-circle-outline" size={13} color={colors.textMuted} />
-                <Text style={[styles.cardMeta, { color: colors.textMuted }]}>
-                  {item.questions.length} question{item.questions.length === 1 ? "" : "s"}
-                  {item.personalisationEnabled ? " · Personalised" : ""}
-                </Text>
-              </View>
-            </Pressable>
-          )}
-        />
-      )}
-
-      <View style={styles.fabContainer}>
-        <Pressable
-          onPress={() => navigation.navigate("CreateAssignment")}
-          style={[styles.fab, { backgroundColor: colors.accent }, cardShadow]}
-          accessibilityRole="button"
-          accessibilityLabel="Create assignment"
-        >
-          <Ionicons name="add" size={24} color={colors.accentOn} />
-        </Pressable>
-      </View>
-    </Screen>
-  );
+  return <Screen>
+    <FlatList
+      data={visibleAssignments}
+      keyExtractor={(item) => item.id}
+      contentContainerStyle={styles.list}
+      showsVerticalScrollIndicator={false}
+      ListHeaderComponent={<>
+        <View style={styles.header}><Text style={[styles.title, { color: colors.textPrimary }]}>Assignment Lab</Text><Pressable onPress={() => navigation.navigate("CreateAssignment")} style={({ pressed }) => [styles.addButton, { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]} accessibilityRole="button"><Ionicons name="add" size={22} color={colors.accentOn} /></Pressable></View>
+        <Text style={[styles.intro, { color: colors.textSecondary }]}>Create, manage and review your assignments.</Text>
+        <Pressable onPress={() => navigation.navigate("CreateAssignment")} style={({ pressed }) => [pressed && { opacity: pressedOpacity }]} accessibilityRole="button"><LinearGradient colors={[colors.accent, colors.accentDark]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.createHero}><View><Text style={[styles.createTitle, { color: colors.accentOn }]}>Create an assignment</Text><Text style={styles.createSubtitle}>Build questions for your class.</Text><View style={styles.createCta}><Text style={[styles.createCtaText, { color: colors.accent }]}>Create</Text><Ionicons name="arrow-forward" size={16} color={colors.accent} /></View></View><Image source={decorativeAssets.teacherAssignment} style={styles.createHeroImage} resizeMode="contain" /></LinearGradient></Pressable>
+        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Your assignments</Text>
+        <View style={styles.filters}>{(["all", "draft", "published"] as Filter[]).map((item) => { const active = filter === item; return <Pressable key={item} onPress={() => setFilter(item)} style={({ pressed }) => [styles.filter, { backgroundColor: active ? colors.accent : colors.surfaceRaised }, pressed && { opacity: pressedOpacity }]} accessibilityRole="button" accessibilityState={{ selected: active }}><Text style={[styles.filterText, { color: active ? colors.accentOn : colors.textSecondary }]}>{item === "all" ? "All" : item === "draft" ? "Drafts" : "Published"}</Text></Pressable>; })}</View>
+        {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
+      </>}
+      ListEmptyComponent={isLoading ? <ActivityIndicator color={colors.accent} style={{ marginTop: 28 }} /> : <View style={styles.emptyState}><Image source={decorativeAssets.book} style={styles.emptyGraphic} resizeMode="contain" /><Text style={[styles.emptyText, { color: colors.textMuted }]}>No {filter === "all" ? "assignments" : `${filter} assignments`} yet.</Text></View>}
+      renderItem={({ item }) => <Pressable onPress={() => navigation.navigate("AssignmentDetail", { assignmentId: item.id })} style={({ pressed }) => [styles.assignmentRow, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]} accessibilityRole="button"><View style={[styles.assignmentIcon, { backgroundColor: colors.accentSoft }]}><Ionicons name={item.status === "draft" ? "document-text-outline" : "school-outline"} size={21} color={colors.accent} /></View><View style={styles.assignmentCopy}><Text style={[styles.assignmentTitle, { color: colors.textPrimary }]} numberOfLines={1}>{item.title}</Text><Text style={[styles.assignmentMeta, { color: colors.textMuted }]}>{item.questions.length} question{item.questions.length === 1 ? "" : "s"} · {new Date(item.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</Text><View style={[styles.statusBadge, { backgroundColor: item.status === "published" ? colors.accentSoft : colors.surfaceRaised }]}><Text style={[styles.statusText, { color: item.status === "published" ? colors.accent : colors.textMuted }]}>{item.status}</Text></View></View><Ionicons name="chevron-forward" size={19} color={colors.textMuted} /></Pressable>}
+    />
+  </Screen>;
 }
 
 const styles = StyleSheet.create({
-  titleSection: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 4 },
-  title: { fontSize: 24, fontWeight: "800", letterSpacing: -0.5 },
-  subtitle: { fontSize: 13, marginTop: 2, fontWeight: "500" },
-  error: { textAlign: "center", marginTop: 12 },
-  list: { padding: 16, gap: 12, flexGrow: 1, paddingBottom: 132 },
-  emptyState: { alignItems: "center", marginTop: 60, gap: 10 },
-  emptyGraphic: { width: 86, height: 86 },
-  empty: { textAlign: "center" },
-  card: { borderRadius: 14, padding: 14, borderWidth: 1, borderLeftWidth: 4 },
-  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
-  cardTitle: { fontSize: 15, fontWeight: "700", flex: 1 },
-  statusBadge: { fontSize: 10, fontWeight: "700", textTransform: "capitalize", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, overflow: "hidden" },
-  cardMetaRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 },
-  cardMeta: { fontSize: 12 },
-  fabContainer: { position: "absolute", bottom: 112, right: 24 },
-  fab: { width: 52, height: 52, borderRadius: 26, alignItems: "center", justifyContent: "center", elevation: 4 },
+  list: { paddingHorizontal: 20, paddingTop: 14, paddingBottom: 132, gap: 12, flexGrow: 1 }, header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, title: { fontSize: 24, fontWeight: "800", letterSpacing: -0.5 }, addButton: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" }, intro: { marginTop: 18, maxWidth: 258, fontSize: 15, lineHeight: 21, fontWeight: "500" },
+  createHero: { minHeight: 172, marginTop: 28, borderRadius: 20, padding: 20, overflow: "hidden", flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, createTitle: { fontSize: 23, lineHeight: 29, fontWeight: "700", letterSpacing: -0.5 }, createSubtitle: { marginTop: 4, fontSize: 13, color: "rgba(255,255,255,0.78)", fontWeight: "500" }, createCta: { marginTop: 20, height: 40, borderRadius: 20, backgroundColor: "#FFFFFF", paddingHorizontal: 17, alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 7 }, createCtaText: { fontSize: 13, fontWeight: "800" }, createHeroImage: { width: 124, height: 124, marginRight: -12 },
+  sectionTitle: { marginTop: 30, fontSize: 23, lineHeight: 29, fontWeight: "500", letterSpacing: -0.4 }, filters: { flexDirection: "row", gap: 8, marginTop: 12, marginBottom: 8 }, filter: { minHeight: 32, borderRadius: 16, paddingHorizontal: 14, alignItems: "center", justifyContent: "center" }, filterText: { fontSize: 12, fontWeight: "700" },
+  assignmentRow: { minHeight: 98, borderWidth: 1, borderRadius: 16, padding: 15, flexDirection: "row", alignItems: "center", gap: 12 }, assignmentIcon: { width: 44, height: 44, borderRadius: 16, alignItems: "center", justifyContent: "center" }, assignmentCopy: { flex: 1 }, assignmentTitle: { fontSize: 14, lineHeight: 19, fontWeight: "800" }, assignmentMeta: { marginTop: 3, fontSize: 11, fontWeight: "500" }, statusBadge: { alignSelf: "flex-start", marginTop: 6, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 }, statusText: { textTransform: "uppercase", fontSize: 9, letterSpacing: 0.5, fontWeight: "800" },
+  error: { textAlign: "center", marginVertical: 8 }, emptyState: { alignItems: "center", marginTop: 26, gap: 8 }, emptyGraphic: { width: 78, height: 78 }, emptyText: { fontSize: 13, fontWeight: "500" },
 });

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useSchoolContext } from "../context/SchoolContext";
 import { api } from "../api/client";
-import type { FunnelResponse, TrendResponse, PipelineStage } from "../api/client";
+import type { AcademicYear, FunnelResponse, TrendResponse, PipelineStage } from "../api/client";
 import { Card } from "../components/Card";
 import { StatTile } from "../components/StatTile";
 import { BarChart } from "../components/BarChart";
@@ -10,15 +10,10 @@ import { LineChart } from "../components/LineChart";
 import { PageHeader } from "../components/PageHeader";
 import { SelectSchoolPrompt } from "../components/SelectSchoolPrompt";
 
-// Pipeline stages are configurable per school (FR-EG-3) - fetched dynamically
-// rather than a fixed list. Colors cycle if a school configures more non-terminal
-// stages than the sequential ramp has steps, rather than crashing.
 const SEQ_COLORS = ["var(--seq-1)", "var(--seq-2)", "var(--seq-3)", "var(--seq-4)", "var(--seq-5)", "var(--seq-6)"];
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-// "Jan" normally; "Jan '25" at the first bucket and at every year boundary, so a
-// 12-month trailing window that spans two calendar years never reads as ambiguous.
 function formatPeriodLabel(period: string, index: number): string {
   const [year, month] = period.split("-");
   const monthName = MONTH_NAMES[Number(month) - 1];
@@ -38,6 +33,21 @@ export function FunnelPage() {
   const [error, setError] = useState<string | null>(null);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
+  const [academicYearId, setAcademicYearId] = useState("");
+  const reportSchoolId = needsSchoolPicker ? selectedSchoolId : user?.schoolId;
+
+  useEffect(() => {
+    if (!accessToken || !reportSchoolId) return;
+    api
+      .listAcademicYears(accessToken, reportSchoolId)
+      .then((years) => {
+        setAcademicYears(years);
+        setAcademicYearId((current) => current || years.find((year) => year.isCurrent)?.id || years[0]?.id || "");
+      })
+      .catch(() => {
+      });
+  }, [accessToken, reportSchoolId]);
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -50,9 +60,10 @@ export function FunnelPage() {
         api.getFunnel(accessToken, {
           startDate: startDate || undefined,
           endDate: endDate || undefined,
+          academicYearId: academicYearId || undefined,
           schoolId,
         }),
-        api.getTrend(accessToken, { schoolId }),
+        api.getTrend(accessToken, { schoolId, academicYearId: academicYearId || undefined }),
         api.listPipelineStages(accessToken, { schoolId }),
       ]);
       setData(funnelRes);
@@ -63,7 +74,7 @@ export function FunnelPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [accessToken, startDate, endDate, needsSchoolPicker, selectedSchoolId]);
+  }, [accessToken, startDate, endDate, academicYearId, needsSchoolPicker, selectedSchoolId]);
 
   useEffect(() => {
     load();
@@ -79,6 +90,13 @@ export function FunnelPage() {
 
       <Card style={{ padding: "20px 24px" }}>
         <div style={styles.filterRow}>
+          <div style={styles.filterField}>
+            <label style={styles.filterLabel}>Academic year</label>
+            <select value={academicYearId} onChange={(e) => setAcademicYearId(e.target.value)} style={styles.dateInput}>
+              <option value="">All academic years</option>
+              {academicYears.map((year) => <option key={year.id} value={year.id}>{year.label}{year.isCurrent ? " (Current)" : ""}</option>)}
+            </select>
+          </div>
           <div style={styles.filterField}>
             <label style={styles.filterLabel}>Start date</label>
             <input

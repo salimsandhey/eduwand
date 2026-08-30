@@ -22,7 +22,6 @@ export async function auditLogRoutes(app: FastifyInstance) {
 
       if (caller.role === PLATFORM_ADMIN_ROLE) {
         if (request.query.schoolId) where = { schoolId: request.query.schoolId };
-        // otherwise unscoped - platform_admin sees everything
       } else if (caller.role === "leadership") {
         if (!caller.trustId) {
           return reply.code(403).send({ data: null, error: { code: "forbidden", message: "No trust scope on this account" } });

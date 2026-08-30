@@ -1,0 +1,40 @@
+precipitation
+to land evaporation
+from precipitation
+evaporation
+from water
+surface
+transpiration
+from vegetation
+evaporation
+from land
+evaporation
+from soil
+evaporation
+from reservoir
+condensation
+evaporation
+from ocean
+precipitation
+to ocean
+surface runoff
+water table
+infiltration
+percolation
+(deep)
+subsurface
+flow
+groundwater outflow
+saltwater intrusion
+
+[ ] soil moisture
+[ ] groundwater
+© Encyclopaedia Britannica, Inc. ocean covers 71 percent of Earth's surface
+196,950,000 sq mi (510,000,000 sq km)
+
+[Figure] The image depicts a comprehensive diagram of the Earth's water cycle, illustrating the continuous movement of water above, on, and below the surface of the Earth. It shows various processes including:
+*   **Atmospheric processes:** Condensation forming clouds, precipitation (rain, snow) falling to land and ocean, and evaporation from precipitation.
+*   **Land-based processes:** Evaporation from the water surface, transpiration from vegetation, evaporation from soil, evaporation from reservoirs, and general evaporation from land. Water on land undergoes surface runoff, infiltrates the ground, and percolates deep into the earth. The water table marks the upper level of groundwater. Subsurface flow and groundwater outflow transport water towards the ocean.
+*   **Ocean processes:** Evaporation from the ocean and precipitation falling directly onto the ocean. The ocean receives surface outflow and groundwater outflow from land.
+*   **Specific phenomena:** Saltwater intrusion is shown as oceanic saltwater moving into freshwater groundwater near the coast.
+*   **Visual cues:** Arrows indicate the direction of water movement. Clouds and the sun are depicted in the sky. The legend differentiates between "soil moisture" (purple shading) and "groundwater" (light blue shading). The diagram emphasizes the interconnectedness of water reservoirs and processes driven by solar energy.

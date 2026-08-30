@@ -2,7 +2,6 @@ import { prisma } from "./prisma";
 import { toCsv } from "./csv";
 import { storage } from "./storage";
 
-// Fixed, standard column set (FR-EG-11) - not configurable per school.
 const CSV_HEADERS = [
   "full_name",
   "date_of_birth",
@@ -16,9 +15,6 @@ const CSV_HEADERS = [
   "source_enquiry_id",
 ];
 
-// Shared by the manual "Run export now" endpoint
-// (backend/src/routes/exports.ts) and the worker's scheduled sweep
-// (backend/src/worker.ts, FR-EG-11) - one code path either way.
 export async function runCsvExport(schoolId: string, requestedByUserId: string) {
   try {
     const students = await prisma.studentStub.findMany({
@@ -37,7 +33,7 @@ export async function runCsvExport(schoolId: string, requestedByUserId: string) 
       s.guardianContact,
       s.admissionDate.toISOString().slice(0, 10),
       s.feeStatus,
-      s.sourceEnquiryId,
+      s.sourceEnquiryId ?? "(added directly, no enquiry)",
     ]);
 
     const csv = toCsv(CSV_HEADERS, rows);

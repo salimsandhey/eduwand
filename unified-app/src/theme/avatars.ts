@@ -1,8 +1,5 @@
 import { ImageSourcePropType } from "react-native";
 
-// Bundled placeholder avatars (unified-app/assets/avatars/avatar-01..10.png).
-// Keep AVATAR_KEYS in sync with backend/src/routes/enquiry-photo.ts's
-// VALID_AVATAR_KEYS and with the actual files in that folder.
 export const AVATAR_KEYS = [
   "avatar-01",
   "avatar-02",
@@ -31,16 +28,25 @@ export const AVATAR_SOURCE_BY_KEY: Record<string, ImageSourcePropType> = {
 
 const AVATAR_SOURCES = AVATAR_KEYS.map((key) => AVATAR_SOURCE_BY_KEY[key]);
 
-// Deterministic fallback for a lead with no photo and no chosen avatar, so
-// the same lead always renders the same placeholder instead of a random one
-// on every reload.
 export function getAvatarSource(seed: string): ImageSourcePropType {
   const hash = seed.split("").reduce((total, char) => total + char.charCodeAt(0), 0);
   return AVATAR_SOURCES[hash % AVATAR_SOURCES.length];
 }
 
-// Single place that picks what to actually render for a lead: an uploaded
-// photo first, then a chosen preset avatar, then the deterministic fallback.
+// Current-user avatar resolution, same precedence as enquiries: uploaded photo
+// first, then a picked preset, then a stable auto-pick seeded on the user id.
+export function resolveUserImageSource(params: {
+  id: string;
+  fullName: string;
+  avatarKey?: string | null;
+  photoUrl?: string | null;
+  hasPhoto?: boolean | null;
+}): ImageSourcePropType {
+  if (params.hasPhoto && params.photoUrl) return { uri: params.photoUrl };
+  if (params.avatarKey && AVATAR_SOURCE_BY_KEY[params.avatarKey]) return AVATAR_SOURCE_BY_KEY[params.avatarKey];
+  return getAvatarSource(params.id || params.fullName);
+}
+
 export function resolveEnquiryImageSource(params: {
   id: string;
   contactName: string;

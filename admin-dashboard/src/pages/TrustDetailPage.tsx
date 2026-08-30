@@ -101,7 +101,6 @@ export function TrustDetailPage() {
     setIsCreatingSchool(true);
     setSchoolError(null);
     try {
-      // trustId is always this page's trust - never a picker, per the new flow.
       const school = await api.createSchool(accessToken, {
         name: schoolName.trim(),
         board: schoolBoard,

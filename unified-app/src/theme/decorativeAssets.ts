@@ -1,9 +1,12 @@
 export const decorativeAssets = {
   heroBlob: require("../../assets/decorative/decor-hero-blob.png"),
   teacherHero: require("../../assets/decorative/decor-teacher-hero.png"),
+  teacherHeroNoBulb: require("../../assets/decorative/decor-teacher-hero-no-bulb.png"),
   teacherLessonCat: require("../../assets/decorative/decor-teacher-lesson-cat.png"),
   teacherAssignment: require("../../assets/decorative/decor-teacher-assignment.png"),
+  assignmentStudent: require("../../assets/decorative/decor-assignment-student.png"),
   teacherSubmissions: require("../../assets/decorative/decor-teacher-submissions.png"),
+  teacherSubmissionsNoStars: require("../../assets/decorative/decor-teacher-submissions-no-stars.png"),
   studioTeacher: require("../../assets/decorative/decor-studio-teacher.png"),
   sparklesLine: require("../../assets/decorative/decor-sparkles-line.png"),
   book: require("../../assets/decorative/decor-book.png"),
@@ -20,4 +23,10 @@ export const decorativeAssets = {
   chevronFlow: require("../../assets/decorative/decor-chevron-flow.png"),
   paperPlane: require("../../assets/decorative/decor-paper-plane.png"),
   ribbonBanner: require("../../assets/decorative/decor-ribbon-banner.png"),
+  classBooks: require("../../assets/decorative/decor-class-books.png"),
+  classPaperPlane: require("../../assets/decorative/decor-class-paper-plane.png"),
+  classBookmark: require("../../assets/decorative/decor-class-bookmark.png"),
+  classPencilCup: require("../../assets/decorative/decor-class-pencil-cup.png"),
+  classNotebook: require("../../assets/decorative/decor-class-notebook.png"),
+  aiButtonIcon: require("../../assets/decorative/AI-button-icon-new.png"),
 } as const;

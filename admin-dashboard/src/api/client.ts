@@ -27,9 +27,6 @@ async function requestEnvelope<T>(path: string, options: RequestInit = {}, token
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
     headers: {
-      // Fastify's JSON body parser rejects an empty body when Content-Type is
-      // application/json (FST_ERR_CTP_EMPTY_JSON_BODY) - only send it for
-      // requests that actually have a body (e.g. not a bodyless DELETE).
       ...(options.body ? { "Content-Type": "application/json" } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
@@ -56,8 +53,6 @@ function toQueryString(params: Record<string, string | undefined>): string {
   return "?" + entries.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v as string)}`).join("&");
 }
 
-// ---- Auth ----
-
 export interface AuthTokens {
   accessToken: string;
   refreshToken: string;
@@ -73,14 +68,10 @@ export interface CurrentUser {
   status: string;
 }
 
-// ---- Analytics ----
-
-export type EnquiryStatus = "new" | "contacted" | "visit" | "application" | "admitted" | "enrolled" | "lost";
+export type EnquiryStatus = "new" | "contacted" | "visit_scheduled" | "visit_done" | "application" | "admitted" | "enrolled" | "lost";
 export type EnquirySource = "phone" | "walk_in" | "website" | "referral" | "event" | "social";
 
 export interface FunnelResponse {
-  // Keyed by whatever pipeline stages the school has configured (FR-EG-3) - no
-  // longer a fixed enum, so this isn't Record<EnquiryStatus, number> anymore.
   byStatus: Record<string, number>;
   totalCount: number;
   convertedCount: number;
@@ -139,10 +130,9 @@ interface DateRangeParams {
   startDate?: string;
   endDate?: string;
   schoolId?: string;
+  academicYearId?: string;
   [key: string]: string | undefined;
 }
-
-// ---- Users ----
 
 export interface AppUserSummary {
   id: string;
@@ -161,8 +151,6 @@ export interface InviteUserInput {
   trustId?: string;
 }
 
-// ---- Academic structure (academic years / class sections) ----
-
 export interface ClassSectionTeacherAssignment {
   teacherUserId: string;
   teacher: { id: string; fullName: string; email: string };
@@ -174,6 +162,38 @@ export interface ClassSection {
   className: string;
   sectionName: string;
   teacherAssignments: ClassSectionTeacherAssignment[];
+}
+
+export interface Student {
+  id: string;
+  schoolId: string;
+  sourceEnquiryId: string | null;
+  fullName: string;
+  dateOfBirth: string;
+  classSectionId: string;
+  guardianName: string;
+  guardianContact: string;
+  admissionDate: string;
+  feeStatus: string;
+}
+
+export interface CreateStudentInput {
+  fullName: string;
+  dateOfBirth: string;
+  classSectionId: string;
+  guardianName: string;
+  guardianContact: string;
+  admissionDate?: string;
+  feeStatus?: string;
+}
+
+export interface UpdateStudentInput {
+  fullName?: string;
+  dateOfBirth?: string;
+  classSectionId?: string;
+  guardianName?: string;
+  guardianContact?: string;
+  feeStatus?: string;
 }
 
 export interface AcademicYear {
@@ -211,8 +231,6 @@ export interface BulkCreateClassSectionsResult {
   skipped: number;
 }
 
-// ---- School format templates ----
-
 export type SchoolFormatTemplateAppliesTo = "generation" | "attainment_report";
 
 export interface SchoolFormatTemplate {
@@ -229,16 +247,12 @@ export interface SchoolFormatTemplates {
   attainmentReport: SchoolFormatTemplate | null;
 }
 
-// ---- Subjects (per-school gateway for Topic.subject) ----
-
 export interface Subject {
   id: string;
   schoolId: string;
   name: string;
   createdAt: string;
 }
-
-// ---- Audit log ----
 
 export interface AuditLogEntry {
   id: string;
@@ -252,8 +266,6 @@ export interface AuditLogEntry {
   metadata: Record<string, unknown> | null;
   createdAt: string;
 }
-
-// ---- Message templates ----
 
 export type MessageChannel = "sms" | "email";
 
@@ -284,8 +296,6 @@ export interface CreateMessageTemplateInput {
   language?: string;
 }
 
-// ---- CSV exports ----
-
 export interface CsvExportLogEntry {
   id: string;
   schoolId: string;
@@ -300,8 +310,6 @@ export interface CsvExportSchedule {
   frequency: "daily" | "weekly";
   isActive: boolean;
 }
-
-// ---- Onboarding: trusts & schools ----
 
 export interface TrustSummary {
   id: string;
@@ -361,8 +369,6 @@ export interface SchoolDetail extends School {
 }
 
 export interface CreateSchoolInput {
-  // Only platform_admin can create a school, and always names the trust
-  // explicitly - see backend/src/routes/schools.ts.
   trustId: string;
   name: string;
   board: string;
@@ -403,6 +409,75 @@ export interface UpdateUserInput {
   schoolId?: string;
 }
 
+export interface UserRoleGrant {
+  id: string;
+  role: string;
+  createdAt: string;
+}
+
+export type FormDefinitionPurpose = "enquiry_intake" | "admission_detail" | "document_checklist";
+export type FormFieldType = "text" | "number" | "date" | "select" | "multiselect" | "checkbox" | "textarea" | "file";
+
+export interface FormDefinition {
+  id: string;
+  schoolId: string;
+  purpose: FormDefinitionPurpose;
+  name: string;
+  isActive: boolean;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FormField {
+  id: string;
+  formDefinitionId: string;
+  key: string;
+  label: string;
+  fieldType: FormFieldType;
+  options: unknown;
+  order: number;
+  isRequired: boolean;
+  requiredAtStage: string | null;
+}
+
+export interface FormDefinitionWithFields {
+  definition: FormDefinition;
+  fields: FormField[];
+}
+
+export interface CreateFormDefinitionInput {
+  purpose: FormDefinitionPurpose;
+  name: string;
+  isActive?: boolean;
+}
+
+export interface UpdateFormDefinitionInput {
+  name?: string;
+  isActive?: boolean;
+}
+
+export interface CreateFormFieldInput {
+  key: string;
+  label: string;
+  fieldType: FormFieldType;
+  options?: unknown;
+  order?: number;
+  isRequired?: boolean;
+  requiredAtStage?: string | null;
+}
+
+export interface UpdateFormFieldInput {
+  key?: string;
+  label?: string;
+  fieldType?: FormFieldType;
+  options?: unknown;
+  order?: number;
+  isRequired?: boolean;
+  requiredAtStage?: string | null;
+}
+
 export const api = {
   login: (email: string, password: string) =>
     request<AuthTokens>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
@@ -414,11 +489,12 @@ export const api = {
     request<BySourceResponse>(`/analytics/enrolment/by-source${toQueryString(params)}`, {}, token),
   getCounsellorPerformance: (token: string, params: DateRangeParams = {}) =>
     request<CounsellorPerformanceEntry[]>(`/analytics/enrolment/counsellor-performance${toQueryString(params)}`, {}, token),
-  getTrend: (token: string, params: { months?: number; schoolId?: string } = {}) =>
+  getTrend: (token: string, params: { months?: number; schoolId?: string; academicYearId?: string } = {}) =>
     request<TrendResponse>(
       `/analytics/enrolment/trend${toQueryString({
         months: params.months !== undefined ? String(params.months) : undefined,
         schoolId: params.schoolId,
+        academicYearId: params.academicYearId,
       })}`,
       {},
       token
@@ -442,6 +518,32 @@ export const api = {
     request<AppUserSummary>(`/users/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
   resetUserPassword: (token: string, id: string) =>
     requestEnvelope<AppUserSummary>(`/users/${id}/reset-password`, { method: "POST" }, token),
+  listUserRoleGrants: (token: string, id: string) =>
+    request<UserRoleGrant[]>(`/users/${id}/role-grants`, {}, token),
+  addUserRoleGrant: (token: string, id: string, input: { role: string }) =>
+    requestEnvelope<UserRoleGrant>(`/users/${id}/role-grants`, { method: "POST", body: JSON.stringify(input) }, token),
+  removeUserRoleGrant: (token: string, id: string, grantId: string) =>
+    request<{ id: string }>(`/users/${id}/role-grants/${grantId}`, { method: "DELETE" }, token),
+
+  // schoolId is required here (unlike the /schools/:schoolId/* nested routes)
+  // because /students is a flat route scoped by the generic requireSchoolScope
+  // plugin - a school-scoped user's JWT already carries it, but platform_admin
+  // and leadership have none and must pass it explicitly as a query param.
+  listStudents: (token: string, schoolId: string, params: { classSectionId?: string; page?: number; pageSize?: number } = {}) =>
+    request<Student[]>(
+      `/students${toQueryString({
+        schoolId,
+        classSectionId: params.classSectionId,
+        page: params.page ? String(params.page) : undefined,
+        pageSize: params.pageSize ? String(params.pageSize) : undefined,
+      })}`,
+      {},
+      token
+    ),
+  createStudent: (token: string, schoolId: string, input: CreateStudentInput) =>
+    requestEnvelope<Student>(`/students${toQueryString({ schoolId })}`, { method: "POST", body: JSON.stringify(input) }, token),
+  updateStudent: (token: string, schoolId: string, id: string, input: UpdateStudentInput) =>
+    request<Student>(`/students/${id}${toQueryString({ schoolId })}`, { method: "PATCH", body: JSON.stringify(input) }, token),
 
   listAcademicYears: (token: string, schoolId: string) =>
     request<AcademicYear[]>(`/schools/${schoolId}/academic-years`, {}, token),
@@ -552,4 +654,33 @@ export const api = {
   updateSchool: (token: string, id: string, input: UpdateSchoolInput) =>
     request<SchoolDetail>(`/schools/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
   deleteSchool: (token: string, id: string) => request<{ deleted: true }>(`/schools/${id}`, { method: "DELETE" }, token),
+
+  getFormDefinition: (token: string, purpose: FormDefinitionPurpose, params: { schoolId?: string } = {}) =>
+    request<FormDefinitionWithFields>(`/form-definitions${toQueryString({ purpose, ...params })}`, {}, token),
+  createFormDefinition: (token: string, input: CreateFormDefinitionInput, params: { schoolId?: string } = {}) =>
+    request<FormDefinition>(`/form-definitions${toQueryString(params)}`, { method: "POST", body: JSON.stringify(input) }, token),
+  updateFormDefinition: (token: string, id: string, input: UpdateFormDefinitionInput, params: { schoolId?: string } = {}) =>
+    request<FormDefinition>(`/form-definitions/${id}${toQueryString(params)}`, { method: "PATCH", body: JSON.stringify(input) }, token),
+  addFormField: (token: string, definitionId: string, input: CreateFormFieldInput, params: { schoolId?: string } = {}) =>
+    request<FormField>(`/form-definitions/${definitionId}/fields${toQueryString(params)}`, { method: "POST", body: JSON.stringify(input) }, token),
+  updateFormField: (
+    token: string,
+    definitionId: string,
+    fieldId: string,
+    input: UpdateFormFieldInput,
+    params: { schoolId?: string } = {}
+  ) =>
+    request<FormField>(
+      `/form-definitions/${definitionId}/fields/${fieldId}${toQueryString(params)}`,
+      { method: "PATCH", body: JSON.stringify(input) },
+      token
+    ),
+  deleteFormField: (token: string, definitionId: string, fieldId: string, params: { schoolId?: string } = {}) =>
+    request<{ id: string }>(`/form-definitions/${definitionId}/fields/${fieldId}${toQueryString(params)}`, { method: "DELETE" }, token),
+  reorderFormFields: (token: string, definitionId: string, fieldIds: string[], params: { schoolId?: string } = {}) =>
+    request<FormField[]>(
+      `/form-definitions/${definitionId}/fields/reorder${toQueryString(params)}`,
+      { method: "PATCH", body: JSON.stringify({ fieldIds }) },
+      token
+    ),
 };

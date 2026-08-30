@@ -1,10 +1,3 @@
-// Horizontal bar chart per the dataviz skill's mark spec: bars capped at 24px thick,
-// 4px rounded data-end (square at the baseline), value labeled at the tip, a 2px
-// surface gap between bars, recessive hairline track. Each row is already directly
-// labeled by category, so no separate legend box is needed - the label IS the
-// identity channel here (see marks-and-anatomy.md: "a single series needs no legend
-// box" / labels supplement, they don't require duplicating into a legend when the
-// category name already rides the bar).
 interface BarChartRow {
   label: string;
   value: number;

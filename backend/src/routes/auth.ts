@@ -51,8 +51,6 @@ export async function authRoutes(app: FastifyInstance) {
       });
     }
 
-    // No separate account-activation flow exists yet - a successful first login with
-    // the invite's temp password IS the activation step.
     if (user.status === "invited") {
       await prisma.appUser.update({ where: { id: user.id }, data: { status: "active" } });
     }
@@ -94,7 +92,8 @@ export async function authRoutes(app: FastifyInstance) {
         }
         const claims = { sub: student.id, role: "student", schoolId: student.schoolId, trustId: null };
         const accessToken = app.jwt.sign({ ...claims, type: "access" }, { expiresIn: ACCESS_TOKEN_EXPIRY });
-        return { data: { accessToken }, meta: {} };
+        const newRefreshToken = app.jwt.sign({ ...claims, type: "refresh" }, { expiresIn: REFRESH_TOKEN_EXPIRY });
+        return { data: { accessToken, refreshToken: newRefreshToken }, meta: {} };
       }
 
       const user = await prisma.appUser.findUnique({ where: { id: decoded.sub } });
@@ -110,8 +109,9 @@ export async function authRoutes(app: FastifyInstance) {
       };
 
       const accessToken = app.jwt.sign({ ...claims, type: "access" }, { expiresIn: ACCESS_TOKEN_EXPIRY });
+      const newRefreshToken = app.jwt.sign({ ...claims, type: "refresh" }, { expiresIn: REFRESH_TOKEN_EXPIRY });
 
-      return { data: { accessToken }, meta: {} };
+      return { data: { accessToken, refreshToken: newRefreshToken }, meta: {} };
     } catch {
       return reply.code(401).send({
         data: null,
@@ -134,11 +134,14 @@ export async function authRoutes(app: FastifyInstance) {
           id: student.id,
           fullName: student.fullName,
           email: "",
+          phone: null,
           role: "student",
           schoolId: student.schoolId,
           trustId: null,
           status: "active",
           classSectionId: student.classSectionId,
+          photoMimeType: null,
+          avatarKey: null,
         },
         meta: {},
       };
@@ -150,20 +153,19 @@ export async function authRoutes(app: FastifyInstance) {
         id: true,
         fullName: true,
         email: true,
+        phone: true,
         role: true,
         schoolId: true,
         trustId: true,
         status: true,
+        photoMimeType: true,
+        avatarKey: true,
       },
     });
 
     return { data: user, meta: {} };
   });
 
-  // Same OTP-over-email pattern as student login (see student-auth.ts) - a
-  // 6-digit code is emailed, verifying it directly authorizes setting a new
-  // password rather than issuing a session, since this endpoint runs while
-  // logged out.
   app.post<{ Body: RequestPasswordResetBody }>(
     "/auth/request-password-reset",
     { config: { rateLimit: { max: 6, timeWindow: "1 minute" } } },
@@ -178,8 +180,6 @@ export async function authRoutes(app: FastifyInstance) {
 
     const user = await prisma.appUser.findUnique({ where: { email } });
 
-    // Always respond the same way whether or not the email exists, so this
-    // endpoint can't be used to enumerate accounts.
     let devCode: string | undefined;
     if (user) {
       const code = generateOtpCode();

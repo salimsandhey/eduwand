@@ -1,8 +1,6 @@
 import type { CSSProperties } from "react";
 import { useSchoolContext } from "../context/SchoolContext";
 
-// Rendered in the topbar only for the leadership role - lets them switch which
-// school in their trust the school-scoped analytics/users pages show.
 export function SchoolPicker() {
   const { schools, selectedSchoolId, setSelectedSchoolId, isLoading } = useSchoolContext();
 

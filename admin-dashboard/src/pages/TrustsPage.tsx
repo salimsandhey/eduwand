@@ -51,8 +51,6 @@ export function TrustsPage() {
         gstNumber: gstNumber.trim() || undefined,
         expectedSchoolCount: expectedSchoolCount ? Number(expectedSchoolCount) : undefined,
       });
-      // Straight to its detail page - that's where "+ Add school" lives now,
-      // so creating a trust flows directly into onboarding its first school.
       navigate(`/trusts/${trust.id}`);
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : "Failed to create trust");

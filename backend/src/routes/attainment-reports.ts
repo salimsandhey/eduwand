@@ -5,14 +5,6 @@ import { requireRoles } from "../lib/rbac";
 
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope, requireRoles("teacher", "leadership", "admin")];
 
-// Attainment Report (Docs/Dev/AI_Module_Rebuild_Plan.md, Phase 4) - one per
-// topic, auto-assembled from that topic's generations, observations, and
-// grade results, no re-entry by the teacher. Generated on first request
-// rather than a separate "create" endpoint, then cached in the
-// attainment_report row (regenerated on every GET for now since the
-// underlying data can keep changing until the topic is archived - a
-// generated_at-based cache invalidation strategy is a follow-up, not built
-// here to avoid guessing a staleness window the client hasn't specified).
 export async function attainmentReportRoutes(app: FastifyInstance) {
   app.get<{ Params: { id: string } }>("/topics/:id/attainment-report", { onRequest: scoped(app) }, async (request, reply) => {
     const topic = await prisma.topic.findFirst({
@@ -20,6 +12,13 @@ export async function attainmentReportRoutes(app: FastifyInstance) {
       include: {
         generations: true,
         observations: { orderBy: { recordedAt: "asc" } },
+        classSection: {
+          select: {
+            className: true,
+            sectionName: true,
+            studentStubs: { select: { id: true } },
+          },
+        },
         assignments: {
           include: { submissions: { include: { grade: true } } },
         },
@@ -29,9 +28,6 @@ export async function attainmentReportRoutes(app: FastifyInstance) {
       return reply.code(404).send({ data: null, error: { code: "not_found", message: "Topic not found" } });
     }
 
-    // Honest gap, per the client doc's own edge case: a topic generated but
-    // never taught (no observations, no outcomes) shows that gap rather than
-    // fabricating content.
     const whatWasDone =
       topic.generations.length > 0
         ? topic.generations.map((g) => `${g.outputType}: ${(g.editedOutput ?? g.aiOutput).slice(0, 200)}`).join("\n\n")
@@ -39,6 +35,25 @@ export async function attainmentReportRoutes(app: FastifyInstance) {
 
     const allGrades = topic.assignments.flatMap((a) => a.submissions.map((s) => s.grade).filter(Boolean));
     const gradedWithScore = allGrades.filter((g) => g!.finalScore != null || g!.aiScore != null);
+    const scores = gradedWithScore.map((grade) => grade!.finalScore ?? grade!.aiScore ?? 0);
+    const averageScore = scores.length > 0 ? scores.reduce((total, score) => total + score, 0) / scores.length : null;
+    const scoreBands = {
+      above80: scores.filter((score) => score >= 80).length,
+      between60And80: scores.filter((score) => score >= 60 && score < 80).length,
+      below60: scores.filter((score) => score < 60).length,
+    };
+    const assignmentAttainment = topic.assignments
+      .map((assignment) => {
+        const assignmentScores = assignment.submissions
+          .map((submission) => submission.grade?.finalScore ?? submission.grade?.aiScore)
+          .filter((score): score is number => score != null);
+        return {
+          assignmentId: assignment.id,
+          title: assignment.title,
+          averageScore: assignmentScores.length > 0 ? assignmentScores.reduce((total, score) => total + score, 0) / assignmentScores.length : null,
+        };
+      })
+      .filter((assignment) => assignment.averageScore !== null);
     const outcomes =
       gradedWithScore.length > 0
         ? `${gradedWithScore.length} graded submission(s) across ${topic.assignments.length} assignment(s) on this topic.`
@@ -63,13 +78,24 @@ export async function attainmentReportRoutes(app: FastifyInstance) {
       update: { whatWasDone, outcomes, improvementNotes },
     });
 
-    return { data: report, meta: {} };
+    return {
+      data: {
+        ...report,
+        topicName: topic.name,
+        subject: topic.subject,
+        board: topic.board,
+        className: topic.classSection.className,
+        sectionName: topic.classSection.sectionName,
+        studentCount: topic.classSection.studentStubs.length,
+        gradedSubmissionCount: scores.length,
+        averageScore,
+        scoreBands,
+        assignmentAttainment,
+      },
+      meta: {},
+    };
   });
 
-  // PDF export needs a PDF generation library - none is a dependency yet
-  // (Docs/Dev/AI_Module_Rebuild_Plan.md Phase 4 flags this explicitly as an
-  // open dependency decision). Not implemented here to avoid silently picking
-  // one; returns 501 rather than a fake/broken PDF.
   app.get<{ Params: { id: string } }>("/topics/:id/attainment-report/pdf", { onRequest: scoped(app) }, async (_request, reply) => {
     return reply.code(501).send({
       data: null,

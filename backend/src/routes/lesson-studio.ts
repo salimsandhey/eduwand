@@ -20,10 +20,6 @@ interface GenerateResearchReportBody {
 
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope, requireRoles("teacher")];
 
-// Lesson Studio (FR-AI-1, FR-AI-5). Generation is synchronous here since the
-// stub provider (backend/src/lib/ai.ts) resolves instantly - the API
-// Specification's note about async jobs applies once a real, slower model is
-// wired in behind the same AiProvider interface.
 export async function lessonStudioRoutes(app: FastifyInstance) {
   app.post<{ Body: GenerateLessonPlanBody }>(
     "/lesson-plans/generate",

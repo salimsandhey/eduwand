@@ -13,11 +13,6 @@ interface StageRailProps {
 const STEP_WIDTH = 88;
 const CIRCLE_SIZE = 28;
 
-// Replaces the old horizontally-scrolling chip row with connected step nodes,
-// so the pipeline reads as a linear progression (done / here / upcoming)
-// rather than a set of interchangeable filter pills. Horizontally scrollable
-// since pipeline stages are school-configured and can run past what fits on
-// one screen (usePipelineStages).
 export function StageRail({ stages, currentKey, onSelect }: StageRailProps) {
   const { colors, pressedOpacity } = useTheme();
   const scrollRef = useRef<ScrollView>(null);

@@ -1,0 +1,15 @@
+{
+  "sourceType": "image",
+  "expectedStatus": "extracted",
+  "mustContain": [],
+  "figureFacts": [
+    "mouth and esophagus",
+    "liver",
+    "stomach",
+    "pancreas",
+    "small intestine",
+    "large intestine (colon)",
+    "human digestive system anatomical diagram, no text labels on the image itself"
+  ],
+  "notes": "Pure anatomical illustration - zero text on the image. This is the clean test of figure-description quality with nothing to transcribe. If no vision key is configured, extractionStatus is expected to be 'pending' instead (not a failure)."
+}

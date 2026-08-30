@@ -12,13 +12,54 @@ export class ApiError extends Error {
   }
 }
 
-async function requestEnvelope<T>(path: string, options: RequestInit = {}, token?: string): Promise<ApiEnvelope<T>> {
+// Lets AuthContext plug in how to refresh a stale access token and how to
+// react when the refresh itself fails, without every screen having to know
+// about token refresh at all - screens still just pass the token they have.
+interface SessionHandlers {
+  getRefreshToken: () => string | null;
+  onTokensRefreshed: (tokens: AuthTokens) => void;
+  onSessionExpired: () => void;
+}
+
+let sessionHandlers: SessionHandlers | null = null;
+let refreshInFlight: Promise<string | null> | null = null;
+
+export function setSessionHandlers(handlers: SessionHandlers | null) {
+  sessionHandlers = handlers;
+}
+
+// Single-flights concurrent 401s into one refresh call so a screen firing
+// several requests at once doesn't burn through multiple refresh tokens.
+async function refreshAccessToken(): Promise<string | null> {
+  if (!sessionHandlers) return null;
+  const refreshToken = sessionHandlers.getRefreshToken();
+  if (!refreshToken) return null;
+
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      try {
+        const tokens = await request<AuthTokens>("/auth/refresh", { method: "POST" }, refreshToken);
+        sessionHandlers?.onTokensRefreshed(tokens);
+        return tokens.accessToken;
+      } catch {
+        sessionHandlers?.onSessionExpired();
+        return null;
+      } finally {
+        refreshInFlight = null;
+      }
+    })();
+  }
+  return refreshInFlight;
+}
+
+function isExpiredAccessToken(token: string | undefined, body: ApiEnvelope<unknown>): boolean {
+  return !!token && body.error?.code === "unauthorized";
+}
+
+async function requestEnvelope<T>(path: string, options: RequestInit = {}, token?: string, isRetry = false): Promise<ApiEnvelope<T>> {
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
     headers: {
-      // Fastify's JSON body parser rejects an empty body when Content-Type is
-      // application/json (FST_ERR_CTP_EMPTY_JSON_BODY) - only send it for
-      // requests that actually have a body (e.g. not a bodyless POST/DELETE).
       ...(options.body ? { "Content-Type": "application/json" } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
@@ -28,6 +69,12 @@ async function requestEnvelope<T>(path: string, options: RequestInit = {}, token
   const body: ApiEnvelope<T> = await response.json();
 
   if (!response.ok || body.error) {
+    if (!isRetry && path !== "/auth/refresh" && isExpiredAccessToken(token, body)) {
+      const newAccessToken = await refreshAccessToken();
+      if (newAccessToken) {
+        return requestEnvelope<T>(path, options, newAccessToken, true);
+      }
+    }
     throw new ApiError(body.error?.code ?? "unknown_error", body.error?.message ?? "Request failed");
   }
 
@@ -39,20 +86,23 @@ async function request<T>(path: string, options: RequestInit = {}, token?: strin
   return body.data as T;
 }
 
-async function requestText(path: string, token: string): Promise<string> {
+async function requestText(path: string, token: string, isRetry = false): Promise<string> {
   const response = await fetch(`${API_URL}${path}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
+    if (!isRetry && response.status === 401) {
+      const newAccessToken = await refreshAccessToken();
+      if (newAccessToken) {
+        return requestText(path, newAccessToken, true);
+      }
+    }
     throw new ApiError("download_failed", "Download failed");
   }
   return response.text();
 }
 
-// No Content-Type header here, deliberately - fetch/React Native sets the
-// multipart boundary itself from the FormData body. requestEnvelope's default
-// "application/json" header would break the upload if reused for this.
-async function requestMultipart<T>(path: string, formData: FormData, token: string): Promise<T> {
+async function requestMultipart<T>(path: string, formData: FormData, token: string, isRetry = false): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
@@ -60,6 +110,12 @@ async function requestMultipart<T>(path: string, formData: FormData, token: stri
   });
   const body: ApiEnvelope<T> = await response.json();
   if (!response.ok || body.error) {
+    if (!isRetry && isExpiredAccessToken(token, body)) {
+      const newAccessToken = await refreshAccessToken();
+      if (newAccessToken) {
+        return requestMultipart<T>(path, formData, newAccessToken, true);
+      }
+    }
     throw new ApiError(body.error?.code ?? "unknown_error", body.error?.message ?? "Request failed");
   }
   return body.data as T;
@@ -71,8 +127,6 @@ function toQueryString(params: Record<string, string | undefined>): string {
   return "?" + entries.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v as string)}`).join("&");
 }
 
-// ---- Auth ----
-
 export interface AuthTokens {
   accessToken: string;
   refreshToken: string;
@@ -82,13 +136,19 @@ export interface CurrentUser {
   id: string;
   fullName: string;
   email: string;
+  phone: string | null;
   role: string;
   schoolId: string | null;
   trustId: string | null;
   status: string;
+  photoMimeType: string | null;
+  avatarKey: string | null;
 }
 
-// ---- Student login (phone + OTP) ----
+export interface UpdateProfileInput {
+  fullName?: string;
+  phone?: string | null;
+}
 
 export interface StudentOtpMatch {
   id: string;
@@ -101,8 +161,6 @@ export interface StudentVerifyOtpResult {
   selectionToken: string;
   students: StudentOtpMatch[];
 }
-
-// ---- Student portal (read-only) ----
 
 export type StudentSubmissionStatus = "not_submitted" | "submitted" | "graded";
 
@@ -139,8 +197,6 @@ export interface StudentMaterial {
   generatedAt: string;
 }
 
-// ---- Communication Hub (Docs/Dev/AI_Module_Rebuild_Plan.md, Phase 4) ----
-
 export type CommunicationChannel = "parent_weekly_update" | "teacher_to_student" | "teacher_to_class" | "student_to_teacher";
 
 export interface CommunicationMessage {
@@ -157,8 +213,6 @@ export interface CommunicationMessage {
   createdAt: string;
 }
 
-// ---- Attainment Report ----
-
 export interface AttainmentReportRecord {
   id: string;
   topicId: string;
@@ -168,9 +222,25 @@ export interface AttainmentReportRecord {
   improvementNotes: string | null;
   pdfFileLocation: string | null;
   generatedAt: string;
+  topicName: string;
+  subject: string;
+  board: string;
+  className: string;
+  sectionName: string;
+  studentCount: number;
+  gradedSubmissionCount: number;
+  averageScore: number | null;
+  scoreBands: {
+    above80: number;
+    between60And80: number;
+    below60: number;
+  };
+  assignmentAttainment: {
+    assignmentId: string;
+    title: string;
+    averageScore: number | null;
+  }[];
 }
-
-// ---- Pipeline stages (FR-EG-3: configurable per school, not a fixed enum) ----
 
 export interface PipelineStage {
   id: string;
@@ -181,10 +251,6 @@ export interface PipelineStage {
   isConverted: boolean;
 }
 
-// ---- Enquiries ----
-
-// Stage keys are now school-configured (see PipelineStage above), not a fixed
-// union - kept as `string` so a custom stage key doesn't fail to type-check.
 export type EnquiryStatus = string;
 export type EnquirySource = "phone" | "walk_in" | "website" | "referral" | "event" | "social";
 export type GuardianRelation = "mother" | "father" | "guardian" | "other";
@@ -192,6 +258,8 @@ export type GuardianRelation = "mother" | "father" | "guardian" | "other";
 export interface Enquiry {
   id: string;
   schoolId: string;
+  academicYearId: string;
+  familyId: string | null;
   contactName: string;
   contactPhone: string;
   contactEmail: string | null;
@@ -207,6 +275,7 @@ export interface Enquiry {
   ownerUserId: string | null;
   duplicateOfEnquiryId: string | null;
   consentCaptured: boolean;
+  formResponses: Record<string, unknown> | null;
   erasedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -274,8 +343,6 @@ export interface EnquiryDetail extends Enquiry {
   admissionSummary: AdmissionSummary;
 }
 
-// ---- Admission draft (backend/src/routes/enquiries.ts admission-draft endpoints) ----
-
 export interface AdmissionDraft {
   fullName?: string;
   dateOfBirth?: string;
@@ -283,6 +350,7 @@ export interface AdmissionDraft {
   guardianName?: string;
   guardianContact?: string;
   admissionDate?: string;
+  [key: string]: unknown;
 }
 
 export interface AdmissionInfo {
@@ -293,6 +361,7 @@ export interface AdmissionInfo {
   startedAt: string | null;
   completedAt: string | null;
   completionPercent: number;
+  fields: FormField[];
 }
 
 export interface PossibleDuplicate {
@@ -313,6 +382,9 @@ export interface CreateEnquiryInput {
   studentName?: string;
   studentDateOfBirth?: string;
   guardianRelation?: GuardianRelation;
+  formResponses?: Record<string, unknown>;
+  academicYearId?: string;
+  familyId?: string;
 }
 
 export interface UpdateEnquiryInput {
@@ -328,9 +400,17 @@ export interface UpdateEnquiryInput {
   studentName?: string;
   studentDateOfBirth?: string;
   guardianRelation?: GuardianRelation;
+  formResponses?: Record<string, unknown>;
 }
 
-// ---- Follow-up tasks & templates ----
+export interface AcademicYear {
+  id: string;
+  schoolId: string;
+  label: string;
+  startDate: string;
+  endDate: string;
+  isCurrent: boolean;
+}
 
 export type MessageChannel = "sms" | "email";
 export type FollowUpStatus = "pending" | "sent" | "failed" | "cancelled";
@@ -356,8 +436,6 @@ export interface FollowUpTask {
   enquiry?: { id: string; contactName: string; contactPhone: string; contactEmail: string | null };
 }
 
-// ---- Class sections / students ----
-
 export interface ClassSection {
   id: string;
   academicYearId: string;
@@ -365,7 +443,6 @@ export interface ClassSection {
   sectionName: string;
 }
 
-// The per-school gateway for Topic.subject - admin-managed, read-only here.
 export interface Subject {
   id: string;
   schoolId: string;
@@ -384,8 +461,6 @@ export interface StudentStub {
   sourceEnquiryId: string;
 }
 
-// ---- Lesson Studio (FR-AI-1, FR-AI-5) ----
-
 export interface LessonPlan {
   id: string;
   topic: string;
@@ -403,10 +478,6 @@ export interface ResearchReport {
   content: string;
   createdAt: string;
 }
-
-// ---- Topic + Generation (AI Module rebuild, Docs/Dev/AI_Module_Rebuild_Plan.md) ----
-// Topic is the container every generation/assignment/observation/attainment
-// report belongs to - see PRD section 6.1.1 for the fixed terms.
 
 export interface Topic {
   id: string;
@@ -453,23 +524,27 @@ export interface Generation {
   editedOutput: string | null;
   modelUsed: string;
   generationStatus: "pending" | "succeeded" | "failed";
+  shareStatus: "draft" | "published";
+  publishedAt: string | null;
   generatedAt: string;
   contextSources: ContextSource[];
   topic?: { name: string; subject: string; board: string; classSection: { className: string; sectionName: string } };
 }
 
 export interface TopicDetail extends Topic {
+  classSection: { className: string; sectionName: string };
   contextSources: ContextSource[];
   generations: Generation[];
   observations: Observation[];
 }
 
-// ---- Assignment Lab (FR-AI-2, FR-AI-3) ----
+export type QuestionDifficulty = "easy" | "medium" | "hard";
 
 export interface AssignmentQuestion {
   id: string;
   prompt: string;
   type?: string;
+  difficulty?: QuestionDifficulty;
 }
 
 export interface Assignment {
@@ -507,12 +582,22 @@ export interface SubmissionRecord {
   grade?: GradeRecord | null;
 }
 
+export interface QuestionGradeDetail {
+  questionId: string;
+  // null when the grader could only judge completeness, not correctness -
+  // the offline heuristic that's used when no AI key is configured.
+  correct: boolean | null;
+  marksAwarded: number | null;
+  note: string;
+}
+
 export interface GradeRecord {
   id: string;
   submissionId: string;
   aiScore: number | null;
   aiFeedback: string | null;
   aiNextStep: string | null;
+  questionDetails: QuestionGradeDetail[] | null;
   finalScore: number | null;
   finalFeedback: string | null;
   performanceBand: "level_1" | "level_2" | "level_3" | null;
@@ -525,6 +610,7 @@ export interface GradeRecord {
 export interface AnswerKeyEntry {
   id: string;
   assignmentId: string;
+  questionId: string;
   questionIndex: number;
   photoSubmissionRequired: boolean;
   aiAnswer: string;
@@ -538,11 +624,21 @@ export interface PersonalisationEligibility {
   eligible: boolean;
 }
 
+export interface ItemAnalysisEntry {
+  questionId: string;
+  prompt: string;
+  correctCount: number;
+  totalCount: number;
+  // null when no submission for this question has been evaluated for
+  // correctness yet (only completeness-graded, offline heuristic).
+  correctRate: number | null;
+}
+
 export interface ClassInsight {
   gradedCount: number;
   totalSubmissions: number;
   bands: Record<"level_1" | "level_2" | "level_3", { studentStubId: string; fullName: string }[]>;
-  itemAnalysis: null;
+  itemAnalysis: ItemAnalysisEntry[] | null;
   suggestedActions: string[];
 }
 
@@ -551,8 +647,6 @@ export interface AssignmentDetail extends Assignment {
   personalisationSuggestions: PersonalisationSuggestion[];
   submissions: SubmissionRecord[];
 }
-
-// ---- Teacher Analytics (FR-AI-4) ----
 
 export interface ClassAnalytics {
   classAverage: number | null;
@@ -567,8 +661,6 @@ export interface StudentAnalytics {
   averageScore: number | null;
   history: { assignmentTitle: string; score: number | null; submittedAt: string }[];
 }
-
-// ---- Teacher Dashboard ----
 
 export interface TeacherDashboardActivityItem {
   type: "generation" | "observation" | "assignment_published";
@@ -589,18 +681,11 @@ export interface TeacherDashboardSummary {
   recentActivity: TeacherDashboardActivityItem[];
 }
 
-// ---- Documents (FR-EG-6) ----
-
-// Fixed admission document checklist (backend/src/routes/documents.ts
-// VALID_DOCUMENT_TYPES) - per-school configurability deferred.
-export type DocumentType =
-  | "student_photo"
-  | "birth_certificate"
-  | "transfer_certificate"
-  | "previous_marksheet"
-  | "id_proof"
-  | "address_proof"
-  | "other";
+// documentType keys are driven by the school's active document_checklist
+// FormDefinition (Docs/Dev/GrowthEngine_Rebuild_Plan.md Phase 2) plus the
+// always-accepted "other" catch-all - no longer a fixed union, since the
+// checklist is per-school configurable via the admin Form Builder.
+export type DocumentType = string;
 
 export interface EnquiryDocument {
   id: string;
@@ -611,8 +696,6 @@ export interface EnquiryDocument {
   uploadedAt: string;
 }
 
-// ---- Exports ----
-
 export interface CsvExportLog {
   id: string;
   schedule: string | null;
@@ -620,6 +703,36 @@ export interface CsvExportLog {
   rowCount: number;
   status: "success" | "failed";
   fileLocation: string | null;
+}
+
+export type FormDefinitionPurpose = "enquiry_intake" | "admission_detail" | "document_checklist";
+export type FormFieldType = "text" | "number" | "date" | "select" | "multiselect" | "checkbox" | "textarea" | "file";
+
+export interface FormDefinition {
+  id: string;
+  schoolId: string;
+  purpose: FormDefinitionPurpose;
+  name: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FormField {
+  id: string;
+  formDefinitionId: string;
+  key: string;
+  label: string;
+  fieldType: FormFieldType;
+  options: unknown;
+  order: number;
+  isRequired: boolean;
+  requiredAtStage: string | null;
+}
+
+export interface FormDefinitionWithFields {
+  definition: FormDefinition;
+  fields: FormField[];
 }
 
 export interface CsvExportSchedule {
@@ -632,7 +745,23 @@ export interface CsvExportSchedule {
 export const api = {
   login: (email: string, password: string) =>
     request<AuthTokens>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
+  refresh: (refreshToken: string) => request<AuthTokens>("/auth/refresh", { method: "POST" }, refreshToken),
   me: (token: string) => request<CurrentUser>("/auth/me", {}, token),
+
+  updateProfile: (token: string, input: UpdateProfileInput) =>
+    request<CurrentUser>("/auth/me", { method: "PATCH", body: JSON.stringify(input) }, token),
+  changeMyPassword: (token: string, input: { currentPassword: string; newPassword: string }) =>
+    request<{ message: string }>("/auth/me/change-password", { method: "POST", body: JSON.stringify(input) }, token),
+  myPhotoUrl: (token: string) => `${API_URL}/auth/me/photo?token=${encodeURIComponent(token)}`,
+  uploadMyPhoto: (token: string, file: { uri: string; name: string; mimeType: string }) => {
+    const formData = new FormData();
+    formData.append("file", { uri: file.uri, name: file.name, type: file.mimeType } as unknown as Blob);
+    return requestMultipart<CurrentUser>("/auth/me/photo", formData, token);
+  },
+  setMyAvatar: (token: string, avatarKey: string) =>
+    request<CurrentUser>("/auth/me/avatar", { method: "PATCH", body: JSON.stringify({ avatarKey }) }, token),
+  removeMyPhoto: (token: string) =>
+    request<CurrentUser>("/auth/me/photo", { method: "DELETE" }, token),
 
   requestPasswordReset: (email: string) =>
     request<{ message: string; devOtp?: string }>("/auth/request-password-reset", {
@@ -678,7 +807,7 @@ export const api = {
   sendStudentCommunication: (token: string, body: string) =>
     request<CommunicationMessage>("/student/communications", { method: "POST", body: JSON.stringify({ body }) }, token),
 
-  listEnquiries: (token: string, params: { status?: string; source?: string; ownerUserId?: string } = {}) =>
+  listEnquiries: (token: string, params: { status?: string; source?: string; ownerUserId?: string; academicYearId?: string } = {}) =>
     requestEnvelope<Enquiry[]>(`/enquiries${toQueryString(params)}`, {}, token),
   createEnquiry: (token: string, input: CreateEnquiryInput) =>
     requestEnvelope<Enquiry>("/enquiries", { method: "POST", body: JSON.stringify(input) }, token),
@@ -688,6 +817,8 @@ export const api = {
     request<Enquiry>(`/enquiries/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
   mergeEnquiry: (token: string, id: string, sourceEnquiryId: string) =>
     request<Enquiry>(`/enquiries/${id}/merge`, { method: "POST", body: JSON.stringify({ sourceEnquiryId }) }, token),
+  linkEnquiryFamily: (token: string, id: string, input: { familyId?: string; sourceEnquiryId?: string }) =>
+    request<Enquiry>(`/enquiries/${id}/link-family`, { method: "POST", body: JSON.stringify(input) }, token),
   eraseEnquiry: (token: string, id: string) => request<Enquiry>(`/enquiries/${id}/erase`, { method: "POST" }, token),
   deleteEnquiry: (token: string, id: string) => request<{ id: string }>(`/enquiries/${id}`, { method: "DELETE" }, token),
   addEnquiryNote: (token: string, id: string, body: string, type: EnquiryNoteType = "lead_note") =>
@@ -733,9 +864,13 @@ export const api = {
     request<FollowUpTask>(`/follow-up-tasks/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
 
   listClassSections: (token: string) => request<ClassSection[]>("/class-sections", {}, token),
+  listAcademicYears: (token: string) => request<AcademicYear[]>("/academic-years", {}, token),
   listSubjects: (token: string) => request<Subject[]>("/subjects", {}, token),
 
   listPipelineStages: (token: string) => request<PipelineStage[]>("/pipeline-stages", {}, token),
+
+  getFormDefinition: (token: string, purpose: FormDefinitionPurpose) =>
+    request<FormDefinitionWithFields>(`/form-definitions${toQueryString({ purpose })}`, {}, token),
 
   generateLessonPlan: (
     token: string,
@@ -746,7 +881,6 @@ export const api = {
     request<ResearchReport>("/research-reports/generate", { method: "POST", body: JSON.stringify(input) }, token),
   listResearchReports: (token: string) => request<ResearchReport[]>("/research-reports", {}, token),
 
-  // ---- Topic + Generation ----
   listTopics: (token: string, params: { classSectionId?: string; subject?: string } = {}) =>
     request<Topic[]>(`/topics${toQueryString(params)}`, {}, token),
   createTopic: (token: string, input: { classSectionId: string; subject: string; name: string; board: string }) =>
@@ -759,23 +893,34 @@ export const api = {
     formData.append("file", { uri: file.uri, name: file.name, type: file.mimeType } as unknown as Blob);
     return requestMultipart<ContextSource>(`/topics/${topicId}/context`, formData, token);
   },
-  // For Linking.openURL, which can't attach an Authorization header - the
-  // backend route accepts the token via ?token= specifically for this reason
-  // (backend/src/routes/topics.ts).
   contextSourceFileUrl: (topicId: string, contextSourceId: string, token: string) =>
     `${API_URL}/topics/${topicId}/context/${contextSourceId}/file?token=${encodeURIComponent(token)}`,
+  updateTopicContextText: (token: string, topicId: string, contextSourceId: string, extractedText: string) =>
+    request<ContextSource>(
+      `/topics/${topicId}/context/${contextSourceId}`,
+      { method: "PATCH", body: JSON.stringify({ extractedText }) },
+      token
+    ),
+  retryTopicContextExtraction: (token: string, topicId: string, contextSourceId: string) =>
+    request<ContextSource>(
+      `/topics/${topicId}/context/${contextSourceId}/retry-extraction`,
+      { method: "POST" },
+      token
+    ),
   addTopicObservation: (token: string, topicId: string, body: string) =>
     request<Observation>(`/topics/${topicId}/observations`, { method: "POST", body: JSON.stringify({ body }) }, token),
 
   createGeneration: (
     token: string,
     topicId: string,
-    input: { outputType: GenerationOutputType; mode?: "plan" | "generate"; classCount?: number; minutesPerClass?: number; language?: string; customPrompt?: string }
+    input: { outputType: GenerationOutputType; classCount?: number; minutesPerClass?: number; language?: string; customPrompt?: string }
   ) => request<Generation>(`/topics/${topicId}/generations`, { method: "POST", body: JSON.stringify(input) }, token),
   getGeneration: (token: string, id: string) => request<Generation>(`/generations/${id}`, {}, token),
   editGeneration: (token: string, id: string, editedOutput: string) =>
     request<Generation>(`/generations/${id}`, { method: "PATCH", body: JSON.stringify({ editedOutput }) }, token),
   retryGeneration: (token: string, id: string) => request<Generation>(`/generations/${id}/retry`, { method: "POST" }, token),
+  publishGeneration: (token: string, id: string) => request<Generation>(`/generations/${id}/publish`, { method: "POST" }, token),
+  unpublishGeneration: (token: string, id: string) => request<Generation>(`/generations/${id}/unpublish`, { method: "POST" }, token),
 
   createAssignment: (
     token: string,
@@ -783,11 +928,14 @@ export const api = {
   ) => request<Assignment>("/assignments", { method: "POST", body: JSON.stringify(input) }, token),
   listAssignments: (token: string) => request<Assignment[]>("/assignments", {}, token),
   getAssignment: (token: string, id: string) => request<AssignmentDetail>(`/assignments/${id}`, {}, token),
+  updateAssignment: (
+    token: string,
+    id: string,
+    input: { title?: string; questions?: AssignmentQuestion[]; personalisationEnabled?: boolean }
+  ) => request<Assignment>(`/assignments/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
   publishAssignment: (token: string, id: string) => request<Assignment>(`/assignments/${id}/publish`, { method: "POST" }, token),
-  // Response shape changed once the server-side prerequisite check
-  // (Docs/Dev/AI_Module_Rebuild_Plan.md Phase 3) landed - students who don't
-  // meet the "2 prior graded assignments" prerequisite come back in `skipped`
-  // with a reason, not silently omitted.
+  unpublishAssignment: (token: string, id: string) => request<Assignment>(`/assignments/${id}/unpublish`, { method: "POST" }, token),
+  deleteAssignment: (token: string, id: string) => request<{ id: string }>(`/assignments/${id}`, { method: "DELETE" }, token),
   generatePersonalisationSuggestions: (token: string, assignmentId: string) =>
     request<{ created: PersonalisationSuggestion[]; skipped: { studentStubId: string; reason: string }[] }>(
       `/assignments/${assignmentId}/personalisation-suggestions`,
@@ -827,7 +975,6 @@ export const api = {
   getTeacherDashboardSummary: (token: string) =>
     request<TeacherDashboardSummary>("/dashboard/teacher-summary", {}, token),
 
-  // ---- Communication Hub (teacher side) ----
   listCommunicationsWithStudent: (token: string, studentStubId: string) =>
     request<CommunicationMessage[]>(`/communications${toQueryString({ studentStubId })}`, {}, token),
   listCommunicationsForClass: (token: string, classSectionId: string) =>
@@ -841,7 +988,6 @@ export const api = {
   holdParentUpdate: (token: string, id: string) =>
     request<CommunicationMessage>(`/communications/parent-weekly-update/${id}/hold`, { method: "POST" }, token),
 
-  // ---- Attainment Report ----
   getAttainmentReport: (token: string, topicId: string) =>
     request<AttainmentReportRecord>(`/topics/${topicId}/attainment-report`, {}, token),
 
@@ -859,10 +1005,6 @@ export const api = {
     return requestMultipart<EnquiryDocument>(`/enquiries/${enquiryId}/documents`, formData, token);
   },
 
-  // ---- Enquiry profile photo/avatar ----
-  // <Image> can't attach an Authorization header cross-platform (react-native-web
-  // renders a plain <img>), so the GET route also accepts the token as a query
-  // param - enquiryPhotoUrl builds that URL for direct use as an <Image> source.
   enquiryPhotoUrl: (token: string, enquiryId: string) => `${API_URL}/enquiries/${enquiryId}/photo?token=${encodeURIComponent(token)}`,
   uploadEnquiryPhoto: (token: string, enquiryId: string, file: { uri: string; name: string; mimeType: string }) => {
     const formData = new FormData();

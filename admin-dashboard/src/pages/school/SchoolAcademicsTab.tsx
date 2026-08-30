@@ -67,7 +67,6 @@ export function SchoolAcademicsTab() {
       const users = await api.listUsers(accessToken, { schoolId: id });
       setTeachers(users.filter((u) => u.role === "teacher"));
     } catch {
-      // Non-critical for this page - the assign UI just won't have options.
     }
   }, [accessToken, id]);
 

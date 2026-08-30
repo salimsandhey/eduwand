@@ -1,7 +1,5 @@
 import { prisma } from "./prisma";
 
-// Duplicate detection (FR-EG-7): flags other, not-already-merged enquiries in the
-// same school sharing the same contact phone number.
 export async function findPossibleDuplicates(schoolId: string, contactPhone: string, excludeId?: string) {
   return prisma.enquiry.findMany({
     where: {
@@ -25,10 +23,6 @@ export interface ActivityItem {
   payload: Record<string, unknown>;
 }
 
-// Same convention the unified-app EnquiryDetailScreen gates its Admission tab
-// on - these are the pipeline-stage keys new schools are seeded with (FR-EG-3),
-// not a hard schema constraint, so a school with fully custom stage keys won't
-// see stage_change events reclassified as "admission" past this point.
 const ADMISSION_STAGE_KEYS = new Set(["admitted", "enrolled"]);
 const NOTE_TYPE_CATEGORY: Record<string, ActivityCategory> = {
   admission_note: "admission",
@@ -55,10 +49,6 @@ interface EnquiryWithActivitySources {
   }[];
 }
 
-// Builds a single chronological activity feed out of the underlying tables (stage
-// history, notes, follow-up tasks) rather than persisting a separate activity log,
-// so there is one source of truth per event type. `category` groups each item for
-// the UI (lead / communication / admission) without needing a separate query.
 export function buildActivityFeed(enquiry: EnquiryWithActivitySources): ActivityItem[] {
   const items: ActivityItem[] = [];
 
@@ -108,9 +98,6 @@ export function buildActivityFeed(enquiry: EnquiryWithActivitySources): Activity
   return items.sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime());
 }
 
-// The fields the Admission tab's form collects (unified-app EnquiryDetailScreen /
-// AdmissionConfirmationScreen before it). Used to score how much of the draft is
-// filled in so the UI can show progress before the final confirm-admission call.
 const ADMISSION_DRAFT_FIELDS = [
   "fullName",
   "dateOfBirth",
@@ -120,11 +107,19 @@ const ADMISSION_DRAFT_FIELDS = [
   "admissionDate",
 ] as const;
 
-export function admissionCompletionPercent(draft: Record<string, unknown> | null | undefined): number {
+// dynamicRequiredFields is the school's active admission_detail FormDefinition's
+// fields where isRequired is true (fetched by the caller via Prisma - kept out
+// of this function to keep it pure/testable). Their values live in the same
+// draft JSON blob, keyed by FormField.key, alongside the fixed
+// ADMISSION_DRAFT_FIELDS.
+export function admissionCompletionPercent(
+  draft: Record<string, unknown> | null | undefined,
+  dynamicRequiredFields: { key: string }[] = []
+): number {
   if (!draft) return 0;
-  const filled = ADMISSION_DRAFT_FIELDS.filter((field) => {
-    const value = draft[field];
-    return typeof value === "string" ? value.trim().length > 0 : value != null;
-  }).length;
-  return Math.round((filled / ADMISSION_DRAFT_FIELDS.length) * 100);
+  const isFilled = (value: unknown) => (typeof value === "string" ? value.trim().length > 0 : value != null);
+  const totalFields = ADMISSION_DRAFT_FIELDS.length + dynamicRequiredFields.length;
+  const filledFixed = ADMISSION_DRAFT_FIELDS.filter((field) => isFilled(draft[field])).length;
+  const filledDynamic = dynamicRequiredFields.filter((field) => isFilled(draft[field.key])).length;
+  return Math.round(((filledFixed + filledDynamic) / totalFields) * 100);
 }

@@ -4,21 +4,27 @@ import { storage } from "../lib/storage";
 
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope];
 
-// Fixed admission document checklist (per-school configurability deferred).
-// "other" covers anything outside this list.
-const VALID_DOCUMENT_TYPES = [
-  "student_photo",
-  "birth_certificate",
-  "transfer_certificate",
-  "previous_marksheet",
-  "id_proof",
-  "address_proof",
-  "other",
-];
+// documentType is validated against the school's active document_checklist
+// FormDefinition's field keys (Docs/Dev/GrowthEngine_Rebuild_Plan.md Phase 2),
+// replacing the old hardcoded VALID_DOCUMENT_TYPES list so the checklist is
+// per-school configurable. "other" is always accepted as a catch-all, same as
+// before - this also keeps uploads working (instead of every non-"other" type
+// 400ing) for the edge case where a school somehow has no active
+// document_checklist FormDefinition (definition is null): every school should
+// have one via seedDefaultFormDefinitions on creation (routes/schools.ts) plus
+// the one-off backfill (prisma/backfill-form-definitions.ts) for schools that
+// predate the form-builder feature, but a mid-request deactivation race or a
+// future data issue would otherwise hard-fail all uploads for that school.
+async function validDocumentTypeKeys(schoolId: string): Promise<Set<string>> {
+  const definition = await prisma.formDefinition.findFirst({
+    where: { schoolId, purpose: "document_checklist", isActive: true },
+    include: { fields: { select: { key: true } } },
+  });
+  const keys = new Set(definition?.fields.map((f) => f.key) ?? []);
+  keys.add("other");
+  return keys;
+}
 
-// Admission document collection (FR-EG-6) - one file per call, stored via the
-// swappable Storage interface (backend/src/lib/storage.ts), same pattern as
-// the CSV export files it already handles.
 export async function documentRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string } }>(
     "/enquiries/:id/documents",
@@ -31,9 +37,6 @@ export async function documentRoutes(app: FastifyInstance) {
         return reply.code(404).send({ data: null, error: { code: "not_found", message: "Enquiry not found" } });
       }
 
-      // documentType rides alongside the file as a plain form field (see
-      // student-portal.ts's photo-submission handler for the same pattern) -
-      // request.file() alone only ever gives you the file part.
       let fileBuffer: Buffer | null = null;
       let fileName = "";
       let mimeType = "";
@@ -52,11 +55,14 @@ export async function documentRoutes(app: FastifyInstance) {
       if (!fileBuffer) {
         return reply.code(400).send({ data: null, error: { code: "validation_error", message: "A file is required" } });
       }
-      if (documentType && !VALID_DOCUMENT_TYPES.includes(documentType)) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: `documentType must be one of ${VALID_DOCUMENT_TYPES.join(", ")}` },
-        });
+      if (documentType) {
+        const validTypes = await validDocumentTypeKeys(request.schoolId);
+        if (!validTypes.has(documentType)) {
+          return reply.code(400).send({
+            data: null,
+            error: { code: "validation_error", message: `documentType must be one of ${[...validTypes].join(", ")}` },
+          });
+        }
       }
 
       const key = `${request.schoolId}/documents/${enquiry.id}/${Date.now()}-${fileName}`;

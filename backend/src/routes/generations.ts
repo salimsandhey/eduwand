@@ -4,16 +4,8 @@ import { requireRoles } from "../lib/rbac";
 import { aiProvider, logAiUsage, GenerationOutputType } from "../lib/ai";
 import { ContextSource } from "@prisma/client";
 
-// Combined cap across all of a topic's context sources when building a
-// generation prompt - individual sources are already capped at extraction
-// time (backend/src/lib/extraction.ts), this bounds the total regardless of
-// how many sources a topic has.
 const MAX_CONTEXT_CHARS_FOR_PROMPT = 12000;
 
-// Only sources with real extracted text can inform a generation - and only
-// those get connected to it afterward, so "sources used" (client doc
-// acceptance criterion) reflects what actually fed the AI call, not every
-// source ever added to the topic.
 function buildContextText(contextSources: ContextSource[]): { contextText: string | null; usedSources: ContextSource[] } {
   const usedSources = contextSources.filter((s) => s.extractionStatus === "extracted" && s.extractedText);
   if (usedSources.length === 0) {
@@ -23,9 +15,6 @@ function buildContextText(contextSources: ContextSource[]): { contextText: strin
   return { contextText: combined, usedSources };
 }
 
-// The school's standing format/style instructions for generations
-// (SchoolFormatTemplate, appliesTo: "generation") - null if the school hasn't
-// set one, in which case generation behaves exactly as before this existed.
 async function getSchoolFormatTemplate(schoolId: string) {
   return prisma.schoolFormatTemplate.findUnique({
     where: { schoolId_appliesTo: { schoolId, appliesTo: "generation" } },
@@ -55,11 +44,6 @@ interface UpdateGenerationBody {
 
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope, requireRoles("teacher")];
 
-// Generation (Docs/Dev/AI_Module_Rebuild_Plan.md, Phase 2) - supersedes
-// lesson-studio.ts's LessonPlan/ResearchReport for new content. Every
-// generation belongs to a Topic. Built synchronous for now (Q-02 in the PRD
-// is still open) but the response shape (generationStatus field) is ready
-// for an async job/poll swap without an API shape change later.
 export async function generationRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string }; Body: CreateGenerationBody }>(
     "/topics/:id/generations",
@@ -94,9 +78,6 @@ export async function generationRoutes(app: FastifyInstance) {
 
       const classCount = body.classCount ?? 1;
       const minutesPerClass = body.minutesPerClass ?? 45;
-      // Ceiling from the client doc's edge-case list ("20 classes of 90
-      // minutes" was their own example of too large) - enforced here since no
-      // other value was specified.
       if (classCount > 10 || minutesPerClass > 90) {
         return reply.code(400).send({
           data: null,
@@ -125,10 +106,6 @@ export async function generationRoutes(app: FastifyInstance) {
         content = result.content;
         model = result.model;
       } catch (err) {
-        // Failed generation must preserve the teacher's inputs and offer a
-        // one-click retry (client doc acceptance criterion) - persisted as a
-        // failed row rather than just an error response, so the frontend has
-        // something to retry against.
         app.log.error(err, "Generation failed");
         const failed = await prisma.generation.create({
           data: {
@@ -197,8 +174,6 @@ export async function generationRoutes(app: FastifyInstance) {
     return { data: generation, meta: {} };
   });
 
-  // The edited version, not aiOutput, is what every other read of this
-  // generation returns from here on (attainment report, distribution).
   app.patch<{ Params: { id: string }; Body: UpdateGenerationBody }>(
     "/generations/:id",
     { onRequest: scoped(app) },
@@ -225,8 +200,6 @@ export async function generationRoutes(app: FastifyInstance) {
     }
   );
 
-  // One-click retry with the original inputs preserved (client doc acceptance
-  // criterion for a failed generation).
   app.post<{ Params: { id: string } }>("/generations/:id/retry", { onRequest: scoped(app) }, async (request, reply) => {
     const generation = await prisma.generation.findFirst({
       where: { id: request.params.id, topic: { schoolId: request.schoolId } },
@@ -281,16 +254,39 @@ export async function generationRoutes(app: FastifyInstance) {
     return { data: updated, meta: {} };
   });
 
-  // Stubbed until the Communication Hub (Phase 4) exists to actually deliver
-  // to students/parents - records intent, no real delivery channel yet.
-  app.post<{ Params: { id: string } }>("/generations/:id/distribute", { onRequest: scoped(app) }, async (request, reply) => {
+  // Publishing/unpublishing is what actually gates /student/materials - see
+  // shareStatus on the Generation model. This is distinct from a future
+  // "push to Communication Hub" delivery feature, which doesn't exist yet.
+  app.post<{ Params: { id: string } }>("/generations/:id/publish", { onRequest: scoped(app) }, async (request, reply) => {
     const generation = await prisma.generation.findFirst({
       where: { id: request.params.id, topic: { schoolId: request.schoolId } },
     });
     if (!generation) {
       return reply.code(404).send({ data: null, error: { code: "not_found", message: "Generation not found" } });
     }
-    app.log.info({ generationId: generation.id }, "Distribute requested - no Communication Hub delivery channel yet");
-    return { data: { distributed: false, reason: "Communication Hub delivery not yet implemented" }, meta: {} };
+    if (generation.generationStatus !== "succeeded") {
+      return reply.code(400).send({ data: null, error: { code: "validation_error", message: "Only a succeeded generation can be shared with students" } });
+    }
+    const updated = await prisma.generation.update({
+      where: { id: generation.id },
+      data: { shareStatus: "published", publishedAt: new Date() },
+      include: { contextSources: true },
+    });
+    return { data: updated, meta: {} };
+  });
+
+  app.post<{ Params: { id: string } }>("/generations/:id/unpublish", { onRequest: scoped(app) }, async (request, reply) => {
+    const generation = await prisma.generation.findFirst({
+      where: { id: request.params.id, topic: { schoolId: request.schoolId } },
+    });
+    if (!generation) {
+      return reply.code(404).send({ data: null, error: { code: "not_found", message: "Generation not found" } });
+    }
+    const updated = await prisma.generation.update({
+      where: { id: generation.id },
+      data: { shareStatus: "draft", publishedAt: null },
+      include: { contextSources: true },
+    });
+    return { data: updated, meta: {} };
   });
 }

@@ -9,7 +9,7 @@ export interface ThemeColors {
   accentDark: string;
   accentSoft: string;
   accentSoftAlt: string;
-  accentOn: string; // text/icon color on top of a solid accent fill
+  accentOn: string;
   textPrimary: string;
   textSecondary: string;
   textMuted: string;
@@ -53,9 +53,6 @@ export const darkColors: ThemeColors = {
   warning: "#FBAA0A",
 };
 
-// Cards read as flat/pasted-on without some depth cue. Dark surfaces barely show a
-// black shadow, so dark mode leans on a faint light-colored glow instead; light mode
-// uses a conventional soft drop shadow. Both keep elevation for Android parity.
 export function getCardShadow(mode: "light" | "dark") {
   if (mode === "dark") {
     return {
@@ -77,21 +74,16 @@ export function getCardShadow(mode: "light" | "dark") {
 
 export const PRESSED_OPACITY = 0.65;
 
-// No shared spacing/radius scale existed before this - every screen picked
-// its own numbers for "card padding"/"card radius", which is why the same
-// visual concept (a card, a list row) looked different screen to screen.
-// radius.lg (16) and spacing.lg (16) are the standard for card/row
-// containers; spacing.md/sm/xs cover internal gaps and margins.
 export const spacing = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 };
 export const radius = { sm: 8, md: 12, lg: 16, pill: 999 };
 
 export const lightColors: ThemeColors = {
-  background: "#F4F1E8",
-  backgroundMuted: "#ECE7DB",
+  background: "#FFFFFF",
+  backgroundMuted: "#F7F5F1",
   surface: "#FFFFFF",
-  surfaceRaised: "#FAF8F1",
-  surfaceAccent: "#F4F1E8",
-  border: "#E4DED0",
+  surfaceRaised: "#FCFBF8",
+  surfaceAccent: "#F8EEF5",
+  border: "#E8E2D9",
   accent: "#7C005A",
   accentDark: "#5B0042",
   accentSoft: "#F7E6F2",

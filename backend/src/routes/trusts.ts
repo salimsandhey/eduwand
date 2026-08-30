@@ -31,10 +31,6 @@ interface UpdateTrustBody {
 
 const TRUST_STATUSES = ["active", "suspended"];
 
-// Onboarding a brand-new client: only platform_admin (internal EduWand/Fovea ops,
-// not tied to any school) can create a trust. There is no self-serve signup - a
-// school doesn't register itself, per how this product is actually sold (see
-// Docs/Dev/EduWand_Engineering_PRD.md).
 export async function trustRoutes(app: FastifyInstance) {
   app.get(
     "/trusts",
@@ -61,8 +57,6 @@ export async function trustRoutes(app: FastifyInstance) {
         });
       }
 
-      // Case-insensitive duplicate check - two trusts with the same name
-      // (typos or accidental double-entry) previously went through silently.
       const duplicate = await prisma.trust.findFirst({
         where: { name: { equals: body.name.trim(), mode: "insensitive" } },
       });
@@ -92,8 +86,6 @@ export async function trustRoutes(app: FastifyInstance) {
     }
   );
 
-  // platform_admin can view any trust; leadership can view (read-only) their own -
-  // they land here from Onboarding/UsersPage links to see their trust's schools.
   app.get<{ Params: { id: string } }>(
     "/trusts/:id",
     { onRequest: [app.authenticate] },
@@ -178,9 +170,6 @@ export async function trustRoutes(app: FastifyInstance) {
     }
   );
 
-  // Hard delete - only safe while the trust has no schools (school.trust_id is
-  // ON DELETE RESTRICT). Checked explicitly here for a friendly error instead
-  // of surfacing a raw Postgres foreign-key violation to the admin.
   app.delete<{ Params: { id: string } }>(
     "/trusts/:id",
     { onRequest: [app.authenticate, requireRoles(PLATFORM_ADMIN_ROLE)] },

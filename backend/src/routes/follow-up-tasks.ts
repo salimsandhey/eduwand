@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 import { sendFollowUpTask, FollowUpSendError } from "../lib/follow-up";
 
-const VALID_CHANNELS = ["sms", "email"];
+const VALID_CHANNELS = ["sms", "email", "whatsapp"];
 const VALID_STATUSES = ["pending", "sent", "failed", "cancelled"];
 
 interface CreateTaskBody {
@@ -22,6 +22,8 @@ interface ListQuery {
 interface UpdateTaskBody {
   dueAt?: string;
   status?: string;
+  outcome?: string;
+  nextFollowUpAt?: string;
 }
 
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope];
@@ -112,8 +114,6 @@ export async function followUpTaskRoutes(app: FastifyInstance) {
     "/follow-up-tasks/:id/send",
     { onRequest: scoped(app) },
     async (request, reply) => {
-      // school-scope check happens here (never inside the shared function,
-      // since the worker calls it directly for due tasks across every school).
       const task = await prisma.followUpTask.findFirst({
         where: { id: request.params.id, enquiry: { schoolId: request.schoolId } },
         select: { id: true },
@@ -135,10 +135,6 @@ export async function followUpTaskRoutes(app: FastifyInstance) {
     }
   );
 
-  // Supports the Follow Up Task List screen's "reschedule" and "mark complete" actions
-  // (Docs/Dev/EduWand_UI_Screen_Spec.md section 3). Not in the original API spec table,
-  // added because the UI needs a way to change a pending task's due date or close it out
-  // without sending. Only pending tasks can be rescheduled or cancelled.
   app.patch<{ Params: { id: string }; Body: UpdateTaskBody }>(
     "/follow-up-tasks/:id",
     { onRequest: scoped(app) },
@@ -172,6 +168,8 @@ export async function followUpTaskRoutes(app: FastifyInstance) {
         data: {
           dueAt: body.dueAt ? new Date(body.dueAt) : undefined,
           status: body.status,
+          outcome: body.outcome,
+          nextFollowUpAt: body.nextFollowUpAt ? new Date(body.nextFollowUpAt) : undefined,
         },
       });
 

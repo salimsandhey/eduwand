@@ -6,8 +6,6 @@ import { useTheme } from "../theme/ThemeContext";
 
 const Stack = createNativeStackNavigator<MoreStackParamList>();
 
-// Nested inside the enrolment "More" tab so CSV Export keeps that tab's bar visible
-// when pushed (per Docs/superpowers/specs/2026-08-05-unified-app-dark-theme-restyle-design.md).
 export function MoreStackNavigator() {
   const { colors } = useTheme();
   return (

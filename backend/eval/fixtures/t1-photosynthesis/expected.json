@@ -1,0 +1,19 @@
+{
+  "sourceType": "pdf",
+  "expectedStatus": "extracted",
+  "mustContain": [
+    "autotrophs",
+    "chlorophyll",
+    "Joseph Priestley",
+    "Jan Ingenhousz",
+    "Julius von Sachs",
+    "Engelmann",
+    "chloroplast",
+    "light reaction",
+    "dark reaction",
+    "stroma",
+    "grana"
+  ],
+  "figureFacts": [],
+  "notes": "Digital NCERT Biology chapter 11 PDF - clean text layer, happy path."
+}

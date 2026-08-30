@@ -7,8 +7,6 @@ import { AVATAR_KEYS, AVATAR_SOURCE_BY_KEY } from "../theme/avatars";
 
 export type PickedPhoto =
   | { type: "none" }
-  // Already-saved photo, shown for preview on an edit screen - nothing to
-  // (re)upload unless the user picks something new.
   | { type: "remote"; uri: string }
   | { type: "photo"; uri: string; name: string; mimeType: string }
   | { type: "avatar"; avatarKey: string };
@@ -18,10 +16,6 @@ interface ProfilePhotoPickerProps {
   onChange: (value: PickedPhoto) => void;
 }
 
-// Lets a counsellor attach a lead/student photo three ways: live camera
-// capture, the device gallery, or one of the app's bundled placeholder
-// avatars - all funnel into the same PickedPhoto the caller uploads after the
-// enquiry exists (backend/src/routes/enquiry-photo.ts).
 export function ProfilePhotoPicker({ value, onChange }: ProfilePhotoPickerProps) {
   const { colors, pressedOpacity } = useTheme();
   const [showAvatarGrid, setShowAvatarGrid] = useState(false);
@@ -94,43 +88,31 @@ export function ProfilePhotoPicker({ value, onChange }: ProfilePhotoPickerProps)
           ) : value.type === "avatar" ? (
             <Image source={AVATAR_SOURCE_BY_KEY[value.avatarKey]} style={styles.previewAvatar} resizeMode="contain" />
           ) : (
-            <Ionicons name="person-outline" size={28} color={colors.textMuted} />
+            <Ionicons name="person-outline" size={30} color={colors.textMuted} />
           )}
         </View>
-
-        <View style={styles.actionsCol}>
-          <View style={styles.actionsRow}>
-            <Pressable
-              onPress={takePhoto}
-              style={({ pressed }) => [styles.actionChip, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
-              accessibilityRole="button"
-            >
-              <Ionicons name="camera-outline" size={14} color={colors.accent} />
-              <Text style={[styles.actionChipText, { color: colors.textSecondary }]}>Camera</Text>
-            </Pressable>
-            <Pressable
-              onPress={pickFromGallery}
-              style={({ pressed }) => [styles.actionChip, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
-              accessibilityRole="button"
-            >
-              <Ionicons name="image-outline" size={14} color={colors.accent} />
-              <Text style={[styles.actionChipText, { color: colors.textSecondary }]}>Gallery</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => setShowAvatarGrid((v) => !v)}
-              style={({ pressed }) => [styles.actionChip, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
-              accessibilityRole="button"
-            >
-              <Ionicons name="happy-outline" size={14} color={colors.accent} />
-              <Text style={[styles.actionChipText, { color: colors.textSecondary }]}>Avatar</Text>
-            </Pressable>
-          </View>
+        <View style={styles.previewMeta}>
+          <Text style={[styles.previewTitle, { color: colors.textPrimary }]}>Profile photo</Text>
+          <Text style={[styles.previewHint, { color: colors.textMuted }]}>Pick an avatar or upload your own photo.</Text>
           {value.type !== "none" ? (
-            <Pressable onPress={clear} style={({ pressed }) => [pressed && { opacity: pressedOpacity }]} accessibilityRole="button">
+            <Pressable onPress={clear} style={({ pressed }) => [styles.removeButton, pressed && { opacity: pressedOpacity }]} accessibilityRole="button">
               <Text style={[styles.removeText, { color: colors.danger }]}>Remove photo</Text>
             </Pressable>
           ) : null}
         </View>
+      </View>
+
+      <View style={styles.actionsList}>
+        <ActionRow
+          icon="happy-outline"
+          label="Choose an avatar"
+          onPress={() => setShowAvatarGrid((v) => !v)}
+          colors={colors}
+          pressedOpacity={pressedOpacity}
+          active={showAvatarGrid}
+        />
+        <ActionRow icon="camera-outline" label="Take a photo" onPress={takePhoto} colors={colors} pressedOpacity={pressedOpacity} />
+        <ActionRow icon="image-outline" label="Upload from gallery" onPress={pickFromGallery} colors={colors} pressedOpacity={pressedOpacity} />
       </View>
 
       {permissionError ? <Text style={[styles.errorText, { color: colors.danger }]}>{permissionError}</Text> : null}
@@ -160,6 +142,40 @@ export function ProfilePhotoPicker({ value, onChange }: ProfilePhotoPickerProps)
   );
 }
 
+function ActionRow({
+  icon,
+  label,
+  onPress,
+  colors,
+  pressedOpacity,
+  active = false,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+  colors: ReturnType<typeof useTheme>["colors"];
+  pressedOpacity: number;
+  active?: boolean;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.actionRow,
+        { backgroundColor: colors.surfaceRaised, borderColor: active ? colors.accent : colors.border },
+        pressed && { opacity: pressedOpacity },
+      ]}
+      accessibilityRole="button"
+    >
+      <View style={[styles.actionRowIcon, { backgroundColor: colors.accentSoft }]}>
+        <Ionicons name={icon} size={16} color={colors.accent} />
+      </View>
+      <Text style={[styles.actionRowText, { color: colors.textPrimary }]}>{label}</Text>
+      <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center", gap: 14 },
   previewWrap: {
@@ -170,22 +186,27 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
+    flexShrink: 0,
   },
   previewPhoto: { width: "100%", height: "100%" },
   previewAvatar: { width: 48, height: 48 },
-  actionsCol: { flex: 1, gap: 6 },
-  actionsRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-  actionChip: {
+  previewMeta: { flex: 1, gap: 3 },
+  previewTitle: { fontSize: 14, fontWeight: "800" },
+  previewHint: { fontSize: 11, lineHeight: 15, fontWeight: "500" },
+  removeButton: { marginTop: 4, alignSelf: "flex-start" },
+  removeText: { fontSize: 11, fontWeight: "700" },
+  actionsList: { marginTop: 14, gap: 8 },
+  actionRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
+    gap: 10,
     borderWidth: 1,
-    borderRadius: 16,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
-  actionChipText: { fontSize: 11, fontWeight: "700" },
-  removeText: { fontSize: 11, fontWeight: "700" },
+  actionRowIcon: { width: 30, height: 30, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  actionRowText: { flex: 1, fontSize: 13, fontWeight: "700" },
   errorText: { fontSize: 12, marginTop: 8 },
   avatarGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
   avatarOption: {

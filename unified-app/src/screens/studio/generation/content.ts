@@ -1,8 +1,3 @@
-// Structured content shapes emitted by the backend for each Generation
-// outputType (backend/src/lib/ai.ts - keep in sync). Generation.aiOutput/
-// editedOutput are plain strings; these are JSON.stringify'd into that
-// string. Generations created before this existed are plain Markdown text,
-// not JSON, so parseGenerationContent must fail soft on those, never throw.
 
 export interface LessonPlanContent {
   type: "lesson_plan";
@@ -50,13 +45,6 @@ function isPresentation(v: any): boolean {
   return Array.isArray(v?.slides);
 }
 
-// The known outputType (from the Generation record itself, e.g.
-// generation.outputType) drives which shape to validate against - the model
-// is never trusted to self-report a "type" field, since it's easy for a
-// prompt to produce an otherwise-correct object that just omits it. Returns
-// null (never throws) for legacy plain-text generations, or JSON that
-// doesn't structurally match the expected shape - callers fall back to the
-// raw-text/Markdown view.
 export function parseGenerationContent(
   outputType: string,
   raw: string
@@ -68,10 +56,6 @@ export function parseGenerationContent(
     return null;
   }
 
-  // A generation stored before the backend started normalizing this (or any
-  // future model slip) may be a bare array instead of the documented
-  // {cards: [...]} / {slides: [...]} wrapper - accepted here too rather than
-  // falling back to plain text for content that's otherwise perfectly usable.
   if (Array.isArray(parsed)) {
     if (outputType === "flashcards") parsed = { cards: parsed };
     else if (outputType === "presentation") parsed = { slides: parsed };

@@ -8,9 +8,6 @@ import { Screen } from "../../components/Screen";
 import { api, StudentSubmissionRecord } from "../../api/client";
 import { decorativeAssets } from "../../theme/decorativeAssets";
 
-// Full history of past submissions (client doc section 5, "remains available
-// to the student to review"). Grade only shows once released - the API
-// already enforces this (student-portal.ts filters on releasedToStudent).
 export function StudentResultsScreen() {
   const { accessToken } = useAuth();
   const { colors, cardShadow } = useTheme();

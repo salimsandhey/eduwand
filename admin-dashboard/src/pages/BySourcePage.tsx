@@ -9,8 +9,6 @@ import { BarChart } from "../components/BarChart";
 import { PageHeader } from "../components/PageHeader";
 import { SelectSchoolPrompt } from "../components/SelectSchoolPrompt";
 
-// Fixed categorical order, validated for CVD/normal-vision separation
-// (dataviz skill, scripts/validate_palette.js) - never reordered per filter.
 const SOURCE_COLORS: Record<string, string> = {
   phone: "var(--series-1)",
   website: "var(--series-2)",

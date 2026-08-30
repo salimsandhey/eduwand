@@ -5,7 +5,7 @@ import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/dat
 import { useTheme } from "../theme/ThemeContext";
 
 interface DatePickerProps {
-  value: string; // "YYYY-MM-DD", or "" for unset
+  value: string;
   onChange: (value: string) => void;
   placeholder?: string;
   minimumDate?: Date;
@@ -27,10 +27,6 @@ function formatDisplay(value: string): string {
   return parseISODate(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
-// Cross-platform due-date picker: a native calendar dialog on iOS/Android
-// (react-native-web has no equivalent, and this app also builds for web),
-// a plain <input type="date"> on web behind createElement to sidestep RN's
-// JSX.IntrinsicElements typing, which doesn't know about DOM tags.
 export function DatePicker({ value, onChange, placeholder = "Select a date", minimumDate }: DatePickerProps) {
   const { colors } = useTheme();
   const [showPicker, setShowPicker] = useState(false);

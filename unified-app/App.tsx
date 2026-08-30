@@ -5,28 +5,27 @@ import { ActivityIndicator, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "./src/context/AuthContext";
 import { ThemeProvider, useTheme } from "./src/theme/ThemeContext";
-import { LoginScreen } from "./src/screens/auth/LoginScreen";
-import { StudentLoginScreen } from "./src/screens/auth/StudentLoginScreen";
+import { AuthScreen } from "./src/screens/auth/AuthScreen";
 import { AppNavigator } from "./src/navigation/AppNavigator";
 import { applyGlobalTypography } from "./src/theme/globalTypography";
 
 applyGlobalTypography();
 
 function Root() {
-  const { user } = useAuth();
+  const { user, isRestoring } = useAuth();
   const { mode } = useTheme();
-  const [loginMode, setLoginMode] = useState<"staff" | "student">("staff");
 
-  function renderLoggedOut() {
-    if (loginMode === "student") {
-      return <StudentLoginScreen onBackToStaffLogin={() => setLoginMode("staff")} />;
-    }
-    return <LoginScreen onStudentLogin={() => setLoginMode("student")} />;
+  if (isRestoring) {
+    return (
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#FFFFFF" }}>
+        <ActivityIndicator color="#7C005A" />
+      </View>
+    );
   }
 
   return (
     <>
-      {user ? <AppNavigator /> : renderLoggedOut()}
+      {user ? <AppNavigator /> : <AuthScreen />}
       <StatusBar style={mode === "dark" ? "light" : "dark"} />
     </>
   );
@@ -42,7 +41,7 @@ export default function App() {
 
   if (!fontsLoaded) {
     return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#F4F1E8" }}>
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#FFFFFF" }}>
         <ActivityIndicator color="#7C005A" />
       </View>
     );

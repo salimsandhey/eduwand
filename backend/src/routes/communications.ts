@@ -14,23 +14,10 @@ interface SendToClassBody {
 
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope, requireRoles("teacher")];
 
-// Communication Hub (Docs/Dev/AI_Module_Rebuild_Plan.md, Phase 4).
-// teacher_to_student/teacher_to_class/student_to_teacher are in-app
-// messaging between accounts that already exist in EduWand, so they deliver
-// immediately (deliveryStatus defaults to "sent" - see schema.prisma). Only
-// parent_weekly_update is blocked: parents have no EduWand account (PRD
-// section 3, receive-only), so that channel needs a real external mechanism
-// (SMS/email) the client doc's own Q-08 gap leaves unresolved (Section 7.3
-// references a Q-08 that Section 8 never defines) - those rows alone are
-// created with deliveryStatus:"pending" and never actually sent by this code.
 export async function communicationRoutes(app: FastifyInstance) {
   app.get("/communications", { onRequest: scoped(app) }, async (request) => {
     const query = (request.query ?? {}) as { studentStubId?: string; classSectionId?: string };
 
-    // With studentStubId, return the full two-way thread (teacher's own
-    // sent messages to this student, plus this student's own
-    // student_to_teacher replies) rather than only what this teacher sent -
-    // a thread view needs both directions.
     if (query.studentStubId) {
       const messages = await prisma.communicationMessage.findMany({
         where: {
@@ -110,11 +97,6 @@ export async function communicationRoutes(app: FastifyInstance) {
     return reply.code(201).send({ data: message, meta: {} });
   });
 
-  // Preview pending weekly parent updates before they send (client doc
-  // acceptance criterion: teacher can review/stop one). Generation of these
-  // rows is a worker job (Docs/Dev/AI_Module_Rebuild_Plan.md Phase 4) not yet
-  // built - this lists whatever exists with channel:parent_weekly_update and
-  // deliveryStatus:pending, which will be empty until that worker job exists.
   app.get("/communications/parent-weekly-update/pending", { onRequest: scoped(app) }, async (request) => {
     const pending = await prisma.communicationMessage.findMany({
       where: { schoolId: request.schoolId, channel: "parent_weekly_update", deliveryStatus: "pending" },

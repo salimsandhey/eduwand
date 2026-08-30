@@ -7,9 +7,6 @@ export class FollowUpSendError extends Error {
   }
 }
 
-// Shared by the manual "Send now" endpoint (backend/src/routes/follow-up-tasks.ts)
-// and the worker's automated due-task sweep (backend/src/worker.ts, FR-EG-4) -
-// one code path so "automated" and "manual" sends behave identically.
 export async function sendFollowUpTask(taskId: string) {
   const task = await prisma.followUpTask.findUnique({
     where: { id: taskId },
@@ -26,11 +23,11 @@ export async function sendFollowUpTask(taskId: string) {
     throw new FollowUpSendError("consent_required", "Messaging consent has not been captured for this enquiry");
   }
 
-  const recipient = task.channel === "sms" ? task.enquiry.contactPhone : task.enquiry.contactEmail;
+  const recipient = task.channel === "sms" || task.channel === "whatsapp" ? task.enquiry.contactPhone : task.enquiry.contactEmail;
   if (!recipient) {
     throw new FollowUpSendError(
       "validation_error",
-      `Enquiry has no ${task.channel === "sms" ? "phone" : "email"} on file`
+      `Enquiry has no ${task.channel === "sms" || task.channel === "whatsapp" ? "phone" : "email"} on file`
     );
   }
 
@@ -41,7 +38,7 @@ export async function sendFollowUpTask(taskId: string) {
     gradeInterest: task.enquiry.gradeInterest,
   });
 
-  const result = await messageProvider.send(task.channel as "sms" | "email", recipient, renderedBody);
+  const result = await messageProvider.send(task.channel as "sms" | "email" | "whatsapp", recipient, renderedBody);
 
   const updated = await prisma.followUpTask.update({
     where: { id: task.id },

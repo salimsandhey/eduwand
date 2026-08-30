@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -6,35 +6,40 @@ import {
   StyleSheet,
   ScrollView,
   ActivityIndicator,
+  Animated,
   Image,
   ImageSourcePropType,
+  useWindowDimensions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
+import { ThemeColors } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { getStatusColor } from "../../theme/statusColors";
 import { api, Enquiry, FollowUpTask, TeacherDashboardSummary, TeacherDashboardActivityItem } from "../../api/client";
 import { usePipelineStages } from "../../hooks/usePipelineStages";
 import { decorativeAssets } from "../../theme/decorativeAssets";
+import { resolveUserImageSource } from "../../theme/avatars";
+import { capitalizeFirst } from "../../utils/text";
 
 const ENROLMENT_ROLES = ["front_desk", "counsellor", "admin", "leadership"];
-const TEACHER_TABS = ["Home", "Teaching", "Assignment"] as const;
 
-// Visual config only - the numbers/labels shown per card are computed at
-// render time from a real TeacherDashboardSummary (GET /dashboard/teacher-summary).
 const TEACHER_SUMMARY_CARD_CONFIG = [
   { key: "lessons", title: "Lessons", accent: "#5B3FD6", icon: "book-outline" as const, graphic: decorativeAssets.teacherLessonCat },
   { key: "assignments", title: "Assignments", accent: "#F46B5B", icon: "clipboard-outline" as const, graphic: decorativeAssets.teacherAssignment },
 ] as const;
 
-const ACTIVITY_TYPE_CONFIG: Record<TeacherDashboardActivityItem["type"], { icon: keyof typeof Ionicons.glyphMap; color: string }> = {
-  generation: { icon: "document-text-outline", color: "#6A50F2" },
-  observation: { icon: "chatbox-ellipses-outline", color: "#37C777" },
-  assignment_published: { icon: "clipboard-outline", color: "#F4BC21" },
-};
+function getActivityTypeConfig(type: TeacherDashboardActivityItem["type"], colors: ThemeColors) {
+  const map: Record<TeacherDashboardActivityItem["type"], { icon: keyof typeof Ionicons.glyphMap; color: string; bg: string }> = {
+    generation: { icon: "document-text-outline", color: colors.accent, bg: colors.accentSoft },
+    observation: { icon: "chatbox-ellipses-outline", color: colors.accent, bg: colors.accentSoft },
+    assignment_published: { icon: "clipboard-outline", color: colors.warning, bg: colors.accentSoft },
+  };
+  return map[type] ?? { icon: "document-text-outline", color: colors.accent, bg: colors.accentSoft };
+}
 
 const AVATAR_SOURCES: ImageSourcePropType[] = [
   require("../../../assets/avatars/avatar-01.png"),
@@ -90,14 +95,38 @@ function teacherFirstName(fullName?: string) {
   return fullName.trim().split(/\s+/)[0] ?? "Teacher";
 }
 
+function getWeekDates(referenceDate: Date): Date[] {
+  const monday = new Date(referenceDate);
+  const dayOffset = referenceDate.getDay() === 0 ? -6 : 1 - referenceDate.getDay();
+  monday.setDate(referenceDate.getDate() + dayOffset);
+
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(monday);
+    date.setDate(monday.getDate() + index);
+    return date;
+  });
+}
+
 export function HomeScreen() {
   const { user, accessToken } = useAuth();
   const { colors, mode, cardShadow, pressedOpacity } = useTheme();
   const { stages } = usePipelineStages();
   const navigation = useNavigation<any>();
+  const { width: windowWidth } = useWindowDimensions();
 
   const isEnrolmentRole = user ? ENROLMENT_ROLES.includes(user.role) : false;
   const isTeacher = user?.role === "teacher";
+  const today = new Date();
+  const weekDates = getWeekDates(today);
+  const teacherProfileImage = user
+    ? resolveUserImageSource({
+        id: user.id,
+        fullName: user.fullName,
+        avatarKey: user.avatarKey,
+        hasPhoto: !!user.photoMimeType,
+        photoUrl: accessToken ? api.myPhotoUrl(accessToken) : null,
+      })
+    : null;
 
   const [stats, setStats] = useState<Stats | null>(null);
   const [recentEnquiries, setRecentEnquiries] = useState<Enquiry[]>([]);
@@ -106,6 +135,102 @@ export function HomeScreen() {
 
   const [teacherSummary, setTeacherSummary] = useState<TeacherDashboardSummary | null>(null);
   const [isLoadingTeacherSummary, setIsLoadingTeacherSummary] = useState(false);
+  const notificationBellAnimation = useRef(new Animated.Value(0)).current;
+  const notificationBadgeScale = useRef(new Animated.Value(1)).current;
+  const heroBulbPulse = useRef(new Animated.Value(0)).current;
+  const submissionMotion = useRef(new Animated.Value(0)).current;
+  const heroCarouselRef = useRef<ScrollView>(null);
+  const heroAutoAdvanceResumeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notificationCount = teacherSummary?.ungradedSubmissionCount ?? 0;
+  const heroWidth = Math.max(windowWidth - 32, 0);
+  const [activeHeroPage, setActiveHeroPage] = useState(0);
+  const [heroAutoAdvancePaused, setHeroAutoAdvancePaused] = useState(false);
+  const notificationBellRotation = notificationBellAnimation.interpolate({
+    inputRange: [0, 0.25, 0.5, 0.75, 1],
+    outputRange: ["0deg", "-12deg", "10deg", "-6deg", "0deg"],
+  });
+  const heroBulbScale = heroBulbPulse.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1.12] });
+  const heroBulbGlowScale = heroBulbPulse.interpolate({ inputRange: [0, 1], outputRange: [0.75, 1.55] });
+  const heroBulbGlowOpacity = heroBulbPulse.interpolate({ inputRange: [0, 1], outputRange: [0.08, 0.52] });
+  const heroBulbRayOpacity = heroBulbPulse.interpolate({ inputRange: [0, 1], outputRange: [0.28, 1] });
+  const submissionGraphicLift = submissionMotion.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, -3, 0] });
+
+  const teacherDisplayName = teacherFirstName(user?.fullName);
+  const [typedTeacherName, setTypedTeacherName] = useState("");
+
+  useEffect(() => {
+    if (!isTeacher) return;
+    setTypedTeacherName("");
+    let index = 0;
+    const interval = setInterval(() => {
+      index += 1;
+      setTypedTeacherName(teacherDisplayName.slice(0, index));
+      if (index >= teacherDisplayName.length) {
+        clearInterval(interval);
+      }
+    }, 70);
+    return () => clearInterval(interval);
+  }, [teacherDisplayName, isTeacher]);
+
+  useEffect(() => {
+    if (!isTeacher || notificationCount === 0) return;
+
+    notificationBellAnimation.setValue(0);
+    notificationBadgeScale.setValue(0.7);
+    Animated.parallel([
+      Animated.timing(notificationBellAnimation, { toValue: 1, duration: 460, useNativeDriver: true }),
+      Animated.spring(notificationBadgeScale, { toValue: 1, friction: 5, tension: 150, useNativeDriver: true }),
+    ]).start();
+  }, [isTeacher, notificationBadgeScale, notificationBellAnimation, notificationCount]);
+
+  useEffect(() => {
+    if (!isTeacher) return;
+    heroBulbPulse.setValue(0);
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(heroBulbPulse, { toValue: 1, duration: 850, useNativeDriver: true }),
+        Animated.timing(heroBulbPulse, { toValue: 0, duration: 850, useNativeDriver: true }),
+      ])
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [heroBulbPulse, isTeacher]);
+
+  useEffect(() => {
+    if (!isTeacher || activeHeroPage !== 0) {
+      submissionMotion.stopAnimation();
+      submissionMotion.setValue(0);
+      return;
+    }
+
+    submissionMotion.setValue(0);
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(submissionMotion, { toValue: 1, duration: 1500, useNativeDriver: true }),
+        Animated.timing(submissionMotion, { toValue: 0, duration: 1500, useNativeDriver: true }),
+      ])
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [activeHeroPage, isTeacher, submissionMotion]);
+
+  useEffect(() => {
+    if (!isTeacher || heroAutoAdvancePaused || heroWidth === 0) return;
+    const timer = setInterval(() => {
+      setActiveHeroPage((currentPage) => {
+        const nextPage = currentPage === 0 ? 1 : 0;
+        heroCarouselRef.current?.scrollTo({ x: nextPage * heroWidth, animated: true });
+        return nextPage;
+      });
+    }, 7000);
+    return () => clearInterval(timer);
+  }, [heroAutoAdvancePaused, heroWidth, isTeacher]);
+
+  useEffect(() => {
+    return () => {
+      if (heroAutoAdvanceResumeTimer.current) clearTimeout(heroAutoAdvanceResumeTimer.current);
+    };
+  }, []);
 
   const loadTeacherSummary = useCallback(async () => {
     if (!accessToken || !isTeacher) return;
@@ -124,10 +249,11 @@ export function HomeScreen() {
     if (!accessToken || !isEnrolmentRole) return;
     setIsLoadingStats(true);
     try {
-      const [newRes, followUps, visitRes, allEnquiriesRes] = await Promise.all([
+      const [newRes, followUps, visitScheduledRes, visitDoneRes, allEnquiriesRes] = await Promise.all([
         api.listEnquiries(accessToken, { status: "new" }),
         api.listFollowUpTasks(accessToken, { status: "pending" }),
-        api.listEnquiries(accessToken, { status: "visit" }),
+        api.listEnquiries(accessToken, { status: "visit_scheduled" }),
+        api.listEnquiries(accessToken, { status: "visit_done" }),
         api.listEnquiries(accessToken),
       ]);
 
@@ -141,7 +267,9 @@ export function HomeScreen() {
         totalLeads: (allEnquiriesRes.meta?.totalCount as number) ?? allEnquiries.length,
         newEnquiries: (newRes.meta?.totalCount as number) ?? newRes.data?.length ?? 0,
         followUps: followUps.length,
-        visitsToday: (visitRes.meta?.totalCount as number) ?? visitRes.data?.length ?? 0,
+        visitsToday:
+          ((visitScheduledRes.meta?.totalCount as number) ?? visitScheduledRes.data?.length ?? 0) +
+          ((visitDoneRes.meta?.totalCount as number) ?? visitDoneRes.data?.length ?? 0),
         converted: convertedCount,
       });
 
@@ -174,49 +302,54 @@ export function HomeScreen() {
 
   return (
     <Screen>
-      <ScrollView contentContainerStyle={[styles.container, { backgroundColor: colors.background }]} showsVerticalScrollIndicator={false}>
-        {isEnrolmentRole ? (
+      {isEnrolmentRole ? (
+        <ScrollView contentContainerStyle={[styles.container, { backgroundColor: colors.background }]} showsVerticalScrollIndicator={false}>
           <>
-            <LinearGradient
-              colors={[colors.accent, colors.accentDark]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.heroCard}
-            >
+            <View style={styles.enrolmentHeader}>
               <View style={styles.heroTopRow}>
                 <View style={styles.profileBlock}>
                   <View style={styles.profileTextBlock}>
-                    <Text style={[styles.eyebrow, { color: "rgba(255,255,255,0.78)" }]}>{greeting()}</Text>
-                    <Text style={[styles.heroTitle, { color: "#FFFFFF" }]}>{user.fullName}</Text>
-                    <Text style={[styles.heroSubtitle, { color: "rgba(255,255,255,0.84)" }]}>
-                      Admissions command center for today&apos;s lead movement, follow-ups, and conversions.
+                    <Text style={[styles.eyebrow, { color: colors.textMuted }]}>{greeting()},</Text>
+                    <Text style={[styles.heroTitle, { color: colors.textPrimary }]}>{user.fullName}!</Text>
+                    <Text style={[styles.heroSubtitle, { color: colors.textMuted }]}> 
+                      Here&apos;s what&apos;s happening at your school today.
                     </Text>
                   </View>
                 </View>
                 <Pressable
                   onPress={() => navigation.navigate("Notifications")}
-                  style={({ pressed }) => [styles.heroBell, pressed && { opacity: pressedOpacity }]}
+                  style={({ pressed }) => [styles.heroBell, { backgroundColor: colors.surface }, cardShadow, pressed && { opacity: pressedOpacity }]}
                   accessibilityRole="button"
                   accessibilityLabel="Open notifications"
                 >
-                  <Ionicons name="notifications-outline" size={20} color="#FFFFFF" />
+                  <Ionicons name="notifications" size={20} color={colors.accent} />
                 </Pressable>
               </View>
-            </LinearGradient>
+            </View>
+
+            <View style={styles.enrolmentTabRow}>
+              {[
+                { label: "Overview", action: () => undefined },
+                { label: "Enquiries", action: () => navigation.navigate("Enquiries") },
+                { label: "Pipeline", action: () => navigation.navigate("Pipeline") },
+              ].map((tab, index) => (
+                <Pressable key={tab.label} onPress={tab.action} style={({ pressed }) => [styles.enrolmentTab, { backgroundColor: index === 0 ? colors.accent : colors.surface }, cardShadow, pressed && { opacity: pressedOpacity }]}>
+                  <Text style={[styles.enrolmentTabText, { color: index === 0 ? colors.accentOn : colors.textSecondary }]}>{tab.label}</Text>
+                </Pressable>
+              ))}
+            </View>
 
             <View style={styles.dashboardBody}>
-              <View style={[styles.focusCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+              <LinearGradient colors={[colors.accent, colors.accentDark]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.focusCard, cardShadow]}>
                 <View style={styles.heroFocusText}>
-                  <Text style={[styles.focusLabel, { color: colors.accent }]}>Today&apos;s focus</Text>
-                  <Text style={[styles.focusValue, { color: colors.textPrimary }]}>{stats?.newEnquiries ?? 0} fresh leads</Text>
-                  <Text style={[styles.focusMeta, { color: colors.textMuted }]}>
-                    {stats?.followUps ?? 0} pending follow-up{stats?.followUps === 1 ? "" : "s"}
-                  </Text>
+                  <Text style={styles.focusLabel}>Today&apos;s focus</Text>
+                  <View style={styles.focusMetrics}><View><Text style={styles.focusValue}>{stats?.newEnquiries ?? 0}</Text><Text style={styles.focusMeta}>New enquiries</Text></View><View style={styles.focusDivider} /><View><Text style={styles.focusValue}>{stats?.followUps ?? 0}</Text><Text style={styles.focusMeta}>Follow-ups today</Text></View></View>
+                  <Pressable onPress={() => navigation.navigate("Enquiries")} style={styles.focusAction}><Text style={[styles.focusActionText, { color: colors.accent }]}>Continue</Text><Ionicons name="arrow-forward" size={17} color={colors.accent} /></Pressable>
                 </View>
-                <View style={[styles.focusGraphicWrap, { backgroundColor: colors.accentSoft }]}>
+                <View style={styles.focusGraphicWrap}>
                   <Image source={decorativeAssets.checkCircle} style={styles.focusGraphic} resizeMode="contain" />
                 </View>
-              </View>
+              </LinearGradient>
 
               <View style={styles.sectionRow}>
                 <View>
@@ -232,34 +365,34 @@ export function HomeScreen() {
                   <KpiCard
                     title="Fresh enquiries"
                     value={stats?.newEnquiries ?? 0}
-                    hint="New leads waiting to be worked"
                     icon="person-add-outline"
-                    colors={colors}
                     shadow={cardShadow}
+                    tone="#7359D9"
+                    onPress={() => navigation.navigate("Enquiries")}
                   />
                   <KpiCard
                     title="Follow-up queue"
                     value={stats?.followUps ?? 0}
-                    hint="Tasks still pending today"
                     icon="time-outline"
-                    colors={colors}
                     shadow={cardShadow}
+                    tone="#F2675B"
+                    onPress={() => navigation.navigate("Tasks")}
                   />
                   <KpiCard
-                    title="Visits stage"
+                    title="Visit progress"
                     value={stats?.visitsToday ?? 0}
-                    hint="Leads currently at visit"
                     icon="calendar-outline"
-                    colors={colors}
                     shadow={cardShadow}
+                    tone="#E5A72D"
+                    onPress={() => navigation.navigate("Pipeline")}
                   />
                   <KpiCard
                     title="Conversions"
                     value={stats?.converted ?? 0}
-                    hint="Leads in converted stage"
                     icon="checkmark-done-outline"
-                    colors={colors}
                     shadow={cardShadow}
+                    tone="#37A47A"
+                    onPress={() => navigation.navigate("Pipeline")}
                   />
                 </View>
               )}
@@ -298,18 +431,18 @@ export function HomeScreen() {
 
               <View style={styles.actionGrid}>
                 <ActionCard
-                  icon="mail-open-outline"
-                  label="Enquiries"
-                  sublabel="Browse, filter and work all incoming leads"
+                  icon="add-outline"
+                  label="New enquiry"
+                  sublabel="Create a lead"
                   colors={colors}
                   shadow={cardShadow}
                   pressedOpacity={pressedOpacity}
-                  onPress={() => navigation.navigate("Enquiries")}
+                  onPress={() => navigation.navigate("NewEnquiryForm")}
                 />
                 <ActionCard
                   icon="git-network-outline"
                   label="Pipeline"
-                  sublabel="See every stage and move leads faster"
+                  sublabel="Move leads forward"
                   colors={colors}
                   shadow={cardShadow}
                   pressedOpacity={pressedOpacity}
@@ -318,7 +451,7 @@ export function HomeScreen() {
                 <ActionCard
                   icon="checkbox-outline"
                   label="Follow-ups"
-                  sublabel="Review pending tasks and clear blockers"
+                  sublabel="Work today's queue"
                   colors={colors}
                   shadow={cardShadow}
                   pressedOpacity={pressedOpacity}
@@ -327,7 +460,7 @@ export function HomeScreen() {
                 <ActionCard
                   icon="download-outline"
                   label="CSV Export"
-                  sublabel="Download operational data and logs"
+                  sublabel="Download your data"
                   colors={colors}
                   shadow={cardShadow}
                   pressedOpacity={pressedOpacity}
@@ -389,110 +522,165 @@ export function HomeScreen() {
               </View>
             </View>
           </>
-        ) : isTeacher ? (
-          <View style={styles.teacherWrap}>
-            <View style={styles.teacherTopRow}>
-              <View style={styles.teacherGreetingBlock}>
-                <Text style={[styles.teacherGreeting, { color: colors.textMuted }]}>{greeting()},</Text>
-                <Text style={[styles.teacherName, { color: colors.textPrimary }]}>{teacherFirstName(user.fullName)}!</Text>
-                <Text style={[styles.teacherIntro, { color: colors.textMuted }]}>
-                  Here&apos;s what&apos;s happening at your school today.
-                </Text>
-              </View>
-              <View style={styles.teacherTopActions}>
-                <Pressable
-                  onPress={() => navigation.navigate("CommunicationHub")}
-                  style={({ pressed }) => [
-                    styles.teacherIconButton,
-                    { backgroundColor: colors.surface },
-                    cardShadow,
-                    pressed && { opacity: pressedOpacity },
-                  ]}
-                  accessibilityRole="button"
-                  accessibilityLabel="Open communication hub"
-                >
-                  <Ionicons name="notifications" size={18} color={colors.accent} />
-                </Pressable>
-                <View style={[styles.teacherAvatarFrame, { backgroundColor: "#EFE5FF" }]}>
-                  <Image
-                    source={require("../../../assets/avatars/hero-profile-illustration.png")}
-                    style={styles.teacherAvatar}
-                    resizeMode="contain"
-                  />
+        </ScrollView>
+      ) : isTeacher ? (
+        <View style={styles.teacherWrap}>
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={styles.teacherHomeScroll}
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.teacherFixedHeader}>
+              <View style={styles.teacherTopRow}>
+                <View style={styles.teacherGreetingBlock}>
+                  <Text style={[styles.teacherGreeting, { color: colors.textMuted }]}>
+                    {greeting()}, <Text style={[styles.teacherGreetingName, { color: colors.accent }]}>{typedTeacherName}</Text>
+                  </Text>
                 </View>
-              </View>
-            </View>
-
-            <View style={styles.teacherTabRow}>
-              {TEACHER_TABS.map((tab, index) => {
-                const isActive = index === 0;
-                return (
+                <View style={[styles.teacherTopActions, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
                   <Pressable
-                    key={tab}
-                    onPress={() => {
-                      if (tab === "Teaching") navigation.navigate("Studio");
-                      if (tab === "Assignment") navigation.navigate("Assignment");
-                    }}
+                    onPress={() => navigation.navigate("CommunicationHub")}
                     style={({ pressed }) => [
-                      styles.teacherTabPill,
-                      {
-                        backgroundColor: isActive ? colors.accent : colors.surface,
-                      },
-                      cardShadow,
+                      styles.teacherIconButton,
+                      { backgroundColor: colors.surface },
                       pressed && { opacity: pressedOpacity },
                     ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Open communication hub"
                   >
-                    <Text style={[styles.teacherTabText, { color: isActive ? "#FFFFFF" : colors.textSecondary }]}>
-                      {tab}
-                    </Text>
+                    <Animated.View style={{ transform: [{ rotate: notificationBellRotation }] }}>
+                      <Ionicons name="notifications" size={18} color={colors.accent} />
+                    </Animated.View>
+                    {notificationCount > 0 ? <Animated.View style={[styles.teacherNotificationDot, { backgroundColor: colors.danger, transform: [{ scale: notificationBadgeScale }] }]}><Text style={styles.teacherNotificationCount}>{notificationCount > 9 ? "9+" : notificationCount}</Text></Animated.View> : null}
                   </Pressable>
-                );
-              })}
+                  <Pressable style={({ pressed }) => [styles.teacherAvatarRing, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.navigate("More")} accessibilityRole="button" accessibilityLabel="Open more menu">
+                    <View style={[styles.teacherAvatarFrame, { backgroundColor: colors.accentSoft }]}>
+                      {teacherProfileImage ? <Image source={teacherProfileImage} style={user?.photoMimeType ? styles.teacherAvatarPhoto : styles.teacherAvatar} resizeMode={user?.photoMimeType ? "cover" : "contain"} /> : null}
+                    </View>
+                  </Pressable>
+                </View>
+              </View>
+              <View style={styles.teacherWeekRow} accessibilityLabel="Current week calendar">
+                {weekDates.map((date) => {
+                  const isToday = date.toDateString() === today.toDateString();
+                  return (
+                    <View
+                      key={date.toISOString()}
+                      style={[
+                        styles.teacherWeekDay,
+                        { backgroundColor: isToday ? colors.accent : colors.surfaceRaised },
+                      ]}
+                    >
+                      <Text style={[styles.teacherWeekDayLabel, { color: isToday ? colors.accentOn : colors.textMuted }]}>
+                        {date.toLocaleDateString("en-IN", { weekday: "short" })}
+                      </Text>
+                      <Text style={[styles.teacherWeekDate, { color: isToday ? colors.accentOn : colors.textPrimary }]}>{date.getDate()}</Text>
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+            <View style={styles.teacherHeroCarousel}>
+              <ScrollView
+                ref={heroCarouselRef}
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                onScrollBeginDrag={() => {
+                  if (heroAutoAdvanceResumeTimer.current) clearTimeout(heroAutoAdvanceResumeTimer.current);
+                  setHeroAutoAdvancePaused(true);
+                }}
+                onMomentumScrollEnd={(event) => {
+                  setActiveHeroPage(Math.round(event.nativeEvent.contentOffset.x / heroWidth));
+                  heroAutoAdvanceResumeTimer.current = setTimeout(() => setHeroAutoAdvancePaused(false), 4000);
+                }}
+                scrollEventThrottle={16}
+              >
+                <LinearGradient
+                  colors={["#5C42C6", "#32266F"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={[styles.teacherHeroCard, { width: heroWidth - 12, marginRight: 12 }]}
+                >
+                  <View style={styles.teacherHeroGlow} />
+                  <View style={styles.teacherHeroCopy}>
+                    <Text style={styles.teacherHeroEyebrow}>ASSIGNMENTS</Text>
+                    <Text style={styles.teacherHeroTitle} numberOfLines={2}>
+                      {notificationCount > 0 ? `${notificationCount} submission${notificationCount === 1 ? "" : "s"} to review` : "Your assignments are ready"}
+                    </Text>
+                    <Text style={styles.teacherHeroSubtitle}>
+                      {teacherSummary?.publishedAssignmentCount ?? 0} published assignment{(teacherSummary?.publishedAssignmentCount ?? 0) === 1 ? "" : "s"} in progress.
+                    </Text>
+                    <View style={styles.teacherHeroPanel}>
+                      <Pressable
+                        onPress={() => navigation.navigate("Assignment")}
+                        style={({ pressed }) => [styles.teacherHeroPanelButton, pressed && { opacity: pressedOpacity }]}
+                      >
+                        <Text style={[styles.teacherHeroPanelButtonText, { color: colors.textPrimary }]}>{notificationCount > 0 ? "Review submissions" : "Open assignments"}</Text>
+                        <Ionicons name="arrow-forward" size={16} color={colors.textPrimary} />
+                      </Pressable>
+                    </View>
+                  </View>
+                  <Animated.Image source={decorativeAssets.teacherSubmissionsNoStars} style={[styles.teacherHeroGraphic, { transform: [{ translateY: submissionGraphicLift }] }]} resizeMode="contain" />
+                </LinearGradient>
+
+                <LinearGradient
+                  colors={[colors.accent, colors.accentDark]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={[styles.teacherHeroCard, { width: heroWidth - 12, marginRight: 12 }]}
+                >
+                  <View style={styles.teacherHeroGlow} />
+                  <View style={styles.teacherHeroBulb} pointerEvents="none">
+                    <Animated.View style={[styles.teacherHeroBulbGlow, { opacity: heroBulbGlowOpacity, transform: [{ scale: heroBulbGlowScale }] }]} />
+                    <Animated.View style={[styles.teacherHeroBulbRay, styles.teacherHeroBulbRayTop, { opacity: heroBulbRayOpacity }]} />
+                    <Animated.View style={[styles.teacherHeroBulbRay, styles.teacherHeroBulbRayLeft, { opacity: heroBulbRayOpacity }]} />
+                    <Animated.View style={[styles.teacherHeroBulbRay, styles.teacherHeroBulbRayRight, { opacity: heroBulbRayOpacity }]} />
+                    <Animated.View style={{ transform: [{ scale: heroBulbScale }] }}>
+                      <Ionicons name="bulb" size={31} color="#FFE26B" />
+                    </Animated.View>
+                  </View>
+                  <View style={styles.teacherHeroCopy}>
+                    <Text style={styles.teacherHeroEyebrow}>{teacherSummary?.continueTopic ? "CONTINUE" : "LESSON STUDIO"}</Text>
+                    {teacherSummary?.continueTopic ? (
+                      <>
+                        <Text style={styles.teacherHeroTitle} numberOfLines={2}>{capitalizeFirst(teacherSummary.continueTopic.name)}</Text>
+                        <View style={styles.teacherHeroChip}>
+                          <Text style={[styles.teacherHeroChipText, { color: colors.textPrimary }]}>{teacherSummary.continueTopic.subject}</Text>
+                        </View>
+                        <Text style={styles.teacherHeroSubtitle}>Updated {formatRelativeTime(teacherSummary.continueTopic.updatedAt)}</Text>
+                      </>
+                    ) : (
+                      <>
+                        <Text style={styles.teacherHeroTitle}>Start your first topic with AI</Text>
+                        <Text style={styles.teacherHeroSubtitle}>Create a lesson plan in a few guided steps.</Text>
+                      </>
+                    )}
+                    <View style={styles.teacherHeroPanel}>
+                      <Pressable
+                        onPress={() => navigation.navigate(teacherSummary?.continueTopic ? "TopicDetail" : "Studio", teacherSummary?.continueTopic ? { topicId: teacherSummary.continueTopic.id } : undefined)}
+                        style={({ pressed }) => [styles.teacherHeroPanelButton, pressed && { opacity: pressedOpacity }]}
+                      >
+                        <Text style={[styles.teacherHeroPanelButtonText, { color: colors.textPrimary }]}>{teacherSummary?.continueTopic ? "Open topic" : "Get started"}</Text>
+                        <Ionicons name="arrow-forward" size={16} color={colors.textPrimary} />
+                      </Pressable>
+                    </View>
+                  </View>
+                  <Image source={decorativeAssets.teacherHeroNoBulb} style={styles.teacherHeroGraphic} resizeMode="contain" />
+                </LinearGradient>
+              </ScrollView>
+              <View style={styles.teacherHeroPageDots} accessibilityLabel={`Hero card ${activeHeroPage + 1} of 2`}>
+                {[0, 1].map((page) => <View key={page} style={[styles.teacherHeroPageDot, { backgroundColor: page === activeHeroPage ? colors.accent : colors.border }]} />)}
+              </View>
             </View>
 
-            <LinearGradient
-              colors={[colors.accent, colors.accentDark]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={[styles.teacherHeroCard, cardShadow]}
-            >
-              <View style={styles.teacherHeroCopy}>
-                <View style={styles.teacherHeroTag}>
-                  <Ionicons name="star" size={12} color="#FFFFFF" />
-                  <Text style={styles.teacherHeroTagText}>Today&apos;s teaching focus</Text>
-                </View>
-                {teacherSummary?.continueTopic ? (
-                  <>
-                    <Text style={styles.teacherHeroTitle}>Continue &quot;{teacherSummary.continueTopic.name}&quot;</Text>
-                    <View style={styles.teacherHeroChip}>
-                      <Text style={[styles.teacherHeroChipText, { color: colors.textPrimary }]}>{teacherSummary.continueTopic.subject}</Text>
-                    </View>
-                    <Pressable
-                      onPress={() => navigation.navigate("TopicDetail", { topicId: teacherSummary.continueTopic!.id })}
-                      style={({ pressed }) => [styles.teacherHeroButton, pressed && { opacity: pressedOpacity }]}
-                    >
-                      <Text style={[styles.teacherHeroButtonText, { color: colors.textPrimary }]}>Continue</Text>
-                      <Ionicons name="arrow-forward" size={18} color={colors.textPrimary} />
-                    </Pressable>
-                  </>
-                ) : (
-                  <>
-                    <Text style={styles.teacherHeroTitle}>Start your first topic with AI</Text>
-                    <Pressable
-                      onPress={() => navigation.navigate("Studio")}
-                      style={({ pressed }) => [styles.teacherHeroButton, pressed && { opacity: pressedOpacity }]}
-                    >
-                      <Text style={[styles.teacherHeroButtonText, { color: colors.textPrimary }]}>Get started</Text>
-                      <Ionicons name="arrow-forward" size={18} color={colors.textPrimary} />
-                    </Pressable>
-                  </>
-                )}
-              </View>
-              <Image source={decorativeAssets.teacherHero} style={styles.teacherHeroGraphic} resizeMode="contain" />
-            </LinearGradient>
+            <TeacherInsightTicker colors={colors} />
 
             <View style={styles.teacherSectionHeader}>
-              <Text style={[styles.teacherSectionTitle, { color: colors.textPrimary }]}>Your plan</Text>
+              <View>
+                <Text style={[styles.teacherSectionTitle, { color: colors.textPrimary }]}>Your plan</Text>
+                <Text style={[styles.teacherSectionHint, { color: colors.textMuted }]}>Your lesson and assessment workspace.</Text>
+              </View>
               <Pressable onPress={() => navigation.navigate("Analytics")}>
                 <Text style={[styles.teacherSeeAll, { color: colors.accent }]}>See all</Text>
               </Pressable>
@@ -521,18 +709,19 @@ export function HomeScreen() {
                       <View style={styles.teacherSummaryIcon}>
                         <Ionicons name={card.icon} size={16} color="#FFFFFF" />
                       </View>
-                      <Ionicons name="bookmark-outline" size={16} color="#FFFFFF" />
+                      <Text style={styles.teacherSummaryKicker}>{isLessons ? "CONTENT" : "ASSESSMENT"}</Text>
                     </View>
                     <Text style={styles.teacherSummaryTitle}>{card.title}</Text>
-                    <Text style={styles.teacherSummaryValue}>{value}</Text>
-                    <Text style={styles.teacherSummaryMetaLabel}>{metaTop}</Text>
-                    <Text style={styles.teacherSummaryMetaValue}>{metaTopValue}</Text>
-                    {metaBottom ? (
-                      <>
-                        <Text style={styles.teacherSummaryMetaLabel}>{metaBottom}</Text>
-                        <Text style={styles.teacherSummaryMetaValue}>{metaBottomValue}</Text>
-                      </>
-                    ) : null}
+                    <View style={styles.teacherSummaryCountRow}>
+                      <Text style={styles.teacherSummaryValue}>{value}</Text>
+                      <Text style={styles.teacherSummaryCountLabel}>total</Text>
+                    </View>
+                    <View style={styles.teacherSummaryStatusRow}>
+                      <View style={styles.teacherSummaryStatusDot} />
+                      <Text style={styles.teacherSummaryMetaLabel}>
+                        {metaTopValue} {metaTop.toLowerCase()}{metaBottom ? ` · ${metaBottomValue} ${metaBottom.toLowerCase()}` : ""}
+                      </Text>
+                    </View>
                     <View style={styles.teacherSummaryFooter}>
                       <View style={styles.teacherSummaryButton}>
                         <Ionicons name="arrow-forward" size={15} color="#FFFFFF" />
@@ -548,42 +737,52 @@ export function HomeScreen() {
               onPress={() => navigation.navigate("Assignment")}
               style={({ pressed }) => [
                 styles.teacherHighlightCard,
-                { backgroundColor: colors.warning },
+                { backgroundColor: colors.accentSoft, borderColor: colors.accentSoftAlt },
                 cardShadow,
                 pressed && { opacity: pressedOpacity },
               ]}
             >
               <View style={styles.teacherHighlightTopRow}>
-                <View style={[styles.teacherHighlightBadge, { backgroundColor: "rgba(124,0,90,0.12)" }]}>
-                  <Text style={[styles.teacherHighlightBadgeText, { color: colors.accent }]}>
-                    {(teacherSummary?.ungradedSubmissionCount ?? 0) > 0 ? "Review" : "Up to date"}
-                  </Text>
+                <View style={[styles.teacherHighlightIcon, { backgroundColor: colors.accent }]}>
+                  <Ionicons name="clipboard-outline" size={18} color={colors.accentOn} />
                 </View>
+                <Text style={[styles.teacherHighlightEyebrow, { color: colors.accent }]}>SUBMISSION REVIEW</Text>
               </View>
               <View style={styles.teacherHighlightBody}>
                 <View style={styles.teacherHighlightCopy}>
-                  <Text style={styles.teacherHighlightTitle}>
+                  <Text style={[styles.teacherHighlightTitle, { color: colors.textPrimary }]}>
                     {(teacherSummary?.ungradedSubmissionCount ?? 0) > 0 ? "Check submissions" : "All caught up"}
                   </Text>
-                  <View style={styles.teacherHighlightFooter}>
-                    <View style={styles.teacherHighlightAvatars}>
-                      <View style={[styles.teacherMiniAvatar, { backgroundColor: colors.accent }]}>
-                        <Text style={styles.teacherMiniAvatarText}>{teacherSummary?.ungradedSubmissionCount ?? 0}</Text>
-                      </View>
-                      <View style={[styles.teacherMiniAvatar, styles.teacherMiniAvatarAlt]}>
-                        <Ionicons name="people" size={14} color={colors.accentDark} />
-                      </View>
-                    </View>
-                    <View style={styles.teacherHighlightArrow}>
-                      <Ionicons name="arrow-forward" size={18} color="#FFFFFF" />
-                    </View>
+                  <Text
+                    style={[styles.teacherHighlightSubtitle, { color: colors.textMuted }]}
+                  >
+                    {(teacherSummary?.ungradedSubmissionCount ?? 0) > 0
+                      ? `${teacherSummary?.ungradedSubmissionCount} student submission${teacherSummary?.ungradedSubmissionCount === 1 ? " is" : "s are"} ready for review.`
+                      : "Every submitted assignment has been reviewed."}
+                  </Text>
+                </View>
+                <View style={styles.teacherHighlightSide}>
+                  <View style={styles.teacherHighlightCount}>
+                    <Text style={[styles.teacherHighlightCountValue, { color: mode === "dark" ? "#A855F7" : "#7C005A" }]}>
+                      {teacherSummary?.ungradedSubmissionCount ?? 0}
+                    </Text>
+                    <Text style={[styles.teacherHighlightCountLabel, { color: mode === "dark" ? "#A855F7" : "#7C005A" }]}>
+                      TO REVIEW
+                    </Text>
+                  </View>
+                  <View style={[styles.teacherHighlightArrow, { backgroundColor: colors.accent }]}>
+                    <Ionicons name="arrow-forward" size={18} color={colors.accentOn} />
                   </View>
                 </View>
-                <Image source={decorativeAssets.teacherSubmissions} style={styles.teacherHighlightGraphic} resizeMode="contain" />
               </View>
             </Pressable>
 
-            <Text style={[styles.teacherSectionTitle, { color: colors.textPrimary }]}>Recent activity</Text>
+            <View style={styles.teacherActivityHeading}>
+              <View>
+                <Text style={[styles.teacherSectionTitle, { color: colors.textPrimary }]}>Recent activity</Text>
+                <Text style={[styles.teacherSectionHint, { color: colors.textMuted }]}>Latest updates across your workspace.</Text>
+              </View>
+            </View>
             <View style={[styles.teacherTimelineCard, { backgroundColor: colors.surface }, cardShadow]}>
               {!teacherSummary || teacherSummary.recentActivity.length === 0 ? (
                 <Text style={[styles.emptyText, { color: colors.textMuted }]}>
@@ -591,7 +790,7 @@ export function HomeScreen() {
                 </Text>
               ) : (
                 teacherSummary.recentActivity.map((item, index) => {
-                  const config = ACTIVITY_TYPE_CONFIG[item.type];
+                  const config = getActivityTypeConfig(item.type, colors);
                   const canOpen = item.type === "assignment_published" || Boolean(item.topicId);
                   return (
                     <Pressable
@@ -606,11 +805,8 @@ export function HomeScreen() {
                         }
                       }}
                     >
-                      <View style={styles.teacherTimelineTrack}>
-                        <View style={[styles.teacherTimelineDot, { backgroundColor: config.color }]} />
-                        {index < teacherSummary.recentActivity.length - 1 ? (
-                          <View style={[styles.teacherTimelineLine, { backgroundColor: "#ECEAF4" }]} />
-                        ) : null}
+                      <View style={[styles.teacherActivityIcon, { backgroundColor: config.bg }]}>
+                        <Ionicons name={config.icon} size={17} color={config.color} />
                       </View>
                       <View style={styles.teacherTimelineMain}>
                         <Text style={[styles.teacherTimelineTitle, { color: colors.textSecondary }]} numberOfLines={1}>
@@ -618,17 +814,17 @@ export function HomeScreen() {
                         </Text>
                         <Text style={[styles.teacherTimelineSubtitle, { color: colors.textMuted }]}>{formatRelativeTime(item.timestamp)}</Text>
                       </View>
-                      <Ionicons name={config.icon} size={20} color={config.color} />
+                      {canOpen ? <Ionicons name="chevron-forward" size={17} color={colors.textMuted} /> : null}
                     </Pressable>
                   );
                 })
               )}
             </View>
-          </View>
-        ) : (
-          <Text style={[styles.emptyText, { color: colors.textMuted }]}>No dashboard is configured for this role yet.</Text>
-        )}
-      </ScrollView>
+          </ScrollView>
+        </View>
+      ) : (
+        <Text style={[styles.emptyText, { color: colors.textMuted }]}>No dashboard is configured for this role yet.</Text>
+      )}
     </Screen>
   );
 }
@@ -636,32 +832,34 @@ export function HomeScreen() {
 function KpiCard({
   title,
   value,
-  hint,
   icon,
-  graphic,
-  colors,
   shadow,
+  tone,
+  onPress,
 }: {
   title: string;
   value: number;
-  hint: string;
   icon: keyof typeof Ionicons.glyphMap;
-  graphic?: ImageSourcePropType;
-  colors: ReturnType<typeof useTheme>["colors"];
   shadow: ReturnType<typeof useTheme>["cardShadow"];
+  tone: string;
+  onPress: () => void;
 }) {
   return (
-    <View style={[styles.kpiCard, { backgroundColor: colors.surface, borderColor: colors.border }, shadow]}>
-      {graphic ? <Image source={graphic} style={styles.kpiGraphic} resizeMode="contain" /> : null}
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.kpiCard, { backgroundColor: tone }, shadow, pressed && { opacity: 0.84 }]}
+      accessibilityRole="button"
+      accessibilityLabel={`Open ${title}`}
+    >
       <View style={styles.kpiTopRow}>
-        <View style={[styles.kpiIconWrap, { backgroundColor: colors.accentSoft }]}>
-          <Ionicons name={icon} size={17} color={colors.accent} />
+        <View style={styles.kpiIconWrap}>
+          <Ionicons name={icon} size={17} color="#FFFFFF" />
         </View>
-        <Text style={[styles.kpiValue, { color: colors.textPrimary }]}>{String(value).padStart(2, "0")}</Text>
+        <Ionicons name="arrow-forward" size={16} color="rgba(255,255,255,0.86)" />
       </View>
-      <Text style={[styles.kpiTitle, { color: colors.textPrimary }]}>{title}</Text>
-      <Text style={[styles.kpiHint, { color: colors.textMuted }]}>{hint}</Text>
-    </View>
+      <Text style={styles.kpiValue}>{String(value).padStart(2, "0")}</Text>
+      <Text style={styles.kpiTitle}>{title}</Text>
+    </Pressable>
   );
 }
 
@@ -785,6 +983,69 @@ function TaskPreviewRow({
   );
 }
 
+const TEACHER_TICKER_ITEMS: { label: string; text: string; avatars: number[] }[] = [
+  { label: "SUBMISSIONS", text: "10 students just submitted their assignment.", avatars: [0, 1, 2] },
+  { label: "ASSIGN A TEST", text: "It's time to assign a new test to your class.", avatars: [3, 4, 5] },
+  { label: "LESSON PLANS", text: "3 lesson plans are ready to review this week.", avatars: [5, 6, 7] },
+];
+
+function TeacherInsightTicker({ colors }: { colors: ThemeColors }) {
+  const [messageIndex, setMessageIndex] = useState(0);
+  const translateY = useRef(new Animated.Value(0)).current;
+  const opacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      Animated.parallel([
+        Animated.timing(translateY, { toValue: -14, duration: 260, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0, duration: 220, useNativeDriver: true }),
+      ]).start(() => {
+        setMessageIndex((current) => (current + 1) % TEACHER_TICKER_ITEMS.length);
+        translateY.setValue(14);
+        Animated.parallel([
+          Animated.timing(translateY, { toValue: 0, duration: 280, useNativeDriver: true }),
+          Animated.timing(opacity, { toValue: 1, duration: 280, useNativeDriver: true }),
+        ]).start();
+      });
+    }, 3200);
+    return () => clearInterval(timer);
+  }, [opacity, translateY]);
+
+  const currentItem = TEACHER_TICKER_ITEMS[messageIndex];
+
+  return (
+    <View style={[styles.tickerWrap, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <View style={styles.tickerAvatarStack}>
+        {currentItem.avatars.map((avatarIndex, position) => (
+          <Image
+            key={position}
+            source={AVATAR_SOURCES[avatarIndex]}
+            style={[
+              styles.tickerAvatar,
+              { borderColor: colors.surface, marginLeft: position === 0 ? 0 : -10, zIndex: currentItem.avatars.length - position },
+            ]}
+          />
+        ))}
+        <View style={[styles.tickerLiveDot, { backgroundColor: "#3DDC84", borderColor: colors.surface }]} />
+      </View>
+
+      <View style={styles.tickerBody}>
+        <Text style={[styles.tickerLabel, { color: colors.accent }]} numberOfLines={1}>
+          {currentItem.label}
+        </Text>
+        <View style={styles.tickerTextClip}>
+          <Animated.Text
+            style={[styles.tickerText, { color: colors.textPrimary, opacity, transform: [{ translateY }] }]}
+            numberOfLines={1}
+          >
+            {currentItem.text}
+          </Animated.Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   container: {
     flexGrow: 1,
@@ -798,6 +1059,10 @@ const styles = StyleSheet.create({
     gap: 0,
     overflow: "hidden",
   },
+  enrolmentHeader: { paddingTop: 18 },
+  enrolmentTabRow: { flexDirection: "row", gap: 10, marginTop: 18 },
+  enrolmentTab: { minHeight: 42, borderRadius: 22, paddingHorizontal: 18, justifyContent: "center", alignItems: "center" },
+  enrolmentTabText: { fontSize: 13, fontWeight: "800" },
   heroTopRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -811,20 +1076,18 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   eyebrow: {
-    fontSize: 12,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 1,
+    fontSize: 15,
+    fontWeight: "500",
   },
   heroTitle: {
-    marginTop: 4,
-    fontSize: 23,
-    lineHeight: 27,
+    marginTop: 2,
+    fontSize: 24,
+    lineHeight: 29,
     fontWeight: "800",
     letterSpacing: -0.5,
   },
   heroSubtitle: {
-    marginTop: 5,
+    marginTop: 8,
     fontSize: 13,
     lineHeight: 18,
     maxWidth: "95%",
@@ -833,7 +1096,6 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 14,
-    backgroundColor: "rgba(255,255,255,0.14)",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -841,18 +1103,18 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   focusCard: {
-    borderWidth: 1,
-    borderRadius: 22,
-    padding: 15,
+    borderRadius: 25,
+    padding: 24,
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-end",
     justifyContent: "space-between",
     gap: 12,
   },
   focusGraphicWrap: {
-    width: 58,
-    height: 58,
-    borderRadius: 19,
+    width: 74,
+    height: 74,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.14)",
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
@@ -862,24 +1124,28 @@ const styles = StyleSheet.create({
     height: 46,
   },
   focusLabel: {
-    fontSize: 11,
-    fontWeight: "800",
-    textTransform: "uppercase",
-    letterSpacing: 0.9,
+    color: "rgba(255,255,255,0.85)",
+    fontSize: 16,
+    fontWeight: "500",
   },
   focusValue: {
-    marginTop: 8,
-    fontSize: 20,
+    color: "#FFFFFF",
+    marginTop: 12,
+    fontSize: 40,
     fontWeight: "800",
     letterSpacing: -0.4,
   },
   focusMeta: {
-    marginTop: 4,
+    color: "rgba(255,255,255,0.84)",
     fontSize: 12,
     fontWeight: "600",
   },
+  focusMetrics: { flexDirection: "row", alignItems: "center", gap: 14 },
+  focusDivider: { width: 1, height: 52, backgroundColor: "rgba(255,255,255,0.28)", marginTop: 12 },
+  focusAction: { marginTop: 20, backgroundColor: "#FFFFFF", minWidth: 152, minHeight: 40, borderRadius: 12, paddingHorizontal: 16, flexDirection: "row", gap: 8, alignItems: "center", justifyContent: "center" },
+  focusActionText: { fontSize: 14, fontWeight: "800" },
   dashboardBody: {
-    marginTop: 14,
+    marginTop: 22,
     gap: 16,
   },
   sectionRow: {
@@ -904,19 +1170,10 @@ const styles = StyleSheet.create({
   },
   kpiCard: {
     width: "48%",
-    borderWidth: 1,
     borderRadius: 24,
     padding: 16,
-    minHeight: 128,
+    minHeight: 142,
     overflow: "hidden",
-  },
-  kpiGraphic: {
-    position: "absolute",
-    right: 8,
-    bottom: 6,
-    width: 54,
-    height: 54,
-    opacity: 0.1,
   },
   kpiTopRow: {
     flexDirection: "row",
@@ -927,23 +1184,22 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 12,
+    backgroundColor: "rgba(255,255,255,0.18)",
     alignItems: "center",
     justifyContent: "center",
   },
   kpiValue: {
+    color: "#FFFFFF",
+    marginTop: 18,
     fontSize: 26,
     fontWeight: "800",
     letterSpacing: -0.6,
   },
   kpiTitle: {
-    marginTop: 18,
+    color: "rgba(255,255,255,0.9)",
+    marginTop: 4,
     fontSize: 14,
     fontWeight: "800",
-  },
-  kpiHint: {
-    marginTop: 5,
-    fontSize: 12,
-    lineHeight: 18,
   },
   alertCard: {
     borderWidth: 1,
@@ -1085,149 +1341,309 @@ const styles = StyleSheet.create({
     textTransform: "capitalize",
   },
   teacherWrap: {
-    paddingTop: 8,
+    flex: 1,
+  },
+  teacherFixedHeader: {
+    paddingTop: 2,
+    paddingBottom: 2,
+  },
+  teacherHomeScroll: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 132,
     gap: 18,
   },
   teacherTopRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "flex-start",
+    alignItems: "center",
     gap: 12,
   },
   teacherGreetingBlock: {
     flex: 1,
-    paddingTop: 10,
   },
   teacherGreeting: {
-    fontSize: 15,
-    lineHeight: 21,
+    fontSize: 23,
+    lineHeight: 29,
+    fontWeight: "600",
+    letterSpacing: -0.45,
   },
-  teacherName: {
-    marginTop: 2,
-    fontSize: 26,
-    lineHeight: 31,
+  teacherGreetingName: {
     fontWeight: "800",
-    letterSpacing: -0.8,
-  },
-  teacherIntro: {
-    marginTop: 8,
-    fontSize: 15,
-    lineHeight: 22,
-    maxWidth: "92%",
   },
   teacherTopActions: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: 7,
+    borderWidth: 1,
+    borderRadius: 22,
+    padding: 3,
+  },
+  teacherWeekRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 16,
+  },
+  teacherWeekDay: {
+    width: 40,
+    minHeight: 52,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  teacherWeekDayLabel: {
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: "700",
+  },
+  teacherWeekDate: {
+    marginTop: 2,
+    fontSize: 15,
+    lineHeight: 19,
+    fontWeight: "800",
   },
   teacherIconButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
     position: "relative",
   },
+  teacherNotificationDot: {
+    position: "absolute",
+    top: -3,
+    right: -3,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#FFFFFF",
+  },
+  teacherNotificationCount: { color: "#FFFFFF", fontSize: 8, fontWeight: "800", lineHeight: 10 },
+  teacherAvatarRing: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    padding: 2,
+    borderWidth: 1,
+  },
   teacherAvatarFrame: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
   },
   teacherAvatar: {
-    width: 38,
-    height: 38,
+    width: 42,
+    height: 42,
+    marginTop: 3,
   },
-  teacherTabRow: {
-    flexDirection: "row",
+  teacherAvatarPhoto: { width: "100%", height: "100%" },
+  teacherHeroCarousel: {
     gap: 10,
   },
-  teacherTabPill: {
-    flex: 1,
-    minHeight: 40,
-    borderRadius: 20,
+  teacherHeroCard: {
+    minHeight: 220,
+    borderRadius: 22,
+    padding: 18,
+    overflow: "hidden",
+  },
+  teacherHeroGlow: {
+    position: "absolute",
+    width: 190,
+    height: 190,
+    borderRadius: 95,
+    right: -55,
+    top: -72,
+    backgroundColor: "#FFFFFF",
+    opacity: 0.12,
+  },
+  teacherHeroBulb: {
+    position: "absolute",
+    bottom: 122,
+    right: 86,
+    width: 36,
+    height: 42,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 14,
+    zIndex: 3,
   },
-  teacherTabText: {
-    fontSize: 15,
-    fontWeight: "700",
+  teacherHeroBulbGlow: {
+    position: "absolute",
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#F7C948",
   },
-  teacherHeroCard: {
-    minHeight: 266,
-    borderRadius: 28,
-    padding: 22,
-    overflow: "hidden",
-    justifyContent: "space-between",
+  teacherHeroBulbRay: {
+    position: "absolute",
+    width: 4,
+    height: 9,
+    borderRadius: 4,
+    backgroundColor: "#FFE26B",
+  },
+  teacherHeroBulbRayTop: {
+    top: -6,
+  },
+  teacherHeroBulbRayLeft: {
+    left: -3,
+    top: 8,
+    transform: [{ rotate: "-48deg" }],
+  },
+  teacherHeroBulbRayRight: {
+    right: -3,
+    top: 8,
+    transform: [{ rotate: "48deg" }],
   },
   teacherHeroCopy: {
-    maxWidth: "62%",
-    gap: 12,
+    maxWidth: "64%",
+    zIndex: 2,
   },
-  teacherHeroTag: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  teacherHeroTagText: {
-    color: "#FFFFFF",
-    fontSize: 13,
-    fontWeight: "600",
+  teacherHeroEyebrow: {
+    color: "rgba(255,255,255,0.78)",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1.1,
   },
   teacherHeroTitle: {
+    marginTop: 3,
     color: "#FFFFFF",
-    fontSize: 24,
-    lineHeight: 34,
-    fontWeight: "700",
-    letterSpacing: -0.7,
+    fontSize: 20,
+    lineHeight: 25,
+    fontWeight: "800",
+    letterSpacing: -0.55,
+  },
+  teacherHeroSubtitle: {
+    marginTop: 3,
+    color: "rgba(255,255,255,0.82)",
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: "600",
   },
   teacherHeroChip: {
+    marginTop: 8,
     alignSelf: "flex-start",
     backgroundColor: "#FFFFFF",
     borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
   },
   teacherHeroChipText: {
-    fontSize: 13,
-    fontWeight: "600",
+    fontSize: 10,
+    fontWeight: "700",
   },
-  teacherHeroButton: {
-    marginTop: 8,
+  teacherHeroPanel: {
+    marginTop: 14,
     alignSelf: "flex-start",
-    minWidth: 168,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "rgba(255,255,255,0.12)",
     borderRadius: 16,
-    paddingHorizontal: 20,
-    paddingVertical: 14,
+    padding: 6,
+  },
+  teacherHeroPanelButton: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 11,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 10,
+    gap: 8,
   },
-  teacherHeroButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
+  teacherHeroPanelButtonText: {
+    fontSize: 12,
+    fontWeight: "800",
   },
   teacherHeroGraphic: {
     position: "absolute",
-    right: 2,
-    bottom: 8,
-    width: 160,
-    height: 160,
-    opacity: 0.95,
+    right: -30,
+    bottom: -6,
+    width: 174,
+    height: 174,
+    opacity: 0.98,
+  },
+  teacherHeroPageDots: {
+    flexDirection: "row",
+    alignSelf: "center",
+    alignItems: "center",
+    gap: 6,
+  },
+  teacherHeroPageDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  tickerWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    borderWidth: 1,
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    shadowColor: "#7C005A",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 2,
+  },
+  tickerAvatarStack: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexShrink: 0,
+    position: "relative",
+  },
+  tickerAvatar: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 2,
+  },
+  tickerLiveDot: {
+    position: "absolute",
+    bottom: -1,
+    right: -1,
+    width: 11,
+    height: 11,
+    borderRadius: 6,
+    borderWidth: 2,
+  },
+  tickerBody: {
+    flex: 1,
+    gap: 3,
+  },
+  tickerLabel: {
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.7,
+  },
+  tickerTextClip: {
+    height: 18,
+    overflow: "hidden",
+  },
+  tickerText: {
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 18,
   },
   teacherSectionHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
+    alignItems: "flex-end",
+  },
+  teacherSectionHint: {
+    marginTop: 3,
+    fontSize: 12,
+    lineHeight: 17,
   },
   teacherSeeAll: {
     fontSize: 14,
-    fontWeight: "600",
+    fontWeight: "800",
+    paddingBottom: 1,
   },
   teacherSummaryRow: {
     flexDirection: "row",
@@ -1235,71 +1651,99 @@ const styles = StyleSheet.create({
   },
   teacherSummaryCard: {
     flex: 1,
-    minHeight: 234,
-    borderRadius: 26,
-    padding: 14,
+    minHeight: 184,
+    borderRadius: 24,
+    padding: 16,
     overflow: "hidden",
   },
   teacherSummaryHeader: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
+    gap: 8,
   },
   teacherSummaryIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 12,
+    width: 36,
+    height: 36,
+    borderRadius: 13,
     backgroundColor: "rgba(255,255,255,0.18)",
     alignItems: "center",
     justifyContent: "center",
   },
-  teacherSummaryTitle: {
-    marginTop: 14,
-    color: "#FFFFFF",
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  teacherSummaryValue: {
-    marginTop: 2,
-    color: "#FFFFFF",
-    fontSize: 38,
-    lineHeight: 44,
+  teacherSummaryKicker: {
+    color: "rgba(255,255,255,0.8)",
+    fontSize: 9,
     fontWeight: "800",
+    letterSpacing: 0.7,
   },
-  teacherSummaryMetaLabel: {
-    marginTop: 6,
-    color: "rgba(255,255,255,0.82)",
-    fontSize: 12,
-    fontWeight: "500",
-  },
-  teacherSummaryMetaValue: {
+  teacherSummaryTitle: {
+    marginTop: 16,
     color: "#FFFFFF",
     fontSize: 15,
+    fontWeight: "800",
+  },
+  teacherSummaryCountRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 5,
+  },
+  teacherSummaryValue: {
+    color: "#FFFFFF",
+    fontSize: 34,
+    lineHeight: 40,
+    fontWeight: "800",
+  },
+  teacherSummaryCountLabel: {
+    color: "rgba(255,255,255,0.75)",
+    fontSize: 11,
+    lineHeight: 18,
     fontWeight: "700",
+    paddingBottom: 7,
+  },
+  teacherSummaryStatusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginTop: 4,
+  },
+  teacherSummaryStatusDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: "rgba(255,255,255,0.9)",
+  },
+  teacherSummaryMetaLabel: {
+    color: "rgba(255,255,255,0.82)",
+    fontSize: 10,
+    lineHeight: 15,
+    fontWeight: "600",
+    flexShrink: 1,
   },
   teacherSummaryFooter: {
-    marginTop: 16,
+    flex: 1,
+    justifyContent: "flex-end",
+    marginTop: 8,
   },
   teacherSummaryButton: {
     alignSelf: "flex-start",
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     backgroundColor: "rgba(255,255,255,0.18)",
     alignItems: "center",
     justifyContent: "center",
   },
   teacherSummaryGraphic: {
     position: "absolute",
-    right: 8,
-    bottom: 12,
-    width: 68,
-    height: 68,
-    opacity: 0.92,
+    right: -2,
+    bottom: 6,
+    width: 78,
+    height: 78,
+    opacity: 0.25,
   },
   teacherHighlightCard: {
-    borderRadius: 24,
-    padding: 16,
+    borderWidth: 1,
+    borderRadius: 20,
+    padding: 14,
     overflow: "hidden",
   },
   teacherHighlightTopRow: {
@@ -1307,113 +1751,120 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
   },
-  teacherHighlightBadge: {
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+  teacherHighlightIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  teacherHighlightBadgeText: {
-    fontSize: 13,
-    fontWeight: "700",
+  teacherHighlightEyebrow: {
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.8,
   },
   teacherHighlightBody: {
     marginTop: 10,
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "flex-end",
+    alignItems: "center",
     gap: 12,
   },
   teacherHighlightCopy: {
     flex: 1,
   },
   teacherHighlightTitle: {
-    color: "#FFFFFF",
-    fontSize: 30,
-    lineHeight: 34,
+    fontSize: 19,
+    lineHeight: 24,
     fontWeight: "800",
-    letterSpacing: -0.8,
+    letterSpacing: -0.5,
   },
-  teacherHighlightFooter: {
-    marginTop: 18,
+  teacherHighlightSubtitle: {
+    marginTop: 3,
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: "600",
+  },
+  teacherHighlightSide: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
+    gap: 8,
   },
-  teacherHighlightAvatars: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  teacherMiniAvatar: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+  teacherHighlightCount: {
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 2,
-    borderColor: "rgba(255,255,255,0.65)",
   },
-  teacherMiniAvatarAlt: {
-    marginLeft: -8,
-    backgroundColor: "#F9D7EA",
+  teacherHighlightCountValue: {
+    fontSize: 34,
+    lineHeight: 38,
+    fontWeight: "800",
   },
-  teacherMiniAvatarText: {
-    color: "#FFFFFF",
-    fontSize: 11,
-    fontWeight: "700",
+  teacherHighlightCountLabel: {
+    marginTop: 0,
+    fontSize: 8,
+    fontWeight: "800",
+    letterSpacing: 0.6,
   },
   teacherHighlightArrow: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: "rgba(255,255,255,0.24)",
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
   },
-  teacherHighlightGraphic: {
-    width: 88,
-    height: 88,
-  },
   teacherTimelineCard: {
-    borderRadius: 26,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    gap: 2,
+    borderRadius: 22,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+  },
+  teacherActivityHeading: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  teacherActivityLive: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+  },
+  teacherActivityLiveDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+  },
+  teacherActivityLiveText: {
+    fontSize: 10,
+    fontWeight: "800",
   },
   teacherTimelineRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 12,
-    paddingVertical: 12,
-  },
-  teacherTimelineTrack: {
-    width: 12,
     alignItems: "center",
+    gap: 12,
+    paddingVertical: 13,
   },
-  teacherTimelineDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    marginTop: 4,
-  },
-  teacherTimelineLine: {
-    width: 2,
-    flex: 1,
-    minHeight: 48,
-    marginTop: 4,
-    borderRadius: 1,
+  teacherActivityIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
   },
   teacherTimelineMain: {
     flex: 1,
   },
   teacherTimelineTitle: {
-    fontSize: 16,
-    lineHeight: 22,
-    fontWeight: "500",
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "700",
   },
   teacherTimelineSubtitle: {
     marginTop: 2,
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 11,
+    lineHeight: 16,
   },
   teacherSectionTitle: {
     fontSize: 21,

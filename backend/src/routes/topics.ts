@@ -2,8 +2,8 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { storage } from "../lib/storage";
-import { extractText, extractUrlText } from "../lib/extraction";
-import { aiProvider } from "../lib/ai";
+import { MAX_EXTRACTED_CHARS } from "../lib/extraction";
+import { runContextExtraction } from "../lib/context-extraction";
 
 const VALID_SOURCE_TYPES = ["pdf", "docx", "pptx", "image", "url", "idream_k12"];
 
@@ -37,10 +37,6 @@ interface CreateObservationBody {
 
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope, requireRoles("teacher")];
 
-// Topic (Docs/Dev/AI_Module_Rebuild_Plan.md, Phase 1) - the container every
-// generation, assignment, observation, and attainment report belongs to.
-// Two topics with the same name for the same class/subject are allowed
-// (client doc edge case) - name is intentionally not unique.
 export async function topicRoutes(app: FastifyInstance) {
   app.get("/topics", { onRequest: scoped(app) }, async (request) => {
     const query = (request.query ?? {}) as { classSectionId?: string; subject?: string };
@@ -92,6 +88,7 @@ export async function topicRoutes(app: FastifyInstance) {
     const topic = await prisma.topic.findFirst({
       where: { id: request.params.id, schoolId: request.schoolId },
       include: {
+        classSection: { select: { className: true, sectionName: true } },
         contextSources: { orderBy: { createdAt: "desc" } },
         generations: { orderBy: { generatedAt: "desc" }, include: { contextSources: true } },
         observations: { orderBy: { recordedAt: "desc" } },
@@ -104,9 +101,6 @@ export async function topicRoutes(app: FastifyInstance) {
     return { data: topic, meta: {} };
   });
 
-  // Upload path (pdf/docx/pptx/image) goes through multipart; url/idream_k12
-  // are plain JSON. Kept as one endpoint per the API spec ("POST
-  // /topics/{id}/context"), branching on content-type.
   app.post<{ Params: { id: string }; Body: CreateContextSourceBody }>(
     "/topics/:id/context",
     { onRequest: scoped(app) },
@@ -122,8 +116,7 @@ export async function topicRoutes(app: FastifyInstance) {
       let originalFilename: string | null = null;
       let sourceUrl: string | null = null;
       let idreamK12ReferenceId: string | null = null;
-      let extractedText: string | null = null;
-      let extractionError: string | null = null;
+      let fileBuffer: Buffer | null = null;
 
       if (isMultipart) {
         const file = await request.file();
@@ -139,31 +132,9 @@ export async function topicRoutes(app: FastifyInstance) {
             : "pdf"
           : "image";
         originalFilename = file.filename;
-        const buffer = await file.toBuffer();
-        const { location } = await storage.save(`context-sources/${topic.id}/${Date.now()}-${file.filename}`, buffer);
+        fileBuffer = await file.toBuffer();
+        const { location } = await storage.save(`context-sources/${topic.id}/${Date.now()}-${file.filename}`, fileBuffer);
         fileLocation = location;
-
-        // Real text extraction for PDF/DOCX/PPTX (backend/src/lib/extraction.ts).
-        // Images go through Gemini OCR (lib/ai.ts's extractTextFromPhoto) when
-        // GEMINI_API_KEY is configured - if not, stays pending exactly as
-        // before this existed, no regression for environments without the key.
-        // Edge case from the client doc ("uploaded PDF is a scan with no
-        // extractable text") lands here as extractionStatus: "failed_no_text".
-        try {
-          if (sourceType === "image") {
-            if (process.env.GEMINI_API_KEY) {
-              const ocr = await aiProvider.extractTextFromPhoto({ fileLocation });
-              if (ocr.text.length > 0) extractedText = ocr.text;
-            }
-          } else {
-            const result = await extractText(buffer, sourceType);
-            if (result && result.text.length > 0) {
-              extractedText = result.text;
-            }
-          }
-        } catch (err) {
-          extractionError = err instanceof Error ? err.message : "Extraction failed";
-        }
       } else {
         const body = request.body ?? ({} as CreateContextSourceBody);
         if (!body.sourceType || !VALID_SOURCE_TYPES.includes(body.sourceType)) {
@@ -184,32 +155,9 @@ export async function topicRoutes(app: FastifyInstance) {
         sourceType = body.sourceType;
         sourceUrl = body.sourceUrl ?? null;
         idreamK12ReferenceId = body.idreamK12ReferenceId ?? null;
-
-        // Real page-content extraction (backend/src/lib/extraction.ts's
-        // extractUrlText) - includes SSRF guards (private/loopback address
-        // rejection). A dead link, timeout, or JS-only page lands on
-        // extractionStatus: "failed_no_text" below, same as any other source
-        // that produced no usable text.
-        if (sourceType === "url" && sourceUrl) {
-          try {
-            const result = await extractUrlText(sourceUrl);
-            if (result && result.text.length > 0) {
-              extractedText = result.text;
-            }
-          } catch (err) {
-            extractionError = err instanceof Error ? err.message : "URL fetch failed";
-          }
-        }
       }
 
-      const extractionStatus =
-        sourceType === "idream_k12"
-          ? "extracted" // no vendor integration exists - nothing to extract
-          : extractedText
-          ? "extracted"
-          : sourceType === "image" && !process.env.GEMINI_API_KEY
-          ? "pending" // OCR not configured - GEMINI_API_KEY unset
-          : "failed_no_text"; // extraction ran (or was configured) but found no usable text, or threw
+      const extraction = await runContextExtraction({ sourceType, fileLocation, sourceUrl, buffer: fileBuffer });
 
       const contextSource = await prisma.contextSource.create({
         data: {
@@ -219,9 +167,9 @@ export async function topicRoutes(app: FastifyInstance) {
           originalFilename,
           sourceUrl,
           idreamK12ReferenceId,
-          extractionStatus,
-          extractedText,
-          extractionError,
+          extractionStatus: extraction.extractionStatus,
+          extractedText: extraction.extractedText,
+          extractionError: extraction.extractionError,
         },
       });
 
@@ -229,13 +177,78 @@ export async function topicRoutes(app: FastifyInstance) {
     }
   );
 
-  // Lets a teacher open/download what they uploaded - fileLocation is a raw
-  // server-local path with no other way to reach it. Accepts the access token
-  // via ?token= in addition to the normal Authorization header: React
-  // Native's Linking.openURL can't attach headers, so this is the only way to
-  // let the OS/browser open the file directly. Deliberate, scoped tradeoff
-  // (token briefly visible in a URL/server log) accepted for a dev-stage
-  // internal tool - revisit before this goes anywhere more exposed.
+  // Re-run extraction for an existing source - used by the "Re-transcribe" /
+  // "Re-extract" action when the first pass produced nothing useful, or ran
+  // before a vision key was configured (status "pending").
+  app.post<{ Params: { topicId: string; contextSourceId: string } }>(
+    "/topics/:topicId/context/:contextSourceId/retry-extraction",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const source = await prisma.contextSource.findFirst({
+        where: {
+          id: request.params.contextSourceId,
+          topicId: request.params.topicId,
+          topic: { schoolId: request.schoolId },
+        },
+      });
+      if (!source) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Context source not found" } });
+      }
+
+      const extraction = await runContextExtraction({
+        sourceType: source.sourceType,
+        fileLocation: source.fileLocation,
+        sourceUrl: source.sourceUrl,
+      });
+
+      const updated = await prisma.contextSource.update({
+        where: { id: source.id },
+        data: {
+          extractedText: extraction.extractedText,
+          extractionError: extraction.extractionError,
+          extractionStatus: extraction.extractionStatus,
+        },
+      });
+
+      return { data: updated, meta: {} };
+    }
+  );
+
+  // Manual override of a source's extracted text - lets a teacher fix a poor
+  // transcription or paste text in for a source the extractor could not read.
+  app.patch<{ Params: { topicId: string; contextSourceId: string }; Body: { extractedText?: string } }>(
+    "/topics/:topicId/context/:contextSourceId",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const body = request.body ?? {};
+      if (typeof body.extractedText !== "string" || !body.extractedText.trim()) {
+        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "extractedText is required" } });
+      }
+
+      const source = await prisma.contextSource.findFirst({
+        where: {
+          id: request.params.contextSourceId,
+          topicId: request.params.topicId,
+          topic: { schoolId: request.schoolId },
+        },
+      });
+      if (!source) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Context source not found" } });
+      }
+
+      const updated = await prisma.contextSource.update({
+        where: { id: source.id },
+        data: {
+          extractedText: body.extractedText.trim().slice(0, MAX_EXTRACTED_CHARS),
+          extractionStatus: "extracted",
+          extractionError: null,
+        },
+      });
+
+      return { data: updated, meta: {} };
+    }
+  );
+
   async function authenticateFromHeaderOrToken(request: FastifyRequest, reply: FastifyReply) {
     if (request.headers.authorization) {
       return app.authenticate(request, reply);
@@ -279,10 +292,6 @@ export async function topicRoutes(app: FastifyInstance) {
     }
   );
 
-  // No iDream K12 credentials/integration exist yet (same situation as
-  // backend/src/lib/messaging.ts and the Bedrock provider in lib/ai.ts).
-  // Returns an explicit empty result rather than fabricating fake library
-  // content - callers must handle the "no results" edge case either way.
   app.get("/content-library/idream-k12/search", { onRequest: scoped(app) }, async (request) => {
     const query = (request.query ?? {}) as { topic?: string };
     app.log.info({ topic: query.topic }, "iDream K12 search requested, no integration configured yet");

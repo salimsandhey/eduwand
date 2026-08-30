@@ -1,3 +1,4 @@
+import "dotenv/config";
 import Fastify from "fastify";
 import rateLimit from "@fastify/rate-limit";
 import cors from "@fastify/cors";
@@ -6,6 +7,7 @@ import { authPlugin } from "./plugins/auth";
 import { scopePlugin } from "./plugins/scope";
 import { healthRoutes } from "./routes/health";
 import { authRoutes } from "./routes/auth";
+import { authMeRoutes } from "./routes/auth-me";
 import { studentAuthRoutes } from "./routes/student-auth";
 import { studentPortalRoutes } from "./routes/student-portal";
 import { enquiryRoutes } from "./routes/enquiries";
@@ -23,6 +25,7 @@ import { userRoutes } from "./routes/users";
 import { trustRoutes } from "./routes/trusts";
 import { schoolRoutes } from "./routes/schools";
 import { pipelineStageRoutes } from "./routes/pipeline-stages";
+import { formDefinitionRoutes } from "./routes/form-definitions";
 import { documentRoutes } from "./routes/documents";
 import { enquiryPhotoRoutes } from "./routes/enquiry-photo";
 import { lessonStudioRoutes } from "./routes/lesson-studio";
@@ -36,18 +39,18 @@ import { submissionRoutes } from "./routes/submissions";
 import { aiAnalyticsRoutes } from "./routes/ai-analytics";
 import { auditLogRoutes } from "./routes/audit-log";
 import { aiPromptRoutes } from "./routes/ai-prompts";
+import { admissionsWorkflowRoutes } from "./routes/admissions-workflow";
 
 const app = Fastify({ logger: true });
 
-// Dev-only: reflects any origin so the local Expo web/admin dashboard dev servers can
-// call the API regardless of port. Lock this down to real origins before production.
 app.register(cors, { origin: true, methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"] });
 app.register(rateLimit, { global: true, max: 1000, timeWindow: "1 minute" });
-app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB per admission document (FR-EG-6)
+app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024 } });
 app.register(authPlugin);
 app.register(scopePlugin);
 app.register(healthRoutes, { prefix: "/api/v1" });
 app.register(authRoutes, { prefix: "/api/v1" });
+app.register(authMeRoutes, { prefix: "/api/v1" });
 app.register(studentAuthRoutes, { prefix: "/api/v1" });
 app.register(studentPortalRoutes, { prefix: "/api/v1" });
 app.register(enquiryRoutes, { prefix: "/api/v1" });
@@ -65,6 +68,7 @@ app.register(userRoutes, { prefix: "/api/v1" });
 app.register(trustRoutes, { prefix: "/api/v1" });
 app.register(schoolRoutes, { prefix: "/api/v1" });
 app.register(pipelineStageRoutes, { prefix: "/api/v1" });
+app.register(formDefinitionRoutes, { prefix: "/api/v1" });
 app.register(documentRoutes, { prefix: "/api/v1" });
 app.register(enquiryPhotoRoutes, { prefix: "/api/v1" });
 app.register(lessonStudioRoutes, { prefix: "/api/v1" });
@@ -78,8 +82,18 @@ app.register(submissionRoutes, { prefix: "/api/v1" });
 app.register(aiAnalyticsRoutes, { prefix: "/api/v1" });
 app.register(auditLogRoutes, { prefix: "/api/v1" });
 app.register(aiPromptRoutes, { prefix: "/api/v1" });
+app.register(admissionsWorkflowRoutes, { prefix: "/api/v1" });
 
 const port = Number(process.env.PORT) || 4000;
+
+// All file uploads (context sources, submissions, photos, exports) go to
+// Cloudinary - fail fast at boot rather than at the first upload.
+for (const requiredEnv of ["DATABASE_URL", "JWT_SECRET", "CLOUDINARY_URL"]) {
+  if (!process.env[requiredEnv]) {
+    console.error(`Missing required environment variable: ${requiredEnv}`);
+    process.exit(1);
+  }
+}
 
 app.listen({ port, host: "0.0.0.0" }).catch((err) => {
   app.log.error(err);

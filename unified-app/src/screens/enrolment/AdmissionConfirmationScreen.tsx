@@ -7,19 +7,34 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { StageRail } from "../../components/StageRail";
-import { DocumentChecklist, requiredDocumentCompletion } from "../../components/DocumentChecklist";
-import { api, ClassSection, EnquiryDocument, AdmissionInfo, DocumentType, PipelineStage } from "../../api/client";
+import { DocumentChecklist, requiredDocumentCompletion, ChecklistItem, FALLBACK_DOCUMENT_CHECKLIST } from "../../components/DocumentChecklist";
+import { DynamicFormFields } from "../../components/DynamicFormFields";
+import { api, ClassSection, EnquiryDocument, AdmissionInfo, DocumentType, PipelineStage, FormField } from "../../api/client";
 
 const DRAFT_SAVE_DELAY_MS = 800;
 
-type WizardStep = "student" | "guardian" | "documents" | "review";
+type WizardStep = "student" | "guardian" | "details" | "documents" | "review";
 
 const WIZARD_STEPS: PipelineStage[] = [
   { id: "student", key: "student", label: "Student", order: 0, isTerminal: false, isConverted: false },
   { id: "guardian", key: "guardian", label: "Guardian", order: 1, isTerminal: false, isConverted: false },
-  { id: "documents", key: "documents", label: "Documents", order: 2, isTerminal: false, isConverted: false },
-  { id: "review", key: "review", label: "Review", order: 3, isTerminal: false, isConverted: false },
+  { id: "details", key: "details", label: "Details", order: 2, isTerminal: false, isConverted: false },
+  { id: "documents", key: "documents", label: "Documents", order: 3, isTerminal: false, isConverted: false },
+  { id: "review", key: "review", label: "Review", order: 4, isTerminal: false, isConverted: false },
 ];
+
+// Fixed AdmissionDraft keys already modelled as first-class inputs below -
+// everything else on the draft/admission_detail FormField set is a dynamic
+// key rendered via DynamicFormFields (Docs/Dev/GrowthEngine_Rebuild_Plan.md
+// Phase 2).
+const ADMISSION_DRAFT_FIXED_KEYS = new Set([
+  "fullName",
+  "dateOfBirth",
+  "classSectionId",
+  "guardianName",
+  "guardianContact",
+  "admissionDate",
+]);
 
 type Props = NativeStackScreenProps<RootStackParamList, "AdmissionConfirmation">;
 
@@ -34,6 +49,9 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
   const [classSections, setClassSections] = useState<ClassSection[]>([]);
   const [documents, setDocuments] = useState<EnquiryDocument[]>([]);
   const [step, setStep] = useState<WizardStep>("student");
+  const [detailFields, setDetailFields] = useState<FormField[]>([]);
+  const [dynamicValues, setDynamicValues] = useState<Record<string, unknown>>({});
+  const [checklist, setChecklist] = useState<ChecklistItem[]>(FALLBACK_DOCUMENT_CHECKLIST);
 
   const [fullName, setFullName] = useState("");
   const [dateOfBirth, setDateOfBirth] = useState("");
@@ -53,8 +71,6 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
   const [admissionDateFocused, setAdmissionDateFocused] = useState(false);
 
   const buttonScale = useRef(new Animated.Value(1)).current;
-  // Skips the draft-autosave effect until the form has been hydrated from the
-  // server once, so restoring a saved draft doesn't immediately re-save itself.
   const isHydrated = useRef(false);
 
   const loadDocuments = useCallback(async () => {
@@ -62,7 +78,6 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
     try {
       setDocuments(await api.listDocuments(accessToken, enquiryId));
     } catch {
-      // Non-fatal - the form itself doesn't depend on this list loading.
     }
   }, [accessToken, enquiryId]);
 
@@ -70,16 +85,28 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
     if (!accessToken) return;
     (async () => {
       try {
-        const [enquiryRes, sections, admissionInfo] = await Promise.all([
+        const [enquiryRes, sections, admissionInfo, checklistResult] = await Promise.all([
           api.getEnquiry(accessToken, enquiryId),
           api.listClassSections(accessToken),
           api.getEnquiryAdmission(accessToken, enquiryId),
+          api.getFormDefinition(accessToken, "document_checklist").catch(() => null),
         ]);
         setClassSections(sections);
         setAdmission(admissionInfo);
+        setDetailFields(admissionInfo.fields ?? []);
+        if (checklistResult && checklistResult.fields.length > 0) {
+          setChecklist(checklistResult.fields.map((f) => ({ key: f.key, label: f.label, required: f.isRequired })));
+        }
 
         const draft = admissionInfo.draft;
         const stub = admissionInfo.studentStub;
+        if (draft) {
+          const dynamic: Record<string, unknown> = {};
+          for (const [key, value] of Object.entries(draft)) {
+            if (!ADMISSION_DRAFT_FIXED_KEYS.has(key)) dynamic[key] = value;
+          }
+          setDynamicValues(dynamic);
+        }
         if (stub) {
           setFullName(stub.fullName);
           setDateOfBirth(stub.dateOfBirth.slice(0, 10));
@@ -101,8 +128,6 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
         setLoadError(err instanceof Error ? err.message : "Failed to load admission details");
       } finally {
         setIsLoadingContext(false);
-        // Deferred a tick so the state updates above land before the
-        // autosave effect starts watching for further edits.
         setTimeout(() => {
           isHydrated.current = true;
         }, 0);
@@ -111,9 +136,6 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
     loadDocuments();
   }, [accessToken, enquiryId, loadDocuments]);
 
-  // Admission draft autosave (backend/src/routes/enquiries.ts PATCH
-  // /enquiries/:id/admission-draft) - lets the counsellor move between wizard
-  // steps or leave and come back without losing progress.
   useEffect(() => {
     if (!isHydrated.current || !accessToken || admission?.confirmed) return;
     const timer = setTimeout(() => {
@@ -125,15 +147,19 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
           guardianName: guardianName || undefined,
           guardianContact: guardianContact || undefined,
           admissionDate: admissionDate || undefined,
+          ...dynamicValues,
         })
         .then(() => setDraftSavedAt(new Date()))
         .catch(() => {
-          // Best-effort - the final confirm-admission call is still authoritative.
         });
     }, DRAFT_SAVE_DELAY_MS);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fullName, dateOfBirth, classSectionId, guardianName, guardianContact, admissionDate]);
+  }, [fullName, dateOfBirth, classSectionId, guardianName, guardianContact, admissionDate, dynamicValues]);
+
+  function setDynamicValue(key: string, value: unknown) {
+    setDynamicValues((prev) => ({ ...prev, [key]: value }));
+  }
 
   async function uploadChecklistDocument(file: { uri: string; name: string; mimeType: string }, documentType: DocumentType) {
     if (!accessToken) return;
@@ -197,37 +223,14 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
     );
   }
 
-  if (!admission.unlocked && !admission.confirmed) {
-    return (
-      <Screen edges={["bottom"]}>
-        <View style={styles.lockedWrap}>
-          <View style={[styles.lockedCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
-            <View style={[styles.lockedIconWrap, { backgroundColor: colors.surfaceRaised }]}>
-              <Ionicons name="lock-closed-outline" size={26} color={colors.textMuted} />
-            </View>
-            <Text style={[styles.lockedTitle, { color: colors.textPrimary }]}>Admission not started</Text>
-            <Text style={[styles.lockedBody, { color: colors.textMuted }]}>
-              Move this lead to the Application stage before starting the admission flow.
-            </Text>
-            <Pressable
-              onPress={() => navigation.goBack()}
-              style={({ pressed }) => [styles.lockedButton, { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]}
-              accessibilityRole="button"
-            >
-              <Text style={[styles.lockedButtonText, { color: colors.accentOn }]}>Back to enquiry</Text>
-            </Pressable>
-          </View>
-        </View>
-      </Screen>
-    );
-  }
-
+  // Admission-detail prep is always unlocked (see backend comment on
+  // admissionSummary.unlocked) - filling these fields in advance is what
+  // lets an enquiry reach Application in the first place, so there is no
+  // "not started yet" locked state to gate here anymore.
   const isConfirmed = admission.confirmed;
   const selectedClassSection = classSections.find((cs) => cs.id === classSectionId);
-  const docCompletion = requiredDocumentCompletion(documents);
+  const docCompletion = requiredDocumentCompletion(documents, checklist);
 
-  // Confirmed admissions are a closed record - show a plain read-only
-  // summary instead of a wizard with nothing left to step through.
   if (isConfirmed) {
     return (
       <Screen edges={["bottom"]}>
@@ -255,7 +258,7 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
 
           <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
             <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Documents</Text>
-            <DocumentChecklist documents={documents} onUpload={uploadChecklistDocument} readOnly />
+            <DocumentChecklist documents={documents} checklist={checklist} onUpload={uploadChecklistDocument} readOnly />
           </View>
         </ScrollView>
       </Screen>
@@ -280,7 +283,11 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
         ) : null}
 
         <View style={styles.stepRailWrap}>
-          <StageRail stages={WIZARD_STEPS} currentKey={step} onSelect={(key) => setStep(key as WizardStep)} />
+          <StageRail
+            stages={detailFields.length > 0 ? WIZARD_STEPS : WIZARD_STEPS.filter((s) => s.key !== "details")}
+            currentKey={step}
+            onSelect={(key) => setStep(key as WizardStep)}
+          />
         </View>
 
         {step === "student" ? (
@@ -390,7 +397,16 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
               />
             </View>
 
-            <StepNavRow onBack={() => setStep("student")} onNext={() => setStep("documents")} colors={colors} pressedOpacity={pressedOpacity} />
+            <StepNavRow onBack={() => setStep("student")} onNext={() => setStep(detailFields.length > 0 ? "details" : "documents")} colors={colors} pressedOpacity={pressedOpacity} />
+          </View>
+        ) : null}
+
+        {step === "details" && detailFields.length > 0 ? (
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+            <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Additional Details</Text>
+            <DynamicFormFields fields={detailFields} values={dynamicValues} onChange={setDynamicValue} />
+
+            <StepNavRow onBack={() => setStep("guardian")} onNext={() => setStep("documents")} colors={colors} pressedOpacity={pressedOpacity} />
           </View>
         ) : null}
 
@@ -402,10 +418,10 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
                 {docCompletion.done}/{docCompletion.total} required
               </Text>
             </View>
-            <DocumentChecklist documents={documents} onUpload={uploadChecklistDocument} />
+            <DocumentChecklist documents={documents} checklist={checklist} onUpload={uploadChecklistDocument} />
             {docError ? <Text style={[styles.error, { color: colors.danger, marginTop: 8 }]}>{docError}</Text> : null}
 
-            <StepNavRow onBack={() => setStep("guardian")} onNext={() => setStep("review")} colors={colors} pressedOpacity={pressedOpacity} />
+            <StepNavRow onBack={() => setStep(detailFields.length > 0 ? "details" : "guardian")} onNext={() => setStep("review")} colors={colors} pressedOpacity={pressedOpacity} />
           </View>
         ) : null}
 
@@ -423,6 +439,23 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
               <ReviewRow label="Name" value={guardianName || "—"} colors={colors} />
               <ReviewRow label="Contact" value={guardianContact || "—"} colors={colors} />
               <ReviewRow label="Admission date" value={admissionDate || "—"} colors={colors} />
+
+              {detailFields.length > 0 ? (
+                <>
+                  <Text style={[styles.reviewSectionLabel, { color: colors.textMuted, marginTop: 14 }]}>Additional Details</Text>
+                  {detailFields.map((field) => {
+                    const rawValue = dynamicValues[field.key];
+                    const display = Array.isArray(rawValue)
+                      ? rawValue.join(", ") || "—"
+                      : typeof rawValue === "boolean"
+                        ? (rawValue ? "Yes" : "No")
+                        : rawValue === undefined || rawValue === null || rawValue === ""
+                          ? "—"
+                          : String(rawValue);
+                    return <ReviewRow key={field.id} label={field.label} value={display} colors={colors} />;
+                  })}
+                </>
+              ) : null}
 
               <Text style={[styles.reviewSectionLabel, { color: colors.textMuted, marginTop: 14 }]}>Documents</Text>
               <ReviewRow

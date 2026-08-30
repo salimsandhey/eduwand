@@ -13,8 +13,6 @@ interface AuditEventInput {
   metadata?: Record<string, unknown>;
 }
 
-// Best-effort logging - a write failure here should never block the actual
-// admin action it's describing.
 export async function recordAuditEvent(input: AuditEventInput): Promise<void> {
   try {
     await prisma.auditLog.create({

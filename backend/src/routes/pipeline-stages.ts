@@ -18,11 +18,6 @@ interface UpdateStageBody {
 
 const KEY_PATTERN = /^[a-z0-9_]+$/;
 
-// Configurable admissions pipeline (FR-EG-3). Read access is any school-scoped
-// role (front_desk/counsellor/teacher on the Unified App need this list too,
-// not just admin/leadership) - write access is admin/leadership only. No
-// delete endpoint in v1: archiving a stage with live enquiries in it is a real
-// product decision, not something to do silently.
 export async function pipelineStageRoutes(app: FastifyInstance) {
   app.get(
     "/pipeline-stages",
@@ -38,7 +33,7 @@ export async function pipelineStageRoutes(app: FastifyInstance) {
 
   app.post<{ Body: CreateStageBody }>(
     "/pipeline-stages",
-    { onRequest: [app.authenticate, app.requireSchoolScope, requireRoles("admin", "leadership")] },
+    { onRequest: [app.authenticate, app.requireSchoolScope, requireRoles("admin", "principal", "leadership")] },
     async (request, reply) => {
       const body = request.body ?? ({} as CreateStageBody);
 
@@ -87,7 +82,7 @@ export async function pipelineStageRoutes(app: FastifyInstance) {
 
   app.patch<{ Params: { id: string }; Body: UpdateStageBody }>(
     "/pipeline-stages/:id",
-    { onRequest: [app.authenticate, app.requireSchoolScope, requireRoles("admin", "leadership")] },
+    { onRequest: [app.authenticate, app.requireSchoolScope, requireRoles("admin", "principal", "leadership")] },
     async (request, reply) => {
       const existing = await prisma.pipelineStage.findFirst({
         where: { id: request.params.id, schoolId: request.schoolId },

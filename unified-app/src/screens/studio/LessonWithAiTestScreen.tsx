@@ -29,8 +29,6 @@ const ACTIVITIES = [
   ["Think and explain", "Students explain the process in their own words.", "10 min", "None"],
 ];
 
-// Standalone React Native reconstruction of the supplied Figma direction. It
-// intentionally uses sample lesson data and does not change the live workflow.
 export function LessonWithAiTestScreen({ navigation }: Props) {
   const { colors, pressedOpacity } = useTheme();
   const [step, setStep] = useState<LessonStep>("overview");
@@ -56,11 +54,14 @@ export function LessonWithAiTestScreen({ navigation }: Props) {
             <Ionicons name="arrow-back" size={22} color={colors.textPrimary} />
           </Pressable>
           <View style={styles.topCopy}><Text style={[styles.topTitle, { color: colors.textPrimary }]}>Lesson with AI</Text><Text style={[styles.topSubtitle, { color: colors.textMuted }]}>Create something great for your next class.</Text></View>
-          <View style={[styles.circleButton, { backgroundColor: colors.accent, borderColor: colors.accent }]}><Ionicons name="sparkles" size={17} color={colors.accentOn} /></View>
+          <Pressable style={({ pressed }) => [styles.circleButton, { backgroundColor: colors.surface, borderColor: colors.border, marginRight: 8 }, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.navigate("MainTabs", { screen: "Home" })} accessibilityRole="button" accessibilityLabel="Go to home">
+            <Ionicons name="home-outline" size={19} color={colors.textPrimary} />
+          </Pressable>
+          <View style={[styles.circleButton, { backgroundColor: colors.accent, borderColor: colors.accent }]}><Ionicons name="color-wand" size={17} color={colors.accentOn} /></View>
         </View>
 
         <View style={styles.hero}>
-          <View style={styles.heroCopy}><Text style={[styles.heroTitle, { color: colors.textPrimary }]}>{step === "assignment" ? "Create an assignment" : "Photosynthesis in Plants"}</Text><Text style={[styles.heroMeta, { color: colors.textMuted }]}>{step === "assignment" ? "Turn today's lesson into meaningful practice." : "Grade 10 / Biology / CBSE"}</Text>{step !== "assignment" ? <View style={[styles.aiBadge, { backgroundColor: colors.accentSoft }]}><Ionicons name="sparkles" size={12} color={colors.accent} /><Text style={[styles.aiBadgeText, { color: colors.accent }]}>AI generated</Text></View> : null}</View>
+          <View style={styles.heroCopy}><Text style={[styles.heroTitle, { color: colors.textPrimary }]}>{step === "assignment" ? "Create an assignment" : "Photosynthesis in Plants"}</Text><Text style={[styles.heroMeta, { color: colors.textMuted }]}>{step === "assignment" ? "Turn today's lesson into meaningful practice." : "Grade 10 / Biology / CBSE"}</Text>{step !== "assignment" ? <View style={[styles.aiBadge, { backgroundColor: colors.accentSoft }]}><Ionicons name="color-wand" size={12} color={colors.accent} /><Text style={[styles.aiBadgeText, { color: colors.accent }]}>AI generated</Text></View> : null}</View>
           <Image source={decorativeAssets.studioTeacher} style={styles.heroImage} resizeMode="contain" />
         </View>
 

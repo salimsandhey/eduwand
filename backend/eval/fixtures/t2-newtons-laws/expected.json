@@ -1,0 +1,16 @@
+{
+  "sourceType": "pdf",
+  "expectedStatus": "extracted",
+  "mustContain": [
+    "Newton's First Law",
+    "inertia",
+    "balanced forces",
+    "unbalanced forces",
+    "Isaac Newton",
+    "mass",
+    "inertia of rest",
+    "inertia of motion"
+  ],
+  "figureFacts": [],
+  "notes": "Scanned school notes that already carry an OCR text layer from the scanning app (OKEN Scanner) - one word per line in places, so recall must be checked on whitespace-normalized text, not exact phrase match."
+}

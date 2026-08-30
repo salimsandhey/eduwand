@@ -58,6 +58,7 @@ model School {
   updatedBy                 String?  @map("updated_by") @db.Uuid
 
   academicYears     AcademicYear[]
+  families          Family[]
   users             AppUser[]
   userSchoolAccess  UserSchoolAccess[]
   enquiries         Enquiry[]
@@ -74,6 +75,9 @@ model School {
   classBandConfig   ClassBandConfig?
   communicationMessages CommunicationMessage[]
   subjects          Subject[]
+  formDefinitions   FormDefinition[]
+  feePlans          FeePlan[]
+  approvalChainSteps ApprovalChainStep[]
 
   @@map("school")
 }
@@ -108,6 +112,8 @@ model AcademicYear {
   updatedBy String?  @map("updated_by") @db.Uuid
 
   classSections ClassSection[]
+  enquiries     Enquiry[]
+  feePlans      FeePlan[]
 
   @@map("academic_year")
 }
@@ -162,6 +168,13 @@ model AppUser {
   role           String
   authProviderId String?  @map("auth_provider_id")
   passwordHash   String?  @map("password_hash")
+  // Self-service profile photo (unified-app ProfileScreen). Same
+  // mutually-exclusive uploaded-file vs preset-avatar shape as Enquiry
+  // (see the photoLocation/avatarKey comment there) - setting one clears
+  // the other. Managed only through /auth/me/* by the user themselves.
+  photoLocation  String?  @map("photo_location")
+  photoMimeType  String?  @map("photo_mime_type")
+  avatarKey      String?  @map("avatar_key")
   status         String   @default("invited")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
@@ -186,8 +199,26 @@ model AppUser {
   observations        Observation[]
   sentCommunicationMessages CommunicationMessage[]
   classSectionAssignments ClassSectionTeacher[]
+  roleGrants UserRoleGrant[]
+  interviews InterviewRecord[] @relation("InterviewConductedBy")
+  approvals  EnquiryApproval[] @relation("ApprovalDecidedBy")
 
   @@map("app_user")
+}
+
+// Additive role grants on top of AppUser.role (Phase 1 of Growth Engine access
+// control) - lets a user hold extra roles (e.g. front_desk primary + counsellor
+// grant) without a full per-school role redesign. Effective role set for a user
+// = { user.role } union { grant.role for each row here }.
+model UserRoleGrant {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  user      AppUser  @relation(fields: [userId], references: [id])
+  role      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("user_role_grant")
 }
 
 // Maps a user to multiple schools within a trust, for staff assigned across more than one school
@@ -210,6 +241,12 @@ model Enquiry {
   id                   String    @id @default(uuid()) @db.Uuid
   schoolId             String    @map("school_id") @db.Uuid
   school               School    @relation(fields: [schoolId], references: [id])
+  academicYearId       String    @map("academic_year_id") @db.Uuid
+  academicYear         AcademicYear @relation(fields: [academicYearId], references: [id])
+  familyId             String?   @map("family_id") @db.Uuid
+  family               Family?   @relation(fields: [familyId], references: [id])
+  feePlanId            String?   @map("fee_plan_id") @db.Uuid
+  feePlan              FeePlan?  @relation(fields: [feePlanId], references: [id])
   contactName          String    @map("contact_name")
   contactPhone         String    @map("contact_phone")
   contactEmail         String?   @map("contact_email")
@@ -244,6 +281,12 @@ model Enquiry {
   admissionDraft        Json?     @map("admission_draft")
   admissionStartedAt    DateTime? @map("admission_started_at")
   admissionCompletedAt  DateTime? @map("admission_completed_at")
+  // Answers to the school's active enquiry_intake FormDefinition's dynamic
+  // fields (Docs/Dev/GrowthEngine_Rebuild_Plan.md Phase 2), keyed by
+  // FormField.key. Parallel to admissionDraft, but for intake-time fields
+  // rather than the admission tab.
+  formResponses         Json?     @map("form_responses")
+  approvalChainSnapshot Json?     @map("approval_chain_snapshot")
   createdAt            DateTime  @default(now()) @map("created_at")
   updatedAt            DateTime  @updatedAt @map("updated_at")
   createdBy            String?   @map("created_by") @db.Uuid
@@ -254,10 +297,91 @@ model Enquiry {
   followUpTasks FollowUpTask[]
   studentStub   StudentStub?
   documents     Document[]
+  interviews    InterviewRecord[]
+  approvals     EnquiryApproval[]
 
   @@index([schoolId, status])
+  @@index([schoolId, academicYearId, status])
   @@index([schoolId, contactPhone])
+  @@index([feePlanId])
   @@map("enquiry")
+}
+
+model InterviewRecord {
+  id                String   @id @default(uuid()) @db.Uuid
+  enquiryId         String   @map("enquiry_id") @db.Uuid
+  enquiry           Enquiry  @relation(fields: [enquiryId], references: [id])
+  conductedByUserId String   @map("conducted_by_user_id") @db.Uuid
+  conductedBy       AppUser  @relation("InterviewConductedBy", fields: [conductedByUserId], references: [id])
+  interviewDate     DateTime @map("interview_date")
+  score             Decimal? @db.Decimal(6, 2)
+  maxScore          Decimal? @map("max_score") @db.Decimal(6, 2)
+  notes             String
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  @@index([enquiryId, interviewDate])
+  @@map("interview_record")
+}
+
+model FeePlan {
+  id             String       @id @default(uuid()) @db.Uuid
+  schoolId       String       @map("school_id") @db.Uuid
+  school         School       @relation(fields: [schoolId], references: [id])
+  academicYearId String       @map("academic_year_id") @db.Uuid
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+  name           String
+  amount         Decimal      @db.Decimal(12, 2)
+  frequency      String
+  isActive       Boolean      @default(true) @map("is_active")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  enquiries Enquiry[]
+
+  @@index([schoolId, academicYearId, isActive])
+  @@map("fee_plan")
+}
+
+model ApprovalChainStep {
+  id           String   @id @default(uuid()) @db.Uuid
+  schoolId     String   @map("school_id") @db.Uuid
+  school       School   @relation(fields: [schoolId], references: [id])
+  order        Int
+  requiredRole String   @map("required_role")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([schoolId, order])
+  @@map("approval_chain_step")
+}
+
+model EnquiryApproval {
+  id               String   @id @default(uuid()) @db.Uuid
+  enquiryId        String   @map("enquiry_id") @db.Uuid
+  enquiry          Enquiry  @relation(fields: [enquiryId], references: [id])
+  stepOrder        Int      @map("step_order")
+  approvedByUserId String   @map("approved_by_user_id") @db.Uuid
+  approvedBy       AppUser  @relation("ApprovalDecidedBy", fields: [approvedByUserId], references: [id])
+  decision         String
+  comment          String?
+  decidedAt        DateTime @default(now()) @map("decided_at")
+
+  @@unique([enquiryId, stepOrder])
+  @@map("enquiry_approval")
+}
+
+model Family {
+  id                  String    @id @default(uuid()) @db.Uuid
+  schoolId            String    @map("school_id") @db.Uuid
+  school              School    @relation(fields: [schoolId], references: [id])
+  primaryContactName  String    @map("primary_contact_name")
+  primaryContactPhone String    @map("primary_contact_phone")
+  createdAt           DateTime  @default(now()) @map("created_at")
+
+  enquiries Enquiry[]
+
+  @@index([schoolId, primaryContactPhone])
+  @@map("family")
 }
 
 // Configurable admissions pipeline (FR-EG-3): stages are per-school, not a fixed
@@ -280,6 +404,65 @@ model PipelineStage {
   @@unique([schoolId, key])
   @@index([schoolId, order])
   @@map("pipeline_stage")
+}
+
+// Form builder foundation (Docs/Dev/GrowthEngine_Rebuild_Plan.md Phase 2) - lets
+// each school customize the dynamic fields captured at intake, on the
+// admission tab, and on the document checklist, without a schema change per
+// school. purpose is one of: enquiry_intake, admission_detail,
+// document_checklist (free text, matching the reference schema's other
+// "enum" fields - enforced in application code, not a real Postgres enum).
+//
+// Only one FormDefinition may be isActive per (schoolId, purpose) at a time.
+// Prisma (6.19, this repo's pinned version) has no schema-level support for a
+// filtered/partial unique index (no `where` clause on @@unique), so that
+// invariant is enforced in application code (backend/src/routes/form-
+// definitions.ts deactivates any existing active definition, in the same
+// transaction, whenever a new one is activated) rather than at the DB layer -
+// same tradeoff already accepted for CsvExportSchedule.isActive. The
+// [schoolId, purpose, isActive] index below just makes the "find the active
+// one" lookup (the hot path, run on every intake/admission/document screen)
+// an index scan instead of a table scan.
+model FormDefinition {
+  id        String   @id @default(uuid()) @db.Uuid
+  schoolId  String   @map("school_id") @db.Uuid
+  school    School   @relation(fields: [schoolId], references: [id])
+  purpose   String
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  createdBy String?  @map("created_by")
+  updatedBy String?  @map("updated_by")
+
+  fields FormField[]
+
+  @@index([schoolId, purpose, isActive])
+  @@map("form_definition")
+}
+
+// fieldType is one of: text, number, date, select, multiselect, checkbox,
+// textarea, file (free text, application-enforced - see FormDefinition).
+// requiredAtStage, when set, is a PipelineStage.key (or Enquiry-lifecycle
+// stage) marking when the field becomes required, e.g. "application" for
+// admission_detail fields that only need answering once the Admission tab
+// unlocks - null means "required (if at all) from the start."
+model FormField {
+  id               String         @id @default(uuid()) @db.Uuid
+  formDefinitionId String         @map("form_definition_id") @db.Uuid
+  formDefinition   FormDefinition @relation(fields: [formDefinitionId], references: [id])
+  key              String
+  label            String
+  fieldType        String         @map("field_type")
+  options          Json?
+  order            Int
+  isRequired       Boolean        @default(false) @map("is_required")
+  requiredAtStage  String?        @map("required_at_stage")
+  createdAt        DateTime       @default(now()) @map("created_at")
+
+  @@unique([formDefinitionId, key])
+  @@index([formDefinitionId, order])
+  @@map("form_field")
 }
 
 // Admission document collection (FR-EG-6). fileLocation is whatever the Storage
@@ -383,6 +566,9 @@ model FollowUpTask {
   template         MessageTemplate @relation(fields: [templateId], references: [id])
   status           String          @default("pending")
   sentAt           DateTime?       @map("sent_at")
+  outcome          String?
+  nextFollowUpAt   DateTime?       @map("next_follow_up_at")
+  escalatedAt      DateTime?       @map("escalated_at")
   createdAt        DateTime        @default(now()) @map("created_at")
   updatedAt        DateTime        @updatedAt @map("updated_at")
   createdBy        String?         @map("created_by") @db.Uuid
@@ -397,8 +583,11 @@ model StudentStub {
   id              String       @id @default(uuid()) @db.Uuid
   schoolId        String       @map("school_id") @db.Uuid
   school          School       @relation(fields: [schoolId], references: [id])
-  sourceEnquiryId String       @unique @map("source_enquiry_id") @db.Uuid
-  sourceEnquiry   Enquiry      @relation(fields: [sourceEnquiryId], references: [id])
+  // Nullable - most students are admitted through the Enquiry pipeline and
+  // get one, but a school onboarding its existing roster can add a student
+  // directly (POST /students) without ever having an Enquiry for them.
+  sourceEnquiryId String?      @unique @map("source_enquiry_id") @db.Uuid
+  sourceEnquiry   Enquiry?     @relation(fields: [sourceEnquiryId], references: [id])
   fullName        String       @map("full_name")
   dateOfBirth     DateTime     @map("date_of_birth") @db.Date
   classSectionId  String       @map("class_section_id") @db.Uuid
@@ -583,6 +772,13 @@ model Generation {
   generationStatus       String                @default("succeeded") @map("generation_status")
   generatedAt            DateTime              @default(now()) @map("generated_at")
 
+  // Separate from generationStatus (which is about whether the AI call
+  // succeeded) - this gates /student/materials. draft = teacher-only,
+  // published = visible to every student in the topic's class section.
+  // Mirrors Assignment.status/publishedAt.
+  shareStatus            String                @default("draft") @map("share_status")
+  publishedAt            DateTime?             @map("published_at")
+
   contextSources ContextSource[]
 
   @@index([topicId])
@@ -674,6 +870,13 @@ model AnswerKey {
   id                      String     @id @default(uuid()) @db.Uuid
   assignmentId            String     @map("assignment_id") @db.Uuid
   assignment              Assignment @relation(fields: [assignmentId], references: [id])
+  // Keyed by the question's own id (the AssignmentQuestion.id inside the
+  // questions JSON), not array position. Personalised delivery
+  // (PersonalisationSuggestion.appliedMix, see lib/personalisation.ts) can
+  // hand different students a different subset/order of the same
+  // assignment's questions, so position alone can no longer identify a
+  // question. questionIndex is kept only for stable display order.
+  questionId              String     @map("question_id")
   questionIndex           Int        @map("question_index")
   photoSubmissionRequired Boolean    @default(false) @map("photo_submission_required")
   aiAnswer                String     @map("ai_answer")
@@ -681,7 +884,8 @@ model AnswerKey {
   marks                   Float      @default(1)
   createdAt               DateTime   @default(now()) @map("created_at")
 
-  @@unique([assignmentId, questionIndex])
+  @@unique([assignmentId, questionId])
+  @@index([assignmentId, questionIndex])
   @@map("answer_key")
 }
 
@@ -745,6 +949,12 @@ model Grade {
   aiScore             Float?     @map("ai_score")
   aiFeedback          String?    @map("ai_feedback")
   aiNextStep          String?    @map("ai_next_step")
+  // Per-question breakdown from the grading call - {questionId, correct
+  // (null when the grader can't judge correctness, e.g. the offline
+  // completeness heuristic), marksAwarded, note}[]. Feeds the class-insight
+  // item analysis (backend/src/routes/submissions.ts) and the per-question
+  // detail shown in GradingReviewScreen.
+  questionDetails     Json?      @map("question_details")
   finalScore          Float?     @map("final_score")
   finalFeedback       String?    @map("final_feedback")
   performanceBand     String?    @map("performance_band")

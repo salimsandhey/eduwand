@@ -3,7 +3,8 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { storage } from "../lib/storage";
-import { aiProvider, logAiUsage, GradingQuestion } from "../lib/ai";
+import { aiProvider, logAiUsage, GradingQuestion, AnswerKeyContext, QuestionGradeDetail } from "../lib/ai";
+import { selectQuestionsForMix, DifficultyTaggedQuestion } from "../lib/personalisation";
 
 interface CreateSubmissionBody {
   assignmentId: string;
@@ -29,9 +30,48 @@ async function computePerformanceBand(schoolId: string, scorePercent: number): P
   return "level_3";
 }
 
-// A teacher logs a submission on a student's behalf here; Phase 4 adds a
-// student's-own POST /student/submissions in student-portal.ts using the same
-// underlying create logic.
+// Same subset a personalised student was actually shown (see
+// lib/personalisation.ts) - recomputed at grading time rather than stored,
+// since it's a pure function of the assignment's questions + the student's
+// applied mix and the two call sites (delivery, grading) must always agree.
+async function effectiveQuestions(
+  assignmentId: string,
+  studentStubId: string,
+  personalisationEnabled: boolean,
+  allQuestions: DifficultyTaggedQuestion[]
+): Promise<DifficultyTaggedQuestion[]> {
+  if (!personalisationEnabled) return allQuestions;
+  const suggestion = await prisma.personalisationSuggestion.findUnique({
+    where: { assignmentId_studentStubId: { assignmentId, studentStubId } },
+  });
+  return selectQuestionsForMix(allQuestions, suggestion?.appliedMix as Record<string, number> | null | undefined);
+}
+
+// A photo submission's OCR text is either the new per-question JSON map
+// (`{questionId: text}`, from extractTextFromPhoto's segmented path) or,
+// for submissions made before segmentation existed, one unstructured blob
+// applied to every question as a best-effort fallback. Empty/missing text
+// (OCR unconfigured, or nothing legible in the photo) resolves to no
+// answers at all - it must NOT be treated as if every question were
+// answered with that text (that was the placeholder-scoring bug).
+function resolveAnswers(
+  submission: { submissionType: string; answers: unknown; ocrExtractedText: string | null },
+  questions: { id: string }[]
+): Record<string, string> {
+  if (submission.submissionType !== "photo") {
+    return (submission.answers as Record<string, string>) ?? {};
+  }
+  const raw = submission.ocrExtractedText;
+  if (!raw || !raw.trim()) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, string>;
+  } catch {
+    // Not JSON - legacy unsegmented text, fall through.
+  }
+  return Object.fromEntries(questions.map((q) => [q.id, raw]));
+}
+
 export async function submissionRoutes(app: FastifyInstance) {
   app.post<{ Body: CreateSubmissionBody }>("/submissions", { onRequest: scoped(app) }, async (request, reply) => {
     const body = request.body ?? ({} as CreateSubmissionBody);
@@ -108,10 +148,9 @@ export async function submissionRoutes(app: FastifyInstance) {
     let ocrExtractedText: string | null = null;
     let ocrConfidence: number | null = null;
     if (submissionType === "photo" && photoFileLocation) {
-      // Placeholder extraction (backend/src/lib/ai.ts) - no OCR provider
-      // configured yet. confidence:0 marks it as not a real read.
-      const ocr = await aiProvider.extractTextFromPhoto({ fileLocation: photoFileLocation });
-      ocrExtractedText = ocr.text;
+      const questionsForOcr = assignment.questions as unknown as { id: string; prompt: string }[];
+      const ocr = await aiProvider.extractTextFromPhoto({ fileLocation: photoFileLocation, questions: questionsForOcr });
+      ocrExtractedText = ocr.perQuestion ? JSON.stringify(ocr.perQuestion) : ocr.text;
       ocrConfidence = ocr.confidence;
     }
 
@@ -149,16 +188,30 @@ export async function submissionRoutes(app: FastifyInstance) {
       });
     }
 
-    const questions = submission.assignment.questions as unknown as GradingQuestion[];
-    // For a photo submission, grade against the OCR'd text (placeholder today),
-    // never the raw file - same shape the grader already expects.
-    const answers =
-      submission.submissionType === "photo"
-        ? Object.fromEntries(questions.map((q) => [q.id, submission.ocrExtractedText ?? ""]))
-        : (submission.answers as unknown as Record<string, string>);
+    const allQuestions = submission.assignment.questions as unknown as GradingQuestion[];
+    const questions = await effectiveQuestions(
+      submission.assignmentId,
+      submission.studentStubId,
+      submission.assignment.personalisationEnabled,
+      allQuestions
+    );
+    const answers = resolveAnswers(submission, questions);
+
+    const answerKeyRows = await prisma.answerKey.findMany({
+      where: { assignmentId: submission.assignmentId, teacherVerifiedAnswer: { not: null } },
+    });
+    const answerKey: AnswerKeyContext[] = answerKeyRows.map((k) => ({
+      questionId: k.questionId,
+      verifiedAnswer: k.teacherVerifiedAnswer!,
+      marks: k.marks,
+    }));
 
     const start = Date.now();
-    const { score, feedback, flagged, nextStep, model } = await aiProvider.gradeSubmission({ questions, answers });
+    const { score, feedback, flagged, nextStep, model, questionDetails } = await aiProvider.gradeSubmission({
+      questions,
+      answers,
+      answerKey,
+    });
     const performanceBand = await computePerformanceBand(request.schoolId, score);
 
     const grade = await prisma.grade.update({
@@ -167,6 +220,7 @@ export async function submissionRoutes(app: FastifyInstance) {
         aiScore: score,
         aiFeedback: feedback,
         aiNextStep: nextStep,
+        questionDetails: questionDetails as unknown as Prisma.InputJsonValue,
         performanceBand,
         flaggedForAttention: flagged,
         status: "ai_graded",
@@ -184,8 +238,6 @@ export async function submissionRoutes(app: FastifyInstance) {
     return { data: grade, meta: {} };
   });
 
-  // Class-level insight: banding + item analysis + suggested actions, per the
-  // client doc's "what the evaluation must tell the teacher" requirement.
   app.get<{ Params: { id: string } }>("/assignments/:id/class-insight", { onRequest: scoped(app) }, async (request, reply) => {
     const assignment = await prisma.assignment.findFirst({
       where: { id: request.params.id, schoolId: request.schoolId },
@@ -204,10 +256,6 @@ export async function submissionRoutes(app: FastifyInstance) {
       bands[band]?.push({ studentStubId: s.studentStub.id, fullName: s.studentStub.fullName });
     }
 
-    // Item analysis: which questions the majority answered incorrectly is not
-    // determinable from the current free-text answers/OCR placeholder without
-    // per-question scoring - flagged as a follow-up once objective question
-    // types carry per-question correctness, not just an overall score.
     const suggestedActions =
       bands.level_3.length > graded.length / 2
         ? ["More than half the class is below 50% - consider re-teaching this topic before moving on."]
@@ -215,20 +263,50 @@ export async function submissionRoutes(app: FastifyInstance) {
         ? ["A small group needs individual follow-up before the next assessment on this topic."]
         : ["Class-wide understanding looks solid - safe to move to the next topic."];
 
+    // Aggregate per-question correctness from every graded submission's
+    // Grade.questionDetails. correct is null under the offline heuristic (it
+    // can't judge correctness, only completeness) - those entries count
+    // toward totalCount but are excluded from correctRate's denominator so a
+    // question doesn't read as "0% correct" when it's really "not yet
+    // evaluated for correctness."
+    const allQuestions = assignment.questions as unknown as { id: string; prompt: string }[];
+    const perQuestion = new Map<string, { correctCount: number; knownCount: number; totalCount: number }>();
+    for (const s of assignment.submissions) {
+      const details = s.grade?.questionDetails as QuestionGradeDetail[] | null | undefined;
+      if (!details) continue;
+      for (const d of details) {
+        const entry = perQuestion.get(d.questionId) ?? { correctCount: 0, knownCount: 0, totalCount: 0 };
+        entry.totalCount += 1;
+        if (d.correct !== null) {
+          entry.knownCount += 1;
+          if (d.correct) entry.correctCount += 1;
+        }
+        perQuestion.set(d.questionId, entry);
+      }
+    }
+    const itemAnalysis =
+      perQuestion.size > 0
+        ? Array.from(perQuestion.entries()).map(([questionId, v]) => ({
+            questionId,
+            prompt: allQuestions.find((q) => q.id === questionId)?.prompt ?? "",
+            correctCount: v.correctCount,
+            totalCount: v.totalCount,
+            correctRate: v.knownCount > 0 ? v.correctCount / v.knownCount : null,
+          }))
+        : null;
+
     return {
       data: {
         gradedCount: graded.length,
         totalSubmissions: assignment.submissions.length,
         bands,
-        itemAnalysis: null,
+        itemAnalysis,
         suggestedActions,
       },
       meta: {},
     };
   });
 
-  // "Accept AI grade" is calling this with no body - finalScore/finalFeedback
-  // fall back to the AI's own values.
   app.patch<{ Params: { id: string }; Body: UpdateGradeBody }>("/grades/:id", { onRequest: scoped(app) }, async (request, reply) => {
     const grade = await prisma.grade.findFirst({
       where: { id: request.params.id, submission: { assignment: { schoolId: request.schoolId } } },
@@ -253,8 +331,6 @@ export async function submissionRoutes(app: FastifyInstance) {
     return { data: updated, meta: {} };
   });
 
-  // Single-grade release (API Specification section 4.3) - the sole gate on
-  // student-visible grades, alongside the bulk action below.
   app.post<{ Params: { id: string } }>("/grades/:id/release", { onRequest: scoped(app) }, async (request, reply) => {
     const grade = await prisma.grade.findFirst({
       where: { id: request.params.id, submission: { assignment: { schoolId: request.schoolId } } },
@@ -280,9 +356,6 @@ export async function submissionRoutes(app: FastifyInstance) {
     return { data: updated, meta: {} };
   });
 
-  // Bulk "release grades" action (UI Screen Spec, Grading Review) - not a
-  // per-submission call in the original API table, added because that's how
-  // the screen's single action is meant to behave.
   app.post<{ Params: { id: string } }>(
     "/assignments/:id/release-grades",
     { onRequest: scoped(app) },

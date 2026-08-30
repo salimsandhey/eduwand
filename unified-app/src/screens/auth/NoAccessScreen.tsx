@@ -4,10 +4,6 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 
-// admin, leadership, platform_admin, student, and parent have no mobile experience by
-// design - per the PRD, admin/leadership's real home is the Admin Dashboard (web),
-// and student/parent are structural shells only in this build phase. Rather than hand
-// them a tab bar full of screens that aren't really theirs, this says so plainly.
 export function NoAccessScreen() {
   const { user, logout } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
