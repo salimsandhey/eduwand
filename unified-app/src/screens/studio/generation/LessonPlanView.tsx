@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { View, Text, TextInput, Pressable, ScrollView, StyleSheet } from "react-native";
 import Markdown from "react-native-markdown-display";
 import { Ionicons } from "@expo/vector-icons";
@@ -28,6 +28,23 @@ interface Props {
   editable: boolean;
   onChange: (content: LessonPlanContent) => void;
   sources: ContextSource[];
+  scrollRef?: React.RefObject<ScrollView | null>;
+}
+
+// Scrolls the field being edited to the top of the visible (above-keyboard) area, instead of
+// leaving it wherever it happened to be - otherwise the last field in a section (e.g. the final
+// objective, or the assessment box) can end up hidden behind the keyboard with no way to see it.
+// A short delay lets the edit-mode layout (and the keyboard's own open animation) settle first.
+function scrollFieldIntoView(inputRef: React.RefObject<TextInput | null>, scrollRef?: React.RefObject<ScrollView | null>) {
+  if (!scrollRef?.current || !inputRef.current) return;
+  setTimeout(() => {
+    if (!scrollRef.current || !inputRef.current) return;
+    (inputRef.current as any).measureLayout(
+      scrollRef.current as any,
+      (_x: number, y: number) => scrollRef.current?.scrollTo({ y: Math.max(0, y - 16), animated: true }),
+      () => {}
+    );
+  }, 250);
 }
 
 const STEPS = [
@@ -89,9 +106,11 @@ function extractBloom(text: string): { level: string; color: string; icon: keyof
   return null;
 }
 
-export function LessonPlanView({ content, editable, onChange, sources }: Props) {
+export function LessonPlanView({ content, editable, onChange, sources, scrollRef }: Props) {
   const { colors, cardShadow } = useTheme();
   const [step, setStep] = useState("overview");
+  const overviewInputRef = useRef<TextInput>(null);
+  const assessmentInputRef = useRef<TextInput>(null);
 
   function updateObjective(i: number, value: string) {
     const objectives = [...content.objectives];
@@ -140,9 +159,11 @@ export function LessonPlanView({ content, editable, onChange, sources }: Props) 
             <CardLabel colors={colors}>Lesson overview</CardLabel>
             {editable ? (
               <TextInput
+                ref={overviewInputRef}
                 style={[styles.multilineInput, { color: colors.textPrimary, borderColor: colors.border }]}
                 value={content.overview}
                 onChangeText={(overview) => onChange({ ...content, overview })}
+                onFocus={() => scrollFieldIntoView(overviewInputRef, scrollRef)}
                 multiline
               />
             ) : (
@@ -235,7 +256,7 @@ export function LessonPlanView({ content, editable, onChange, sources }: Props) 
                   </View>
                 )}
                 renderEditor={(done, cancel) => (
-                  <EditableObjective initial={obj} onCancel={cancel} onDone={(v) => { updateObjective(i, v); done(); }} colors={colors} />
+                  <EditableObjective initial={obj} onCancel={cancel} onDone={(v) => { updateObjective(i, v); done(); }} colors={colors} scrollRef={scrollRef} />
                 )}
               />
             );
@@ -273,6 +294,7 @@ export function LessonPlanView({ content, editable, onChange, sources }: Props) 
                   onCancel={cancel}
                   onDone={(v) => { updateActivity(i, v); done(); }}
                   colors={colors}
+                  scrollRef={scrollRef}
                 />
               )}
             />
@@ -287,9 +309,11 @@ export function LessonPlanView({ content, editable, onChange, sources }: Props) 
             <Card colors={colors} cardShadow={cardShadow}>
               <CardLabel colors={colors}>Assessment</CardLabel>
               <TextInput
+                ref={assessmentInputRef}
                 style={[styles.multilineInput, { color: colors.textPrimary, borderColor: colors.border }]}
                 value={content.assessment}
                 onChangeText={(assessment) => onChange({ ...content, assessment })}
+                onFocus={() => scrollFieldIntoView(assessmentInputRef, scrollRef)}
                 multiline
               />
             </Card>
@@ -323,19 +347,24 @@ function EditableObjective({
   onCancel,
   onDone,
   colors,
+  scrollRef,
 }: {
   initial: string;
   onCancel: () => void;
   onDone: (v: string) => void;
   colors: any;
+  scrollRef?: React.RefObject<ScrollView | null>;
 }) {
   const [value, setValue] = useState(initial);
+  const inputRef = useRef<TextInput>(null);
   return (
     <View>
       <TextInput
+        ref={inputRef}
         style={[styles.multilineInput, { color: colors.textPrimary, borderColor: colors.border }]}
         value={value}
         onChangeText={setValue}
+        onFocus={() => scrollFieldIntoView(inputRef, scrollRef)}
         multiline
         autoFocus
       />
@@ -349,19 +378,31 @@ function EditableActivity({
   onCancel,
   onDone,
   colors,
+  scrollRef,
 }: {
   initial: LessonPlanContent["activities"][number];
   onCancel: () => void;
   onDone: (v: LessonPlanContent["activities"][number]) => void;
   colors: any;
+  scrollRef?: React.RefObject<ScrollView | null>;
 }) {
   const [title, setTitle] = useState(initial.title);
   const [description, setDescription] = useState(initial.description);
   const [durationMinutes, setDurationMinutes] = useState(String(initial.durationMinutes));
   const [materials, setMaterials] = useState(initial.materials.join(", "));
+  const titleInputRef = useRef<TextInput>(null);
   return (
     <View>
-      <TextInput style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]} value={title} onChangeText={setTitle} placeholder="Title" placeholderTextColor={colors.textMuted} autoFocus />
+      <TextInput
+        ref={titleInputRef}
+        style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+        value={title}
+        onChangeText={setTitle}
+        placeholder="Title"
+        placeholderTextColor={colors.textMuted}
+        onFocus={() => scrollFieldIntoView(titleInputRef, scrollRef)}
+        autoFocus
+      />
       <TextInput
         style={[styles.multilineInput, { color: colors.textPrimary, borderColor: colors.border, marginTop: spacing.xs }]}
         value={description}

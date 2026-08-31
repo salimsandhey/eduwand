@@ -250,7 +250,7 @@ const styles = StyleSheet.create({
   },
   label: {
     fontFamily: typography.fontFamily,
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: "700",
     letterSpacing: 0,
   },

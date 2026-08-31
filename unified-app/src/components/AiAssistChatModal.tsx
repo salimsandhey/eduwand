@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, Modal, Image, Animated } from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, Modal, Image, Animated, useWindowDimensions } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme/ThemeContext";
 import { decorativeAssets } from "../theme/decorativeAssets";
@@ -60,6 +60,15 @@ function TypingDots() {
 export function AiAssistChatModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const { colors, cardShadow, pressedOpacity } = useTheme();
   const keyboardHeight = useKeyboardHeight();
+  const { height: windowHeight } = useWindowDimensions();
+  // Base (no-keyboard) height is 82% of the window, anchored to the bottom. When the
+  // keyboard opens we lift the sheet by keyboardHeight (marginBottom) so the input row
+  // clears it - but if the sheet height stays at 82%, that lift pushes the header off
+  // the top. Shrinking the height by exactly keyboardHeight keeps the top edge (header)
+  // right where it was and only eats into the message-list space, with a floor so it
+  // never collapses to nothing on very tall keyboards.
+  const baseSheetHeight = windowHeight * 0.82;
+  const sheetHeight = Math.max(280, baseSheetHeight - keyboardHeight);
   const [messages, setMessages] = useState<ChatMessage[]>([GREETING]);
   const [draft, setDraft] = useState("");
   const [isTyping, setIsTyping] = useState(false);
@@ -94,7 +103,7 @@ export function AiAssistChatModal({ visible, onClose }: { visible: boolean; onCl
     <Modal transparent animationType="slide" visible={visible} onRequestClose={onClose}>
       <View style={styles.root}>
         <Pressable style={styles.backdrop} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close AI assistant" />
-        <View style={[styles.sheet, { backgroundColor: colors.surface, marginBottom: keyboardHeight }]}>
+        <View style={[styles.sheet, { backgroundColor: colors.surface, height: sheetHeight, marginBottom: keyboardHeight }]}>
           <View style={[styles.handle, { backgroundColor: colors.border }]} />
 
           <View style={styles.header}>
@@ -191,7 +200,7 @@ export function AiAssistChatModal({ visible, onClose }: { visible: boolean; onCl
 const styles = StyleSheet.create({
   root: { flex: 1, justifyContent: "flex-end" },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(22, 15, 20, 0.48)" },
-  sheet: { height: "82%", borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 16 },
+  sheet: { borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 16 },
   handle: { width: 42, height: 4, borderRadius: 2, alignSelf: "center", marginTop: 10, marginBottom: 6 },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 10 },
   headerLeft: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },

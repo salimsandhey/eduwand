@@ -4,25 +4,24 @@ import { Keyboard, Platform } from "react-native";
 /**
  * Tracks the on-screen keyboard height via real Keyboard events, for use as
  * marginBottom/paddingBottom on a <Modal>'s content so the keyboard doesn't
- * cover it (KeyboardAvoidingView doesn't reliably reach into Modal's separate
- * native window).
+ * cover it.
  *
- * iOS only: the Activity here runs with windowSoftInputMode="adjustResize"
- * (see AndroidManifest.xml / app.json's softwareKeyboardLayoutMode), so on
- * Android the OS already shrinks the window - and the Modal sheet along with
- * it, since it's pinned to the bottom - when the keyboard opens. Adding the
- * keyboard height again on top of that double-compensates and pushes the
- * sheet up far past the keyboard. Only iOS (which does no such resize) needs
- * the manual offset.
+ * windowSoftInputMode="adjustResize" in AndroidManifest.xml only resizes the
+ * Activity's own window - React Native's <Modal> renders in a separate native
+ * Android Dialog window that does not inherit that setting, so the OS never
+ * shrinks the modal for the keyboard on Android either. Both platforms need
+ * the manual offset; only the event names differ (Android has no
+ * keyboardWillShow/Hide, only keyboardDidShow/Hide).
  */
 export function useKeyboardHeight() {
   const [height, setHeight] = useState(0);
 
   useEffect(() => {
-    if (Platform.OS !== "ios") return;
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
 
-    const showSub = Keyboard.addListener("keyboardWillShow", (e) => setHeight(e.endCoordinates?.height ?? 0));
-    const hideSub = Keyboard.addListener("keyboardWillHide", () => setHeight(0));
+    const showSub = Keyboard.addListener(showEvent, (e) => setHeight(e.endCoordinates?.height ?? 0));
+    const hideSub = Keyboard.addListener(hideEvent, () => setHeight(0));
 
     return () => {
       showSub.remove();

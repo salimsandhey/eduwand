@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Switch } from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Switch, Platform, KeyboardAvoidingView } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "../../navigation/types";
@@ -149,7 +149,12 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
 
   return (
     <Screen edges={["bottom"]}>
-      <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
           <Text style={[styles.label, { color: colors.textSecondary }]}>Title</Text>
           <TextInput
@@ -275,6 +280,7 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
           </Pressable>
         </View>
       </ScrollView>
+      </KeyboardAvoidingView>
     </Screen>
   );
 }

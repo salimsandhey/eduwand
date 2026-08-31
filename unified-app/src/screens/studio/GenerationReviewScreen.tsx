@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator } from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Platform, KeyboardAvoidingView } from "react-native";
 import Markdown, { MarkdownIt } from "react-native-markdown-display";
 import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -97,6 +97,7 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
   const { generationId } = route.params;
   const { accessToken } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
+  const scrollRef = useRef<ScrollView>(null);
 
   const [generation, setGeneration] = useState<Generation | null>(null);
   const [structuredContent, setStructuredContent] = useState<StructuredGenerationContent | null>(null);
@@ -263,6 +264,7 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
 
   return (
     <Screen edges={["top", "bottom"]}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
       <View style={styles.screenHeader}>
         <View style={styles.topBar}>
           <Pressable style={({ pressed }) => [styles.backButton, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.goBack()} accessibilityRole="button" accessibilityLabel="Go back">
@@ -328,7 +330,12 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
           </View>
         </View>
       </View>
-      <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        ref={scrollRef}
+        style={styles.container}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
         {structuredContent ? (
           <View>
             {structuredContent.type !== "lesson_plan" ? <View style={styles.structuredReviewHeader}>
@@ -344,7 +351,7 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
             </View> : null}
             {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
             {structuredContent.type === "lesson_plan" ? (
-              <LessonPlanView content={structuredContent} editable={isEditing} onChange={handleStructuredChange} sources={generation.contextSources} />
+              <LessonPlanView content={structuredContent} editable={isEditing} onChange={handleStructuredChange} sources={generation.contextSources} scrollRef={scrollRef} />
             ) : structuredContent.type === "custom_activity_report" ? (
               <CustomActivityView content={structuredContent} editable={isEditing} onChange={handleStructuredChange} />
             ) : structuredContent.type === "flashcards" ? (
@@ -450,6 +457,7 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
           <Text style={[styles.footerNote, { color: colors.textMuted }]}>{generation.shareStatus === "published" ? "Students can see this in their Materials tab." : "Review before students receive it."}</Text>
         </View>
       </ScrollView>
+      </KeyboardAvoidingView>
     </Screen>
   );
 }
