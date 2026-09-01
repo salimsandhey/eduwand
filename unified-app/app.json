@@ -40,6 +40,12 @@
     "owner": "salimsandhey",
     "plugins": [
       [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#FFFFFF"
+        }
+      ],
+      [
         "expo-font",
         {
           "fonts": [

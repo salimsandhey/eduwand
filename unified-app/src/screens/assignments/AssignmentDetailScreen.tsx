@@ -146,7 +146,6 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
     );
   }
 
-  const pendingSuggestions = assignment.personalisationSuggestions.filter((s) => s.status === "pending").length;
   const submittedCount = assignment.submissions.length;
   const pendingCount = Math.max(students.length - submittedCount, 0);
   const visibleQuestions = showAllQuestions ? assignment.questions : assignment.questions.slice(0, 3);
@@ -193,23 +192,21 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
           </Pressable>
         </View>
 
-        <View style={styles.hero}>
-          <View style={styles.heroCopy}>
-            <Text style={[styles.title, { color: colors.textPrimary }]}>{assignment.title}</Text>
-            {metaLine ? <Text style={[styles.heroMeta, { color: colors.textMuted }]}>{metaLine}</Text> : null}
-            {classSection?.sectionName ? (
-              <Text style={[styles.heroSubMeta, { color: colors.textMuted }]}>Section {classSection.sectionName}</Text>
-            ) : null}
-            {assignment.topicId ? (
-              <View style={[styles.aiBadge, { backgroundColor: colors.accentSoft }]}>
-                <Ionicons name="color-wand" size={12} color={colors.accent} />
-                <Text style={[styles.aiBadgeText, { color: colors.accent }]}>AI generated</Text>
-              </View>
-            ) : null}
-          </View>
-
-          <Image source={decorativeAssets.assignmentStudent} style={styles.heroImage} resizeMode="contain" />
+        <View style={styles.heroCopy}>
+          <Text style={[styles.title, { color: colors.textPrimary }]}>{assignment.title}</Text>
+          {metaLine ? <Text style={[styles.heroMeta, { color: colors.textMuted }]}>{metaLine}</Text> : null}
+          {classSection?.sectionName ? (
+            <Text style={[styles.heroSubMeta, { color: colors.textMuted }]}>Section {classSection.sectionName}</Text>
+          ) : null}
+          {assignment.topicId ? (
+            <View style={[styles.aiBadge, { backgroundColor: colors.accentSoft }]}>
+              <Ionicons name="color-wand" size={12} color={colors.accent} />
+              <Text style={[styles.aiBadgeText, { color: colors.accent }]}>AI generated</Text>
+            </View>
+          ) : null}
         </View>
+
+        <Image source={decorativeAssets.assignmentStudent} style={styles.heroImage} resizeMode="contain" />
 
         <View style={[styles.statsCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <View style={styles.statBlock}>
@@ -260,14 +257,14 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
           ) : null}
         </View>
 
-        <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        <View style={[styles.infoCard, { backgroundColor: colors.accent, borderColor: colors.accent }, cardShadow]}>
           <View style={styles.infoCardContent}>
-            <View style={[styles.infoIconWrap, { backgroundColor: colors.accentSoft }]}>
+            <View style={[styles.infoIconWrap, { backgroundColor: colors.accentOn }]}>
               <Ionicons name="key-outline" size={20} color={colors.accent} />
             </View>
             <View style={styles.infoCopy}>
-              <Text style={[styles.infoTitle, { color: colors.textPrimary }]}>Answer Key</Text>
-              <Text style={[styles.infoMeta, { color: colors.textSecondary }]}>
+              <Text style={[styles.infoTitle, { color: colors.accentOn }]}>Answer Key</Text>
+              <Text style={[styles.infoMeta, { color: colors.accentOn, opacity: 0.85 }]}>
                 {assignment.status === "draft" ? "AI draft - Review required" : "Review and verify before distributing"}
               </Text>
             </View>
@@ -276,7 +273,7 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
             onPress={() => navigation.navigate("AnswerKeyReview", { assignmentId })}
             style={({ pressed }) => [
               styles.outlineAction,
-              { borderColor: colors.border },
+              { backgroundColor: colors.accentOn, borderColor: colors.accentOn },
               pressed && { opacity: pressedOpacity },
             ]}
             accessibilityRole="button"
@@ -284,64 +281,6 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
             <Text style={[styles.outlineActionText, { color: colors.accent }]}>Review →</Text>
           </Pressable>
         </View>
-
-        <Pressable
-          onPress={() =>
-            assignment.personalisationEnabled
-              ? navigation.navigate("PersonalisationReview", { assignmentId })
-              : navigation.navigate("CreateAssignment", { assignmentId: assignment.id })
-          }
-          style={({ pressed }) => [
-            styles.personalisationCard,
-            { backgroundColor: colors.surface, borderColor: colors.border },
-            cardShadow,
-            pressed && { opacity: pressedOpacity },
-          ]}
-          accessibilityRole="button"
-        >
-          <View style={styles.personalisationTopRow}>
-            <View style={styles.personalisationInfo}>
-              <View style={[styles.infoIconWrap, { backgroundColor: colors.accentSoft }]}>
-                <Ionicons name="options-outline" size={20} color={colors.accent} />
-              </View>
-              <View style={styles.infoCopy}>
-                <Text style={[styles.infoTitle, { color: colors.textPrimary }]}>Personalisation</Text>
-                <Text style={[styles.infoMeta, { color: colors.textMuted }]}>
-                  {assignment.personalisationEnabled
-                    ? "Suggest a different difficulty mix based on recent performance."
-                    : "Turn this on from edit mode to generate differentiated suggestions."}
-                </Text>
-              </View>
-            </View>
-            <View
-              style={[
-                styles.toggleShell,
-                { backgroundColor: assignment.personalisationEnabled ? colors.accentSoftAlt : "#D0D4DC" },
-              ]}
-            >
-              <View
-                style={[
-                  styles.toggleKnob,
-                  {
-                    backgroundColor: colors.accentOn,
-                    alignSelf: assignment.personalisationEnabled ? "flex-end" : "flex-start",
-                  },
-                ]}
-              />
-            </View>
-          </View>
-
-          <View style={[styles.personalisationFooter, { borderTopColor: colors.border }]}>
-            <Text style={[styles.personalisationLink, { color: colors.accent }]}>
-              {assignment.personalisationEnabled
-                ? pendingSuggestions > 0
-                  ? "Review suggestions"
-                  : "Open personalisation"
-                : "Edit draft to enable"}
-            </Text>
-            <Ionicons name="chevron-forward" size={17} color={colors.accent} />
-          </View>
-        </Pressable>
 
         {assignment.status === "published" ? (
           <Pressable
@@ -381,10 +320,10 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
             </View>
 
             <View style={[styles.primaryInlineAction, { backgroundColor: colors.accent }]}>
+              <Text style={[styles.primaryInlineActionText, { color: colors.accentOn }]}>Review submissions</Text>
               <View style={[styles.primaryInlineActionCircle, { backgroundColor: colors.accentOn }]}>
                 <Ionicons name="chevron-forward" size={16} color={colors.accent} />
               </View>
-              <Text style={[styles.primaryInlineActionText, { color: colors.accentOn }]}>Swipe Review submissions</Text>
             </View>
           </Pressable>
         ) : null}
@@ -581,14 +520,8 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: -0.5,
   },
-  hero: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 22,
-  },
   heroCopy: {
-    flex: 1,
-    paddingRight: 12,
+    marginBottom: 4,
   },
   title: {
     fontSize: 22,
@@ -623,9 +556,12 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   heroImage: {
-    width: 160,
-    height: 132,
-    marginRight: -8,
+    alignSelf: "flex-end",
+    width: 210,
+    height: 174,
+    marginTop: -130,
+    marginBottom: 0,
+    transform: [{ translateY: 30}],
   },
   statsCard: {
     flexDirection: "row",
@@ -762,48 +698,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700",
   },
-  personalisationCard: {
-    borderWidth: 1,
-    borderRadius: 22,
-    padding: 16,
-    marginBottom: 16,
-  },
-  personalisationTopRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  personalisationInfo: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "flex-start",
-  },
-  toggleShell: {
-    width: 50,
-    height: 30,
-    borderRadius: 999,
-    padding: 4,
-    justifyContent: "center",
-  },
-  toggleKnob: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-  },
-  personalisationFooter: {
-    marginTop: 14,
-    paddingTop: 14,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  personalisationLink: {
-    fontSize: 14,
-    lineHeight: 19,
-    fontWeight: "800",
-  },
   submissionsCard: {
     borderWidth: 1,
     borderRadius: 22,
@@ -844,11 +738,10 @@ const styles = StyleSheet.create({
   primaryInlineAction: {
     borderRadius: 14,
     minHeight: 46,
-    paddingHorizontal: 14,
+    paddingHorizontal: 18,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 12,
+    justifyContent: "space-between",
   },
   primaryInlineActionCircle: {
     width: 24,

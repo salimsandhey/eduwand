@@ -32,6 +32,8 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
   const [isLoadingExisting, setIsLoadingExisting] = useState(isEditMode);
   const [blockedReason, setBlockedReason] = useState<string | null>(null);
 
+  const isSaveDisabled = isSaving || !title.trim() || (!isEditMode && !classSectionId);
+
   useEffect(() => {
     if (!accessToken) return;
     api
@@ -80,7 +82,15 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
   }
 
   async function save(publish: boolean) {
-    if (!accessToken || !title.trim() || !classSectionId) return;
+    if (!accessToken || !title.trim()) return;
+    if (!classSectionId) {
+      setError(
+        classSections.length === 0
+          ? "You haven't been assigned to any class section yet - ask your admin to assign you one before creating an assignment."
+          : "Select a class"
+      );
+      return;
+    }
     const filledQuestions = questions.filter((q) => q.prompt.trim().length > 0);
     if (filledQuestions.length === 0) {
       setError("Add at least one question");
@@ -263,17 +273,25 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
 
         <View style={styles.actionRow}>
           <Pressable
-            style={({ pressed }) => [styles.secondaryButton, { borderColor: colors.border }, (isSaving || pressed) && { opacity: pressedOpacity }]}
+            style={({ pressed }) => [
+              styles.secondaryButton,
+              { borderColor: colors.border },
+              (isSaving || pressed || isSaveDisabled) && { opacity: pressedOpacity },
+            ]}
             onPress={() => save(false)}
-            disabled={isSaving || !title.trim()}
+            disabled={isSaveDisabled}
             accessibilityRole="button"
           >
             <Text style={[styles.secondaryButtonText, { color: colors.textSecondary }]}>{isEditMode ? "Save changes" : "Save as draft"}</Text>
           </Pressable>
           <Pressable
-            style={({ pressed }) => [styles.primaryButton, { backgroundColor: colors.accent }, (isSaving || pressed) && { opacity: pressedOpacity }]}
+            style={({ pressed }) => [
+              styles.primaryButton,
+              { backgroundColor: colors.accent },
+              (isSaving || pressed || isSaveDisabled) && { opacity: pressedOpacity },
+            ]}
             onPress={() => save(true)}
-            disabled={isSaving || !title.trim()}
+            disabled={isSaveDisabled}
             accessibilityRole="button"
           >
             {isSaving ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.primaryButtonText, { color: colors.accentOn }]}>{isEditMode ? "Save & Publish" : "Publish"}</Text>}

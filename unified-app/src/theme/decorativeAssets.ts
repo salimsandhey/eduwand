@@ -3,6 +3,8 @@ export const decorativeAssets = {
   teacherHero: require("../../assets/decorative/decor-teacher-hero.png"),
   teacherHeroNoBulb: require("../../assets/decorative/decor-teacher-hero-no-bulb.png"),
   teacherLessonCat: require("../../assets/decorative/decor-teacher-lesson-cat.png"),
+  teacherLessonCatEyesWhite: require("../../assets/decorative/decor-teacher-lesson-cat-eyes-white.png"),
+  teacherLessonCatFrame: require("../../assets/decorative/decor-teacher-lesson-cat-frame.png"),
   teacherAssignment: require("../../assets/decorative/decor-teacher-assignment.png"),
   assignmentStudent: require("../../assets/decorative/decor-assignment-student.png"),
   teacherSubmissions: require("../../assets/decorative/decor-teacher-submissions.png"),

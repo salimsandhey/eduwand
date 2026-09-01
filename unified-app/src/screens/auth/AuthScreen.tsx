@@ -18,7 +18,7 @@ import { useAuth } from "../../context/AuthContext";
 import { getCardShadow, lightColors, PRESSED_OPACITY, typography } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { brandAssets } from "../../theme/brandAssets";
-import { decorativeAssets } from "../../theme/decorativeAssets";
+import { BlinkingMascot } from "../../components/BlinkingMascot";
 
 type AuthTab = "staff" | "student";
 type StaffMode = "login" | "forgot-request" | "forgot-reset";
@@ -310,7 +310,7 @@ export function AuthScreen() {
               {isLandingState ? (
                 <View style={styles.loginHero}>
                   <Image source={brandAssets.logo} style={styles.loginLogo} resizeMode="contain" />
-                  <Image source={decorativeAssets.teacherLessonCat} style={styles.loginArtworkSmall} resizeMode="contain" />
+                  <BlinkingMascot style={styles.loginArtworkSmall} />
                 </View>
               ) : authTab === "staff" ? (
                 <View style={styles.simpleHeaderTop}>

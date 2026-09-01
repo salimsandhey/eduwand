@@ -1,31 +1,27 @@
 import { useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { useFonts } from "expo-font";
-import { ActivityIndicator, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "./src/context/AuthContext";
 import { ThemeProvider, useTheme } from "./src/theme/ThemeContext";
 import { AuthScreen } from "./src/screens/auth/AuthScreen";
 import { AppNavigator } from "./src/navigation/AppNavigator";
 import { applyGlobalTypography } from "./src/theme/globalTypography";
+import { AnimatedSplashScreen } from "./src/components/AnimatedSplashScreen";
 
 applyGlobalTypography();
 
 function Root() {
   const { user, isRestoring } = useAuth();
   const { mode } = useTheme();
-
-  if (isRestoring) {
-    return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#FFFFFF" }}>
-        <ActivityIndicator color="#7C005A" />
-      </View>
-    );
-  }
+  const [splashDone, setSplashDone] = useState(false);
 
   return (
     <>
-      {user ? <AppNavigator /> : <AuthScreen />}
+      {!isRestoring && (user ? <AppNavigator /> : <AuthScreen />)}
+      {!splashDone && (
+        <AnimatedSplashScreen ready={!isRestoring} onFinish={() => setSplashDone(true)} />
+      )}
       <StatusBar style={mode === "dark" ? "light" : "dark"} />
     </>
   );
@@ -39,12 +35,11 @@ export default function App() {
     "Poppins-Bold": require("./assets/fonts/Poppins-Bold.ttf"),
   });
 
+  // Fonts load in well under a frame; the native splash (app.json) stays up
+  // and nothing paints here, so there's no bare/spinner flash before the
+  // animated splash takes over.
   if (!fontsLoaded) {
-    return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#FFFFFF" }}>
-        <ActivityIndicator color="#7C005A" />
-      </View>
-    );
+    return null;
   }
 
   return (
