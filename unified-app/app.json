@@ -12,6 +12,11 @@
       "assets/avatars/*"
     ],
     "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/brand/eduwand-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FFFFFF"
+    },
     "ios": {
       "supportsTablet": true
     },
@@ -42,7 +47,9 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#FFFFFF"
+          "backgroundColor": "#FFFFFF",
+          "image": "./assets/brand/eduwand-icon.png",
+          "imageWidth": 150
         }
       ],
       [

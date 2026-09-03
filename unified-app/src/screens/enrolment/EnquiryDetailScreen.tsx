@@ -1004,22 +1004,68 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
           </>
         ) : (
           <>
-            <View style={styles.bento}>
-              <View style={[styles.tile, styles.tileAccent, { backgroundColor: colors.accentSoft, borderColor: colors.accentSoftAlt }]}>
-                <Text style={[styles.tileValue, { color: colors.accent }]}>
-                  {enquiry.admissionSummary.confirmed ? "✓" : `${enquiry.admissionSummary.completionPercent}%`}
+            <View style={styles.admissionStatsRow}>
+              <View style={[styles.admissionStatCard, { backgroundColor: colors.accentSoft, borderColor: colors.accentSoftAlt }]}>
+                <View style={[styles.admissionStatIconWrap, { backgroundColor: colors.surface }]}>
+                  <Ionicons
+                    name={enquiry.admissionSummary.confirmed ? "checkmark-circle" : "document-text-outline"}
+                    size={15}
+                    color={colors.accent}
+                  />
+                </View>
+                <Text style={[styles.admissionStatValue, { color: colors.accent }]} numberOfLines={1}>
+                  {enquiry.admissionSummary.confirmed ? "Confirmed" : `${enquiry.admissionSummary.completionPercent}%`}
                 </Text>
-                <Text style={[styles.tileLabel, { color: colors.accent }]}>{enquiry.admissionSummary.confirmed ? "Confirmed" : "Draft filled"}</Text>
+                <Text style={[styles.admissionStatLabel, { color: colors.accent }]} numberOfLines={1}>
+                  {enquiry.admissionSummary.confirmed ? "Admission locked in" : "Draft filled"}
+                </Text>
+                {!enquiry.admissionSummary.confirmed ? (
+                  <View style={[styles.admissionProgressTrack, { backgroundColor: colors.accentSoftAlt }]}>
+                    <View
+                      style={[
+                        styles.admissionProgressFill,
+                        { backgroundColor: colors.accent, width: `${Math.min(100, enquiry.admissionSummary.completionPercent)}%` },
+                      ]}
+                    />
+                  </View>
+                ) : null}
               </View>
-              <View style={[styles.tile, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
-                <Text style={[styles.tileValue, { color: colors.textPrimary }]}>
+
+              <View style={[styles.admissionStatCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+                <View style={[styles.admissionStatIconWrap, { backgroundColor: colors.surfaceRaised }]}>
+                  <Ionicons name="folder-open-outline" size={15} color={colors.accent} />
+                </View>
+                <Text style={[styles.admissionStatValue, { color: colors.textPrimary }]} numberOfLines={1}>
                   {docCompletion.done}/{docCompletion.total}
                 </Text>
-                <Text style={[styles.tileLabel, { color: colors.textMuted }]}>Documents</Text>
+                <Text style={[styles.admissionStatLabel, { color: colors.textMuted }]} numberOfLines={1}>
+                  Documents ready
+                </Text>
+                <View style={[styles.admissionProgressTrack, { backgroundColor: colors.border }]}>
+                  <View
+                    style={[
+                      styles.admissionProgressFill,
+                      {
+                        backgroundColor: colors.accent,
+                        width: `${docCompletion.total > 0 ? Math.min(100, (docCompletion.done / docCompletion.total) * 100) : 0}%`,
+                      },
+                    ]}
+                  />
+                </View>
               </View>
-              <View style={[styles.tile, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
-                <Text style={[styles.tileValue, { color: colors.textPrimary }]}>{formatStageLabel(enquiry.status)}</Text>
-                <Text style={[styles.tileLabel, { color: colors.textMuted }]}>Lead stage</Text>
+
+              <View style={[styles.admissionStatCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+                <View style={[styles.admissionStatIconWrap, { backgroundColor: colors.surfaceRaised }]}>
+                  <Ionicons name="flag-outline" size={15} color={colors.accent} />
+                </View>
+                <View style={[styles.admissionStagePill, { backgroundColor: currentStatusColor.bg }]}>
+                  <Text style={[styles.admissionStagePillText, { color: currentStatusColor.text }]} numberOfLines={1}>
+                    {formatStageLabel(enquiry.status)}
+                  </Text>
+                </View>
+                <Text style={[styles.admissionStatLabel, { color: colors.textMuted }]} numberOfLines={1}>
+                  Lead stage
+                </Text>
               </View>
             </View>
 
@@ -1414,6 +1460,20 @@ const styles = StyleSheet.create({
   tileAccent: {},
   tileValue: { fontSize: 18, fontWeight: "800" },
   tileLabel: { fontSize: 10.5, fontWeight: "700" },
+
+  // Admission tab's 3 stat cards - purpose-built per card (progress bar for
+  // the two completion metrics, a status pill for the stage) rather than
+  // reusing the numeric bento/tile above, which doesn't fit a full stage
+  // name or a confirmed/percent value well.
+  admissionStatsRow: { flexDirection: "row", gap: 10 },
+  admissionStatCard: { flex: 1, borderWidth: 1, borderRadius: 16, padding: 12, gap: 6 },
+  admissionStatIconWrap: { width: 26, height: 26, borderRadius: 9, alignItems: "center", justifyContent: "center" },
+  admissionStatValue: { fontSize: 14.5, fontWeight: "900", letterSpacing: -0.2 },
+  admissionStatLabel: { fontSize: 10, fontWeight: "700" },
+  admissionProgressTrack: { height: 4, borderRadius: 2, overflow: "hidden", marginTop: 2 },
+  admissionProgressFill: { height: 4, borderRadius: 2 },
+  admissionStagePill: { alignSelf: "flex-start", maxWidth: "100%", borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
+  admissionStagePillText: { fontSize: 10.5, fontWeight: "800" },
 
   section: { gap: 10 },
   sectionHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },

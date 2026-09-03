@@ -1,0 +1,55 @@
+$ErrorActionPreference = "Stop"
+
+$appDir = $PSScriptRoot
+$androidDir = Join-Path $appDir "android"
+
+# Set Android SDK if not configured
+if (-not $env:ANDROID_HOME) {
+    $defaultSdk = Join-Path $env:LOCALAPPDATA "Android\Sdk"
+    if (Test-Path $defaultSdk) {
+        $env:ANDROID_HOME = $defaultSdk
+    }
+}
+
+# Set Java Home if not configured
+if (-not $env:JAVA_HOME) {
+    $jbrPath = "C:\Program Files\Android\Android Studio\jbr"
+    if (Test-Path $jbrPath) {
+        $env:JAVA_HOME = $jbrPath
+        $env:Path = "$jbrPath\bin;" + $env:Path
+    }
+}
+
+# Ensure local.properties exists
+$localProps = Join-Path $androidDir "local.properties"
+if (-not (Test-Path $localProps)) {
+    $escapedSdk = $env:ANDROID_HOME -replace '\\', '\\'
+    Set-Content -Path $localProps -Value "sdk.dir=$escapedSdk"
+}
+
+# Set Production Environment
+if (-not $env:EXPO_PUBLIC_API_URL) {
+    $env:EXPO_PUBLIC_API_URL = "https://eduwand.flipoo.in/api/v1"
+}
+$env:NODE_ENV = "production"
+
+Write-Host "Building Production APK for EduWand..." -ForegroundColor Cyan
+Write-Host "API URL: $env:EXPO_PUBLIC_API_URL" -ForegroundColor Yellow
+Write-Host "Java Home: $env:JAVA_HOME" -ForegroundColor Gray
+Write-Host "Android SDK: $env:ANDROID_HOME" -ForegroundColor Gray
+
+Push-Location $androidDir
+try {
+    .\gradlew.bat assembleRelease
+} finally {
+    Pop-Location
+}
+
+$apkPath = Join-Path $androidDir "app\build\outputs\apk\release\app-release.apk"
+if (Test-Path $apkPath) {
+    $apkItem = Get-Item $apkPath
+    $sizeMb = [math]::Round($apkItem.Length / 1MB, 2)
+    Write-Host "`nProduction APK build SUCCESSFUL!" -ForegroundColor Green
+    Write-Host "APK Location: $($apkItem.FullName)" -ForegroundColor Green
+    Write-Host "APK Size: $sizeMb MB" -ForegroundColor Green
+}
