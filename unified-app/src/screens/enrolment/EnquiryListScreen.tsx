@@ -15,11 +15,11 @@ import type { CompositeScreenProps } from "@react-navigation/native";
 import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { EnrolmentTabParamList, RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
-import { PageHeader } from "../../components/PageHeader";
 import { getStatusColor } from "../../theme/statusColors";
 import { usePipelineStages } from "../../hooks/usePipelineStages";
 import { api, AcademicYear, Enquiry, EnquiryStatus } from "../../api/client";
@@ -39,6 +39,46 @@ function formatDateLabel(value: string) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return "Recently updated";
   return parsed.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+}
+
+type SortKey = "updated" | "created" | "name";
+const SORT_ORDER: SortKey[] = ["updated", "created", "name"];
+const SORT_LABEL: Record<SortKey, string> = { updated: "Updated", created: "Created", name: "Name" };
+
+function StatCell({
+  icon,
+  tint,
+  value,
+  label,
+  percent,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  tint: string;
+  value: number;
+  label: string;
+  percent: number;
+}) {
+  return (
+    <View style={[styles.statCell, { backgroundColor: tint }]}>
+      <View style={styles.statCellTopRow}>
+        <View style={styles.statIconChip}>
+          <Ionicons name={icon} size={14} color={tint} />
+        </View>
+        <Text style={styles.statPercentText} numberOfLines={1}>
+          {percent}%
+        </Text>
+      </View>
+      <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+        {value}
+      </Text>
+      <Text style={styles.statLabel} numberOfLines={1}>
+        {label}
+      </Text>
+      <View style={styles.statProgressTrack}>
+        <View style={[styles.statProgressFill, { width: `${percent}%` }]} />
+      </View>
+    </View>
+  );
 }
 
 function AnimatedCard({
@@ -188,7 +228,21 @@ export function EnquiryListScreen({ navigation }: Props) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchFocused, setSearchFocused] = useState(false);
+  const [sortBy, setSortBy] = useState<SortKey>("updated");
   const fabScale = useRef(new Animated.Value(1)).current;
+  const liveDotPulse = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(liveDotPulse, { toValue: 1, duration: 900, useNativeDriver: true }),
+        Animated.timing(liveDotPulse, { toValue: 0, duration: 900, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [liveDotPulse]);
+  const liveDotOpacity = liveDotPulse.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] });
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -227,15 +281,22 @@ export function EnquiryListScreen({ navigation }: Props) {
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (!query) return enquiries;
-    return enquiries.filter(
-      (enquiry) =>
-        enquiry.contactName.toLowerCase().includes(query) ||
-        (enquiry.studentName ?? "").toLowerCase().includes(query) ||
-        enquiry.contactPhone.includes(query) ||
-        enquiry.source.toLowerCase().includes(query)
-    );
-  }, [enquiries, search]);
+    const matches = !query
+      ? enquiries
+      : enquiries.filter(
+          (enquiry) =>
+            enquiry.contactName.toLowerCase().includes(query) ||
+            (enquiry.studentName ?? "").toLowerCase().includes(query) ||
+            enquiry.contactPhone.includes(query) ||
+            enquiry.source.toLowerCase().includes(query)
+        );
+
+    return [...matches].sort((a, b) => {
+      if (sortBy === "name") return (a.studentName || a.contactName).localeCompare(b.studentName || b.contactName);
+      const key = sortBy === "created" ? "createdAt" : "updatedAt";
+      return new Date(b[key]).getTime() - new Date(a[key]).getTime();
+    });
+  }, [enquiries, search, sortBy]);
 
   const stats = useMemo(() => {
     const convertedStage = stages.find((stage) => stage.isConverted);
@@ -250,7 +311,15 @@ export function EnquiryListScreen({ navigation }: Props) {
     return { total, fresh, converted, needsAttention };
   }, [enquiries, stages]);
 
-  const activeFilterLabel = statusFilter === "all" ? "All stages" : labelFor(statusFilter);
+  const statPercents = useMemo(
+    () => ({
+      fresh: stats.total ? Math.round((stats.fresh / stats.total) * 100) : 0,
+      converted: stats.total ? Math.round((stats.converted / stats.total) * 100) : 0,
+    }),
+    [stats]
+  );
+
+  const cycleSort = () => setSortBy((current) => SORT_ORDER[(SORT_ORDER.indexOf(current) + 1) % SORT_ORDER.length]);
 
   const getFilterCount = (status: EnquiryStatus | "all") => {
     if (status === "all") return enquiries.length;
@@ -271,6 +340,31 @@ export function EnquiryListScreen({ navigation }: Props) {
     }).start();
   };
 
+  const [quickMenuOpen, setQuickMenuOpen] = useState(false);
+  const quickMenuAnim = useRef(new Animated.Value(0)).current;
+
+  const toggleQuickMenu = () => {
+    const opening = !quickMenuOpen;
+    setQuickMenuOpen(opening);
+    Animated.spring(quickMenuAnim, {
+      toValue: opening ? 1 : 0,
+      useNativeDriver: true,
+      tension: 190,
+      friction: 16,
+    }).start();
+  };
+
+  const closeQuickMenu = () => {
+    if (!quickMenuOpen) return;
+    setQuickMenuOpen(false);
+    Animated.spring(quickMenuAnim, { toValue: 0, useNativeDriver: true, tension: 190, friction: 16 }).start();
+  };
+
+  const quickMenuScaleY = quickMenuAnim.interpolate({ inputRange: [0, 1], outputRange: [0.15, 1] });
+  const quickMenuTranslateY = quickMenuAnim.interpolate({ inputRange: [0, 1], outputRange: [18, 0] });
+  const quickMenuOpacity = quickMenuAnim;
+  const quickMenuToggleRotate = quickMenuAnim.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "45deg"] });
+
   return (
     <Screen>
       <FlatList
@@ -281,54 +375,67 @@ export function EnquiryListScreen({ navigation }: Props) {
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={
           <>
-            <PageHeader
-              eyebrow="Enrolment"
-              title="Lead desk"
-              subtitle={`${filtered.length} visible lead${filtered.length === 1 ? "" : "s"} in ${activeFilterLabel.toLowerCase()}`}
-              icon="mail-open-outline"
-              metrics={[
-                { label: "Total", value: stats.total },
-                { label: "Fresh", value: stats.fresh, tone: "accent" },
-                { label: "Converted", value: stats.converted },
-              ]}
-            />
-
-            <View style={styles.searchWrap}>
-              <View
-                style={[
-                  styles.searchCard,
-                  {
-                    backgroundColor: colors.surface,
-                    borderColor: searchFocused ? colors.accent : colors.border,
-                  },
-                  cardShadow,
-                ]}
-              >
-                <Ionicons name="search-outline" size={18} color={searchFocused ? colors.accent : colors.textMuted} />
-                <TextInput
-                  style={[styles.searchInput, { color: colors.textPrimary }]}
-                  placeholder="Search by name, phone or source"
-                  placeholderTextColor={colors.textMuted}
-                  value={search}
-                  onChangeText={setSearch}
-                  onFocus={() => setSearchFocused(true)}
-                  onBlur={() => setSearchFocused(false)}
-                />
-                {search.length > 0 ? (
-                  <Pressable onPress={() => setSearch("")} hitSlop={8}>
-                    <Ionicons name="close-circle" size={18} color={colors.textMuted} />
-                  </Pressable>
-                ) : null}
-              </View>
+            <View style={styles.header}>
+              <Text style={[styles.pageTitle, { color: colors.textPrimary }]}>Enquiries</Text>
+              <Text style={[styles.pageSubtitle, { color: colors.textMuted }]}>
+                Manage every enquiry and keep leads moving.
+              </Text>
             </View>
 
-            <View style={styles.sectionHeader}>
-              <View>
-                <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Lead list</Text>
-                <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
-                  {filtered.length} contact{filtered.length === 1 ? "" : "s"} ready for action
-                </Text>
+            <LinearGradient
+              colors={[colors.accent, colors.accentDark]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.statHero}
+            >
+              <View style={styles.statHeroGlow} pointerEvents="none" />
+              <View style={styles.statHeroGlowSecondary} pointerEvents="none" />
+
+              <View style={styles.statHeroTopRow}>
+                <Text style={styles.statHeroEyebrow}>Enrolment overview</Text>
+                <View style={styles.liveBadge}>
+                  <Animated.View style={[styles.liveDot, { opacity: liveDotOpacity }]} />
+                  <Text style={styles.liveBadgeText}>Live</Text>
+                </View>
               </View>
+
+              <View style={styles.statHeroRow}>
+                <StatCell icon="people-outline" tint="#7359D9" value={stats.total} label="Total" percent={100} />
+                <StatCell icon="person-outline" tint="#2FA678" value={stats.fresh} label="Fresh" percent={statPercents.fresh} />
+                <StatCell
+                  icon="trending-up-outline"
+                  tint="#E5A72D"
+                  value={stats.converted}
+                  label="Converted"
+                  percent={statPercents.converted}
+                />
+              </View>
+            </LinearGradient>
+
+            <View
+              style={[
+                styles.searchCard,
+                {
+                  backgroundColor: colors.surfaceRaised,
+                  borderColor: searchFocused ? colors.accent : colors.border,
+                },
+              ]}
+            >
+              <Ionicons name="search-outline" size={18} color={searchFocused ? colors.accent : colors.textMuted} />
+              <TextInput
+                style={[styles.searchInput, { color: colors.textPrimary }]}
+                placeholder="Search enquiries..."
+                placeholderTextColor={colors.textMuted}
+                value={search}
+                onChangeText={setSearch}
+                onFocus={() => setSearchFocused(true)}
+                onBlur={() => setSearchFocused(false)}
+              />
+              {search.length > 0 ? (
+                <Pressable onPress={() => setSearch("")} hitSlop={8}>
+                  <Ionicons name="close-circle" size={18} color={colors.textMuted} />
+                </Pressable>
+              ) : null}
             </View>
 
             {academicYears.length > 0 ? (
@@ -347,11 +454,22 @@ export function EnquiryListScreen({ navigation }: Props) {
                         onPress={() => setAcademicYearId(item.id)}
                         style={({ pressed }) => [
                           styles.yearChip,
-                          { backgroundColor: active ? colors.accentSoft : colors.surface, borderColor: active ? colors.accent : colors.border },
+                          active
+                            ? { backgroundColor: colors.accent, borderColor: colors.accent }
+                            : { backgroundColor: colors.surface, borderColor: colors.border },
+                          active && cardShadow,
                           pressed && { opacity: pressedOpacity },
                         ]}
                       >
-                        <Text style={[styles.yearChipText, { color: active ? colors.accent : colors.textSecondary }]}>{item.label}</Text>
+                        <Ionicons
+                          name="calendar-outline"
+                          size={13}
+                          color={active ? colors.accentOn : colors.textMuted}
+                        />
+                        <Text style={[styles.yearChipText, { color: active ? colors.accentOn : colors.textSecondary }]}>
+                          {item.label}
+                        </Text>
+                        {active ? <View style={styles.yearChipDot} /> : null}
                       </Pressable>
                     );
                   }}
@@ -403,6 +521,16 @@ export function EnquiryListScreen({ navigation }: Props) {
               }}
             />
 
+            <View style={styles.listHeaderRow}>
+              <Text style={[styles.listCount, { color: colors.textPrimary }]}>
+                {filtered.length} {filtered.length === 1 ? "enquiry" : "enquiries"}
+              </Text>
+              <Pressable onPress={cycleSort} hitSlop={8} style={({ pressed }) => [styles.sortBtn, pressed && { opacity: pressedOpacity }]}>
+                <Text style={[styles.sortLabel, { color: colors.textSecondary }]}>Sort by: {SORT_LABEL[sortBy]}</Text>
+                <Ionicons name="chevron-down" size={14} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+
             {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
           </>
         }
@@ -431,28 +559,66 @@ export function EnquiryListScreen({ navigation }: Props) {
         )}
       />
 
-      <View style={styles.fabColumn}>
+      <Animated.View
+        pointerEvents={quickMenuOpen ? "auto" : "none"}
+        style={[
+          styles.quickMenuPanel,
+          { backgroundColor: colors.surface, borderColor: colors.border },
+          cardShadow,
+          {
+            opacity: quickMenuOpacity,
+            transform: [{ translateY: quickMenuTranslateY }, { scaleY: quickMenuScaleY }],
+          },
+        ]}
+      >
         <Pressable
-          onPress={() => navigation.navigate("BulkUpload")}
-          style={[styles.secondaryFab, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}
+          onPress={() => {
+            closeQuickMenu();
+            navigation.navigate("BulkUpload");
+          }}
+          style={({ pressed }) => [styles.quickMenuRow, pressed && { opacity: pressedOpacity }]}
           accessibilityRole="button"
           accessibilityLabel="Bulk upload enquiries"
         >
-          <Ionicons name="cloud-upload-outline" size={20} color={colors.accent} />
+          <View style={[styles.quickMenuIcon, { backgroundColor: colors.accentSoft }]}>
+            <Ionicons name="cloud-upload-outline" size={17} color={colors.accent} />
+          </View>
+          <Text style={[styles.quickMenuLabel, { color: colors.textPrimary }]}>Bulk Upload</Text>
         </Pressable>
-        <Animated.View style={{ transform: [{ scale: fabScale }] }}>
-          <Pressable
-            onPressIn={handleFabPressIn}
-            onPressOut={handleFabPressOut}
-            onPress={() => navigation.navigate("NewEnquiryForm")}
-            style={[styles.primaryFab, { backgroundColor: colors.accent }, cardShadow]}
-            accessibilityRole="button"
-            accessibilityLabel="Add new enquiry"
-          >
-            <Ionicons name="add" size={24} color={colors.accentOn} />
-          </Pressable>
-        </Animated.View>
-      </View>
+
+        <View style={[styles.quickMenuDivider, { backgroundColor: colors.border }]} />
+
+        <Pressable
+          onPress={() => {
+            closeQuickMenu();
+            navigation.navigate("NewEnquiryForm");
+          }}
+          style={({ pressed }) => [styles.quickMenuRow, pressed && { opacity: pressedOpacity }]}
+          accessibilityRole="button"
+          accessibilityLabel="Add new enquiry"
+        >
+          <View style={[styles.quickMenuIcon, { backgroundColor: colors.accentSoft }]}>
+            <Ionicons name="add" size={17} color={colors.accent} />
+          </View>
+          <Text style={[styles.quickMenuLabel, { color: colors.textPrimary }]}>New Enquiry</Text>
+        </Pressable>
+      </Animated.View>
+
+      <Animated.View style={[styles.primaryFabWrap, { transform: [{ scale: fabScale }] }]}>
+        <Pressable
+          onPressIn={handleFabPressIn}
+          onPressOut={handleFabPressOut}
+          onPress={toggleQuickMenu}
+          style={[styles.primaryFab, { backgroundColor: colors.accent }, cardShadow]}
+          accessibilityRole="button"
+          accessibilityLabel="Quick actions"
+          accessibilityState={{ expanded: quickMenuOpen }}
+        >
+          <Animated.View style={{ transform: [{ rotate: quickMenuToggleRotate }] }}>
+            <Ionicons name="add" size={26} color={colors.accentOn} />
+          </Animated.View>
+        </Pressable>
+      </Animated.View>
     </Screen>
   );
 }
@@ -461,17 +627,153 @@ const styles = StyleSheet.create({
   list: {
     paddingHorizontal: 18,
     paddingTop: 14,
-    paddingBottom: 132,
+    paddingBottom: 150,
     gap: 14,
   },
-  searchWrap: {
-    marginTop: 18,
+  header: {
+    marginBottom: 4,
+  },
+  pageTitle: {
+    fontSize: 28,
+    fontWeight: "800",
+    letterSpacing: -0.6,
+  },
+  pageSubtitle: {
+    marginTop: 6,
+    fontSize: 13,
+    fontWeight: "500",
+    lineHeight: 18,
+  },
+  statHero: {
+    marginTop: 16,
+    borderRadius: 26,
+    paddingTop: 16,
+    paddingBottom: 16,
+    paddingHorizontal: 14,
+    gap: 14,
+    overflow: "hidden",
+  },
+  statHeroGlow: {
+    position: "absolute",
+    top: -46,
+    right: -30,
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    backgroundColor: "rgba(255,255,255,0.14)",
+  },
+  statHeroGlowSecondary: {
+    position: "absolute",
+    bottom: -52,
+    left: -32,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  statHeroTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    zIndex: 2,
+  },
+  statHeroEyebrow: {
+    color: "rgba(255,255,255,0.85)",
+    fontSize: 11,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  liveBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "rgba(255,255,255,0.16)",
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+  },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#8CE7B8",
+  },
+  liveBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+  },
+  statHeroRow: {
+    flexDirection: "row",
+    gap: 10,
+    zIndex: 2,
+  },
+  statCell: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: "center",
+    gap: 5,
+    borderRadius: 18,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+  },
+  statCellTopRow: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  statIconChip: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    flexShrink: 0,
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  statPercentText: {
+    flexShrink: 1,
+    marginLeft: 4,
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  statValue: {
+    marginTop: 2,
+    alignSelf: "flex-start",
+    color: "#FFFFFF",
+    fontSize: 20,
+    fontWeight: "800",
+    letterSpacing: -0.4,
+  },
+  statLabel: {
+    alignSelf: "flex-start",
+    color: "rgba(255,255,255,0.9)",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  statProgressTrack: {
+    width: "100%",
+    height: 4,
+    borderRadius: 2,
+    marginTop: 4,
+    backgroundColor: "rgba(255,255,255,0.3)",
+    overflow: "hidden",
+  },
+  statProgressFill: {
+    height: "100%",
+    borderRadius: 2,
+    backgroundColor: "#FFFFFF",
   },
   searchCard: {
-    minHeight: 58,
-    borderRadius: 18,
+    marginTop: 16,
+    minHeight: 52,
+    borderRadius: 26,
     borderWidth: 1,
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
@@ -481,19 +783,25 @@ const styles = StyleSheet.create({
     fontSize: 14,
     paddingVertical: 0,
   },
-  sectionHeader: {
-    marginTop: 22,
-    marginBottom: 2,
+  listHeaderRow: {
+    marginTop: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
-  sectionTitle: {
-    fontSize: 22,
+  listCount: {
+    fontSize: 20,
     fontWeight: "800",
-    letterSpacing: -0.5,
+    letterSpacing: -0.4,
   },
-  sectionSubtitle: {
-    marginTop: 4,
+  sortBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  sortLabel: {
     fontSize: 13,
-    fontWeight: "500",
+    fontWeight: "700",
   },
   yearLabel: {
     marginTop: 14,
@@ -503,8 +811,22 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   yearRow: { paddingTop: 8, paddingBottom: 2, gap: 8 },
-  yearChip: { borderWidth: 1, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 },
-  yearChipText: { fontSize: 12, fontWeight: "700" },
+  yearChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  yearChipText: { fontSize: 12, fontWeight: "800" },
+  yearChipDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: "rgba(255,255,255,0.9)",
+  },
   filterRow: {
     paddingTop: 12,
     paddingBottom: 8,
@@ -512,12 +834,12 @@ const styles = StyleSheet.create({
   },
   filterChip: {
     minHeight: 40,
-    borderRadius: 20,
+    borderRadius: 999,
     borderWidth: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
   },
   filterChipText: {
     fontSize: 12,
@@ -655,26 +977,48 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 20,
   },
-  fabColumn: {
+  primaryFabWrap: {
     position: "absolute",
-    right: 22,
-    bottom: 112,
-    alignItems: "center",
-    gap: 12,
+    right: 20,
+    bottom: 146,
   },
   primaryFab: {
-    width: 58,
-    height: 58,
-    borderRadius: 22,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     alignItems: "center",
     justifyContent: "center",
   },
-  secondaryFab: {
-    width: 44,
-    height: 44,
-    borderRadius: 16,
+  quickMenuPanel: {
+    position: "absolute",
+    right: 20,
+    bottom: 218,
+    width: 176,
+    borderRadius: 20,
     borderWidth: 1,
+    paddingVertical: 6,
+    transformOrigin: "bottom",
+  },
+  quickMenuRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  quickMenuIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     alignItems: "center",
     justifyContent: "center",
+  },
+  quickMenuLabel: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  quickMenuDivider: {
+    height: 1,
+    marginHorizontal: 12,
   },
 });

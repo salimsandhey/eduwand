@@ -35,6 +35,11 @@ const ACTIVITY_ICON: Record<ActivityType, keyof typeof Ionicons.glyphMap> = {
   task_sent: "paper-plane-outline",
 };
 
+// Scroll distance over which the header collapses from its expanded (top of
+// screen) state into the compact, icon-only state - see the collapse-driven
+// interpolations below.
+const HEADER_SCROLL_DISTANCE = 110;
+
 type DetailTab = "lead" | "admission";
 type LeadSubTab = "timeline" | "tasks";
 
@@ -201,6 +206,52 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
   const { stages } = usePipelineStages();
   const stageKeys = stages.map((stage) => stage.key);
   const canErase = user?.role === "admin" || user?.role === "leadership";
+
+  // Header collapse: driven by the body ScrollView's scroll offset. `collapse`
+  // runs 0 (top of screen, expanded header) -> 1 (scrolled past
+  // HEADER_SCROLL_DISTANCE, compact header) - the phone/edit/share pills drop
+  // their text labels over this range so they don't wrap/overflow once the
+  // header shrinks, and the avatar gets a small parallax translateY on top of
+  // its own size change for a bit of depth as it shrinks.
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const collapse = scrollY.interpolate({ inputRange: [0, HEADER_SCROLL_DISTANCE], outputRange: [0, 1], extrapolate: "clamp" });
+  const lerp = (from: number, to: number) => collapse.interpolate({ inputRange: [0, 1], outputRange: [from, to] });
+  const avatarSize = lerp(64, 46);
+  const avatarRadius = lerp(20, 16);
+  const avatarTranslateY = lerp(0, -4);
+  const nameFontSize = lerp(19, 15.5);
+  const headerPaddingTop = lerp(12, 6);
+  const headerPaddingBottom = lerp(12, 6);
+  const pillLabelOpacity = collapse.interpolate({ inputRange: [0, 0.55, 1], outputRange: [1, 0, 0] });
+  const pillLabelMarginLeft = collapse.interpolate({ inputRange: [0, 0.55, 1], outputRange: [6, 0, 0] });
+  const phoneLabelMaxWidth = collapse.interpolate({ inputRange: [0, 0.55, 1], outputRange: [130, 0, 0] });
+  const actionLabelMaxWidth = collapse.interpolate({ inputRange: [0, 0.55, 1], outputRange: [46, 0, 0] });
+  // Status tag (+ overdue/duplicate chips): default position unchanged (next
+  // to the name, in normal flow) - only its visual position slides via
+  // transform as you scroll, settling just below the avatar once collapsed.
+  const tagTranslateX = lerp(0, -58);
+  const tagTranslateY = lerp(0, 10);
+  // Phone/edit/share: default position unchanged (own row below the name
+  // row, left-aligned). On scroll it slides right (ending flush against the
+  // row's right edge - distance measured via onLayout since it depends on
+  // the row's real width) and slides up to meet the tag's row level once the
+  // tag has settled just below the avatar (translateY target is an estimate
+  // of that gap - nudge it the same way the tag's translateY was nudged).
+  const [actionRowWidth, setActionRowWidth] = useState(0);
+  const COLLAPSED_PILLS_WIDTH = 3 * 40 + 2 * 8;
+  const pillsTranslateX = collapse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, Math.max(0, actionRowWidth - COLLAPSED_PILLS_WIDTH)],
+  });
+  const pillsTranslateY = lerp(0, -12);
+  // Each pill's own height - shrinks once scrolled, on top of the text
+  // collapsing to icon-only.
+  const pillHeight = lerp(34, 26);
+  // Gap above the Lead/Admission tabs - shrinks further on scroll (separate
+  // from headerActionRow's own fixed gap above it).
+  const segmentTopMargin = lerp(8, 2);
+  // Lead/Admission tabs - shrink on scroll too.
+  const segmentButtonHeight = lerp(38, 30);
 
   const [activeTab, setActiveTab] = useState<DetailTab>("lead");
   const [leadSubTab, setLeadSubTab] = useState<LeadSubTab>("timeline");
@@ -489,30 +540,55 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
 
   return (
     <Screen edges={["bottom"]}>
-      <View style={[styles.head, { backgroundColor: colors.surface, borderBottomColor: colors.border }, cardShadow]}>
+      <Animated.View
+        style={[
+          styles.head,
+          { backgroundColor: colors.surface, borderBottomColor: colors.border, paddingTop: headerPaddingTop, paddingBottom: headerPaddingBottom },
+        ]}
+      >
         <View style={styles.headRow}>
-          <View style={[styles.avatarWrap, { backgroundColor: colors.surfaceRaised, borderColor: colors.accent }]}>
+          <Animated.View
+            style={[
+              styles.avatarWrap,
+              {
+                backgroundColor: colors.surfaceRaised,
+                borderColor: colors.accent,
+                width: avatarSize,
+                height: avatarSize,
+                borderRadius: avatarRadius,
+                transform: [{ translateY: avatarTranslateY }],
+              },
+            ]}
+          >
             <Image
               source={avatarSource}
               style={[styles.avatar, hasRealPhoto && styles.avatarPhoto]}
               resizeMode={hasRealPhoto ? "cover" : "contain"}
             />
-          </View>
+          </Animated.View>
           <View style={styles.headIdBlock}>
-            <Text style={[styles.headName, { color: colors.textPrimary }]} numberOfLines={1}>
+            <Animated.Text style={[styles.headName, { color: colors.textPrimary, fontSize: nameFontSize }]} numberOfLines={1}>
               {enquiry.studentName || enquiry.contactName}
-            </Text>
+            </Animated.Text>
             <Text style={[styles.headSub, { color: colors.textMuted }]} numberOfLines={1}>
               {enquiry.studentName
                 ? `${enquiry.guardianRelation ? `${formatSource(enquiry.guardianRelation)} · ` : ""}${enquiry.contactName}`
                 : formatSource(enquiry.source)}
             </Text>
-            <View style={styles.headMetaRow}>
-              <View style={[styles.headMetaChip, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
-                <Ionicons name="call-outline" size={11} color={colors.accent} />
-                <Text style={[styles.headMetaText, { color: colors.textSecondary }]} numberOfLines={1}>
-                  {enquiry.contactPhone}
-                </Text>
+            {/* Absolutely positioned (not in flow) so it no longer reserves
+                its own line's height inside headIdBlock once it slides away -
+                that reserved space was the reason headRow (and everything
+                below it) stayed taller than necessary. top/left below just
+                reproduce where it used to sit in flow, by default. */}
+            <Animated.View
+              style={[
+                styles.headMetaRow,
+                { position: "absolute", top: 40, left: 0, transform: [{ translateX: tagTranslateX }, { translateY: tagTranslateY }] },
+              ]}
+            >
+              <View style={[styles.statusPill, { backgroundColor: currentStatusColor.bg }]}>
+                <Ionicons name="globe-outline" size={11} color={currentStatusColor.text} />
+                <Text style={[styles.statusPillText, { color: currentStatusColor.text }]}>{formatStageLabel(enquiry.status)}</Text>
               </View>
               {overdueTasksCount > 0 ? (
                 <View style={[styles.headMetaChip, { backgroundColor: colors.accentSoft, borderColor: colors.accentSoftAlt }]}>
@@ -526,8 +602,10 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
                   <Text style={[styles.headMetaText, { color: colors.accent }]}>Duplicate</Text>
                 </View>
               ) : null}
-            </View>
+            </Animated.View>
           </View>
+          {/* Fixed - top-right, aligned with the start (top) of the name
+              text. Not animated, same spot before or after scroll. */}
           <Pressable
             onPress={() => setSheetOpen(true)}
             style={({ pressed }) => [
@@ -541,60 +619,75 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
           </Pressable>
         </View>
 
-        <View style={styles.headerActionRow}>
-          <View style={[styles.statusPill, { backgroundColor: currentStatusColor.bg }]}>
-            <Text style={[styles.statusPillText, { color: currentStatusColor.text }]}>{formatStageLabel(enquiry.status)}</Text>
-          </View>
-          <Pressable
-            onPress={() => navigation.navigate("EditEnquiry", { enquiryId })}
-            style={({ pressed }) => [
-              styles.headerGhostAction,
-              { backgroundColor: colors.surfaceRaised, borderColor: colors.border },
-              pressed && { opacity: pressedOpacity },
-            ]}
-          >
-            <Ionicons name="create-outline" size={13} color={colors.accent} />
-            <Text style={[styles.headerGhostText, { color: colors.textSecondary }]}>Edit</Text>
-          </Pressable>
-          <Pressable
-            onPress={handleShare}
-            style={({ pressed }) => [
-              styles.headerGhostAction,
-              { backgroundColor: colors.surfaceRaised, borderColor: colors.border },
-              pressed && { opacity: pressedOpacity },
-            ]}
-          >
-            <Ionicons name="share-social-outline" size={13} color={colors.accent} />
-            <Text style={[styles.headerGhostText, { color: colors.textSecondary }]}>Share</Text>
-          </Pressable>
+        <View style={styles.headerActionRow} onLayout={(e) => setActionRowWidth(e.nativeEvent.layout.width)}>
+          <Animated.View style={[styles.headerActionGroup, { transform: [{ translateX: pillsTranslateX }, { translateY: pillsTranslateY }] }]}>
+            <Animated.View style={[styles.headerPill, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, minHeight: pillHeight }]}>
+              <Ionicons name="call-outline" size={14} color={colors.accent} />
+              <Animated.View style={{ overflow: "hidden", maxWidth: phoneLabelMaxWidth, opacity: pillLabelOpacity, marginLeft: pillLabelMarginLeft }}>
+                <Text style={[styles.headerPillText, { color: colors.textPrimary }]} numberOfLines={1}>
+                  {enquiry.contactPhone}
+                </Text>
+              </Animated.View>
+            </Animated.View>
+            <Animated.View style={[styles.headerPill, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, minHeight: pillHeight }]}>
+              <Pressable
+                onPress={() => navigation.navigate("EditEnquiry", { enquiryId })}
+                style={({ pressed }) => [styles.headerPillTouchable, pressed && { opacity: pressedOpacity }]}
+              >
+                <Ionicons name="create-outline" size={14} color={colors.accent} />
+                <Animated.View style={{ overflow: "hidden", maxWidth: actionLabelMaxWidth, opacity: pillLabelOpacity, marginLeft: pillLabelMarginLeft }}>
+                  <Text style={[styles.headerPillText, { color: colors.textSecondary }]} numberOfLines={1}>
+                    Edit
+                  </Text>
+                </Animated.View>
+              </Pressable>
+            </Animated.View>
+            <Animated.View style={[styles.headerPill, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, minHeight: pillHeight }]}>
+              <Pressable onPress={handleShare} style={({ pressed }) => [styles.headerPillTouchable, pressed && { opacity: pressedOpacity }]}>
+                <Ionicons name="share-social-outline" size={14} color={colors.accent} />
+                <Animated.View style={{ overflow: "hidden", maxWidth: actionLabelMaxWidth, opacity: pillLabelOpacity, marginLeft: pillLabelMarginLeft }}>
+                  <Text style={[styles.headerPillText, { color: colors.textSecondary }]} numberOfLines={1}>
+                    Share
+                  </Text>
+                </Animated.View>
+              </Pressable>
+            </Animated.View>
+          </Animated.View>
         </View>
 
-        <View style={[styles.segmentedControl, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+        <Animated.View style={[styles.segmentedControl, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, marginTop: segmentTopMargin }]}>
           {([
             { key: "lead", label: "Lead" },
             { key: "admission", label: "Admission" },
           ] as const).map((tab) => {
             const active = activeTab === tab.key;
             return (
-              <Pressable
-                key={tab.key}
-                onPress={() => setActiveTab(tab.key)}
-                style={({ pressed }) => [
-                  styles.segmentButton,
-                  active && { backgroundColor: colors.accent },
-                  pressed && { opacity: pressedOpacity },
-                ]}
-              >
-                <Text style={[styles.segmentButtonText, { color: active ? colors.accentOn : colors.textSecondary }]}>
-                  {tab.label}
-                </Text>
-              </Pressable>
+              <Animated.View key={tab.key} style={[styles.segmentButtonShell, { minHeight: segmentButtonHeight }]}>
+                <Pressable
+                  onPress={() => setActiveTab(tab.key)}
+                  style={({ pressed }) => [
+                    styles.segmentButton,
+                    active && { backgroundColor: colors.accent },
+                    pressed && { opacity: pressedOpacity },
+                  ]}
+                >
+                  <Text style={[styles.segmentButtonText, { color: active ? colors.accentOn : colors.textSecondary }]}>
+                    {tab.label}
+                  </Text>
+                </Pressable>
+              </Animated.View>
             );
           })}
-        </View>
-      </View>
+        </Animated.View>
+      </Animated.View>
 
-      <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <Animated.ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false })}
+        scrollEventThrottle={16}
+      >
         {enquiry.erasedAt ? (
           <View style={[styles.bannerCard, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
             <View style={styles.bannerTitleRow}>
@@ -1036,7 +1129,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
         )}
 
         {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
-      </ScrollView>
+      </Animated.ScrollView>
 
       <Pressable
         onPress={() => setSheetOpen(true)}
@@ -1167,12 +1260,16 @@ const styles = StyleSheet.create({
   content: { padding: 16, paddingTop: 16, paddingBottom: 110, gap: 20 },
   centered: { justifyContent: "center", alignItems: "center" },
 
+  // No `gap` here (would space every child pair equally, headRow ->
+  // headerActionRow -> segmentedControl) - the two gaps need to shrink
+  // differently on scroll, so each is its own explicit marginTop instead:
+  // headerActionRow's is static, segmentedControl's is animated
+  // (segmentTopMargin).
   head: {
     borderBottomWidth: 1,
     paddingTop: 10,
-    paddingBottom: 14,
+    paddingBottom: 10,
     paddingHorizontal: 16,
-    gap: 12,
   },
   headRow: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
   avatarWrap: {
@@ -1190,7 +1287,7 @@ const styles = StyleSheet.create({
   headIdBlock: { flex: 1, minWidth: 0 },
   headName: { fontSize: 18, fontWeight: "900", letterSpacing: -0.35 },
   headSub: { fontSize: 12, fontWeight: "600", marginTop: 2 },
-  headMetaRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
+  headMetaRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   headMetaChip: {
     maxWidth: 140,
     minHeight: 25,
@@ -1211,24 +1308,32 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     flexShrink: 0,
   },
-  headerActionRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  headerActionRow: { marginTop: 8, flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  headerActionGroup: { flexDirection: "row", alignItems: "center", gap: 8 },
   statusPill: {
     flexShrink: 0,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  statusPillText: { fontSize: 10.5, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.3 },
-  headerGhostAction: {
-    minHeight: 30,
-    borderRadius: 999,
-    borderWidth: 1,
-    paddingHorizontal: 10,
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
+    gap: 4,
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
   },
-  headerGhostText: { fontSize: 11, fontWeight: "800" },
+  statusPillText: { fontSize: 10, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.3 },
+  headerPill: {
+    minHeight: 34,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    flexShrink: 1,
+  },
+  headerPillText: { fontSize: 11.5, fontWeight: "800" },
+  // Fills the headerPill shell (Edit/Share only) - the shell itself carries
+  // the box styling (border/radius/bg/padding/minHeight), this is just the
+  // row layout for the icon + collapsing text inside it.
+  headerPillTouchable: { flexDirection: "row", alignItems: "center" },
 
   segmentedControl: {
     borderWidth: 1,
@@ -1237,9 +1342,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 4,
   },
+  // Shell carries the animated minHeight (segmentButtonHeight); segmentButton
+  // (the actual Pressable) fills it via flex:1 - same shell/inner split as
+  // headerPill, so the tab's background/radius still resize correctly rather
+  // than the Pressable silently ignoring an animated style.
+  segmentButtonShell: { flex: 1 },
   segmentButton: {
     flex: 1,
-    minHeight: 36,
     borderRadius: 9,
     alignItems: "center",
     justifyContent: "center",

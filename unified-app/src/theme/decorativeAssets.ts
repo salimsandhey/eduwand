@@ -31,4 +31,10 @@ export const decorativeAssets = {
   classPencilCup: require("../../assets/decorative/decor-class-pencil-cup.png"),
   classNotebook: require("../../assets/decorative/decor-class-notebook.png"),
   aiButtonIcon: require("../../assets/decorative/AI-button-icon-new.png"),
+  aiButtonIconEyesWhite: require("../../assets/decorative/AI-button-icon-eyes-white.png"),
+  aiButtonIconFrame: require("../../assets/decorative/AI-button-icon-frame.png"),
+  followUpsCat: require("../../assets/decorative/decor-followups-cat.png"),
+  heroFocusCard: require("../../assets/decorative/decor-hero-focus-card.png"),
+  heroFollowupCard: require("../../assets/decorative/decor-hero-followup-card.png"),
+  heroConversionCard: require("../../assets/decorative/decor-hero-conversion-card.png"),
 } as const;

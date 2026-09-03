@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -6,24 +6,25 @@ import {
   Pressable,
   StyleSheet,
   ActivityIndicator,
-  FlatList,
+  RefreshControl,
   Image,
   ImageSourcePropType,
+  Alert,
+  Animated,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import type { CompositeScreenProps } from "@react-navigation/native";
 import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { EnrolmentTabParamList, RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
-import { PageHeader } from "../../components/PageHeader";
 import { getStatusColor } from "../../theme/statusColors";
 import { usePipelineStages } from "../../hooks/usePipelineStages";
 import { api, Enquiry, EnquiryStatus } from "../../api/client";
-import { decorativeAssets } from "../../theme/decorativeAssets";
 
 type Props = CompositeScreenProps<
   BottomTabScreenProps<EnrolmentTabParamList, "Pipeline">,
@@ -56,14 +57,140 @@ function formatStageKey(value: string) {
   return value.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function timeAgo(value: string) {
+  const diffMs = Date.now() - new Date(value).getTime();
+  const min = Math.floor(diffMs / 60000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min} min ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} hr ago`;
+  const day = Math.floor(hr / 24);
+  return `${day}d ago`;
+}
+
+function stageIconFor(key: string): keyof typeof Ionicons.glyphMap {
+  if (key.includes("visit")) return "calendar-outline";
+  if (key.includes("application")) return "document-text-outline";
+  if (key.includes("admit") || key.includes("enrol")) return "checkmark-circle-outline";
+  if (key.includes("lost")) return "close-circle-outline";
+  if (key.includes("contact")) return "call-outline";
+  return "person-outline";
+}
+
+function StatCell({
+  icon,
+  tint,
+  value,
+  label,
+  percent,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  tint: string;
+  value: number;
+  label: string;
+  percent: number;
+}) {
+  return (
+    <View style={[styles.statCell, { backgroundColor: tint }]}>
+      <View style={styles.statCellTopRow}>
+        <View style={styles.statIconChip}>
+          <Ionicons name={icon} size={13} color={tint} />
+        </View>
+        <Text style={styles.statPercentText} numberOfLines={1}>
+          {percent}%
+        </Text>
+      </View>
+      <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+        {value}
+      </Text>
+      <Text style={styles.statLabel} numberOfLines={1}>
+        {label}
+      </Text>
+      <View style={styles.statProgressTrack}>
+        <View style={[styles.statProgressFill, { width: `${percent}%` }]} />
+      </View>
+    </View>
+  );
+}
+
+function LeadCard({
+  item,
+  colors,
+  cardShadow,
+  pressedOpacity,
+  onPress,
+}: {
+  item: Enquiry;
+  colors: ReturnType<typeof useTheme>["colors"];
+  cardShadow: ReturnType<typeof useTheme>["cardShadow"];
+  pressedOpacity: number;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.leadCard,
+        { backgroundColor: colors.surface, borderColor: colors.border },
+        cardShadow,
+        pressed && { opacity: pressedOpacity },
+      ]}
+      accessibilityRole="button"
+    >
+      <View style={styles.leadTop}>
+        <View style={[styles.leadAvatar, { backgroundColor: colors.surfaceRaised, borderColor: colors.accent }]}>
+          <Image source={getAvatarSource(item.id)} style={styles.leadAvatarImage} resizeMode="contain" />
+        </View>
+        <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+      </View>
+      <Text style={[styles.leadName, { color: colors.textPrimary }]} numberOfLines={1}>
+        {item.studentName || item.contactName}
+      </Text>
+      <Text style={[styles.leadMeta, { color: colors.textMuted }]} numberOfLines={1}>
+        {item.gradeInterest || "Grade not set"}
+      </Text>
+      <Text style={styles.leadSource} numberOfLines={1}>
+        <Text style={{ color: colors.textMuted }}>Source: </Text>
+        <Text style={{ color: colors.textPrimary, fontWeight: "700" }}>{formatSource(item.source)}</Text>
+      </Text>
+      <View style={[styles.leadTimePill, { backgroundColor: colors.accentSoft }]}>
+        <Ionicons name="time-outline" size={12} color={colors.accent} />
+        <Text style={[styles.leadTimeText, { color: colors.accent }]}>{timeAgo(item.updatedAt)}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
 export function PipelineBoardScreen({ navigation }: Props) {
   const { accessToken } = useAuth();
   const { colors, mode, cardShadow, pressedOpacity } = useTheme();
   const { stages } = usePipelineStages();
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
-  const [activeStage, setActiveStage] = useState<EnquiryStatus>("new");
+  const [activeStage, setActiveStage] = useState<EnquiryStatus | "all">("all");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const liveDotPulse = useRef(new Animated.Value(0)).current;
+  const fabScale = useRef(new Animated.Value(1)).current;
+
+  const handleFabPressIn = () => {
+    Animated.spring(fabScale, { toValue: 0.94, useNativeDriver: true }).start();
+  };
+
+  const handleFabPressOut = () => {
+    Animated.spring(fabScale, { toValue: 1, useNativeDriver: true }).start();
+  };
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(liveDotPulse, { toValue: 1, duration: 900, useNativeDriver: true }),
+        Animated.timing(liveDotPulse, { toValue: 0, duration: 900, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [liveDotPulse]);
+  const liveDotOpacity = liveDotPulse.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] });
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -87,8 +214,8 @@ export function PipelineBoardScreen({ navigation }: Props) {
 
   useEffect(() => {
     if (!stages.length) return;
-    if (!stages.find((stage) => stage.key === activeStage)) {
-      setActiveStage(stages[0].key);
+    if (activeStage !== "all" && !stages.find((stage) => stage.key === activeStage)) {
+      setActiveStage("all");
     }
   }, [activeStage, stages]);
 
@@ -99,19 +226,45 @@ export function PipelineBoardScreen({ navigation }: Props) {
     }, {});
   }, [enquiries, stages]);
 
+  const leadsByStage = useMemo(() => {
+    return stages.reduce<Record<string, Enquiry[]>>((acc, stage) => {
+      acc[stage.key] = enquiries
+        .filter((enquiry) => enquiry.status === stage.key)
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      return acc;
+    }, {});
+  }, [enquiries, stages]);
+
   const totalLeads = enquiries.length;
-  const activeLeads = enquiries.filter((enquiry) => enquiry.status === activeStage);
-  const selectedStage = stages.find((stage) => stage.key === activeStage);
+  const newCount = stages[0] ? stageCounts[stages[0].key] ?? 0 : 0;
+  const visitCount = enquiries.filter((enquiry) => enquiry.status.includes("visit")).length;
   const convertedStage = stages.find((stage) => stage.isConverted);
   const convertedCount = convertedStage ? stageCounts[convertedStage.key] ?? 0 : 0;
-  const lostStage = stages.find((stage) => stage.isTerminal && !stage.isConverted);
-  const lostCount = lostStage ? stageCounts[lostStage.key] ?? 0 : 0;
-  const hottestStage =
-    stages
-      .map((stage) => ({ stage, count: stageCounts[stage.key] ?? 0 }))
-      .sort((a, b) => b.count - a.count)[0]?.stage ?? stages[0];
 
-  if (isLoading) {
+  const statPercents = useMemo(
+    () => ({
+      new: totalLeads ? Math.round((newCount / totalLeads) * 100) : 0,
+      visits: totalLeads ? Math.round((visitCount / totalLeads) * 100) : 0,
+      converted: totalLeads ? Math.round((convertedCount / totalLeads) * 100) : 0,
+    }),
+    [totalLeads, newCount, visitCount, convertedCount]
+  );
+
+  const filters: (EnquiryStatus | "all")[] = ["all", ...stages.map((stage) => stage.key)];
+  const labelFor = (key: EnquiryStatus | "all") =>
+    key === "all" ? "All stages" : stages.find((stage) => stage.key === key)?.label ?? formatStageKey(key);
+  const filterCount = (key: EnquiryStatus | "all") =>
+    key === "all" ? totalLeads : stageCounts[key] ?? 0;
+
+  const visibleStages = activeStage === "all" ? stages : stages.filter((stage) => stage.key === activeStage);
+
+  const showFunnelInfo = () =>
+    Alert.alert(
+      "Admissions funnel",
+      "Detailed funnel analytics are available to your school admin in the EduWand web dashboard."
+    );
+
+  if (isLoading && enquiries.length === 0) {
     return (
       <Screen style={styles.centered}>
         <ActivityIndicator color={colors.accent} />
@@ -121,466 +274,524 @@ export function PipelineBoardScreen({ navigation }: Props) {
 
   return (
     <Screen>
-      <FlatList
-        data={activeLeads}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContainer}
+      <ScrollView
+        contentContainerStyle={styles.container}
         showsVerticalScrollIndicator={false}
-        ListHeaderComponent={
-          <>
-            <PageHeader
-              eyebrow="Pipeline"
-              title="Admissions movement"
-              subtitle={hottestStage ? `${hottestStage.label} is the busiest stage` : "Track lead movement by stage"}
-              icon="git-network-outline"
-              metrics={[
-                { label: "Total", value: totalLeads },
-                { label: "Converted", value: convertedCount, tone: "accent" },
-                { label: "Lost", value: lostCount, tone: lostCount > 0 ? "danger" : "default" },
-              ]}
-            />
-
-            {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
-
-            <View style={styles.sectionWrap}>
-              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Pipeline health</Text>
-            </View>
-
-            <View style={styles.summaryGrid}>
-              <View style={[styles.summaryCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
-                <View style={[styles.summaryIcon, { backgroundColor: colors.accentSoft }]}>
-                  <Ionicons name="flame-outline" size={16} color={colors.accent} />
-                </View>
-                <Text style={[styles.summaryValue, { color: colors.textPrimary }]}>
-                  {hottestStage ? hottestStage.label : "N/A"}
-                </Text>
-                <Text style={[styles.summaryLabel, { color: colors.textMuted }]}>Busiest stage</Text>
-              </View>
-
-              <View style={[styles.summaryCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
-                <View style={[styles.summaryIcon, { backgroundColor: colors.accentSoft }]}>
-                  <Ionicons name="swap-horizontal-outline" size={16} color={colors.accent} />
-                </View>
-                <Text style={[styles.summaryValue, { color: colors.textPrimary }]}>
-                  {selectedStage ? stageCounts[selectedStage.key] ?? 0 : 0}
-                </Text>
-                <Text style={[styles.summaryLabel, { color: colors.textMuted }]}>Selected stage</Text>
-              </View>
-            </View>
-
-            <View style={styles.sectionWrap}>
-              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Stage board</Text>
-            </View>
-
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.stageRail}
-            >
-              {stages.map((stage, index) => {
-                const active = stage.key === activeStage;
-                const count = stageCounts[stage.key] ?? 0;
-                const statusColor = getStatusColor(stage.key, mode);
-                const isConverted = stage.isConverted;
-                const isTerminal = stage.isTerminal && !stage.isConverted;
-
-                return (
-                  <View key={stage.key} style={styles.stageRailItem}>
-                    <Pressable
-                      onPress={() => setActiveStage(stage.key)}
-                      style={({ pressed }) => [
-                        styles.stageCard,
-                        {
-                          backgroundColor: active ? colors.accent : colors.surface,
-                          borderColor: active ? colors.accent : colors.border,
-                        },
-                        cardShadow,
-                        pressed && { opacity: pressedOpacity },
-                      ]}
-                    >
-                      <View style={styles.stageTopRow}>
-                        <View
-                          style={[
-                            styles.stageIndexBadge,
-                            {
-                              backgroundColor: active ? "rgba(255,255,255,0.16)" : colors.surfaceRaised,
-                            },
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.stageIndexText,
-                              { color: active ? colors.accentOn : colors.textSecondary },
-                            ]}
-                          >
-                            {index + 1}
-                          </Text>
-                        </View>
-                        {isConverted ? (
-                          <Ionicons name="checkmark-circle" size={18} color={active ? colors.accentOn : colors.accent} />
-                        ) : isTerminal ? (
-                          <Ionicons name="close-circle-outline" size={18} color={active ? colors.accentOn : colors.textMuted} />
-                        ) : (
-                          <Ionicons name="ellipse-outline" size={18} color={active ? colors.accentOn : statusColor.text} />
-                        )}
-                      </View>
-
-                      <Text style={[styles.stageCardTitle, { color: active ? colors.accentOn : colors.textPrimary }]}>
-                        {stage.label}
-                      </Text>
-                      <Text style={[styles.stageCardCount, { color: active ? colors.accentOn : colors.textPrimary }]}>
-                        {count}
-                      </Text>
-                      <View style={styles.stageCardBottomRow}>
-                        {isConverted ? (
-                          <View style={[styles.stageChip, { backgroundColor: active ? "rgba(255,255,255,0.16)" : colors.accentSoft }]}>
-                            <Text style={[styles.stageChipText, { color: active ? colors.accentOn : colors.accent }]}>Won</Text>
-                          </View>
-                        ) : isTerminal ? (
-                          <View style={[styles.stageChip, { backgroundColor: active ? "rgba(255,255,255,0.16)" : colors.surfaceRaised }]}>
-                            <Text style={[styles.stageChipText, { color: active ? colors.accentOn : colors.textSecondary }]}>Closed</Text>
-                          </View>
-                        ) : (
-                          <View style={[styles.stageChip, { backgroundColor: active ? "rgba(255,255,255,0.16)" : colors.surfaceRaised }]}>
-                            <Text style={[styles.stageChipText, { color: active ? colors.accentOn : colors.textSecondary }]}>Live</Text>
-                          </View>
-                        )}
-                      </View>
-                    </Pressable>
-                  </View>
-                );
-              })}
-            </ScrollView>
-
-            <View style={[styles.focusCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
-              <View style={styles.focusHeader}>
-                <View>
-                  <Text style={[styles.focusTitle, { color: colors.textPrimary }]}>
-                    {selectedStage?.label ?? formatStageKey(activeStage)}
-                  </Text>
-                </View>
-                <View style={styles.focusRight}>
-                  <View style={[styles.focusBadge, { backgroundColor: colors.accentSoft }]}>
-                    <Text style={[styles.focusBadgeText, { color: colors.accent }]}>
-                      {stageCounts[activeStage] ?? 0}
-                    </Text>
-                  </View>
-                  <View style={[styles.focusStatusChip, { backgroundColor: colors.surfaceRaised }]}>
-                    <Text style={[styles.focusStatusChipText, { color: colors.textSecondary }]}>
-                      {activeLeads.length === 0 ? "Clear" : activeLeads.length > 5 ? "Hot" : "Active"}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            </View>
-          </>
-        }
-        ListEmptyComponent={
-          <View style={[styles.emptyContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Image source={decorativeAssets.stackedCards} style={styles.emptyGraphic} resizeMode="contain" />
-            <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>No leads in this stage</Text>
-            <Text style={[styles.emptyText, { color: colors.textMuted }]}>
-              The selected stage is currently clear. Pick another stage or add new movement into the funnel.
+        refreshControl={<RefreshControl refreshing={isLoading} onRefresh={load} tintColor={colors.accent} />}
+      >
+        <View style={styles.header}>
+          <View style={styles.headerText}>
+            <Text style={[styles.pageTitle, { color: colors.textPrimary }]}>Pipeline</Text>
+            <Text style={[styles.pageSubtitle, { color: colors.textMuted }]}>
+              Track every lead across the admission journey
             </Text>
           </View>
-        }
-        renderItem={({ item }) => {
-          const avatarSource = getAvatarSource(item.id);
-          const statusColor = getStatusColor(item.status, mode);
+        </View>
 
-          return (
-            <Pressable
-              style={({ pressed }) => [
-                styles.leadCard,
-                { backgroundColor: colors.surface, borderColor: colors.border },
-                cardShadow,
-                pressed && { opacity: pressedOpacity },
-              ]}
-              onPress={() => navigation.navigate("EnquiryDetail", { enquiryId: item.id })}
-              accessibilityRole="button"
-            >
-              <View style={styles.leadTopRow}>
-                <View style={[styles.avatarWrap, { backgroundColor: colors.surfaceRaised, borderColor: colors.accent }]}>
-                  <Image source={avatarSource} style={styles.avatarImage} resizeMode="contain" />
-                </View>
-                <View style={styles.leadMain}>
-                  <Text style={[styles.leadName, { color: colors.textPrimary }]} numberOfLines={1}>
-                    {item.contactName}
+        <LinearGradient
+          colors={[colors.accent, colors.accentDark]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.statHero}
+        >
+          <View style={styles.statHeroGlow} pointerEvents="none" />
+          <View style={styles.statHeroGlowSecondary} pointerEvents="none" />
+
+          <View style={styles.statHeroTopRow}>
+            <Text style={styles.statHeroEyebrow}>Pipeline overview</Text>
+            <View style={styles.liveBadge}>
+              <Animated.View style={[styles.liveDot, { opacity: liveDotOpacity }]} />
+              <Text style={styles.liveBadgeText}>Live</Text>
+            </View>
+          </View>
+
+          <View style={styles.statHeroRow}>
+            <StatCell icon="people-outline" tint="#7359D9" value={totalLeads} label="Total leads" percent={100} />
+            <StatCell icon="trending-up-outline" tint="#3E8ED9" value={newCount} label="New" percent={statPercents.new} />
+            <StatCell icon="calendar-outline" tint="#E5A72D" value={visitCount} label="Visits" percent={statPercents.visits} />
+            <StatCell icon="ribbon-outline" tint="#2FA678" value={convertedCount} label="Converted" percent={statPercents.converted} />
+          </View>
+        </LinearGradient>
+
+        {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+          {filters.map((key) => {
+            const active = key === activeStage;
+            return (
+              <Pressable
+                key={key}
+                onPress={() => setActiveStage(key)}
+                style={({ pressed }) => [
+                  styles.filterChip,
+                  {
+                    backgroundColor: active ? colors.accent : colors.surface,
+                    borderColor: active ? colors.accent : colors.border,
+                  },
+                  pressed && { opacity: pressedOpacity },
+                ]}
+              >
+                <Text style={[styles.filterChipText, { color: active ? colors.accentOn : colors.textSecondary }]}>
+                  {labelFor(key)}
+                </Text>
+                <View
+                  style={[
+                    styles.filterChipBadge,
+                    { backgroundColor: active ? "rgba(255,255,255,0.18)" : colors.backgroundMuted },
+                  ]}
+                >
+                  <Text style={[styles.filterChipBadgeText, { color: active ? colors.accentOn : colors.textMuted }]}>
+                    {filterCount(key)}
                   </Text>
-                  <Text style={[styles.leadMeta, { color: colors.textMuted }]} numberOfLines={1}>
-                    {formatSource(item.source)}
-                  </Text>
                 </View>
-                <View style={[styles.stageBadge, { backgroundColor: statusColor.bg }]}>
-                  <Text style={[styles.stageBadgeText, { color: statusColor.text }]}>{item.status}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.boardScroll}
+          contentContainerStyle={styles.boardContent}
+        >
+          {visibleStages.map((stage) => {
+            const leads = leadsByStage[stage.key] ?? [];
+            const ruleColor = getStatusColor(stage.key, mode).text;
+            return (
+              <View key={stage.key} style={[styles.column, { backgroundColor: colors.backgroundMuted }]}>
+                <View style={styles.columnHeader}>
+                  <Ionicons name={stageIconFor(stage.key)} size={16} color={colors.textSecondary} />
+                  <Text style={[styles.columnTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+                    {stage.label}
+                  </Text>
+                  <View style={[styles.columnCount, { backgroundColor: colors.accentSoft }]}>
+                    <Text style={[styles.columnCountText, { color: colors.accent }]}>{stageCounts[stage.key] ?? 0}</Text>
+                  </View>
+                </View>
+                <View style={[styles.columnRule, { backgroundColor: ruleColor }]} />
+
+                <View style={styles.columnBody}>
+                  {leads.length === 0 ? (
+                    <Text style={[styles.columnEmpty, { color: colors.textMuted }]}>No leads in this stage yet</Text>
+                  ) : (
+                    leads.map((lead) => (
+                      <LeadCard
+                        key={lead.id}
+                        item={lead}
+                        colors={colors}
+                        cardShadow={cardShadow}
+                        pressedOpacity={pressedOpacity}
+                        onPress={() => navigation.navigate("EnquiryDetail", { enquiryId: lead.id })}
+                      />
+                    ))
+                  )}
+
+                  <Pressable
+                    onPress={() => navigation.navigate("NewEnquiryForm")}
+                    style={({ pressed }) => [styles.addLead, pressed && { opacity: pressedOpacity }]}
+                    accessibilityRole="button"
+                  >
+                    <Ionicons name="add" size={16} color={colors.accent} />
+                    <Text style={[styles.addLeadText, { color: colors.accent }]}>Add lead</Text>
+                  </Pressable>
                 </View>
               </View>
+            );
+          })}
+        </ScrollView>
 
-              <View style={styles.leadBottomRow}>
-                <View style={styles.leadDetailBlock}>
-                  <Text style={[styles.leadDetailLabel, { color: colors.textMuted }]}>Grade</Text>
-                  <Text style={[styles.leadDetailValue, { color: colors.textPrimary }]}>
-                    {item.gradeInterest || "Not added"}
-                  </Text>
-                </View>
-                <View style={styles.leadDetailBlock}>
-                  <Text style={[styles.leadDetailLabel, { color: colors.textMuted }]}>Phone</Text>
-                  <Text style={[styles.leadDetailValue, { color: colors.textPrimary }]}>{item.contactPhone}</Text>
-                </View>
-                <Ionicons name="arrow-forward" size={16} color={colors.textMuted} />
-              </View>
-            </Pressable>
-          );
-        }}
-      />
+        <Pressable
+          onPress={showFunnelInfo}
+          style={({ pressed }) => [styles.infoCard, { backgroundColor: colors.accentSoft }, pressed && { opacity: pressedOpacity }]}
+          accessibilityRole="button"
+        >
+          <View style={[styles.infoIcon, { backgroundColor: colors.surface }]}>
+            <Ionicons name="filter-outline" size={18} color={colors.accent} />
+          </View>
+          <Text style={[styles.infoTitle, { color: colors.textPrimary }]}>Admissions funnel</Text>
+          <Text style={[styles.infoText, { color: colors.textSecondary }]}>
+            Track how leads move through each stage of the admissions process.
+          </Text>
+          <View style={[styles.infoButton, { backgroundColor: colors.surface }]}>
+            <Ionicons name="stats-chart-outline" size={15} color={colors.accent} />
+            <Text style={[styles.infoButtonText, { color: colors.accent }]}>View funnel report</Text>
+            <Ionicons name="arrow-forward" size={14} color={colors.accent} />
+          </View>
+        </Pressable>
+
+        <View style={[styles.infoCard, { backgroundColor: colors.warning + "22" }]}>
+          <View style={[styles.infoIcon, { backgroundColor: colors.surface }]}>
+            <Ionicons name="bulb-outline" size={18} color={colors.warning} />
+          </View>
+          <Text style={[styles.infoTitle, { color: colors.textPrimary }]}>Drag and drop leads between stages</Text>
+          <Text style={[styles.infoText, { color: colors.textSecondary }]}>
+            Keep your pipeline updated to get accurate reports.
+          </Text>
+        </View>
+      </ScrollView>
+
+      <Animated.View style={[styles.primaryFabWrap, { transform: [{ scale: fabScale }] }]}>
+        <Pressable
+          onPressIn={handleFabPressIn}
+          onPressOut={handleFabPressOut}
+          onPress={() => navigation.navigate("NewEnquiryForm")}
+          style={[styles.primaryFab, { backgroundColor: colors.accent }, cardShadow]}
+          accessibilityRole="button"
+          accessibilityLabel="Add lead"
+        >
+          <Ionicons name="add" size={26} color={colors.accentOn} />
+        </Pressable>
+      </Animated.View>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
   centered: { justifyContent: "center", alignItems: "center" },
-  listContainer: {
+  container: {
     paddingHorizontal: 16,
     paddingTop: 14,
-    paddingBottom: 132,
+    paddingBottom: 150,
     gap: 14,
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  headerText: {
+    flex: 1,
+  },
+  pageTitle: {
+    fontSize: 28,
+    fontWeight: "800",
+    letterSpacing: -0.6,
+  },
+  pageSubtitle: {
+    marginTop: 6,
+    fontSize: 13,
+    fontWeight: "500",
+    lineHeight: 18,
+  },
+  primaryFabWrap: {
+    position: "absolute",
+    right: 20,
+    bottom: 146,
+  },
+  primaryFab: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  statHero: {
+    marginTop: 2,
+    borderRadius: 26,
+    paddingTop: 16,
+    paddingBottom: 16,
+    paddingHorizontal: 12,
+    gap: 14,
+    overflow: "hidden",
+  },
+  statHeroGlow: {
+    position: "absolute",
+    top: -46,
+    right: -30,
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    backgroundColor: "rgba(255,255,255,0.14)",
+  },
+  statHeroGlowSecondary: {
+    position: "absolute",
+    bottom: -52,
+    left: -32,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  statHeroTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    zIndex: 2,
+  },
+  statHeroEyebrow: {
+    color: "rgba(255,255,255,0.85)",
+    fontSize: 11,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  liveBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "rgba(255,255,255,0.16)",
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+  },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#8CE7B8",
+  },
+  liveBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+  },
+  statHeroRow: {
+    flexDirection: "row",
+    gap: 6,
+    zIndex: 2,
+  },
+  statCell: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: "center",
+    gap: 4,
+    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+  },
+  statCellTopRow: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  statIconChip: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    flexShrink: 0,
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  statPercentText: {
+    flexShrink: 1,
+    marginLeft: 4,
+    color: "#FFFFFF",
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  statValue: {
+    marginTop: 1,
+    alignSelf: "flex-start",
+    color: "#FFFFFF",
+    fontSize: 17,
+    fontWeight: "800",
+    letterSpacing: -0.4,
+  },
+  statLabel: {
+    alignSelf: "flex-start",
+    color: "rgba(255,255,255,0.9)",
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  statProgressTrack: {
+    width: "100%",
+    height: 3,
+    borderRadius: 2,
+    marginTop: 3,
+    backgroundColor: "rgba(255,255,255,0.3)",
+    overflow: "hidden",
+  },
+  statProgressFill: {
+    height: "100%",
+    borderRadius: 2,
+    backgroundColor: "#FFFFFF",
   },
   error: {
     textAlign: "center",
     fontSize: 13,
     fontWeight: "600",
-    marginTop: 8,
   },
-  sectionWrap: {
-    marginTop: 18,
-    marginBottom: 4,
+  filterRow: {
+    paddingVertical: 2,
+    gap: 10,
   },
-  sectionTitle: {
-    fontSize: 21,
-    fontWeight: "800",
-    letterSpacing: -0.4,
-  },
-  sectionSubtitle: {
-    marginTop: 4,
-    fontSize: 13,
-    lineHeight: 20,
-  },
-  summaryGrid: {
-    flexDirection: "row",
-    gap: 12,
-  },
-  summaryCard: {
-    flex: 1,
-    borderWidth: 1,
-    borderRadius: 22,
-    padding: 16,
-  },
-  summaryIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 16,
-  },
-  summaryValue: {
-    fontSize: 18,
-    fontWeight: "800",
-    lineHeight: 24,
-  },
-  summaryLabel: {
-    marginTop: 4,
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  stageRail: {
-    paddingBottom: 8,
-    paddingTop: 4,
-    paddingRight: 12,
-    gap: 12,
-  },
-  stageRailItem: {
-    width: 104,
-  },
-  stageCard: {
-    borderWidth: 1,
-    borderRadius: 18,
-    padding: 12,
-    minHeight: 104,
-  },
-  stageTopRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  stageIndexBadge: {
-    minWidth: 24,
-    height: 24,
-    borderRadius: 12,
-    paddingHorizontal: 6,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  stageIndexText: {
-    fontSize: 10,
-    fontWeight: "800",
-  },
-  stageCardTitle: {
-    marginTop: 10,
-    fontSize: 12,
-    fontWeight: "800",
-    lineHeight: 16,
-  },
-  stageCardCount: {
-    marginTop: 8,
-    fontSize: 20,
-    fontWeight: "800",
-    letterSpacing: -0.6,
-  },
-  stageCardBottomRow: {
-    marginTop: 8,
-  },
-  stageChip: {
-    alignSelf: "flex-start",
-    minHeight: 24,
+  filterChip: {
+    minHeight: 38,
     borderRadius: 999,
-    paddingHorizontal: 8,
-    justifyContent: "center",
-  },
-  stageChipText: {
-    fontSize: 10,
-    fontWeight: "800",
-  },
-  focusCard: {
-    marginTop: 8,
     borderWidth: 1,
-    borderRadius: 24,
-    padding: 16,
-  },
-  focusHeader: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    gap: 12,
+    gap: 8,
+    paddingHorizontal: 16,
   },
-  focusTitle: {
-    fontSize: 18,
-    fontWeight: "800",
+  filterChipText: {
+    fontSize: 12,
+    fontWeight: "700",
   },
-  focusRight: {
+  filterChipBadge: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 7,
+  },
+  filterChipBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  boardScroll: {
+    marginHorizontal: -16,
+  },
+  boardContent: {
+    paddingHorizontal: 16,
+    gap: 14,
+  },
+  column: {
+    width: 300,
+    borderRadius: 22,
+    padding: 14,
+  },
+  columnHeader: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
   },
-  focusBadge: {
-    minWidth: 36,
-    height: 36,
-    borderRadius: 18,
+  columnTitle: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: "800",
+    letterSpacing: -0.3,
+  },
+  columnCount: {
+    minWidth: 24,
+    height: 22,
+    borderRadius: 11,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 10,
+    paddingHorizontal: 7,
   },
-  focusBadgeText: {
-    fontSize: 13,
-    fontWeight: "800",
-  },
-  focusStatusChip: {
-    minHeight: 32,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    justifyContent: "center",
-  },
-  focusStatusChipText: {
+  columnCountText: {
     fontSize: 11,
     fontWeight: "800",
   },
-  emptyContainer: {
-    borderWidth: 1,
-    borderRadius: 24,
-    paddingVertical: 28,
-    paddingHorizontal: 20,
-    alignItems: "center",
-    marginTop: 8,
+  columnRule: {
+    height: 3,
+    borderRadius: 2,
+    marginTop: 12,
   },
-  emptyGraphic: {
-    width: 92,
-    height: 92,
-    opacity: 0.9,
+  columnBody: {
+    marginTop: 12,
+    gap: 12,
   },
-  emptyTitle: {
-    marginTop: 14,
-    fontSize: 18,
-    fontWeight: "800",
-  },
-  emptyText: {
-    marginTop: 8,
-    fontSize: 13,
-    lineHeight: 20,
+  columnEmpty: {
+    fontSize: 12,
+    fontWeight: "500",
     textAlign: "center",
+    paddingVertical: 16,
+  },
+  addLead: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 12,
+  },
+  addLeadText: {
+    fontSize: 13,
+    fontWeight: "800",
   },
   leadCard: {
     borderWidth: 1,
-    borderRadius: 24,
-    padding: 16,
-    gap: 14,
+    borderRadius: 16,
+    padding: 14,
   },
-  leadTopRow: {
+  leadTop: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    justifyContent: "space-between",
+    marginBottom: 10,
   },
-  avatarWrap: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
+  leadAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
   },
-  avatarImage: {
-    width: 36,
-    height: 36,
-  },
-  leadMain: {
-    flex: 1,
+  leadAvatarImage: {
+    width: 32,
+    height: 32,
   },
   leadName: {
     fontSize: 15,
     fontWeight: "800",
+    letterSpacing: -0.3,
   },
   leadMeta: {
     marginTop: 4,
     fontSize: 12,
     fontWeight: "500",
   },
-  stageBadge: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+  leadSource: {
+    marginTop: 3,
+    fontSize: 12,
   },
-  stageBadgeText: {
-    fontSize: 10,
-    fontWeight: "800",
-    textTransform: "capitalize",
-  },
-  leadBottomRow: {
+  leadTimePill: {
+    alignSelf: "flex-start",
     flexDirection: "row",
-    alignItems: "flex-end",
-    gap: 18,
+    alignItems: "center",
+    gap: 5,
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    marginTop: 12,
   },
-  leadDetailBlock: {
-    gap: 4,
-    flex: 1,
-  },
-  leadDetailLabel: {
+  leadTimeText: {
     fontSize: 11,
     fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
   },
-  leadDetailValue: {
-    fontSize: 14,
-    fontWeight: "700",
+  infoCard: {
+    borderRadius: 22,
+    padding: 18,
+    gap: 10,
+  },
+  infoIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  infoTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    letterSpacing: -0.3,
+  },
+  infoText: {
+    fontSize: 12.5,
+    fontWeight: "500",
+    lineHeight: 18,
+  },
+  infoButton: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginTop: 4,
+  },
+  infoButtonText: {
+    fontSize: 12.5,
+    fontWeight: "800",
   },
 });

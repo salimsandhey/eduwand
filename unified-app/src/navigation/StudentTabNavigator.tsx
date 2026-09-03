@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Ionicons } from "@expo/vector-icons";
 import { StudentTabParamList } from "./types";
@@ -6,6 +7,8 @@ import { StudentMaterialsScreen } from "../screens/student/StudentMaterialsScree
 import { StudentResultsScreen } from "../screens/student/StudentResultsScreen";
 import { StudentMessagesScreen } from "../screens/student/StudentMessagesScreen";
 import { FloatingTabBar } from "./FloatingTabBar";
+import { AiAssistChatModal } from "../components/AiAssistChatModal";
+import { decorativeAssets } from "../theme/decorativeAssets";
 
 const Tab = createBottomTabNavigator<StudentTabParamList>();
 
@@ -17,21 +20,33 @@ const ICONS: Record<keyof StudentTabParamList, keyof typeof Ionicons.glyphMap> =
 };
 
 export function StudentTabNavigator() {
+  const [showAiAssist, setShowAiAssist] = useState(false);
+
   return (
-    <Tab.Navigator
-      tabBar={(props) => <FloatingTabBar {...props} icons={ICONS} />}
-      screenOptions={({ route }) => ({
-        headerShown: false,
-        tabBarHideOnKeyboard: true,
-        tabBarIcon: ({ color, size }) => (
-          <Ionicons name={ICONS[route.name as keyof StudentTabParamList]} size={size} color={color} />
-        ),
-      })}
-    >
-      <Tab.Screen name="Home" component={StudentHomeScreen} />
-      <Tab.Screen name="Materials" component={StudentMaterialsScreen} />
-      <Tab.Screen name="Results" component={StudentResultsScreen} />
-      <Tab.Screen name="Messages" component={StudentMessagesScreen} />
-    </Tab.Navigator>
+    <>
+      <Tab.Navigator
+        tabBar={(props) => (
+          <FloatingTabBar
+            {...props}
+            icons={ICONS}
+            aiAssistIcon={decorativeAssets.aiButtonIcon}
+            onAiAssistPress={() => setShowAiAssist(true)}
+          />
+        )}
+        screenOptions={({ route }) => ({
+          headerShown: false,
+          tabBarHideOnKeyboard: true,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name={ICONS[route.name as keyof StudentTabParamList]} size={size} color={color} />
+          ),
+        })}
+      >
+        <Tab.Screen name="Home" component={StudentHomeScreen} />
+        <Tab.Screen name="Materials" component={StudentMaterialsScreen} />
+        <Tab.Screen name="Results" component={StudentResultsScreen} />
+        <Tab.Screen name="Messages" component={StudentMessagesScreen} />
+      </Tab.Navigator>
+      <AiAssistChatModal visible={showAiAssist} onClose={() => setShowAiAssist(false)} />
+    </>
   );
 }

@@ -316,165 +316,152 @@ export function HomeScreen() {
                     </Text>
                   </View>
                 </View>
-                <Pressable
-                  onPress={() => navigation.navigate("Notifications")}
-                  style={({ pressed }) => [styles.heroBell, { backgroundColor: colors.surface }, cardShadow, pressed && { opacity: pressedOpacity }]}
-                  accessibilityRole="button"
-                  accessibilityLabel="Open notifications"
-                >
-                  <Ionicons name="notifications" size={20} color={colors.accent} />
-                </Pressable>
+                <View style={[styles.headerActions, { backgroundColor: colors.surface }, cardShadow]}>
+                  <Pressable
+                    onPress={() => navigation.navigate("Notifications")}
+                    style={({ pressed }) => [styles.headerBell, pressed && { opacity: pressedOpacity }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Open notifications"
+                  >
+                    <Ionicons name="notifications-outline" size={20} color={colors.accent} />
+                    {(stats?.followUps ?? 0) > 0 ? (
+                      <View style={[styles.headerBadge, { backgroundColor: colors.danger, borderColor: colors.surface }]}>
+                        <Text style={styles.headerBadgeText}>{(stats?.followUps ?? 0) > 9 ? "9+" : stats?.followUps}</Text>
+                      </View>
+                    ) : null}
+                  </Pressable>
+                  <Pressable
+                    onPress={() => navigation.navigate("More")}
+                    style={({ pressed }) => [styles.headerAvatar, { backgroundColor: colors.accentSoft }, pressed && { opacity: pressedOpacity }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Open profile menu"
+                  >
+                    {teacherProfileImage ? (
+                      <Image
+                        source={teacherProfileImage}
+                        style={user.photoMimeType ? styles.headerAvatarPhoto : styles.headerAvatarIllustration}
+                        resizeMode={user.photoMimeType ? "cover" : "contain"}
+                      />
+                    ) : (
+                      <Ionicons name="person" size={18} color={colors.accent} />
+                    )}
+                  </Pressable>
+                </View>
               </View>
-            </View>
-
-            <View style={styles.enrolmentTabRow}>
-              {[
-                { label: "Overview", action: () => undefined },
-                { label: "Enquiries", action: () => navigation.navigate("Enquiries") },
-                { label: "Pipeline", action: () => navigation.navigate("Pipeline") },
-              ].map((tab, index) => (
-                <Pressable key={tab.label} onPress={tab.action} style={({ pressed }) => [styles.enrolmentTab, { backgroundColor: index === 0 ? colors.accent : colors.surface }, cardShadow, pressed && { opacity: pressedOpacity }]}>
-                  <Text style={[styles.enrolmentTabText, { color: index === 0 ? colors.accentOn : colors.textSecondary }]}>{tab.label}</Text>
-                </Pressable>
-              ))}
             </View>
 
             <View style={styles.dashboardBody}>
-              <LinearGradient colors={[colors.accent, colors.accentDark]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.focusCard, cardShadow]}>
-                <View style={styles.heroFocusText}>
-                  <Text style={styles.focusLabel}>Today&apos;s focus</Text>
-                  <View style={styles.focusMetrics}><View><Text style={styles.focusValue}>{stats?.newEnquiries ?? 0}</Text><Text style={styles.focusMeta}>New enquiries</Text></View><View style={styles.focusDivider} /><View><Text style={styles.focusValue}>{stats?.followUps ?? 0}</Text><Text style={styles.focusMeta}>Follow-ups today</Text></View></View>
-                  <Pressable onPress={() => navigation.navigate("Enquiries")} style={styles.focusAction}><Text style={[styles.focusActionText, { color: colors.accent }]}>Continue</Text><Ionicons name="arrow-forward" size={17} color={colors.accent} /></Pressable>
-                </View>
-                <View style={styles.focusGraphicWrap}>
-                  <Image source={decorativeAssets.checkCircle} style={styles.focusGraphic} resizeMode="contain" />
-                </View>
-              </LinearGradient>
-
-              <View style={styles.sectionRow}>
-                <View>
-                  <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Today&apos;s view</Text>
-                  <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>A fast read of pipeline pressure and conversions.</Text>
-                </View>
-              </View>
+              <EnrolmentFocusCarousel
+                stats={stats}
+                colors={colors}
+                cardShadow={cardShadow}
+                pressedOpacity={pressedOpacity}
+                onNavigate={(tab) => navigation.navigate(tab)}
+              />
 
               {isLoadingStats && !stats ? (
                 <ActivityIndicator color={colors.accent} style={{ marginVertical: 16 }} />
               ) : (
                 <View style={styles.kpiGrid}>
                   <KpiCard
-                    title="Fresh enquiries"
-                    value={stats?.newEnquiries ?? 0}
-                    icon="person-add-outline"
-                    shadow={cardShadow}
+                    title="Fresh Enquiries"
+                    icon="people-outline"
                     tone="#7359D9"
+                    graphic={decorativeAssets.teacherLessonCat}
+                    shadow={cardShadow}
+                    pressedOpacity={pressedOpacity}
+                    stats={[
+                      { value: stats?.newEnquiries ?? 0, label: "New enquiries" },
+                      { value: stats?.followUps ?? 0, label: "Follow-ups today" },
+                    ]}
                     onPress={() => navigation.navigate("Enquiries")}
                   />
                   <KpiCard
-                    title="Follow-up queue"
-                    value={stats?.followUps ?? 0}
-                    icon="time-outline"
-                    shadow={cardShadow}
+                    title="Follow up Queue"
+                    icon="person-add-outline"
                     tone="#F2675B"
+                    graphic={decorativeAssets.teacherAssignment}
+                    shadow={cardShadow}
+                    pressedOpacity={pressedOpacity}
+                    stats={[
+                      { value: stats?.followUps ?? 0, label: "Open tasks" },
+                      { value: stats?.visitsToday ?? 0, label: "Visits in play" },
+                    ]}
                     onPress={() => navigation.navigate("Tasks")}
                   />
                   <KpiCard
                     title="Visit progress"
-                    value={stats?.visitsToday ?? 0}
                     icon="calendar-outline"
-                    shadow={cardShadow}
                     tone="#E5A72D"
+                    graphic={decorativeAssets.classBooks}
+                    shadow={cardShadow}
+                    pressedOpacity={pressedOpacity}
+                    stats={[{ value: stats?.visitsToday ?? 0, label: "Visits scheduled" }]}
                     onPress={() => navigation.navigate("Pipeline")}
                   />
                   <KpiCard
                     title="Conversions"
-                    value={stats?.converted ?? 0}
                     icon="checkmark-done-outline"
+                    tone="#2FA678"
+                    graphic={decorativeAssets.checkCircle}
                     shadow={cardShadow}
-                    tone="#37A47A"
+                    pressedOpacity={pressedOpacity}
+                    stats={[
+                      { value: stats?.converted ?? 0, label: "Converted" },
+                      { value: stats?.totalLeads ?? 0, label: "Total leads" },
+                    ]}
                     onPress={() => navigation.navigate("Pipeline")}
                   />
                 </View>
               )}
 
-              {stats && stats.followUps > 0 ? (
-                <Pressable
-                  onPress={() => navigation.navigate("Tasks")}
-                  style={({ pressed }) => [
-                    styles.alertCard,
-                    { backgroundColor: colors.surface, borderColor: colors.accent },
-                    cardShadow,
-                    pressed && { opacity: pressedOpacity },
-                  ]}
-                >
-                  <View style={styles.alertLeft}>
-                    <View style={[styles.alertIconWrap, { backgroundColor: colors.accentSoft }]}>
-                      <Ionicons name="flash-outline" size={18} color={colors.accent} />
-                    </View>
-                    <View style={styles.alertTextBlock}>
-                      <Text style={[styles.alertTitle, { color: colors.textPrimary }]}>Follow-ups need attention</Text>
-                      <Text style={[styles.alertSubtitle, { color: colors.textMuted }]}>
-                        {stats.followUps} pending task{stats.followUps === 1 ? "" : "s"} can affect today&apos;s conversion flow.
-                      </Text>
-                    </View>
-                  </View>
-                  <Ionicons name="arrow-forward" size={16} color={colors.accent} />
-                </Pressable>
-              ) : null}
-
               <View style={styles.sectionRow}>
-                <View>
-                  <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Quick desk actions</Text>
-                  <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>Jump into the screens that matter most.</Text>
-                </View>
+                <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Quick actions</Text>
               </View>
 
               <View style={styles.actionGrid}>
                 <ActionCard
-                  icon="add-outline"
+                  icon="add"
                   label="New enquiry"
-                  sublabel="Create a lead"
+                  hint="Add a lead"
+                  tone="#7C005A"
                   colors={colors}
-                  shadow={cardShadow}
                   pressedOpacity={pressedOpacity}
                   onPress={() => navigation.navigate("NewEnquiryForm")}
                 />
                 <ActionCard
                   icon="git-network-outline"
                   label="Pipeline"
-                  sublabel="Move leads forward"
+                  hint={`${stats?.totalLeads ?? 0} leads`}
+                  tone="#5B3FD6"
                   colors={colors}
-                  shadow={cardShadow}
                   pressedOpacity={pressedOpacity}
                   onPress={() => navigation.navigate("Pipeline")}
                 />
                 <ActionCard
-                  icon="checkbox-outline"
+                  icon="call"
                   label="Follow-ups"
-                  sublabel="Work today's queue"
+                  hint={`${stats?.followUps ?? 0} due`}
+                  tone="#E5A72D"
+                  image={decorativeAssets.followUpsCat}
                   colors={colors}
-                  shadow={cardShadow}
                   pressedOpacity={pressedOpacity}
                   onPress={() => navigation.navigate("Tasks")}
-                />
-                <ActionCard
-                  icon="download-outline"
-                  label="CSV Export"
-                  sublabel="Download your data"
-                  colors={colors}
-                  shadow={cardShadow}
-                  pressedOpacity={pressedOpacity}
-                  onPress={() => navigation.navigate("More", { screen: "CsvExport" })}
                 />
               </View>
 
               <View style={styles.splitSection}>
                 <View style={styles.splitColumn}>
                   <View style={styles.sectionRow}>
-                    <View>
-                      <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Recent leads</Text>
-                      <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>The newest activity entering the desk.</Text>
-                    </View>
+                    <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Recent leads</Text>
+                    <Pressable
+                      onPress={() => navigation.navigate("Enquiries")}
+                      hitSlop={8}
+                      style={({ pressed }) => [styles.viewAll, pressed && { opacity: pressedOpacity }]}
+                    >
+                      <Text style={[styles.viewAllText, { color: colors.accent }]}>View all</Text>
+                      <Ionicons name="arrow-forward" size={14} color={colors.accent} />
+                    </Pressable>
                   </View>
 
                   <View style={[styles.panelCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
@@ -497,10 +484,15 @@ export function HomeScreen() {
 
                 <View style={styles.splitColumn}>
                   <View style={styles.sectionRow}>
-                    <View>
-                      <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Next follow-ups</Text>
-                      <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>A simple queue of the most urgent pending outreach.</Text>
-                    </View>
+                    <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Next follow-ups</Text>
+                    <Pressable
+                      onPress={() => navigation.navigate("Tasks")}
+                      hitSlop={8}
+                      style={({ pressed }) => [styles.viewAll, pressed && { opacity: pressedOpacity }]}
+                    >
+                      <Text style={[styles.viewAllText, { color: colors.accent }]}>View all</Text>
+                      <Ionicons name="arrow-forward" size={14} color={colors.accent} />
+                    </Pressable>
                   </View>
 
                   <View style={[styles.panelCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
@@ -831,34 +823,49 @@ export function HomeScreen() {
 
 function KpiCard({
   title,
-  value,
   icon,
-  shadow,
   tone,
+  graphic,
+  shadow,
+  pressedOpacity,
+  stats,
   onPress,
 }: {
   title: string;
-  value: number;
   icon: keyof typeof Ionicons.glyphMap;
-  shadow: ReturnType<typeof useTheme>["cardShadow"];
   tone: string;
+  graphic?: ImageSourcePropType;
+  shadow: ReturnType<typeof useTheme>["cardShadow"];
+  pressedOpacity: number;
+  stats: { value: number; label: string }[];
   onPress: () => void;
 }) {
   return (
     <Pressable
       onPress={onPress}
-      style={({ pressed }) => [styles.kpiCard, { backgroundColor: tone }, shadow, pressed && { opacity: 0.84 }]}
+      style={({ pressed }) => [styles.kpiCard, { backgroundColor: tone }, shadow, pressed && { opacity: pressedOpacity }]}
       accessibilityRole="button"
       accessibilityLabel={`Open ${title}`}
     >
+      {graphic ? <Image source={graphic} style={styles.kpiGraphic} resizeMode="contain" /> : null}
       <View style={styles.kpiTopRow}>
         <View style={styles.kpiIconWrap}>
           <Ionicons name={icon} size={17} color="#FFFFFF" />
         </View>
-        <Ionicons name="arrow-forward" size={16} color="rgba(255,255,255,0.86)" />
+        <Ionicons name="bookmark-outline" size={16} color="rgba(255,255,255,0.55)" />
       </View>
-      <Text style={styles.kpiValue}>{String(value).padStart(2, "0")}</Text>
       <Text style={styles.kpiTitle}>{title}</Text>
+      <View style={styles.kpiStatList}>
+        {stats.map((stat) => (
+          <View key={stat.label}>
+            <Text style={styles.kpiStatValue}>{String(stat.value).padStart(2, "0")}</Text>
+            <Text style={styles.kpiStatLabel}>{stat.label}</Text>
+          </View>
+        ))}
+      </View>
+      <View style={styles.kpiArrow}>
+        <Ionicons name="arrow-forward" size={16} color="#FFFFFF" />
+      </View>
     </Pressable>
   );
 }
@@ -866,19 +873,19 @@ function KpiCard({
 function ActionCard({
   icon,
   label,
-  sublabel,
-  graphic,
+  hint,
+  tone,
+  image,
   colors,
-  shadow,
   pressedOpacity,
   onPress,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
-  sublabel: string;
-  graphic?: ImageSourcePropType;
+  hint: string;
+  tone: string;
+  image?: ImageSourcePropType;
   colors: ReturnType<typeof useTheme>["colors"];
-  shadow: ReturnType<typeof useTheme>["cardShadow"];
   pressedOpacity: number;
   onPress: () => void;
 }) {
@@ -887,21 +894,29 @@ function ActionCard({
       onPress={onPress}
       style={({ pressed }) => [
         styles.actionCard,
-        { backgroundColor: colors.surface, borderColor: colors.border },
-        shadow,
+        { backgroundColor: tone + "1F", borderColor: tone + "40" },
         pressed && { opacity: pressedOpacity },
       ]}
       accessibilityRole="button"
+      accessibilityLabel={label}
     >
-      {graphic ? <Image source={graphic} style={styles.actionGraphic} resizeMode="contain" /> : null}
-      <View style={styles.actionCardHeader}>
-        <View style={[styles.actionIconBg, { backgroundColor: colors.accentSoft }]}>
-          <Ionicons name={icon} size={18} color={colors.accent} />
+      {image ? (
+        <Image source={image} style={styles.actionPeek} resizeMode="contain" />
+      ) : null}
+      <View style={styles.actionTopRow}>
+        <View style={[styles.actionIconBg, { backgroundColor: tone }]}>
+          <Ionicons name={icon} size={19} color="#FFFFFF" />
         </View>
-        <Ionicons name="arrow-forward" size={14} color={colors.textMuted} />
+        {image ? null : (
+          <Ionicons name="arrow-forward" size={13} color={tone} style={styles.actionArrow} />
+        )}
       </View>
-      <Text style={[styles.actionLabel, { color: colors.textPrimary }]}>{label}</Text>
-      <Text style={[styles.actionSub, { color: colors.textMuted }]}>{sublabel}</Text>
+      <Text style={[styles.actionLabel, { color: colors.textPrimary }]} numberOfLines={2}>
+        {label}
+      </Text>
+      <Text style={[styles.actionHint, { color: tone }]} numberOfLines={1}>
+        {hint}
+      </Text>
     </Pressable>
   );
 }
@@ -921,6 +936,7 @@ function RecentLeadRow({
 }) {
   const avatarSource = getAvatarSource(enquiry.id);
   const statusColor = getStatusColor(enquiry.status, mode);
+  const meta = [enquiry.gradeInterest, formatSource(enquiry.source)].filter(Boolean).join(" • ");
 
   return (
     <Pressable
@@ -938,12 +954,15 @@ function RecentLeadRow({
           {enquiry.contactName}
         </Text>
         <Text style={[styles.rowMeta, { color: colors.textMuted }]} numberOfLines={1}>
-          {formatSource(enquiry.source)} · {formatRelativeTime(enquiry.createdAt)}
+          {meta || formatRelativeTime(enquiry.createdAt)}
         </Text>
       </View>
       <View style={[styles.rowBadge, { backgroundColor: statusColor.bg }]}>
-        <Text style={[styles.rowBadgeText, { color: statusColor.text }]}>{enquiry.status}</Text>
+        <Text style={[styles.rowBadgeText, { color: statusColor.text }]} numberOfLines={1}>
+          {capitalizeFirst(enquiry.status.replace(/_/g, " "))}
+        </Text>
       </View>
+      <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
     </Pressable>
   );
 }
@@ -959,6 +978,10 @@ function TaskPreviewRow({
   isLast: boolean;
   onPress: () => void;
 }) {
+  const time = new Date(task.dueAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+  const subtitle = task.channel === "email" ? "Email" : task.channel === "sms" ? "SMS follow-up" : "Call";
+  const actionIcon = task.channel === "email" ? "mail-outline" : "call-outline";
+
   return (
     <Pressable
       onPress={onPress}
@@ -967,19 +990,187 @@ function TaskPreviewRow({
         !isLast && { borderBottomWidth: 1, borderBottomColor: colors.border },
       ]}
     >
-      <View style={[styles.taskPreviewIcon, { backgroundColor: colors.accentSoft }]}>
-        <Ionicons name={task.channel === "sms" ? "chatbubble-outline" : "mail-outline"} size={16} color={colors.accent} />
+      <View style={[styles.taskClock, { backgroundColor: colors.accentSoft }]}>
+        <Ionicons name="time-outline" size={16} color={colors.accent} />
       </View>
+      <Text style={[styles.taskTime, { color: colors.textPrimary }]}>{time}</Text>
       <View style={styles.rowMain}>
         <Text style={[styles.rowTitle, { color: colors.textPrimary }]} numberOfLines={1}>
           {task.enquiry?.contactName ?? "Lead follow-up"}
         </Text>
         <Text style={[styles.rowMeta, { color: colors.textMuted }]} numberOfLines={1}>
-          {task.channel.toUpperCase()} · due {new Date(task.dueAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+          {subtitle}
         </Text>
       </View>
-      <Ionicons name="arrow-forward" size={14} color={colors.textMuted} />
+      <View style={[styles.taskAction, { backgroundColor: colors.accentSoft }]}>
+        <Ionicons name={actionIcon} size={15} color={colors.accent} />
+      </View>
+      <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
     </Pressable>
+  );
+}
+
+const ENROLMENT_FOCUS_ROTATE_MS = 6000;
+
+function EnrolmentFocusCarousel({
+  stats,
+  colors,
+  cardShadow,
+  pressedOpacity,
+  onNavigate,
+}: {
+  stats: Stats | null;
+  colors: ThemeColors;
+  cardShadow: ReturnType<typeof useTheme>["cardShadow"];
+  pressedOpacity: number;
+  onNavigate: (tab: "Enquiries" | "Tasks" | "Pipeline") => void;
+}) {
+  const { width: windowWidth } = useWindowDimensions();
+  const cardWidth = Math.max(windowWidth - 32, 0);
+  const scrollRef = useRef<ScrollView>(null);
+  const [page, setPage] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const resumeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const followUps = stats?.followUps ?? 0;
+  const slides: {
+    key: string;
+    eyebrow: string;
+    title: string;
+    gradient: readonly [string, string];
+    glow: string;
+    graphic: ImageSourcePropType;
+    stats: { value: number; label: string }[];
+    cta: string;
+    target: "Enquiries" | "Tasks" | "Pipeline";
+  }[] = [
+    {
+      key: "focus",
+      eyebrow: "TODAY'S FOCUS",
+      title: "Stay ahead of today's pipeline",
+      gradient: [colors.accent, colors.accentDark] as const,
+      glow: "rgba(255,255,255,0.16)",
+      graphic: decorativeAssets.heroFocusCard,
+      stats: [
+        { value: stats?.newEnquiries ?? 0, label: "New enquiries" },
+        { value: followUps, label: "Follow-ups today" },
+      ],
+      cta: "Open enquiries",
+      target: "Enquiries",
+    },
+    {
+      key: "followups",
+      eyebrow: "FOLLOW-UP QUEUE",
+      title: followUps > 0 ? "Outreach is waiting on you" : "Follow-up queue is clear",
+      gradient: ["#F2675B", "#C24039"] as const,
+      glow: "rgba(255,255,255,0.18)",
+      graphic: decorativeAssets.heroFollowupCard,
+      stats: [
+        { value: followUps, label: "Pending tasks" },
+        { value: stats?.visitsToday ?? 0, label: "Visits in play" },
+      ],
+      cta: "Work the queue",
+      target: "Tasks",
+    },
+    {
+      key: "conversions",
+      eyebrow: "CONVERSIONS",
+      title: "Move leads toward admission",
+      gradient: ["#2FA678", "#1E7A56"] as const,
+      glow: "rgba(255,255,255,0.16)",
+      graphic: decorativeAssets.heroConversionCard,
+      stats: [
+        { value: stats?.converted ?? 0, label: "Converted" },
+        { value: stats?.totalLeads ?? 0, label: "Total leads" },
+      ],
+      cta: "View pipeline",
+      target: "Pipeline",
+    },
+  ];
+
+  useEffect(() => {
+    if (paused || cardWidth === 0) return;
+    const timer = setInterval(() => {
+      setPage((current) => {
+        const next = (current + 1) % slides.length;
+        scrollRef.current?.scrollTo({ x: next * cardWidth, animated: true });
+        return next;
+      });
+    }, ENROLMENT_FOCUS_ROTATE_MS);
+    return () => clearInterval(timer);
+  }, [paused, cardWidth, slides.length]);
+
+  useEffect(() => {
+    return () => {
+      if (resumeTimer.current) clearTimeout(resumeTimer.current);
+    };
+  }, []);
+
+  return (
+    <View style={styles.focusCarousel}>
+      <ScrollView
+        ref={scrollRef}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        onScrollBeginDrag={() => {
+          if (resumeTimer.current) clearTimeout(resumeTimer.current);
+          setPaused(true);
+        }}
+        onMomentumScrollEnd={(event) => {
+          const nextPage = cardWidth > 0 ? Math.round(event.nativeEvent.contentOffset.x / cardWidth) : 0;
+          setPage(nextPage);
+          resumeTimer.current = setTimeout(() => setPaused(false), 5000);
+        }}
+        scrollEventThrottle={16}
+      >
+        {slides.map((slide) => (
+          <LinearGradient
+            key={slide.key}
+            colors={slide.gradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[styles.focusCard, { width: cardWidth - 12, marginRight: 12 }, cardShadow]}
+          >
+            <View style={[styles.focusGlow, { backgroundColor: slide.glow }]} pointerEvents="none" />
+            <Image source={slide.graphic} style={styles.focusGraphic} resizeMode="contain" />
+            <View style={styles.focusCardBody}>
+              <Text style={styles.focusEyebrow}>{slide.eyebrow}</Text>
+              <Text style={styles.focusTitle} numberOfLines={2}>
+                {slide.title}
+              </Text>
+              <View style={styles.focusStatRow}>
+                {slide.stats.map((stat) => (
+                  <View key={stat.label} style={styles.focusStatChip}>
+                    <Text style={styles.focusStatValue}>{String(stat.value).padStart(2, "0")}</Text>
+                    <Text style={styles.focusStatLabel}>{stat.label}</Text>
+                  </View>
+                ))}
+              </View>
+              <View style={styles.focusPanel}>
+                <Pressable
+                  onPress={() => onNavigate(slide.target)}
+                  style={({ pressed }) => [styles.focusPanelButton, pressed && { opacity: pressedOpacity }]}
+                  accessibilityRole="button"
+                  accessibilityLabel={slide.cta}
+                >
+                  <Text style={[styles.focusPanelButtonText, { color: colors.accent }]}>{slide.cta}</Text>
+                  <Ionicons name="arrow-forward" size={16} color={colors.accent} />
+                </Pressable>
+              </View>
+            </View>
+          </LinearGradient>
+        ))}
+      </ScrollView>
+      <View style={styles.focusDots} accessibilityLabel={`Card ${page + 1} of ${slides.length}`}>
+        {slides.map((slide, index) => (
+          <View
+            key={slide.key}
+            style={[styles.focusDot, { backgroundColor: index === page ? colors.accent : colors.border }]}
+          />
+        ))}
+      </View>
+    </View>
   );
 }
 
@@ -1060,9 +1251,6 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   enrolmentHeader: { paddingTop: 18 },
-  enrolmentTabRow: { flexDirection: "row", gap: 10, marginTop: 18 },
-  enrolmentTab: { minHeight: 42, borderRadius: 22, paddingHorizontal: 18, justifyContent: "center", alignItems: "center" },
-  enrolmentTabText: { fontSize: 13, fontWeight: "800" },
   heroTopRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1092,58 +1280,159 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     maxWidth: "95%",
   },
-  heroBell: {
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: 22,
+    padding: 4,
+  },
+  headerBell: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerBadge: {
+    position: "absolute",
+    top: -2,
+    right: -2,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 3,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+  },
+  headerBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 8,
+    fontWeight: "800",
+    lineHeight: 10,
+  },
+  headerAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  headerAvatarPhoto: {
+    width: "100%",
+    height: "100%",
+  },
+  headerAvatarIllustration: {
     width: 40,
     height: 40,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
+    marginTop: 3,
   },
-  heroFocusText: {
-    flex: 1,
-  },
-  focusCard: {
-    borderRadius: 25,
-    padding: 24,
-    flexDirection: "row",
-    alignItems: "flex-end",
-    justifyContent: "space-between",
+  focusCarousel: {
     gap: 12,
   },
-  focusGraphicWrap: {
-    width: 74,
-    height: 74,
-    borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.14)",
-    alignItems: "center",
+  focusCard: {
+    minHeight: 208,
+    borderRadius: 24,
+    padding: 20,
     justifyContent: "center",
-    flexShrink: 0,
+    overflow: "hidden",
+  },
+  focusGlow: {
+    position: "absolute",
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    right: -58,
+    top: -78,
+    zIndex: 0,
+    elevation: 0,
   },
   focusGraphic: {
-    width: 46,
-    height: 46,
+    position: "absolute",
+    right: -16,
+    bottom: -14,
+    width: 148,
+    height: 148,
+    opacity: 0.9,
+    zIndex: 0,
+    elevation: 0,
   },
-  focusLabel: {
-    color: "rgba(255,255,255,0.85)",
-    fontSize: 16,
-    fontWeight: "500",
+  focusCardBody: {
+    maxWidth: "72%",
+    elevation: 2,
+    zIndex: 2,
   },
-  focusValue: {
-    color: "#FFFFFF",
-    marginTop: 12,
-    fontSize: 40,
+  focusEyebrow: {
+    color: "rgba(255,255,255,0.8)",
+    fontSize: 10,
     fontWeight: "800",
-    letterSpacing: -0.4,
+    letterSpacing: 1.1,
   },
-  focusMeta: {
-    color: "rgba(255,255,255,0.84)",
+  focusTitle: {
+    marginTop: 6,
+    color: "#FFFFFF",
+    fontSize: 21,
+    lineHeight: 26,
+    fontWeight: "800",
+    letterSpacing: -0.5,
+  },
+  focusStatRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 16,
+  },
+  focusStatChip: {
+    backgroundColor: "rgba(255,255,255,0.15)",
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    minWidth: 92,
+  },
+  focusStatValue: {
+    color: "#FFFFFF",
+    fontSize: 22,
+    fontWeight: "800",
+    letterSpacing: -0.5,
+  },
+  focusStatLabel: {
+    marginTop: 2,
+    color: "rgba(255,255,255,0.82)",
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  focusPanel: {
+    marginTop: 16,
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(255,255,255,0.14)",
+    borderRadius: 16,
+    padding: 6,
+  },
+  focusPanelButton: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 11,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  focusPanelButtonText: {
     fontSize: 12,
-    fontWeight: "600",
+    fontWeight: "800",
   },
-  focusMetrics: { flexDirection: "row", alignItems: "center", gap: 14 },
-  focusDivider: { width: 1, height: 52, backgroundColor: "rgba(255,255,255,0.28)", marginTop: 12 },
-  focusAction: { marginTop: 20, backgroundColor: "#FFFFFF", minWidth: 152, minHeight: 40, borderRadius: 12, paddingHorizontal: 16, flexDirection: "row", gap: 8, alignItems: "center", justifyContent: "center" },
-  focusActionText: { fontSize: 14, fontWeight: "800" },
+  focusDots: {
+    flexDirection: "row",
+    alignSelf: "center",
+    gap: 6,
+    marginTop: 2,
+  },
+  focusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
   dashboardBody: {
     marginTop: 22,
     gap: 16,
@@ -1151,17 +1440,21 @@ const styles = StyleSheet.create({
   sectionRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "flex-end",
+    alignItems: "center",
   },
   sectionTitle: {
     fontSize: 21,
     fontWeight: "800",
     letterSpacing: -0.4,
   },
-  sectionSubtitle: {
-    marginTop: 4,
+  viewAll: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  viewAllText: {
     fontSize: 13,
-    lineHeight: 20,
+    fontWeight: "800",
   },
   kpiGrid: {
     flexDirection: "row",
@@ -1172,8 +1465,16 @@ const styles = StyleSheet.create({
     width: "48%",
     borderRadius: 24,
     padding: 16,
-    minHeight: 142,
+    minHeight: 168,
     overflow: "hidden",
+  },
+  kpiGraphic: {
+    position: "absolute",
+    right: -10,
+    bottom: -8,
+    width: 82,
+    height: 82,
+    opacity: 0.9,
   },
   kpiTopRow: {
     flexDirection: "row",
@@ -1188,96 +1489,86 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  kpiValue: {
-    color: "#FFFFFF",
-    marginTop: 18,
-    fontSize: 26,
-    fontWeight: "800",
-    letterSpacing: -0.6,
-  },
   kpiTitle: {
-    color: "rgba(255,255,255,0.9)",
-    marginTop: 4,
-    fontSize: 14,
+    color: "#FFFFFF",
+    marginTop: 14,
+    fontSize: 15,
     fontWeight: "800",
   },
-  alertCard: {
-    borderWidth: 1,
-    borderRadius: 22,
-    padding: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
+  kpiStatList: {
+    marginTop: 8,
+    gap: 8,
   },
-  alertLeft: {
-    flexDirection: "row",
-    gap: 12,
-    alignItems: "center",
-    flex: 1,
+  kpiStatValue: {
+    color: "#FFFFFF",
+    fontSize: 22,
+    lineHeight: 25,
+    fontWeight: "800",
+    letterSpacing: -0.5,
   },
-  alertIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 14,
+  kpiStatLabel: {
+    color: "rgba(255,255,255,0.85)",
+    marginTop: 1,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  kpiArrow: {
+    alignSelf: "flex-start",
+    marginTop: 14,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.2)",
     alignItems: "center",
     justifyContent: "center",
-  },
-  alertTextBlock: {
-    flex: 1,
-  },
-  alertTitle: {
-    fontSize: 14,
-    fontWeight: "800",
-  },
-  alertSubtitle: {
-    marginTop: 4,
-    fontSize: 12,
-    lineHeight: 18,
   },
   actionGrid: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 12,
+    gap: 10,
   },
   actionCard: {
-    width: "48%",
+    flex: 1,
+    minHeight: 124,
     borderWidth: 1,
-    borderRadius: 22,
-    padding: 16,
-    minHeight: 132,
-    overflow: "hidden",
+    borderRadius: 20,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    justifyContent: "space-between",
+    gap: 8,
   },
-  actionGraphic: {
+  actionPeek: {
     position: "absolute",
+    top: -41,
     right: 8,
-    bottom: 8,
     width: 54,
     height: 54,
-    opacity: 0.1,
+    zIndex: 3,
   },
-  actionCardHeader: {
+  actionTopRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 18,
+    justifyContent: "space-between",
   },
   actionIconBg: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
+    width: 40,
+    height: 40,
+    borderRadius: 13,
     alignItems: "center",
     justifyContent: "center",
   },
-  actionLabel: {
-    fontSize: 14,
-    fontWeight: "800",
+  actionArrow: {
+    transform: [{ rotate: "-45deg" }],
+    opacity: 0.75,
   },
-  actionSub: {
-    marginTop: 6,
-    fontSize: 12,
-    fontWeight: "500",
-    lineHeight: 18,
+  actionLabel: {
+    fontSize: 13.5,
+    fontWeight: "800",
+    lineHeight: 17,
+    letterSpacing: -0.2,
+  },
+  actionHint: {
+    fontSize: 11,
+    fontWeight: "800",
   },
   splitSection: {
     gap: 16,
@@ -1294,7 +1585,7 @@ const styles = StyleSheet.create({
   listRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    gap: 10,
     paddingVertical: 12,
   },
   rowAvatarWrap: {
@@ -1310,9 +1601,21 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
   },
-  taskPreviewIcon: {
-    width: 44,
-    height: 44,
+  taskClock: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  taskTime: {
+    width: 62,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  taskAction: {
+    width: 30,
+    height: 30,
     borderRadius: 15,
     alignItems: "center",
     justifyContent: "center",
@@ -1334,11 +1637,11 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 6,
+    maxWidth: 116,
   },
   rowBadgeText: {
     fontSize: 10,
     fontWeight: "800",
-    textTransform: "capitalize",
   },
   teacherWrap: {
     flex: 1,

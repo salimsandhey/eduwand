@@ -5,6 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../theme/ThemeContext";
 import { typography } from "../theme/tokens";
+import { AnimatedAiButtonMascot } from "../components/AnimatedAiButtonMascot";
 
 interface FloatingTabBarProps extends BottomTabBarProps {
   icons: Record<string, keyof typeof Ionicons.glyphMap>;
@@ -22,6 +23,10 @@ export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssist
 
   const [itemLayouts, setItemLayouts] = useState<Record<number, ItemLayout>>({});
   const indicatorX = useRef(new Animated.Value(0)).current;
+  // Elastic "jelly" travel: the indicator stretches wider/flatter as it sets
+  // off, then springs back to its normal shape with a slight overshoot once
+  // it arrives - replaces the old plain rigid slide.
+  const indicatorStretch = useRef(new Animated.Value(1)).current;
   const activeLayout = itemLayouts[state.index];
 
   useEffect(() => {
@@ -32,7 +37,13 @@ export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssist
       tension: 210,
       friction: 28,
     }).start();
-  }, [activeLayout, indicatorX]);
+    Animated.sequence([
+      Animated.timing(indicatorStretch, { toValue: 1.28, duration: 130, useNativeDriver: true }),
+      Animated.spring(indicatorStretch, { toValue: 1, useNativeDriver: true, tension: 260, friction: 9 }),
+    ]).start();
+  }, [activeLayout, indicatorX, indicatorStretch]);
+
+  const indicatorSquash = indicatorStretch.interpolate({ inputRange: [1, 1.28], outputRange: [1, 0.86] });
 
   function handleItemLayout(index: number, event: LayoutChangeEvent) {
     const { x, width } = event.nativeEvent.layout;
@@ -54,7 +65,7 @@ export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssist
               {
                 backgroundColor: colors.accent,
                 width: activeLayout.width,
-                transform: [{ translateX: indicatorX }],
+                transform: [{ translateX: indicatorX }, { scaleX: indicatorStretch }, { scaleY: indicatorSquash }],
               },
             ]}
           />
@@ -110,7 +121,7 @@ export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssist
           accessibilityRole="button"
           accessibilityLabel="Open AI assistant"
         >
-          {aiAssistIcon ? <Image source={aiAssistIcon} style={styles.aiAssistIcon} resizeMode="contain" /> : null}
+          {aiAssistIcon ? <AnimatedAiButtonMascot style={styles.aiAssistIcon} /> : null}
         </Pressable>
       ) : null}
     </View>
@@ -136,6 +147,10 @@ function AnimatedTabItem({
 }) {
   const { colors, pressedOpacity } = useTheme();
   const progress = useRef(new Animated.Value(focused ? 1 : 0)).current;
+  // One-shot pop on top of progress's smooth scale - overshoots past full
+  // size then settles, giving the newly-active icon a distinct "bounce in"
+  // rather than just easing to its resting scale.
+  const pop = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     Animated.spring(progress, {
@@ -144,7 +159,11 @@ function AnimatedTabItem({
       tension: 150,
       friction: 16,
     }).start();
-  }, [focused, progress]);
+    if (focused) {
+      pop.setValue(0.8);
+      Animated.spring(pop, { toValue: 1, useNativeDriver: true, tension: 300, friction: 7 }).start();
+    }
+  }, [focused, progress, pop]);
 
   const contentLift = progress.interpolate({ inputRange: [0, 1], outputRange: [0, -1] });
   const iconScale = progress.interpolate({ inputRange: [0, 1], outputRange: [1, 0.92] });
@@ -173,7 +192,7 @@ function AnimatedTabItem({
               },
             ]}
           />
-          <Animated.View style={{ transform: [{ scale: iconScale }] }}>
+          <Animated.View style={{ transform: [{ scale: iconScale }, { scale: pop }] }}>
             <Ionicons name={icon} size={19} color={focused ? colors.accentOn : colors.textMuted} />
           </Animated.View>
         </View>
