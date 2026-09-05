@@ -1,6 +1,7 @@
 import { ReactNode, useCallback, useState } from "react";
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
+import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
@@ -130,43 +131,43 @@ export function EnrolmentAnalyticsScreen() {
           <ActivityIndicator color={colors.accent} style={{ marginVertical: 32 }} />
         ) : (
           <>
-            <ChartCard title="Enquiry trend" subtitle="New enquiries vs. conversions, last 6 months" colors={colors} cardShadow={cardShadow}>
+            <ChartCard title="Enquiry trend" subtitle="New enquiries vs. conversions, last 6 months" icon="trending-up-outline" colors={colors} cardShadow={cardShadow}>
               <TrendChart series={trend?.periods.map((p) => ({ key: p.period, label: monthLabel(p.period), newEnquiries: p.newEnquiries, converted: p.converted })) ?? []} colors={colors} />
             </ChartCard>
 
-            <ChartCard title="Year-on-year growth" subtitle="New enquiries vs. conversions, by year" colors={colors} cardShadow={cardShadow}>
+            <ChartCard title="Year-on-year growth" subtitle="New enquiries vs. conversions, by year" icon="stats-chart-outline" colors={colors} cardShadow={cardShadow}>
               <TrendChart series={yearlyTrend?.years.map((y) => ({ key: y.year, label: y.year, newEnquiries: y.newEnquiries, converted: y.converted })) ?? []} colors={colors} />
             </ChartCard>
 
-            <ChartCard title="Source breakdown" subtitle="Where your enquiries are coming from" colors={colors} cardShadow={cardShadow}>
+            <ChartCard title="Source breakdown" subtitle="Where your enquiries are coming from" icon="pie-chart-outline" colors={colors} cardShadow={cardShadow}>
               <SourceChart bySource={bySource} colors={colors} />
             </ChartCard>
 
-            <ChartCard title="Grade-wise demand" subtitle="Enquiries by grade interest" colors={colors} cardShadow={cardShadow}>
+            <ChartCard title="Grade-wise demand" subtitle="Enquiries by grade interest" icon="school-outline" colors={colors} cardShadow={cardShadow}>
               <GradeDemandChart gradeDemand={gradeDemand} colors={colors} />
             </ChartCard>
 
-            <ChartCard title="Pipeline funnel" subtitle="Leads by pipeline stage" colors={colors} cardShadow={cardShadow}>
+            <ChartCard title="Pipeline funnel" subtitle="Leads by pipeline stage" icon="filter-outline" colors={colors} cardShadow={cardShadow}>
               <FunnelChart funnel={funnel} stages={stages} colors={colors} />
             </ChartCard>
 
-            <ChartCard title="Stage velocity" subtitle="Average days a lead spends in a stage before moving on" colors={colors} cardShadow={cardShadow}>
+            <ChartCard title="Stage velocity" subtitle="Average days a lead spends in a stage before moving on" icon="speedometer-outline" colors={colors} cardShadow={cardShadow}>
               <StageVelocityChart stageVelocity={stageVelocity} colors={colors} />
             </ChartCard>
 
-            <ChartCard title="Lost reasons" subtitle="Why leads are marked lost" colors={colors} cardShadow={cardShadow}>
+            <ChartCard title="Lost reasons" subtitle="Why leads are marked lost" icon="close-circle-outline" colors={colors} cardShadow={cardShadow}>
               <LostReasonsChart lostReasons={lostReasons} colors={colors} />
             </ChartCard>
 
-            <ChartCard title="Follow-up outcomes" subtitle="Status of every follow-up task" colors={colors} cardShadow={cardShadow}>
+            <ChartCard title="Follow-up outcomes" subtitle="Status of every follow-up task" icon="checkmark-done-outline" colors={colors} cardShadow={cardShadow}>
               <TaskStatusChart taskOutcomes={taskOutcomes} colors={colors} />
             </ChartCard>
 
-            <ChartCard title="Channel effectiveness" subtitle="Share of follow-ups actually sent, by channel" colors={colors} cardShadow={cardShadow}>
+            <ChartCard title="Channel effectiveness" subtitle="Share of follow-ups actually sent, by channel" icon="radio-outline" colors={colors} cardShadow={cardShadow}>
               <ChannelEffectivenessChart taskOutcomes={taskOutcomes} colors={colors} />
             </ChartCard>
 
-            <ChartCard title="Counsellor performance" subtitle="Conversion rate, top 5 counsellors" colors={colors} cardShadow={cardShadow}>
+            <ChartCard title="Counsellor performance" subtitle="Conversion rate, top 5 counsellors" icon="people-outline" colors={colors} cardShadow={cardShadow}>
               <TeamChart data={counsellorPerformance} colors={colors} />
             </ChartCard>
           </>
@@ -179,20 +180,28 @@ export function EnrolmentAnalyticsScreen() {
 function ChartCard({
   title,
   subtitle,
+  icon,
   colors,
   cardShadow,
   children,
 }: {
   title: string;
   subtitle: string;
+  icon: keyof typeof Ionicons.glyphMap;
   colors: ThemeColors;
   cardShadow: ReturnType<typeof useTheme>["cardShadow"];
   children: ReactNode;
 }) {
   return (
     <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
-      <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{title}</Text>
-      <Text style={[styles.cardSubtitle, { color: colors.textMuted }]}>{subtitle}</Text>
+      <View style={styles.cardHeader}>
+        <Ionicons name={icon} size={16} color={colors.textMuted} />
+        <View style={styles.cardHeaderText}>
+          <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{title}</Text>
+          <Text style={[styles.cardSubtitle, { color: colors.textMuted }]}>{subtitle}</Text>
+        </View>
+      </View>
+      <View style={[styles.cardDivider, { backgroundColor: colors.border }]} />
       <View style={styles.chartArea}>{children}</View>
     </View>
   );
@@ -215,7 +224,7 @@ function BarChart({
     <View style={styles.chartRow}>
       {bars.map((bar) => (
         <View key={bar.label} style={styles.chartCol}>
-          <Text style={[styles.chartValue, { color: colors.textPrimary }]} numberOfLines={1}>
+          <Text style={[styles.chartValue, { color: colors.textSecondary }]} numberOfLines={1}>
             {bar.value}
             {valueSuffix}
           </Text>
@@ -410,10 +419,13 @@ const styles = StyleSheet.create({
   header: { gap: 6, marginBottom: 4 },
   title: { fontSize: 28, fontWeight: "800", letterSpacing: -0.6 },
   subtitle: { fontSize: 13, lineHeight: 19, fontWeight: "500" },
-  card: { borderRadius: 22, borderWidth: 1, padding: 18, gap: 4 },
-  cardTitle: { fontSize: 15, fontWeight: "800", letterSpacing: -0.2 },
+  card: { borderRadius: 16, borderWidth: 1, padding: 16, gap: 4 },
+  cardHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
+  cardHeaderText: { flex: 1, gap: 2 },
+  cardTitle: { fontSize: 14, fontWeight: "700", letterSpacing: -0.1 },
   cardSubtitle: { fontSize: 12, fontWeight: "500" },
-  chartArea: { marginTop: 12, alignItems: "center" },
+  cardDivider: { height: 1, marginTop: 12 },
+  chartArea: { marginTop: 16, alignItems: "center" },
   chartEmpty: { fontSize: 13, fontWeight: "500", paddingVertical: 24 },
   chartRow: {
     flexDirection: "row",
@@ -423,15 +435,15 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   chartCol: { flex: 1, alignItems: "center" },
-  chartValue: { fontSize: 11, fontWeight: "800", marginBottom: 4 },
-  chartTrack: { width: 22, height: 96, borderRadius: 8, overflow: "hidden", justifyContent: "flex-end" },
-  chartTrackNarrow: { width: 10 },
+  chartValue: { fontSize: 11, fontWeight: "700", marginBottom: 6 },
+  chartTrack: { width: 20, height: 96, borderRadius: 4, overflow: "hidden", justifyContent: "flex-end" },
+  chartTrackNarrow: { width: 9 },
   chartGroupTrack: { flexDirection: "row", alignItems: "flex-end", gap: 3, height: 96 },
-  chartFill: { width: "100%", borderRadius: 8 },
-  chartLabel: { marginTop: 6, fontSize: 10, fontWeight: "700" },
+  chartFill: { width: "100%", borderRadius: 4 },
+  chartLabel: { marginTop: 6, fontSize: 10, fontWeight: "600" },
   chartFootnote: { marginTop: 14, fontSize: 12, fontWeight: "600", textAlign: "center" },
   chartLegendRow: { flexDirection: "row", justifyContent: "center", gap: 18, marginTop: 14 },
   legendItem: { flexDirection: "row", alignItems: "center", gap: 6 },
   legendDot: { width: 8, height: 8, borderRadius: 4 },
-  legendLabel: { fontSize: 11, fontWeight: "700" },
+  legendLabel: { fontSize: 11, fontWeight: "600" },
 });

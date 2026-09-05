@@ -18,7 +18,9 @@ interface DropdownProps {
   triggerLabel: string;
   triggerIcon?: keyof typeof Ionicons.glyphMap;
   variant?: "field" | "plain";
-  /** Tints the trigger with the accent colour to signal a non-default filter is applied. */
+  /** This dropdown's signature colour — every dropdown gets its own so they read as distinct controls, not identical grey boxes. */
+  hue: string;
+  /** Fills the trigger solid with `hue` to signal a non-default value is applied. */
   active?: boolean;
   style?: StyleProp<ViewStyle>;
 }
@@ -31,6 +33,7 @@ export function Dropdown({
   triggerLabel,
   triggerIcon,
   variant = "field",
+  hue,
   active = false,
   style,
 }: DropdownProps) {
@@ -48,60 +51,90 @@ export function Dropdown({
   }, [open, chevronAnim]);
 
   const chevronRotate = chevronAnim.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "180deg"] });
-
   const isField = variant === "field";
-  const tint = active ? colors.accent : colors.textMuted;
+
+  const pressIn = () =>
+    Animated.spring(scaleAnim, { toValue: 0.96, useNativeDriver: true, speed: 40, bounciness: 4 }).start();
+  const pressOut = () =>
+    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, speed: 40, bounciness: 4 }).start();
 
   return (
     <>
       <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
-        <Pressable
-          onPress={() => setOpen(true)}
-          onPressIn={() =>
-            Animated.spring(scaleAnim, { toValue: 0.97, useNativeDriver: true, speed: 40, bounciness: 4 }).start()
-          }
-          onPressOut={() =>
-            Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, speed: 40, bounciness: 4 }).start()
-          }
-          style={({ pressed }) => [
-            styles.trigger,
-            isField
-              ? [
-                  styles.triggerField,
-                  {
-                    backgroundColor: active ? colors.accentSoft : colors.surfaceRaised,
-                    borderColor: active ? colors.accent : colors.border,
-                  },
-                  cardShadow,
-                ]
-              : [
-                  styles.triggerPlain,
-                  { backgroundColor: active ? colors.accentSoft : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border },
-                ],
-            pressed && { opacity: pressedOpacity },
-            style,
-          ]}
-          accessibilityRole="button"
-          accessibilityLabel={title}
-        >
-          {isField && triggerIcon ? (
-            <View style={[styles.triggerIconChip, { backgroundColor: active ? colors.accent : colors.accentSoft }]}>
-              <Ionicons name={triggerIcon} size={14} color={active ? colors.accentOn : colors.accent} />
+        {isField ? (
+          <View style={styles.fieldWrap}>
+            <View style={[styles.floatingLabel, { backgroundColor: colors.background, borderColor: hue + "55" }]}>
+              <Text style={[styles.floatingLabelText, { color: hue }]} numberOfLines={1}>
+                {title}
+              </Text>
             </View>
-          ) : null}
-          <Text
-            style={[
-              isField ? styles.triggerTextField : styles.triggerTextPlain,
-              { color: active ? colors.accent : isField ? colors.textPrimary : colors.textSecondary },
+            <Pressable
+              onPress={() => setOpen(true)}
+              onPressIn={pressIn}
+              onPressOut={pressOut}
+              style={({ pressed }) => [
+                styles.trigger,
+                styles.triggerField,
+                {
+                  backgroundColor: active ? hue : colors.surfaceRaised,
+                  borderColor: active ? hue : hue + "45",
+                },
+                cardShadow,
+                pressed && { opacity: pressedOpacity },
+                style,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={title}
+            >
+              {triggerIcon ? (
+                <View
+                  style={[
+                    styles.triggerIconChip,
+                    { backgroundColor: active ? "rgba(255,255,255,0.22)" : hue + "22" },
+                  ]}
+                >
+                  <Ionicons name={triggerIcon} size={14} color={active ? "#FFFFFF" : hue} />
+                </View>
+              ) : null}
+              <Text
+                style={[styles.triggerTextField, { color: active ? "#FFFFFF" : colors.textPrimary }]}
+                numberOfLines={1}
+              >
+                {triggerLabel}
+              </Text>
+              <Animated.View style={{ transform: [{ rotate: chevronRotate }] }}>
+                <Ionicons name="chevron-down" size={14} color={active ? "#FFFFFF" : hue} />
+              </Animated.View>
+            </Pressable>
+            <View style={[styles.bottomAccent, { backgroundColor: hue, opacity: active ? 1 : 0.35 }]} />
+          </View>
+        ) : (
+          <Pressable
+            onPress={() => setOpen(true)}
+            onPressIn={pressIn}
+            onPressOut={pressOut}
+            style={({ pressed }) => [
+              styles.trigger,
+              styles.triggerPlain,
+              {
+                backgroundColor: active ? hue + "1F" : colors.surfaceRaised,
+                borderColor: active ? hue : colors.border,
+              },
+              pressed && { opacity: pressedOpacity },
+              style,
             ]}
-            numberOfLines={1}
+            accessibilityRole="button"
+            accessibilityLabel={title}
           >
-            {triggerLabel}
-          </Text>
-          <Animated.View style={{ transform: [{ rotate: chevronRotate }] }}>
-            <Ionicons name="chevron-down" size={14} color={tint} />
-          </Animated.View>
-        </Pressable>
+            <View style={[styles.triggerDot, { backgroundColor: hue }]} />
+            <Text style={[styles.triggerTextPlain, { color: active ? hue : colors.textSecondary }]} numberOfLines={1}>
+              {triggerLabel}
+            </Text>
+            <Animated.View style={{ transform: [{ rotate: chevronRotate }] }}>
+              <Ionicons name="chevron-down" size={13} color={active ? hue : colors.textSecondary} />
+            </Animated.View>
+          </Pressable>
+        )}
       </Animated.View>
 
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
@@ -110,7 +143,10 @@ export function Dropdown({
             style={[styles.sheet, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}
             onPress={() => {}}
           >
-            <Text style={[styles.sheetTitle, { color: colors.textPrimary }]}>{title}</Text>
+            <View style={styles.sheetTitleRow}>
+              <View style={[styles.sheetTitleDot, { backgroundColor: hue }]} />
+              <Text style={[styles.sheetTitle, { color: colors.textPrimary }]}>{title}</Text>
+            </View>
             <View style={[styles.sheetDivider, { backgroundColor: colors.border }]} />
             <FlatList
               data={options}
@@ -119,7 +155,7 @@ export function Dropdown({
               showsVerticalScrollIndicator={false}
               ItemSeparatorComponent={() => <View style={[styles.optionDivider, { backgroundColor: colors.border }]} />}
               renderItem={({ item }) => {
-                const active = item.key === selectedKey;
+                const isSelected = item.key === selectedKey;
                 return (
                   <Pressable
                     onPress={() => {
@@ -133,14 +169,14 @@ export function Dropdown({
                       <Ionicons
                         name={item.icon}
                         size={16}
-                        color={active ? colors.accent : colors.textSecondary}
+                        color={isSelected ? hue : colors.textSecondary}
                         style={styles.optionIcon}
                       />
                     ) : null}
                     <Text
                       style={[
                         styles.optionText,
-                        { color: active ? colors.accent : colors.textPrimary, fontWeight: active ? "800" : "600" },
+                        { color: isSelected ? hue : colors.textPrimary, fontWeight: isSelected ? "800" : "600" },
                       ]}
                       numberOfLines={1}
                     >
@@ -151,8 +187,8 @@ export function Dropdown({
                         <Text style={[styles.optionMetaText, { color: colors.textMuted }]}>{item.meta}</Text>
                       </View>
                     ) : null}
-                    {active ? (
-                      <Ionicons name="checkmark" size={18} color={colors.accent} style={styles.optionCheck} />
+                    {isSelected ? (
+                      <Ionicons name="checkmark" size={18} color={hue} style={styles.optionCheck} />
                     ) : null}
                   </Pressable>
                 );
@@ -171,16 +207,35 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
   },
+  fieldWrap: {
+    marginTop: 9,
+  },
+  floatingLabel: {
+    position: "absolute",
+    top: -9,
+    left: 12,
+    zIndex: 2,
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  floatingLabelText: {
+    fontSize: 10,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
   triggerField: {
     borderRadius: 16,
     borderWidth: 1.5,
     paddingHorizontal: 10,
-    paddingVertical: 10,
+    paddingVertical: 12,
     minHeight: 52,
   },
   triggerIconChip: {
-    width: 30,
-    height: 30,
+    width: 28,
+    height: 28,
     borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
@@ -190,7 +245,20 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     paddingHorizontal: 14,
     paddingVertical: 9,
-    gap: 6,
+    gap: 8,
+  },
+  triggerDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+  },
+  bottomAccent: {
+    alignSelf: "flex-start",
+    marginLeft: 14,
+    marginTop: 6,
+    width: 28,
+    height: 3,
+    borderRadius: 2,
   },
   triggerTextField: {
     flex: 1,
@@ -219,10 +287,20 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     overflow: "hidden",
   },
+  sheetTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 20,
+  },
+  sheetTitleDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
   sheetTitle: {
     fontSize: 16,
     fontWeight: "800",
-    paddingHorizontal: 20,
   },
   sheetDivider: {
     height: 1,

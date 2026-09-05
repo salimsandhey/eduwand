@@ -446,7 +446,7 @@ function TaskCard({
 
   const historyLabel = getHistoryLabel(task.enquiryId);
   const isUrgent = tone !== "today";
-  const accent = tone === "overdue" ? colors.danger : colors.accent;
+  const accent = tone === "overdue" ? colors.danger : tone === "upcoming" ? "#2FA678" : colors.accent;
   const channelIcon = task.channel === "sms" ? "chatbubble-ellipses-outline" : "mail-outline";
   const contactValue = task.channel === "sms" ? task.enquiry?.contactPhone : task.enquiry?.contactEmail;
   const subtitle = contactValue ?? (task.channel === "sms" ? "No phone on file" : "No email on file");
@@ -500,6 +500,24 @@ function TaskCard({
     </View>
   );
 
+  const contactRow = (
+    <View style={styles.contactRow}>
+      <Ionicons name={channelIcon} size={13} color={colors.textMuted} />
+      <Text style={[styles.subText, { color: colors.textMuted }]} numberOfLines={1}>
+        {subtitle}
+      </Text>
+    </View>
+  );
+
+  const historyRow = (
+    <View style={styles.contactRow}>
+      <Ionicons name="repeat-outline" size={12} color={colors.textMuted} />
+      <Text style={[styles.historyText, { color: colors.textMuted }]} numberOfLines={1}>
+        {historyLabel}
+      </Text>
+    </View>
+  );
+
   if (isUrgent) {
     const pillText = tone === "overdue" ? overdueLabel(task.dueAt) : `Due ${formatDueDate(task.dueAt)}`;
     return (
@@ -507,33 +525,25 @@ function TaskCard({
         style={[
           styles.urgentCard,
           {
-            backgroundColor: tone === "overdue" ? colors.danger + "14" : colors.accentSoft,
-            borderColor: accent + "33",
+            backgroundColor: colors.surface,
+            borderColor: colors.border,
             borderLeftColor: accent,
           },
+          shadow,
         ]}
       >
         <Pressable onPress={onOpen} style={({ pressed }) => [styles.urgentTop, pressed && { opacity: pressedOpacity }]}>
           <Text style={[styles.urgentName, { color: colors.textPrimary }]} numberOfLines={1}>
             {name}
           </Text>
-          <View style={[styles.urgentPill, { backgroundColor: colors.surface }]}>
+          <View style={styles.urgentPill}>
             <Ionicons name="time-outline" size={12} color={accent} />
             <Text style={[styles.urgentPillText, { color: accent }]}>{pillText}</Text>
           </View>
         </Pressable>
 
-        <View style={styles.subRow}>
-          <Ionicons name={channelIcon} size={13} color={colors.textMuted} />
-          <Text style={[styles.subText, { color: colors.textSecondary }]}>{subtitle}</Text>
-        </View>
-
-        <View style={styles.subRow}>
-          <Ionicons name="repeat-outline" size={12} color={colors.textMuted} />
-          <Text style={[styles.historyText, { color: colors.textMuted }]} numberOfLines={1}>
-            {historyLabel}
-          </Text>
-        </View>
+        {contactRow}
+        {historyRow}
 
         {rescheduling ? (
           rescheduleRow
@@ -549,13 +559,13 @@ function TaskCard({
             <Pressable
               onPress={() => setRescheduling(true)}
               style={({ pressed }) => [
-                styles.urgentSecondary,
+                styles.circleIconBtn,
                 { borderColor: colors.border, backgroundColor: colors.surface },
                 pressed && { opacity: pressedOpacity },
               ]}
+              accessibilityLabel="Reschedule task"
             >
-              <Ionicons name="calendar-outline" size={14} color={colors.textSecondary} />
-              <Text style={[styles.urgentSecondaryText, { color: colors.textSecondary }]}>Reschedule</Text>
+              <Ionicons name="calendar-outline" size={16} color={colors.textSecondary} />
             </Pressable>
           </View>
         )}
@@ -564,30 +574,16 @@ function TaskCard({
   }
 
   return (
-    <View style={[styles.fullCard, { backgroundColor: colors.surface, borderColor: colors.border }, shadow]}>
+    <View style={[styles.fullCard, { backgroundColor: colors.surface, borderColor: colors.border, borderLeftColor: accent }, shadow]}>
       <Pressable onPress={onOpen} style={({ pressed }) => [styles.fullTop, pressed && { opacity: pressedOpacity }]}>
-        <View style={styles.fullTitleWrap}>
-          <Text style={[styles.fullName, { color: colors.textPrimary }]} numberOfLines={1}>
-            {name}
-          </Text>
-        </View>
-        <View style={styles.fullTimeWrap}>
-          <Text style={[styles.fullTime, { color: colors.accent }]}>{time}</Text>
-          <Text style={[styles.fullDue, { color: colors.textMuted }]}>Due today</Text>
-        </View>
+        <Text style={[styles.fullName, { color: colors.textPrimary }]} numberOfLines={1}>
+          {name}
+        </Text>
+        <Text style={[styles.fullTime, { color: colors.textSecondary }]}>{time}</Text>
       </Pressable>
 
-      <View style={styles.subRow}>
-        <Ionicons name={channelIcon} size={13} color={colors.textMuted} />
-        <Text style={[styles.subText, { color: colors.textSecondary }]}>{subtitle}</Text>
-      </View>
-
-      <View style={styles.subRow}>
-        <Ionicons name="repeat-outline" size={12} color={colors.textMuted} />
-        <Text style={[styles.historyText, { color: colors.textMuted }]} numberOfLines={1}>
-          {historyLabel}
-        </Text>
-      </View>
+      {contactRow}
+      {historyRow}
 
       <View style={[styles.fullDivider, { backgroundColor: colors.border }]} />
 
@@ -786,87 +782,80 @@ const styles = StyleSheet.create({
   viewAll: { flexDirection: "row", alignItems: "center", gap: 4 },
   viewAllText: { fontSize: 13, fontWeight: "800" },
   miniEmpty: { fontSize: 13, fontWeight: "500", paddingVertical: 4 },
-  subRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   subText: { fontSize: 12.5, fontWeight: "600" },
-  historyText: { fontSize: 11.5, fontWeight: "500" },
+  historyText: { fontSize: 11, fontWeight: "500" },
+  contactRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   urgentCard: {
-    borderRadius: 18,
+    borderRadius: 16,
     borderWidth: 1,
-    borderLeftWidth: 4,
+    borderLeftWidth: 3,
     padding: 14,
-    gap: 10,
+    gap: 8,
   },
   urgentTop: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 8,
+    gap: 10,
   },
-  urgentName: { flex: 1, fontSize: 16, fontWeight: "800", letterSpacing: -0.3 },
+  urgentName: { flex: 1, fontSize: 15, fontWeight: "700", letterSpacing: -0.2 },
   urgentPill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    flexShrink: 0,
   },
-  urgentPillText: { fontSize: 11, fontWeight: "800" },
-  urgentActions: { flexDirection: "row", gap: 10, marginTop: 2 },
+  urgentPillText: { fontSize: 12, fontWeight: "700" },
+  urgentActions: { flexDirection: "row", gap: 10, marginTop: 4 },
   urgentPrimary: {
     flex: 1,
     height: 42,
-    borderRadius: 12,
+    borderRadius: 10,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
   },
-  urgentPrimaryText: { color: "#FFFFFF", fontSize: 13, fontWeight: "800" },
-  urgentSecondary: {
-    flex: 1,
-    height: 42,
-    borderRadius: 12,
-    borderWidth: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-  },
-  urgentSecondaryText: { fontSize: 13, fontWeight: "800" },
+  urgentPrimaryText: { color: "#FFFFFF", fontSize: 13, fontWeight: "700" },
   fullCard: {
-    borderRadius: 18,
+    borderRadius: 16,
     borderWidth: 1,
+    borderLeftWidth: 3,
     padding: 16,
-    gap: 12,
+    gap: 8,
   },
   fullTop: {
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "center",
     justifyContent: "space-between",
-    gap: 12,
+    gap: 10,
   },
-  fullTitleWrap: { flex: 1 },
-  fullName: { fontSize: 16, fontWeight: "800", letterSpacing: -0.3 },
-  fullTimeWrap: { alignItems: "flex-end" },
-  fullTime: { fontSize: 14, fontWeight: "800" },
-  fullDue: { marginTop: 2, fontSize: 11, fontWeight: "600" },
-  fullDivider: { height: 1 },
-  fullActions: { flexDirection: "row", alignItems: "center", gap: 10 },
+  fullName: { flex: 1, fontSize: 15, fontWeight: "700", letterSpacing: -0.2 },
+  fullTime: { fontSize: 13, fontWeight: "700" },
+  fullDivider: { height: 1, marginTop: 4 },
+  fullActions: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 2 },
   fullPrimary: {
     flex: 1,
     height: 44,
-    borderRadius: 12,
+    borderRadius: 10,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
   },
-  fullPrimaryText: { fontSize: 13, fontWeight: "800" },
+  fullPrimaryText: { fontSize: 13, fontWeight: "700" },
   fullIconBtn: {
     width: 44,
     height: 44,
-    borderRadius: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  circleIconBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",

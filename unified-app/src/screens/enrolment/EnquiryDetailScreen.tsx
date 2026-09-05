@@ -1,5 +1,5 @@
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Share, Image, Modal, Animated } from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Share, Image, Animated } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
@@ -201,11 +201,10 @@ type Props = NativeStackScreenProps<RootStackParamList, "EnquiryDetail">;
 
 export function EnquiryDetailScreen({ route, navigation }: Props) {
   const { enquiryId } = route.params;
-  const { accessToken, user } = useAuth();
+  const { accessToken } = useAuth();
   const { colors, mode, cardShadow, pressedOpacity } = useTheme();
   const { stages } = usePipelineStages();
   const stageKeys = stages.map((stage) => stage.key);
-  const canErase = user?.role === "admin" || user?.role === "leadership";
 
   // Header collapse: driven by the body ScrollView's scroll offset. `collapse`
   // runs 0 (top of screen, expanded header) -> 1 (scrolled past
@@ -216,46 +215,73 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
   const scrollY = useRef(new Animated.Value(0)).current;
   const collapse = scrollY.interpolate({ inputRange: [0, HEADER_SCROLL_DISTANCE], outputRange: [0, 1], extrapolate: "clamp" });
   const lerp = (from: number, to: number) => collapse.interpolate({ inputRange: [0, 1], outputRange: [from, to] });
-  const avatarSize = lerp(64, 46);
+  // Avatar's expanded size, used as the initial estimate of headRow's height
+  // before its real rendered height is measured (see headRowHeight below).
+  const HEAD_ROW_HEIGHT = 64;
+  // headRow's real measured height (avatar + name/subtitle) - starts at the
+  // estimate above and corrects itself on first layout, so the resting
+  // position below tracks the actual content instead of a fixed guess (which
+  // could sit too close to the avatar if a device renders it taller, e.g.
+  // larger system font size).
+  const [headRowHeight, setHeadRowHeight] = useState(HEAD_ROW_HEIGHT);
+  // Extra clearance below headRow before the phone/edit/share row rests -
+  // generous on purpose since the status tag also floats (absolutely
+  // positioned) a little below headRow and can wrap to two lines when an
+  // overdue/duplicate chip is present.
+  const ACTION_ROW_GAP = 16;
+  const avatarSize = lerp(HEAD_ROW_HEIGHT, 46);
   const avatarRadius = lerp(20, 16);
   const avatarTranslateY = lerp(0, -4);
   const nameFontSize = lerp(19, 15.5);
   const headerPaddingTop = lerp(12, 6);
-  const headerPaddingBottom = lerp(12, 6);
+  const headerPaddingBottom = lerp(12, 4);
   const pillLabelOpacity = collapse.interpolate({ inputRange: [0, 0.55, 1], outputRange: [1, 0, 0] });
   const pillLabelMarginLeft = collapse.interpolate({ inputRange: [0, 0.55, 1], outputRange: [6, 0, 0] });
   const phoneLabelMaxWidth = collapse.interpolate({ inputRange: [0, 0.55, 1], outputRange: [130, 0, 0] });
   const actionLabelMaxWidth = collapse.interpolate({ inputRange: [0, 0.55, 1], outputRange: [46, 0, 0] });
-  // Status tag (+ overdue/duplicate chips): default position unchanged (next
-  // to the name, in normal flow) - only its visual position slides via
-  // transform as you scroll, settling just below the avatar once collapsed.
-  const tagTranslateX = lerp(0, -58);
-  const tagTranslateY = lerp(0, 10);
-  // Phone/edit/share: default position unchanged (own row below the name
-  // row, left-aligned). On scroll it slides right (ending flush against the
-  // row's right edge - distance measured via onLayout since it depends on
-  // the row's real width) and slides up to meet the tag's row level once the
-  // tag has settled just below the avatar (translateY target is an estimate
-  // of that gap - nudge it the same way the tag's translateY was nudged).
+  // The "Phone"/guardian subtitle line fades and collapses to zero height as
+  // you scroll, clearing its spot for the status tag to slide into.
+  const headSubOpacity = collapse.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 0, 0] });
+  const headSubHeight = lerp(18, 0);
+  // Status tag (+ overdue/duplicate chips): default position unchanged
+  // (below the name/subtitle, in normal flow via absolute anchor top:40) -
+  // only its visual position slides up via transform as you scroll, ending
+  // up right where the subtitle text used to sit once that's faded out.
+  const tagTranslateY = lerp(0, -19);
+  // Phone/edit/share: rendered at a fixed absolute position that replicates
+  // where this row sits today (left-aligned, directly below headRow) so the
+  // expanded header is unchanged - then on scroll it slides up to the very
+  // top of the header (top-right corner, alongside the avatar/name) and
+  // right (ending flush against the header's right edge - that x distance is
+  // measured via onLayout since it depends on the row's real width).
   const [actionRowWidth, setActionRowWidth] = useState(0);
   const COLLAPSED_PILLS_WIDTH = 3 * 40 + 2 * 8;
   const pillsTranslateX = collapse.interpolate({
     inputRange: [0, 1],
     outputRange: [0, Math.max(0, actionRowWidth - COLLAPSED_PILLS_WIDTH)],
   });
-  const pillsTranslateY = lerp(0, -12);
+  const pillsTranslateY = lerp(10, -(headRowHeight + ACTION_ROW_GAP - 10));
   // Each pill's own height - shrinks once scrolled, on top of the text
   // collapsing to icon-only.
   const pillHeight = lerp(34, 26);
+  // headerActionRow is now absolutely positioned (see below) so it no longer
+  // reserves flow space - this spacer stands in for the space it used to
+  // take up, shrinking down (not all the way to 0 - keeps a small floor so
+  // the Lead/Admission tabs never crowd right up against the content above
+  // them) once collapsed so the header can get shorter overall than it could
+  // while that row still reserved a fixed minimum height.
+  const actionRowSpacerHeight = lerp(ACTION_ROW_GAP + 34, 4);
   // Gap above the Lead/Admission tabs - shrinks further on scroll (separate
-  // from headerActionRow's own fixed gap above it).
-  const segmentTopMargin = lerp(8, 2);
+  // from headerActionRow's own fixed gap above it). The 4px floor on
+  // actionRowSpacerHeight above already keeps a minimum gap once collapsed,
+  // so this can go all the way to 0 without the tabs ending up flush against
+  // the content above them.
+  const segmentTopMargin = lerp(6, 0);
   // Lead/Admission tabs - shrink on scroll too.
   const segmentButtonHeight = lerp(38, 30);
 
   const [activeTab, setActiveTab] = useState<DetailTab>("lead");
   const [leadSubTab, setLeadSubTab] = useState<LeadSubTab>("timeline");
-  const [sheetOpen, setSheetOpen] = useState(false);
   const [enquiry, setEnquiry] = useState<EnquiryDetail | null>(null);
   const [duplicates, setDuplicates] = useState<PossibleDuplicate[]>([]);
   const [tasks, setTasks] = useState<FollowUpTask[]>([]);
@@ -273,10 +299,6 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
   const [lostReasonFocused, setLostReasonFocused] = useState(false);
 
   const [pendingStageChange, setPendingStageChange] = useState<EnquiryStatus | null>(null);
-  const [showEraseConfirm, setShowEraseConfirm] = useState(false);
-  const [isErasing, setIsErasing] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
 
   const [noteBody, setNoteBody] = useState("");
   const [noteFocused, setNoteFocused] = useState(false);
@@ -409,34 +431,6 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
     }
   }
 
-  async function eraseNow() {
-    if (!accessToken) return;
-    setIsErasing(true);
-    try {
-      await api.eraseEnquiry(accessToken, enquiryId);
-      setShowEraseConfirm(false);
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to erase personal data");
-    } finally {
-      setIsErasing(false);
-    }
-  }
-
-  async function deleteNow() {
-    if (!accessToken) return;
-    setIsDeleting(true);
-    try {
-      await api.deleteEnquiry(accessToken, enquiryId);
-      navigation.goBack();
-    } catch (err) {
-      setShowDeleteConfirm(false);
-      setError(err instanceof Error ? err.message : "Failed to delete lead");
-    } finally {
-      setIsDeleting(false);
-    }
-  }
-
   async function mergeDuplicate(sourceId: string) {
     if (!accessToken) return;
     try {
@@ -499,7 +493,6 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
 
   const handleShare = async () => {
     if (!enquiry) return;
-    setSheetOpen(false);
     try {
       await Share.share({
         message: `Lead Details:\nName: ${enquiry.contactName}\nPhone: ${enquiry.contactPhone}\nEmail: ${enquiry.contactEmail || "N/A"}\nSource: ${enquiry.source}\nStatus: ${enquiry.status}`,
@@ -546,7 +539,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
           { backgroundColor: colors.surface, borderBottomColor: colors.border, paddingTop: headerPaddingTop, paddingBottom: headerPaddingBottom },
         ]}
       >
-        <View style={styles.headRow}>
+        <View style={styles.headRow} onLayout={(e) => setHeadRowHeight(e.nativeEvent.layout.height)}>
           <Animated.View
             style={[
               styles.avatarWrap,
@@ -570,20 +563,26 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
             <Animated.Text style={[styles.headName, { color: colors.textPrimary, fontSize: nameFontSize }]} numberOfLines={1}>
               {enquiry.studentName || enquiry.contactName}
             </Animated.Text>
-            <Text style={[styles.headSub, { color: colors.textMuted }]} numberOfLines={1}>
-              {enquiry.studentName
-                ? `${enquiry.guardianRelation ? `${formatSource(enquiry.guardianRelation)} · ` : ""}${enquiry.contactName}`
-                : formatSource(enquiry.source)}
-            </Text>
+            {/* Fades and collapses to zero height on scroll, clearing this
+                spot for the status tag (below) to slide into. */}
+            <Animated.View style={{ height: headSubHeight, opacity: headSubOpacity, overflow: "hidden" }}>
+              <Text style={[styles.headSub, { color: colors.textMuted }]} numberOfLines={1}>
+                {enquiry.studentName
+                  ? `${enquiry.guardianRelation ? `${formatSource(enquiry.guardianRelation)} · ` : ""}${enquiry.contactName}`
+                  : formatSource(enquiry.source)}
+              </Text>
+            </Animated.View>
             {/* Absolutely positioned (not in flow) so it no longer reserves
                 its own line's height inside headIdBlock once it slides away -
                 that reserved space was the reason headRow (and everything
                 below it) stayed taller than necessary. top/left below just
-                reproduce where it used to sit in flow, by default. */}
+                reproduce where it used to sit in flow, by default - it then
+                slides up (translateY only) to land where the subtitle above
+                used to sit, once that's faded out. */}
             <Animated.View
               style={[
                 styles.headMetaRow,
-                { position: "absolute", top: 40, left: 0, transform: [{ translateX: tagTranslateX }, { translateY: tagTranslateY }] },
+                { position: "absolute", top: 40, left: 0, transform: [{ translateY: tagTranslateY }] },
               ]}
             >
               <View style={[styles.statusPill, { backgroundColor: currentStatusColor.bg }]}>
@@ -604,22 +603,18 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
               ) : null}
             </Animated.View>
           </View>
-          {/* Fixed - top-right, aligned with the start (top) of the name
-              text. Not animated, same spot before or after scroll. */}
-          <Pressable
-            onPress={() => setSheetOpen(true)}
-            style={({ pressed }) => [
-              styles.headerAction,
-              { backgroundColor: colors.accent, borderColor: colors.accent },
-              pressed && { opacity: pressedOpacity },
-            ]}
-            accessibilityRole="button"
-          >
-            <Ionicons name="flash-outline" size={16} color={colors.accentOn} />
-          </Pressable>
         </View>
 
-        <View style={styles.headerActionRow} onLayout={(e) => setActionRowWidth(e.nativeEvent.layout.width)}>
+        {/* headerActionRow is absolutely positioned below (see style) - this
+            flow spacer stands in for the vertical space it used to reserve,
+            shrinking to 0 on scroll so the header can get shorter than a
+            fixed-height row would otherwise allow. */}
+        <Animated.View style={{ height: actionRowSpacerHeight }} />
+
+        <View
+          style={[styles.headerActionRow, { top: headRowHeight + ACTION_ROW_GAP }]}
+          onLayout={(e) => setActionRowWidth(e.nativeEvent.layout.width)}
+        >
           <Animated.View style={[styles.headerActionGroup, { transform: [{ translateX: pillsTranslateX }, { translateY: pillsTranslateY }] }]}>
             <Animated.View style={[styles.headerPill, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, minHeight: pillHeight }]}>
               <Ionicons name="call-outline" size={14} color={colors.accent} />
@@ -734,17 +729,36 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
             <View style={[styles.stageWorkspace, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
               <View style={styles.stageWorkspaceTop}>
                 <View style={styles.stageWorkspaceCopy}>
-                  <Text style={[styles.stageKicker, { color: colors.accent }]}>Lead momentum</Text>
-                  <Text style={[styles.stageTitle, { color: colors.textPrimary }]}>
-                    {currentStage?.label ?? formatStageLabel(enquiry.status)}
-                  </Text>
+                  <View style={styles.stageKickerRow}>
+                    <Text style={[styles.stageKicker, { color: colors.accent }]}>Lead momentum</Text>
+                    <View style={[styles.statusPill, styles.stageStatusTag, { backgroundColor: currentStatusColor.bg }]}>
+                      <Ionicons name="globe-outline" size={10} color={currentStatusColor.text} />
+                      <Text style={[styles.statusPillText, { color: currentStatusColor.text }]} numberOfLines={1}>
+                        {currentStage?.label ?? formatStageLabel(enquiry.status)}
+                      </Text>
+                    </View>
+                  </View>
                   <Text style={[styles.stageSubtitle, { color: colors.textMuted }]} numberOfLines={2}>
                     Next best action: {nextActionLabel}
                   </Text>
                 </View>
                 <View style={[styles.stageStepBadge, { backgroundColor: colors.accentSoft, borderColor: colors.accentSoftAlt }]}>
-                  <Text style={[styles.stageStepValue, { color: colors.accent }]}>{Math.max(currentStageIndex + 1, 1)}</Text>
-                  <Text style={[styles.stageStepLabel, { color: colors.accent }]}>of {stages.length}</Text>
+                  <Text style={[styles.stageStepFraction, { color: colors.accent }]} numberOfLines={1}>
+                    {Math.max(currentStageIndex + 1, 1)}
+                    <Text style={[styles.stageStepFractionMuted, { color: colors.accent }]}>/{stages.length}</Text>
+                  </Text>
+                  <Text style={[styles.stageStepLabel, { color: colors.accent }]}>Stage</Text>
+                  <View style={[styles.stageStepTrack, { backgroundColor: colors.accentSoftAlt }]}>
+                    <View
+                      style={[
+                        styles.stageStepFill,
+                        {
+                          backgroundColor: colors.accent,
+                          width: `${stages.length > 0 ? (Math.max(currentStageIndex + 1, 1) / stages.length) * 100 : 0}%`,
+                        },
+                      ]}
+                    />
+                  </View>
                 </View>
               </View>
 
@@ -825,24 +839,43 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
               </View>
             </View>
 
+            {/* Phone/email/grade/source already surface on the Enquiries list card and
+                (phone) in this screen's own header pill row - showing them again here was
+                pure repetition. This now surfaces things that appear nowhere else on
+                this screen: when the lead was logged, DPDP messaging consent, whether a
+                family link exists, and the child's date of birth if one's on file. */}
             <View style={styles.section}>
               <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Details</Text>
               <View style={styles.factsRow}>
                 <View style={[styles.fact, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <Ionicons name="call-outline" size={12} color={colors.accent} />
-                  <Text style={[styles.factText, { color: colors.textSecondary }]}>{enquiry.contactPhone}</Text>
+                  <Ionicons name="calendar-outline" size={12} color={colors.accent} />
+                  <Text style={[styles.factText, { color: colors.textSecondary }]}>
+                    Logged {new Date(enquiry.createdAt).toLocaleDateString("en-IN")}
+                  </Text>
                 </View>
                 <View style={[styles.fact, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <Ionicons name="mail-outline" size={12} color={colors.accent} />
-                  <Text style={[styles.factText, { color: colors.textSecondary }]}>{enquiry.contactEmail || "No email added"}</Text>
+                  <Ionicons
+                    name={enquiry.consentCaptured ? "shield-checkmark-outline" : "shield-outline"}
+                    size={12}
+                    color={colors.accent}
+                  />
+                  <Text style={[styles.factText, { color: colors.textSecondary }]}>
+                    {enquiry.consentCaptured ? "Consent given" : "Consent pending"}
+                  </Text>
                 </View>
                 <View style={[styles.fact, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <Ionicons name="school-outline" size={12} color={colors.accent} />
-                  <Text style={[styles.factText, { color: colors.textSecondary }]}>{enquiry.gradeInterest || "Grade not set"}</Text>
+                  <Ionicons name="people-outline" size={12} color={colors.accent} />
+                  <Text style={[styles.factText, { color: colors.textSecondary }]}>
+                    {enquiry.familyId ? "Linked to a family" : "Standalone lead"}
+                  </Text>
                 </View>
                 <View style={[styles.fact, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <Ionicons name="globe-outline" size={12} color={colors.accent} />
-                  <Text style={[styles.factText, { color: colors.textSecondary }]}>{formatSource(enquiry.source)}</Text>
+                  <Ionicons name="gift-outline" size={12} color={colors.accent} />
+                  <Text style={[styles.factText, { color: colors.textSecondary }]}>
+                    {enquiry.studentDateOfBirth
+                      ? `DOB ${new Date(enquiry.studentDateOfBirth).toLocaleDateString("en-IN")}`
+                      : "DOB not on file"}
+                  </Text>
                 </View>
               </View>
             </View>
@@ -893,7 +926,14 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
                   </Pressable>
                 </View>
                 {leadSubTab === "tasks" ? (
-                  <Pressable onPress={() => setShowAddTask((value) => !value)} style={({ pressed }) => [pressed && { opacity: pressedOpacity }]}>
+                  <Pressable
+                    onPress={() => setShowAddTask((value) => !value)}
+                    style={({ pressed }) => [
+                      styles.sectionLinkOutline,
+                      { borderColor: colors.accent },
+                      pressed && { opacity: pressedOpacity },
+                    ]}
+                  >
                     <Text style={[styles.sectionLink, { color: colors.accent }]}>{showAddTask ? "Close" : "+ Add"}</Text>
                   </Pressable>
                 ) : null}
@@ -1177,91 +1217,6 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
         {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
       </Animated.ScrollView>
 
-      <Pressable
-        onPress={() => setSheetOpen(true)}
-        style={({ pressed }) => [styles.fab, { backgroundColor: colors.accent }, cardShadow, pressed && { opacity: pressedOpacity }]}
-        accessibilityRole="button"
-      >
-        <Ionicons name="add" size={26} color={colors.accentOn} />
-      </Pressable>
-
-      <Modal visible={sheetOpen} transparent animationType="fade" onRequestClose={() => setSheetOpen(false)}>
-        <Pressable style={styles.sheetBackdrop} onPress={() => setSheetOpen(false)}>
-          <Pressable style={[styles.sheet, { backgroundColor: colors.surface, borderColor: colors.border }]} onPress={() => {}}>
-            <View style={[styles.grabber, { backgroundColor: colors.border }]} />
-
-            <Pressable style={({ pressed }) => [styles.sheetAction, { borderBottomColor: colors.border }, pressed && { opacity: pressedOpacity }]}>
-              <View style={[styles.sheetActionIcon, { backgroundColor: colors.accentSoft }]}>
-                <Ionicons name="call-outline" size={16} color={colors.accent} />
-              </View>
-              <Text style={[styles.sheetActionText, { color: colors.textPrimary }]}>Call {enquiry.contactName}</Text>
-            </Pressable>
-
-            <Pressable style={({ pressed }) => [styles.sheetAction, { borderBottomColor: colors.border }, pressed && { opacity: pressedOpacity }]}>
-              <View style={[styles.sheetActionIcon, { backgroundColor: colors.accentSoft }]}>
-                <Ionicons name="mail-outline" size={16} color={colors.accent} />
-              </View>
-              <Text style={[styles.sheetActionText, { color: colors.textPrimary }]}>Email {enquiry.contactName}</Text>
-            </Pressable>
-
-            <Pressable
-              onPress={handleShare}
-              style={({ pressed }) => [styles.sheetAction, { borderBottomColor: colors.border }, pressed && { opacity: pressedOpacity }]}
-            >
-              <View style={[styles.sheetActionIcon, { backgroundColor: colors.accentSoft }]}>
-                <Ionicons name="share-social-outline" size={16} color={colors.accent} />
-              </View>
-              <Text style={[styles.sheetActionText, { color: colors.textPrimary }]}>Share lead details</Text>
-            </Pressable>
-
-            {!enquiry.erasedAt ? (
-              <Pressable
-                onPress={() => {
-                  setSheetOpen(false);
-                  navigation.navigate("EditEnquiry", { enquiryId });
-                }}
-                style={({ pressed }) => [styles.sheetAction, { borderBottomColor: colors.border }, pressed && { opacity: pressedOpacity }]}
-              >
-                <View style={[styles.sheetActionIcon, { backgroundColor: colors.accentSoft }]}>
-                  <Ionicons name="create-outline" size={16} color={colors.accent} />
-                </View>
-                <Text style={[styles.sheetActionText, { color: colors.textPrimary }]}>Edit lead</Text>
-              </Pressable>
-            ) : null}
-
-            {canErase && !enquiry.erasedAt ? (
-              <Pressable
-                onPress={() => {
-                  setSheetOpen(false);
-                  setShowEraseConfirm(true);
-                }}
-                style={({ pressed }) => [styles.sheetAction, { borderBottomColor: colors.border }, pressed && { opacity: pressedOpacity }]}
-              >
-                <View style={[styles.sheetActionIcon, { backgroundColor: "#F8ECEC" }]}>
-                  <Ionicons name="trash-outline" size={16} color={colors.danger} />
-                </View>
-                <Text style={[styles.sheetActionText, { color: colors.danger }]}>Erase personal data</Text>
-              </Pressable>
-            ) : null}
-
-            {canErase && !enquiry.admissionSummary.confirmed ? (
-              <Pressable
-                onPress={() => {
-                  setSheetOpen(false);
-                  setShowDeleteConfirm(true);
-                }}
-                style={({ pressed }) => [styles.sheetAction, pressed && { opacity: pressedOpacity }]}
-              >
-                <View style={[styles.sheetActionIcon, { backgroundColor: "#F8ECEC" }]}>
-                  <Ionicons name="trash-bin-outline" size={16} color={colors.danger} />
-                </View>
-                <Text style={[styles.sheetActionText, { color: colors.danger }]}>Delete lead</Text>
-              </Pressable>
-            ) : null}
-          </Pressable>
-        </Pressable>
-      </Modal>
-
       <ConfirmModal
         visible={pendingStageChange !== null}
         title="Change lead stage"
@@ -1278,24 +1233,6 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
           setPendingStageChange(null);
         }}
         onCancel={() => setPendingStageChange(null)}
-      />
-
-      <ConfirmModal
-        visible={showEraseConfirm}
-        title="Erase personal data"
-        message="This permanently redacts this lead's name, phone, and email, deletes attached documents, and cannot be undone. Continue?"
-        confirmLabel={isErasing ? "Erasing..." : "Erase"}
-        onConfirm={eraseNow}
-        onCancel={() => setShowEraseConfirm(false)}
-      />
-
-      <ConfirmModal
-        visible={showDeleteConfirm}
-        title="Delete lead"
-        message="This permanently removes this lead - its notes, tasks, documents, and stage history - from the system. This cannot be undone. Continue?"
-        confirmLabel={isDeleting ? "Deleting..." : "Delete"}
-        onConfirm={deleteNow}
-        onCancel={() => setShowDeleteConfirm(false)}
       />
     </Screen>
   );
@@ -1345,16 +1282,15 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   headMetaText: { fontSize: 10.5, fontWeight: "800" },
-  headerAction: {
-    width: 38,
-    height: 38,
-    borderRadius: 14,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  headerActionRow: { marginTop: 8, flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  // Absolutely positioned (see the flow spacer that replaces its old reserved
+  // height, and the pillsTranslateY animation that slides it up to the
+  // header's top-right corner on scroll) - `top` here is its resting
+  // (expanded, collapse:0) position, overridden inline to match HEAD_ROW_HEIGHT.
+  // left/right explicitly repeat `head`'s own paddingHorizontal (16) - an
+  // absolutely positioned child here is relative to head's border box, not
+  // its padding box, so left/right:0 would otherwise sit flush against the
+  // screen edges instead of lining up with the rest of the header's content.
+  headerActionRow: { position: "absolute", left: 16, right: 16, flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
   headerActionGroup: { flexDirection: "row", alignItems: "center", gap: 8 },
   statusPill: {
     flexShrink: 0,
@@ -1413,20 +1349,27 @@ const styles = StyleSheet.create({
   stageWorkspace: { borderWidth: 1, borderRadius: 22, padding: 15, gap: 14 },
   stageWorkspaceTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   stageWorkspaceCopy: { flex: 1, minWidth: 0 },
+  stageKickerRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 },
   stageKicker: { fontSize: 10.5, fontWeight: "900", letterSpacing: 0.8, textTransform: "uppercase" },
-  stageTitle: { marginTop: 5, fontSize: 22, fontWeight: "900", letterSpacing: -0.6 },
-  stageSubtitle: { marginTop: 5, fontSize: 12.5, lineHeight: 18, fontWeight: "600" },
+  stageStatusTag: { maxWidth: 150 },
+  stageSubtitle: { marginTop: 6, fontSize: 12.5, lineHeight: 18, fontWeight: "600" },
   stageStepBadge: {
-    width: 58,
-    height: 58,
-    borderRadius: 19,
+    width: 72,
+    height: 72,
+    borderRadius: 20,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
+    paddingTop: 10,
+    paddingBottom: 9,
+    gap: 3,
     flexShrink: 0,
   },
-  stageStepValue: { fontSize: 20, fontWeight: "900", lineHeight: 23 },
-  stageStepLabel: { fontSize: 10.5, fontWeight: "800" },
+  stageStepFraction: { fontSize: 19, fontWeight: "900", lineHeight: 21 },
+  stageStepFractionMuted: { fontSize: 12, fontWeight: "700" },
+  stageStepLabel: { fontSize: 9.5, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.4 },
+  stageStepTrack: { width: 44, height: 4, borderRadius: 2, overflow: "hidden", marginTop: 2 },
+  stageStepFill: { height: "100%", borderRadius: 2 },
   stagePicker: { gap: 8, paddingRight: 4 },
   stageChip: {
     minWidth: 104,
@@ -1479,6 +1422,12 @@ const styles = StyleSheet.create({
   sectionHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   sectionTitle: { fontSize: 13, fontWeight: "800" },
   sectionLink: { fontSize: 12.5, fontWeight: "800" },
+  sectionLinkOutline: {
+    borderWidth: 1.5,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
 
   factsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   fact: { flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7 },
@@ -1576,30 +1525,4 @@ const styles = StyleSheet.create({
   noteBody: { fontSize: 12.5, lineHeight: 19 },
 
   error: { marginTop: 4, textAlign: "center", fontSize: 13, fontWeight: "600" },
-
-  fab: {
-    position: "absolute",
-    right: 18,
-    bottom: 22,
-    width: 54,
-    height: 54,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  sheetBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" },
-  sheet: {
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
-    borderWidth: 1,
-    borderBottomWidth: 0,
-    paddingHorizontal: 18,
-    paddingTop: 10,
-    paddingBottom: 30,
-  },
-  grabber: { width: 36, height: 4, borderRadius: 2, alignSelf: "center", marginBottom: 8 },
-  sheetAction: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 13, borderBottomWidth: 1 },
-  sheetActionIcon: { width: 32, height: 32, borderRadius: 10, alignItems: "center", justifyContent: "center" },
-  sheetActionText: { fontSize: 13.5, fontWeight: "700" },
 });

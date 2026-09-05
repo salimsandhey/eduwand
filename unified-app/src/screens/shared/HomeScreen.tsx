@@ -193,6 +193,28 @@ export function HomeScreen() {
     ]).start();
   }, [isTeacher, notificationBadgeScale, notificationBellAnimation, notificationCount]);
 
+  const followUpCount = stats?.followUps ?? 0;
+
+  useEffect(() => {
+    if (!isEnrolmentRole) return;
+    notificationBellAnimation.setValue(0);
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(notificationBellAnimation, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.timing(notificationBellAnimation, { toValue: 0, duration: 0, useNativeDriver: true }),
+        Animated.delay(2800),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [isEnrolmentRole, notificationBellAnimation]);
+
+  useEffect(() => {
+    if (!isEnrolmentRole || followUpCount === 0) return;
+    notificationBadgeScale.setValue(0.7);
+    Animated.spring(notificationBadgeScale, { toValue: 1, friction: 5, tension: 150, useNativeDriver: true }).start();
+  }, [isEnrolmentRole, notificationBadgeScale, followUpCount]);
+
   useEffect(() => {
     if (!isTeacher) return;
     heroBulbPulse.setValue(0);
@@ -347,11 +369,18 @@ export function HomeScreen() {
                     accessibilityRole="button"
                     accessibilityLabel="Open notifications"
                   >
-                    <Ionicons name="notifications-outline" size={20} color={colors.accent} />
-                    {(stats?.followUps ?? 0) > 0 ? (
-                      <View style={[styles.headerBadge, { backgroundColor: colors.danger, borderColor: colors.surface }]}>
-                        <Text style={styles.headerBadgeText}>{(stats?.followUps ?? 0) > 9 ? "9+" : stats?.followUps}</Text>
-                      </View>
+                    <Animated.View style={{ transform: [{ rotate: notificationBellRotation }] }}>
+                      <Ionicons name="notifications-outline" size={20} color={colors.accent} />
+                    </Animated.View>
+                    {followUpCount > 0 ? (
+                      <Animated.View
+                        style={[
+                          styles.headerBadge,
+                          { backgroundColor: colors.danger, borderColor: colors.surface, transform: [{ scale: notificationBadgeScale }] },
+                        ]}
+                      >
+                        <Text style={styles.headerBadgeText}>{followUpCount > 9 ? "9+" : followUpCount}</Text>
+                      </Animated.View>
                     ) : null}
                   </Pressable>
                   <Pressable

@@ -22,8 +22,9 @@ import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { Dropdown } from "../../components/Dropdown";
 import { getStatusColor } from "../../theme/statusColors";
+import { brandPalette } from "../../theme/tokens";
 import { usePipelineStages } from "../../hooks/usePipelineStages";
-import { api, AcademicYear, Enquiry, EnquiryStatus } from "../../api/client";
+import { api, AcademicYear, Enquiry, EnquiryStatus, PipelineStage } from "../../api/client";
 import { resolveEnquiryImageSource } from "../../theme/avatars";
 import { decorativeAssets } from "../../theme/decorativeAssets";
 
@@ -82,6 +83,8 @@ function StatCell({
   );
 }
 
+const STUB_WIDTH = 98;
+
 function AnimatedCard({
   item,
   index,
@@ -91,6 +94,7 @@ function AnimatedCard({
   pressedOpacity,
   mode,
   photoUrl,
+  stages,
 }: {
   item: Enquiry;
   index: number;
@@ -100,6 +104,7 @@ function AnimatedCard({
   pressedOpacity: number;
   mode: "light" | "dark";
   photoUrl: string | null;
+  stages: PipelineStage[];
 }) {
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(24)).current;
@@ -125,7 +130,7 @@ function AnimatedCard({
 
   const handlePressIn = () => {
     Animated.spring(scaleAnim, {
-      toValue: 0.985,
+      toValue: 0.98,
       tension: 180,
       friction: 8,
       useNativeDriver: true,
@@ -149,6 +154,7 @@ function AnimatedCard({
     photoUrl: item.photoMimeType ? photoUrl : null,
   });
   const displayName = item.studentName || item.contactName;
+  const stageIndex = stages.findIndex((stage) => stage.key === item.status);
 
   return (
     <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }, { scale: scaleAnim }] }}>
@@ -158,54 +164,90 @@ function AnimatedCard({
         onPressOut={handlePressOut}
         style={({ pressed }) => [
           styles.card,
-          {
-            backgroundColor: colors.surface,
-            borderColor: colors.border,
-          },
+          { backgroundColor: colors.surface, borderColor: colors.border },
           cardShadow,
           pressed && { opacity: pressedOpacity },
         ]}
         accessibilityRole="button"
       >
-        <View style={styles.cardTopRow}>
-          <View style={styles.cardIdentity}>
-            <View style={[styles.cardAvatar, { backgroundColor: colors.surfaceRaised, borderColor: colors.accent }]}>
-              <Image source={avatarSource} style={styles.cardAvatarImage} resizeMode="contain" />
-            </View>
-            <View style={styles.cardIdentityText}>
-              <Text style={[styles.cardName, { color: colors.textPrimary }]} numberOfLines={1}>
-                {displayName}
-              </Text>
-              <Text style={[styles.cardSubtext, { color: colors.textSecondary }]} numberOfLines={1}>
-                {item.contactPhone}
-              </Text>
-            </View>
+        <View style={[styles.cardStub, { backgroundColor: statusColor.bg }]}>
+          <View
+            style={[
+              styles.cardAvatar,
+              {
+                backgroundColor: colors.surface,
+                // A few statuses (e.g. "enrolled") pair a dark bg with white text — if that
+                // white were used as the ring color here it would vanish against the equally
+                // white avatar fill, so fall back to a guaranteed-visible neutral in that case.
+                borderColor: statusColor.text === colors.surface ? colors.textPrimary : statusColor.text,
+              },
+            ]}
+          >
+            <Image source={avatarSource} style={styles.cardAvatarImage} resizeMode="contain" />
           </View>
-          <Text style={[styles.statusBadge, { color: statusColor.text, backgroundColor: statusColor.bg }]}>
-            {item.status}
-          </Text>
-        </View>
-
-        <View style={[styles.cardInfoBand, { backgroundColor: colors.backgroundMuted }]}>
-          <View style={styles.cardInfoItem}>
-            <Ionicons name="color-wand-outline" size={14} color={colors.accent} />
-            <Text style={[styles.cardInfoText, { color: colors.textSecondary }]}>{formatSource(item.source)}</Text>
-          </View>
-          <View style={styles.cardInfoItem}>
-            <Ionicons name="time-outline" size={14} color={colors.accent} />
-            <Text style={[styles.cardInfoText, { color: colors.textSecondary }]}>Updated {formatDateLabel(item.updatedAt)}</Text>
-          </View>
-        </View>
-
-        <View style={styles.cardBottomRow}>
-          <View style={styles.cardGradeWrap}>
-            <Text style={[styles.cardMetaLabel, { color: colors.textMuted }]}>Grade interest</Text>
-            <Text style={[styles.cardMetaValue, { color: colors.textPrimary }]}>
-              {item.gradeInterest || "Not added yet"}
+          {/* bg+text are always used as the pre-validated pair from statusColors.ts — never
+              mix statusColor.text with an unrelated neutral background, or a status whose pair
+              is inverted (dark bg / white text, e.g. "enrolled") renders invisible text. */}
+          <View style={[styles.cardStatusPill, { backgroundColor: statusColor.bg, borderColor: colors.surface }]}>
+            <Text style={[styles.cardStatusPillText, { color: statusColor.text }]} numberOfLines={1}>
+              {item.status}
             </Text>
           </View>
-          <View style={[styles.chevronWrap, { backgroundColor: colors.accentSoft }]}>
-            <Ionicons name="arrow-forward" size={16} color={colors.accent} />
+          {stages.length > 0 ? (
+            <View style={styles.cardStageDots}>
+              {stages.map((stage, i) => (
+                <View
+                  key={stage.key}
+                  style={[
+                    styles.cardStageDot,
+                    {
+                      backgroundColor: i <= stageIndex ? statusColor.text : colors.surface,
+                      opacity: i <= stageIndex ? 1 : 0.5,
+                    },
+                  ]}
+                />
+              ))}
+            </View>
+          ) : null}
+
+          <View style={[styles.cardNotch, styles.cardNotchTop, { backgroundColor: colors.background }]} />
+          <View style={[styles.cardNotch, styles.cardNotchBottom, { backgroundColor: colors.background }]} />
+          <View style={[styles.cardSeam, { borderLeftColor: colors.border }]} />
+        </View>
+
+        <View style={styles.cardMain}>
+          <Text style={[styles.cardName, { color: colors.textPrimary }]} numberOfLines={1}>
+            {displayName}
+          </Text>
+          <Text style={[styles.cardSubtext, { color: colors.textSecondary }]} numberOfLines={1}>
+            {item.contactPhone}
+          </Text>
+
+          <View style={styles.cardChipRow}>
+            <View style={[styles.cardChip, { backgroundColor: colors.accentSoft }]}>
+              <Ionicons name="color-wand-outline" size={12} color={colors.accent} />
+              <Text style={[styles.cardChipText, { color: colors.accent }]} numberOfLines={1}>
+                {formatSource(item.source)}
+              </Text>
+            </View>
+            <View style={[styles.cardChip, { backgroundColor: colors.backgroundMuted }]}>
+              <Ionicons name="school-outline" size={12} color={colors.textSecondary} />
+              <Text style={[styles.cardChipText, { color: colors.textSecondary }]} numberOfLines={1}>
+                {item.gradeInterest || "No grade yet"}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.cardBottomRow}>
+            <View style={styles.cardInfoItem}>
+              <Ionicons name="time-outline" size={13} color={colors.textMuted} />
+              <Text style={[styles.cardInfoText, { color: colors.textMuted }]}>
+                Updated {formatDateLabel(item.updatedAt)}
+              </Text>
+            </View>
+            <View style={[styles.chevronWrap, { backgroundColor: colors.accentSoft }]}>
+              <Ionicons name="arrow-forward" size={15} color={colors.accent} />
+            </View>
           </View>
         </View>
       </Pressable>
@@ -381,6 +423,7 @@ export function EnquiryListScreen({ navigation }: Props) {
               </Text>
             </View>
 
+            {/* Enrolment overview hero card — commented out per request
             <LinearGradient
               colors={[colors.accent, colors.accentDark]}
               start={{ x: 0, y: 0 }}
@@ -410,6 +453,7 @@ export function EnquiryListScreen({ navigation }: Props) {
                 />
               </View>
             </LinearGradient>
+            */}
 
             <View
               style={[
@@ -435,15 +479,16 @@ export function EnquiryListScreen({ navigation }: Props) {
                   <Ionicons name="close-circle" size={18} color={colors.textMuted} />
                 </Pressable>
               ) : null}
+              <Image source={decorativeAssets.searchMascotThinking} style={styles.searchMascot} resizeMode="contain" />
             </View>
 
             <View style={styles.filtersRow}>
               {academicYears.length > 0 ? (
                 <View style={styles.filterCol}>
-                  <Text style={[styles.filterColLabel, { color: colors.textMuted }]}>Academic year</Text>
                   <Dropdown
                     title="Academic year"
                     triggerIcon="calendar-outline"
+                    hue={brandPalette.deepPlum}
                     triggerLabel={academicYears.find((year) => year.id === academicYearId)?.label ?? "Select year"}
                     selectedKey={academicYearId ?? ""}
                     onSelect={(key) => setAcademicYearId(key)}
@@ -457,10 +502,10 @@ export function EnquiryListScreen({ navigation }: Props) {
               ) : null}
 
               <View style={styles.filterCol}>
-                <Text style={[styles.filterColLabel, { color: colors.textMuted }]}>Status</Text>
                 <Dropdown
                   title="Filter by status"
                   triggerIcon="funnel-outline"
+                  hue={statusFilter === "all" ? brandPalette.coral : getStatusColor(statusFilter, mode).text}
                   triggerLabel={labelFor(statusFilter)}
                   selectedKey={statusFilter}
                   onSelect={(key) => setStatusFilter(key as EnquiryStatus | "all")}
@@ -481,6 +526,7 @@ export function EnquiryListScreen({ navigation }: Props) {
               <Dropdown
                 variant="plain"
                 title="Sort by"
+                hue={brandPalette.teal}
                 triggerLabel={`Sort by: ${SORT_LABEL[sortBy]}`}
                 selectedKey={sortBy}
                 onSelect={(key) => setSortBy(key as SortKey)}
@@ -513,6 +559,7 @@ export function EnquiryListScreen({ navigation }: Props) {
             pressedOpacity={pressedOpacity}
             mode={mode}
             photoUrl={accessToken ? api.enquiryPhotoUrl(accessToken, item.id) : null}
+            stages={stages}
           />
         )}
       />
@@ -732,6 +779,7 @@ const styles = StyleSheet.create({
     borderRadius: 26,
     borderWidth: 1,
     paddingHorizontal: 18,
+    paddingRight: 46,
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
@@ -740,6 +788,17 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     paddingVertical: 0,
+  },
+  // Peeks up over the search bar's top-right corner, echoing the floating AI
+  // assist mascot that sits above the tab bar - absolutely positioned so it
+  // doesn't affect the row's own flex layout.
+  searchMascot: {
+    position: "absolute",
+    right: 6,
+    // top: -42,
+    top: 8,
+    width: 44,
+    height: 44,
   },
   listHeaderRow: {
     marginTop: 18,
@@ -759,13 +818,6 @@ const styles = StyleSheet.create({
   },
   filterCol: {
     flex: 1,
-    gap: 6,
-  },
-  filterColLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
   },
   error: {
     marginTop: 8,
@@ -774,28 +826,24 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   card: {
+    flexDirection: "row",
+    alignItems: "stretch",
     borderRadius: 24,
     borderWidth: 1,
-    padding: 16,
-    gap: 14,
+    overflow: "hidden",
   },
-  cardTopRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  cardIdentity: {
-    flex: 1,
-    flexDirection: "row",
+  cardStub: {
+    width: STUB_WIDTH,
     alignItems: "center",
-    gap: 12,
+    justifyContent: "center",
+    paddingVertical: 16,
+    gap: 10,
   },
   cardAvatar: {
-    width: 52,
-    height: 52,
-    borderRadius: 18,
-    borderWidth: 1,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    borderWidth: 2,
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
@@ -804,8 +852,57 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
   },
-  cardIdentityText: {
+  cardStatusPill: {
+    maxWidth: STUB_WIDTH - 20,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1.5,
+  },
+  cardStatusPillText: {
+    fontSize: 10,
+    fontWeight: "800",
+    textTransform: "capitalize",
+  },
+  cardStageDots: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    gap: 4,
+    maxWidth: STUB_WIDTH - 28,
+  },
+  cardStageDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+  },
+  cardNotch: {
+    position: "absolute",
+    left: STUB_WIDTH - 7,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+  },
+  cardNotchTop: {
+    top: -7,
+  },
+  cardNotchBottom: {
+    bottom: -7,
+  },
+  cardSeam: {
+    position: "absolute",
+    left: STUB_WIDTH,
+    top: 14,
+    bottom: 14,
+    width: 0,
+    borderLeftWidth: 1.5,
+    borderStyle: "dashed",
+  },
+  cardMain: {
     flex: 1,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    gap: 8,
   },
   cardName: {
     fontSize: 16,
@@ -813,58 +910,47 @@ const styles = StyleSheet.create({
     letterSpacing: -0.3,
   },
   cardSubtext: {
-    marginTop: 4,
     fontSize: 13,
     fontWeight: "500",
   },
-  statusBadge: {
+  cardChipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 4,
+  },
+  cardChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 999,
-    fontSize: 11,
-    fontWeight: "800",
-    textTransform: "capitalize",
-    overflow: "hidden",
+    maxWidth: "100%",
   },
-  cardInfoBand: {
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    gap: 8,
+  cardChipText: {
+    fontSize: 11.5,
+    fontWeight: "700",
   },
   cardInfoItem: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 6,
   },
   cardInfoText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "600",
   },
   cardBottomRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "flex-end",
-    gap: 12,
-  },
-  cardGradeWrap: {
-    flex: 1,
-  },
-  cardMetaLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
-  },
-  cardMetaValue: {
+    alignItems: "center",
     marginTop: 6,
-    fontSize: 14,
-    fontWeight: "700",
   },
   chevronWrap: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
   },
