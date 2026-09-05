@@ -13,12 +13,10 @@ import {
   Animated,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
-import type { CompositeScreenProps } from "@react-navigation/native";
-import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { EnrolmentTabParamList, RootStackParamList } from "../../navigation/types";
+import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
@@ -26,10 +24,7 @@ import { getStatusColor } from "../../theme/statusColors";
 import { usePipelineStages } from "../../hooks/usePipelineStages";
 import { api, Enquiry, EnquiryStatus } from "../../api/client";
 
-type Props = CompositeScreenProps<
-  BottomTabScreenProps<EnrolmentTabParamList, "Pipeline">,
-  NativeStackScreenProps<RootStackParamList>
->;
+type Props = NativeStackScreenProps<RootStackParamList, "Pipeline">;
 
 const AVATAR_SOURCES: ImageSourcePropType[] = [
   require("../../../assets/avatars/avatar-01.png"),
@@ -280,6 +275,14 @@ export function PipelineBoardScreen({ navigation }: Props) {
         refreshControl={<RefreshControl refreshing={isLoading} onRefresh={load} tintColor={colors.accent} />}
       >
         <View style={styles.header}>
+          <Pressable
+            style={({ pressed }) => [styles.backButton, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+            onPress={() => navigation.goBack()}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <Ionicons name="arrow-back" size={20} color={colors.textPrimary} />
+          </Pressable>
           <View style={styles.headerText}>
             <Text style={[styles.pageTitle, { color: colors.textPrimary }]}>Pipeline</Text>
             <Text style={[styles.pageSubtitle, { color: colors.textMuted }]}>
@@ -458,9 +461,9 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "flex-start",
-    justifyContent: "space-between",
     gap: 12,
   },
+  backButton: { width: 40, height: 40, borderRadius: 20, borderWidth: 1, alignItems: "center", justifyContent: "center" },
   headerText: {
     flex: 1,
   },

@@ -19,7 +19,14 @@ import { useTheme } from "../../theme/ThemeContext";
 import { ThemeColors } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { getStatusColor } from "../../theme/statusColors";
-import { api, Enquiry, FollowUpTask, TeacherDashboardSummary, TeacherDashboardActivityItem } from "../../api/client";
+import {
+  api,
+  Enquiry,
+  FollowUpTask,
+  TeacherDashboardSummary,
+  TeacherDashboardActivityItem,
+  EnrolmentTrend,
+} from "../../api/client";
 import { usePipelineStages } from "../../hooks/usePipelineStages";
 import { decorativeAssets } from "../../theme/decorativeAssets";
 import { resolveUserImageSource } from "../../theme/avatars";
@@ -135,6 +142,9 @@ export function HomeScreen() {
 
   const [teacherSummary, setTeacherSummary] = useState<TeacherDashboardSummary | null>(null);
   const [isLoadingTeacherSummary, setIsLoadingTeacherSummary] = useState(false);
+
+  const [enrolmentTrend, setEnrolmentTrend] = useState<EnrolmentTrend | null>(null);
+  const [isLoadingAnalytics, setIsLoadingAnalytics] = useState(false);
   const notificationBellAnimation = useRef(new Animated.Value(0)).current;
   const notificationBadgeScale = useRef(new Animated.Value(1)).current;
   const heroBulbPulse = useRef(new Animated.Value(0)).current;
@@ -291,11 +301,25 @@ export function HomeScreen() {
     }
   }, [accessToken, isEnrolmentRole, stages]);
 
+  const loadEnrolmentAnalytics = useCallback(async () => {
+    if (!accessToken || !isEnrolmentRole) return;
+    setIsLoadingAnalytics(true);
+    try {
+      const trend = await api.getEnrolmentTrend(accessToken, 6);
+      setEnrolmentTrend(trend);
+    } catch {
+      setEnrolmentTrend(null);
+    } finally {
+      setIsLoadingAnalytics(false);
+    }
+  }, [accessToken, isEnrolmentRole]);
+
   useFocusEffect(
     useCallback(() => {
       loadStats();
       loadTeacherSummary();
-    }, [loadStats, loadTeacherSummary])
+      loadEnrolmentAnalytics();
+    }, [loadStats, loadTeacherSummary, loadEnrolmentAnalytics])
   );
 
   if (!user) return null;
@@ -348,15 +372,33 @@ export function HomeScreen() {
                   </Pressable>
                 </View>
               </View>
+              <View style={styles.teacherWeekRow} accessibilityLabel="Current week calendar">
+                {weekDates.map((date) => {
+                  const isToday = date.toDateString() === today.toDateString();
+                  return (
+                    <View
+                      key={date.toISOString()}
+                      style={[
+                        styles.teacherWeekDay,
+                        { backgroundColor: isToday ? colors.accent : colors.surfaceRaised },
+                      ]}
+                    >
+                      <Text style={[styles.teacherWeekDayLabel, { color: isToday ? colors.accentOn : colors.textMuted }]}>
+                        {date.toLocaleDateString("en-IN", { weekday: "short" })}
+                      </Text>
+                      <Text style={[styles.teacherWeekDate, { color: isToday ? colors.accentOn : colors.textPrimary }]}>{date.getDate()}</Text>
+                    </View>
+                  );
+                })}
+              </View>
             </View>
 
             <View style={styles.dashboardBody}>
-              <EnrolmentFocusCarousel
-                stats={stats}
+              <EnrolmentAnalyticsSection
+                trend={enrolmentTrend}
+                isLoading={isLoadingAnalytics}
                 colors={colors}
                 cardShadow={cardShadow}
-                pressedOpacity={pressedOpacity}
-                onNavigate={(tab) => navigation.navigate(tab)}
               />
 
               {isLoadingStats && !stats ? (
@@ -369,12 +411,7 @@ export function HomeScreen() {
                     tone="#7359D9"
                     graphic={decorativeAssets.teacherLessonCat}
                     shadow={cardShadow}
-                    pressedOpacity={pressedOpacity}
-                    stats={[
-                      { value: stats?.newEnquiries ?? 0, label: "New enquiries" },
-                      { value: stats?.followUps ?? 0, label: "Follow-ups today" },
-                    ]}
-                    onPress={() => navigation.navigate("Enquiries")}
+                    stat={{ value: stats?.newEnquiries ?? 0, label: "New enquiries" }}
                   />
                   <KpiCard
                     title="Follow up Queue"
@@ -382,12 +419,7 @@ export function HomeScreen() {
                     tone="#F2675B"
                     graphic={decorativeAssets.teacherAssignment}
                     shadow={cardShadow}
-                    pressedOpacity={pressedOpacity}
-                    stats={[
-                      { value: stats?.followUps ?? 0, label: "Open tasks" },
-                      { value: stats?.visitsToday ?? 0, label: "Visits in play" },
-                    ]}
-                    onPress={() => navigation.navigate("Tasks")}
+                    stat={{ value: stats?.followUps ?? 0, label: "Open tasks" }}
                   />
                   <KpiCard
                     title="Visit progress"
@@ -395,9 +427,7 @@ export function HomeScreen() {
                     tone="#E5A72D"
                     graphic={decorativeAssets.classBooks}
                     shadow={cardShadow}
-                    pressedOpacity={pressedOpacity}
-                    stats={[{ value: stats?.visitsToday ?? 0, label: "Visits scheduled" }]}
-                    onPress={() => navigation.navigate("Pipeline")}
+                    stat={{ value: stats?.visitsToday ?? 0, label: "Visits scheduled" }}
                   />
                   <KpiCard
                     title="Conversions"
@@ -405,12 +435,7 @@ export function HomeScreen() {
                     tone="#2FA678"
                     graphic={decorativeAssets.checkCircle}
                     shadow={cardShadow}
-                    pressedOpacity={pressedOpacity}
-                    stats={[
-                      { value: stats?.converted ?? 0, label: "Converted" },
-                      { value: stats?.totalLeads ?? 0, label: "Total leads" },
-                    ]}
-                    onPress={() => navigation.navigate("Pipeline")}
+                    stat={{ value: stats?.converted ?? 0, label: "Converted" }}
                   />
                 </View>
               )}
@@ -430,23 +455,23 @@ export function HomeScreen() {
                   onPress={() => navigation.navigate("NewEnquiryForm")}
                 />
                 <ActionCard
-                  icon="git-network-outline"
-                  label="Pipeline"
-                  hint={`${stats?.totalLeads ?? 0} leads`}
+                  icon="notifications-outline"
+                  label="Notifications"
+                  hint="View updates"
                   tone="#5B3FD6"
                   colors={colors}
                   pressedOpacity={pressedOpacity}
-                  onPress={() => navigation.navigate("Pipeline")}
+                  onPress={() => navigation.navigate("Notifications")}
                 />
                 <ActionCard
-                  icon="call"
-                  label="Follow-ups"
-                  hint={`${stats?.followUps ?? 0} due`}
+                  icon="help-circle-outline"
+                  label="Help & support"
+                  hint="Get assistance"
                   tone="#E5A72D"
                   image={decorativeAssets.followUpsCat}
                   colors={colors}
                   pressedOpacity={pressedOpacity}
-                  onPress={() => navigation.navigate("Tasks")}
+                  onPress={() => navigation.navigate("HelpSupport")}
                 />
               </View>
 
@@ -827,46 +852,29 @@ function KpiCard({
   tone,
   graphic,
   shadow,
-  pressedOpacity,
-  stats,
-  onPress,
+  stat,
 }: {
   title: string;
   icon: keyof typeof Ionicons.glyphMap;
   tone: string;
   graphic?: ImageSourcePropType;
   shadow: ReturnType<typeof useTheme>["cardShadow"];
-  pressedOpacity: number;
-  stats: { value: number; label: string }[];
-  onPress: () => void;
+  stat: { value: number; label: string };
 }) {
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [styles.kpiCard, { backgroundColor: tone }, shadow, pressed && { opacity: pressedOpacity }]}
-      accessibilityRole="button"
-      accessibilityLabel={`Open ${title}`}
-    >
+    <View style={[styles.kpiCard, { backgroundColor: tone }, shadow]}>
       {graphic ? <Image source={graphic} style={styles.kpiGraphic} resizeMode="contain" /> : null}
       <View style={styles.kpiTopRow}>
         <View style={styles.kpiIconWrap}>
-          <Ionicons name={icon} size={17} color="#FFFFFF" />
+          <Ionicons name={icon} size={12} color="#FFFFFF" />
         </View>
-        <Ionicons name="bookmark-outline" size={16} color="rgba(255,255,255,0.55)" />
+        <Text style={styles.kpiTitle} numberOfLines={1}>{title}</Text>
       </View>
-      <Text style={styles.kpiTitle}>{title}</Text>
       <View style={styles.kpiStatList}>
-        {stats.map((stat) => (
-          <View key={stat.label}>
-            <Text style={styles.kpiStatValue}>{String(stat.value).padStart(2, "0")}</Text>
-            <Text style={styles.kpiStatLabel}>{stat.label}</Text>
-          </View>
-        ))}
+        <Text style={styles.kpiStatValue}>{String(stat.value).padStart(2, "0")}</Text>
+        <Text style={styles.kpiStatLabel}>{stat.label}</Text>
       </View>
-      <View style={styles.kpiArrow}>
-        <Ionicons name="arrow-forward" size={16} color="#FFFFFF" />
-      </View>
-    </Pressable>
+    </View>
   );
 }
 
@@ -907,9 +915,7 @@ function ActionCard({
         <View style={[styles.actionIconBg, { backgroundColor: tone }]}>
           <Ionicons name={icon} size={19} color="#FFFFFF" />
         </View>
-        {image ? null : (
-          <Ionicons name="arrow-forward" size={13} color={tone} style={styles.actionArrow} />
-        )}
+        <Ionicons name="arrow-forward" size={13} color={tone} style={styles.actionArrow} />
       </View>
       <Text style={[styles.actionLabel, { color: colors.textPrimary }]} numberOfLines={2}>
         {label}
@@ -1010,166 +1016,83 @@ function TaskPreviewRow({
   );
 }
 
-const ENROLMENT_FOCUS_ROTATE_MS = 6000;
+function monthLabel(period: string): string {
+  const [year, month] = period.split("-").map(Number);
+  if (!year || !month) return period;
+  return new Date(Date.UTC(year, month - 1, 1)).toLocaleDateString("en-IN", { month: "short" });
+}
 
-function EnrolmentFocusCarousel({
-  stats,
+function EnrolmentAnalyticsSection({
+  trend,
+  isLoading,
   colors,
   cardShadow,
-  pressedOpacity,
-  onNavigate,
 }: {
-  stats: Stats | null;
+  trend: EnrolmentTrend | null;
+  isLoading: boolean;
   colors: ThemeColors;
   cardShadow: ReturnType<typeof useTheme>["cardShadow"];
-  pressedOpacity: number;
-  onNavigate: (tab: "Enquiries" | "Tasks" | "Pipeline") => void;
 }) {
-  const { width: windowWidth } = useWindowDimensions();
-  const cardWidth = Math.max(windowWidth - 32, 0);
-  const scrollRef = useRef<ScrollView>(null);
-  const [page, setPage] = useState(0);
-  const [paused, setPaused] = useState(false);
-  const resumeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const followUps = stats?.followUps ?? 0;
-  const slides: {
-    key: string;
-    eyebrow: string;
-    title: string;
-    gradient: readonly [string, string];
-    glow: string;
-    graphic: ImageSourcePropType;
-    stats: { value: number; label: string }[];
-    cta: string;
-    target: "Enquiries" | "Tasks" | "Pipeline";
-  }[] = [
-    {
-      key: "focus",
-      eyebrow: "TODAY'S FOCUS",
-      title: "Stay ahead of today's pipeline",
-      gradient: [colors.accent, colors.accentDark] as const,
-      glow: "rgba(255,255,255,0.16)",
-      graphic: decorativeAssets.heroFocusCard,
-      stats: [
-        { value: stats?.newEnquiries ?? 0, label: "New enquiries" },
-        { value: followUps, label: "Follow-ups today" },
-      ],
-      cta: "Open enquiries",
-      target: "Enquiries",
-    },
-    {
-      key: "followups",
-      eyebrow: "FOLLOW-UP QUEUE",
-      title: followUps > 0 ? "Outreach is waiting on you" : "Follow-up queue is clear",
-      gradient: ["#F2675B", "#C24039"] as const,
-      glow: "rgba(255,255,255,0.18)",
-      graphic: decorativeAssets.heroFollowupCard,
-      stats: [
-        { value: followUps, label: "Pending tasks" },
-        { value: stats?.visitsToday ?? 0, label: "Visits in play" },
-      ],
-      cta: "Work the queue",
-      target: "Tasks",
-    },
-    {
-      key: "conversions",
-      eyebrow: "CONVERSIONS",
-      title: "Move leads toward admission",
-      gradient: ["#2FA678", "#1E7A56"] as const,
-      glow: "rgba(255,255,255,0.16)",
-      graphic: decorativeAssets.heroConversionCard,
-      stats: [
-        { value: stats?.converted ?? 0, label: "Converted" },
-        { value: stats?.totalLeads ?? 0, label: "Total leads" },
-      ],
-      cta: "View pipeline",
-      target: "Pipeline",
-    },
-  ];
-
-  useEffect(() => {
-    if (paused || cardWidth === 0) return;
-    const timer = setInterval(() => {
-      setPage((current) => {
-        const next = (current + 1) % slides.length;
-        scrollRef.current?.scrollTo({ x: next * cardWidth, animated: true });
-        return next;
-      });
-    }, ENROLMENT_FOCUS_ROTATE_MS);
-    return () => clearInterval(timer);
-  }, [paused, cardWidth, slides.length]);
-
-  useEffect(() => {
-    return () => {
-      if (resumeTimer.current) clearTimeout(resumeTimer.current);
-    };
-  }, []);
-
   return (
-    <View style={styles.focusCarousel}>
-      <ScrollView
-        ref={scrollRef}
-        horizontal
-        pagingEnabled
-        showsHorizontalScrollIndicator={false}
-        onScrollBeginDrag={() => {
-          if (resumeTimer.current) clearTimeout(resumeTimer.current);
-          setPaused(true);
-        }}
-        onMomentumScrollEnd={(event) => {
-          const nextPage = cardWidth > 0 ? Math.round(event.nativeEvent.contentOffset.x / cardWidth) : 0;
-          setPage(nextPage);
-          resumeTimer.current = setTimeout(() => setPaused(false), 5000);
-        }}
-        scrollEventThrottle={16}
-      >
-        {slides.map((slide) => (
-          <LinearGradient
-            key={slide.key}
-            colors={slide.gradient}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={[styles.focusCard, { width: cardWidth - 12, marginRight: 12 }, cardShadow]}
-          >
-            <View style={[styles.focusGlow, { backgroundColor: slide.glow }]} pointerEvents="none" />
-            <Image source={slide.graphic} style={styles.focusGraphic} resizeMode="contain" />
-            <View style={styles.focusCardBody}>
-              <Text style={styles.focusEyebrow}>{slide.eyebrow}</Text>
-              <Text style={styles.focusTitle} numberOfLines={2}>
-                {slide.title}
-              </Text>
-              <View style={styles.focusStatRow}>
-                {slide.stats.map((stat) => (
-                  <View key={stat.label} style={styles.focusStatChip}>
-                    <Text style={styles.focusStatValue}>{String(stat.value).padStart(2, "0")}</Text>
-                    <Text style={styles.focusStatLabel}>{stat.label}</Text>
-                  </View>
-                ))}
+    <View style={[styles.analyticsCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+      <Text style={[styles.analyticsCaption, { color: colors.textSecondary }]}>Monthly enquiry trend</Text>
+      {isLoading && !trend ? (
+        <ActivityIndicator color={colors.accent} style={{ marginVertical: 24 }} />
+      ) : (
+        <View style={styles.chartArea}>
+          <TrendChart trend={trend} colors={colors} />
+        </View>
+      )}
+    </View>
+  );
+}
+
+function TrendChart({ trend, colors }: { trend: EnrolmentTrend | null; colors: ThemeColors }) {
+  const periods = trend?.periods ?? [];
+  if (periods.length === 0) {
+    return <Text style={[styles.chartEmpty, { color: colors.textMuted }]}>No trend data yet.</Text>;
+  }
+  const maxValue = Math.max(1, ...periods.flatMap((p) => [p.newEnquiries, p.converted]));
+  return (
+    <>
+      <View style={styles.chartRow}>
+        {periods.map((p) => (
+          <View key={p.period} style={styles.chartCol}>
+            <View style={styles.chartGroupTrack}>
+              <View style={[styles.chartTrack, styles.chartTrackNarrow, { backgroundColor: colors.surfaceRaised }]}>
+                <View
+                  style={[
+                    styles.chartFill,
+                    { height: `${Math.max(4, (p.newEnquiries / maxValue) * 100)}%`, backgroundColor: "#7359D9" },
+                  ]}
+                />
               </View>
-              <View style={styles.focusPanel}>
-                <Pressable
-                  onPress={() => onNavigate(slide.target)}
-                  style={({ pressed }) => [styles.focusPanelButton, pressed && { opacity: pressedOpacity }]}
-                  accessibilityRole="button"
-                  accessibilityLabel={slide.cta}
-                >
-                  <Text style={[styles.focusPanelButtonText, { color: colors.accent }]}>{slide.cta}</Text>
-                  <Ionicons name="arrow-forward" size={16} color={colors.accent} />
-                </Pressable>
+              <View style={[styles.chartTrack, styles.chartTrackNarrow, { backgroundColor: colors.surfaceRaised }]}>
+                <View
+                  style={[
+                    styles.chartFill,
+                    { height: `${Math.max(4, (p.converted / maxValue) * 100)}%`, backgroundColor: "#2FA678" },
+                  ]}
+                />
               </View>
             </View>
-          </LinearGradient>
-        ))}
-      </ScrollView>
-      <View style={styles.focusDots} accessibilityLabel={`Card ${page + 1} of ${slides.length}`}>
-        {slides.map((slide, index) => (
-          <View
-            key={slide.key}
-            style={[styles.focusDot, { backgroundColor: index === page ? colors.accent : colors.border }]}
-          />
+            <Text style={[styles.chartLabel, { color: colors.textMuted }]}>{monthLabel(p.period)}</Text>
+          </View>
         ))}
       </View>
+      <View style={styles.chartLegendRow}>
+        <LegendDot color="#7359D9" label="New" colors={colors} />
+        <LegendDot color="#2FA678" label="Converted" colors={colors} />
+      </View>
+    </>
+  );
+}
+
+function LegendDot({ color, label, colors }: { color: string; label: string; colors: ThemeColors }) {
+  return (
+    <View style={styles.legendItem}>
+      <View style={[styles.legendDot, { backgroundColor: color }]} />
+      <Text style={[styles.legendLabel, { color: colors.textMuted }]}>{label}</Text>
     </View>
   );
 }
@@ -1329,109 +1252,90 @@ const styles = StyleSheet.create({
     height: 40,
     marginTop: 3,
   },
-  focusCarousel: {
-    gap: 12,
-  },
-  focusCard: {
-    minHeight: 208,
+  analyticsCard: {
     borderRadius: 24,
-    padding: 20,
-    justifyContent: "center",
-    overflow: "hidden",
+    borderWidth: 1,
+    padding: 18,
+    gap: 16,
   },
-  focusGlow: {
-    position: "absolute",
-    width: 200,
-    height: 200,
-    borderRadius: 100,
-    right: -58,
-    top: -78,
-    zIndex: 0,
-    elevation: 0,
+  analyticsCaption: {
+    fontSize: 13,
+    fontWeight: "700",
   },
-  focusGraphic: {
-    position: "absolute",
-    right: -16,
-    bottom: -14,
-    width: 148,
-    height: 148,
-    opacity: 0.9,
-    zIndex: 0,
-    elevation: 0,
+  chartArea: {
+    alignItems: "center",
   },
-  focusCardBody: {
-    maxWidth: "72%",
-    elevation: 2,
-    zIndex: 2,
+  chartEmpty: {
+    fontSize: 13,
+    fontWeight: "500",
+    paddingVertical: 24,
   },
-  focusEyebrow: {
-    color: "rgba(255,255,255,0.8)",
-    fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 1.1,
-  },
-  focusTitle: {
-    marginTop: 6,
-    color: "#FFFFFF",
-    fontSize: 21,
-    lineHeight: 26,
-    fontWeight: "800",
-    letterSpacing: -0.5,
-  },
-  focusStatRow: {
+  chartRow: {
     flexDirection: "row",
-    gap: 10,
-    marginTop: 16,
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    alignSelf: "stretch",
+    gap: 6,
   },
-  focusStatChip: {
-    backgroundColor: "rgba(255,255,255,0.15)",
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    minWidth: 92,
+  chartCol: {
+    flex: 1,
+    alignItems: "center",
   },
-  focusStatValue: {
-    color: "#FFFFFF",
-    fontSize: 22,
+  chartValue: {
+    fontSize: 11,
     fontWeight: "800",
-    letterSpacing: -0.5,
+    marginBottom: 4,
   },
-  focusStatLabel: {
-    marginTop: 2,
-    color: "rgba(255,255,255,0.82)",
+  chartTrack: {
+    width: 22,
+    height: 96,
+    borderRadius: 8,
+    overflow: "hidden",
+    justifyContent: "flex-end",
+  },
+  chartTrackNarrow: {
+    width: 10,
+  },
+  chartGroupTrack: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 3,
+    height: 96,
+  },
+  chartFill: {
+    width: "100%",
+    borderRadius: 8,
+  },
+  chartLabel: {
+    marginTop: 6,
     fontSize: 10,
     fontWeight: "700",
   },
-  focusPanel: {
-    marginTop: 16,
-    alignSelf: "flex-start",
-    backgroundColor: "rgba(255,255,255,0.14)",
-    borderRadius: 16,
-    padding: 6,
+  chartFootnote: {
+    marginTop: 14,
+    fontSize: 12,
+    fontWeight: "600",
+    textAlign: "center",
   },
-  focusPanelButton: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 11,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
+  chartLegendRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 18,
+    marginTop: 14,
+  },
+  legendItem: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-  },
-  focusPanelButtonText: {
-    fontSize: 12,
-    fontWeight: "800",
-  },
-  focusDots: {
-    flexDirection: "row",
-    alignSelf: "center",
     gap: 6,
-    marginTop: 2,
   },
-  focusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+  legendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  legendLabel: {
+    fontSize: 11,
+    fontWeight: "700",
   },
   dashboardBody: {
     marginTop: 22,
@@ -1459,68 +1363,58 @@ const styles = StyleSheet.create({
   kpiGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 12,
+    gap: 8,
   },
   kpiCard: {
     width: "48%",
-    borderRadius: 24,
-    padding: 16,
-    minHeight: 168,
+    borderRadius: 16,
+    padding: 10,
+    minHeight: 76,
     overflow: "hidden",
   },
   kpiGraphic: {
     position: "absolute",
-    right: -10,
-    bottom: -8,
-    width: 82,
-    height: 82,
-    opacity: 0.9,
+    right: -14,
+    bottom: -14,
+    width: 52,
+    height: 52,
+    opacity: 0.55,
   },
   kpiTopRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
+    justifyContent: "flex-start",
     alignItems: "center",
+    gap: 6,
   },
   kpiIconWrap: {
-    width: 34,
-    height: 34,
-    borderRadius: 12,
+    width: 22,
+    height: 22,
+    borderRadius: 8,
     backgroundColor: "rgba(255,255,255,0.18)",
     alignItems: "center",
     justifyContent: "center",
   },
   kpiTitle: {
     color: "#FFFFFF",
-    marginTop: 14,
-    fontSize: 15,
+    flex: 1,
+    fontSize: 11,
     fontWeight: "800",
   },
   kpiStatList: {
-    marginTop: 8,
-    gap: 8,
+    marginTop: 6,
   },
   kpiStatValue: {
     color: "#FFFFFF",
-    fontSize: 22,
-    lineHeight: 25,
+    fontSize: 15,
+    lineHeight: 17,
     fontWeight: "800",
-    letterSpacing: -0.5,
+    letterSpacing: -0.3,
   },
   kpiStatLabel: {
     color: "rgba(255,255,255,0.85)",
     marginTop: 1,
-    fontSize: 11,
+    fontSize: 8.5,
     fontWeight: "700",
-  },
-  kpiArrow: {
-    alignSelf: "flex-start",
-    marginTop: 14,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "rgba(255,255,255,0.2)",
-    alignItems: "center",
-    justifyContent: "center",
   },
   actionGrid: {
     flexDirection: "row",

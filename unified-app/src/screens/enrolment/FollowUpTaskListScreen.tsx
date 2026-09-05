@@ -12,7 +12,6 @@ import {
 } from "react-native";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
@@ -269,20 +268,12 @@ export function FollowUpTaskListScreen() {
           </Pressable>
         </View>
 
-        <LinearGradient
-          colors={[colors.accent, colors.accentDark]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.statHero}
-        >
-          <View style={styles.statHeroGlow} pointerEvents="none" />
-          <View style={styles.statHeroGlowSecondary} pointerEvents="none" />
-
+        <View style={[styles.statHero, { borderColor: colors.accent }]}>
           <View style={styles.statHeroTopRow}>
-            <Text style={styles.statHeroEyebrow}>Follow-up overview</Text>
-            <View style={styles.liveBadge}>
+            <Text style={[styles.statHeroEyebrow, { color: colors.accent }]}>Follow-up overview</Text>
+            <View style={[styles.liveBadge, { backgroundColor: colors.accent + "14" }]}>
               <Animated.View style={[styles.liveDot, { opacity: liveDotOpacity }]} />
-              <Text style={styles.liveBadgeText}>Live</Text>
+              <Text style={[styles.liveBadgeText, { color: colors.accent }]}>Live</Text>
             </View>
           </View>
 
@@ -298,7 +289,7 @@ export function FollowUpTaskListScreen() {
               />
             ))}
           </View>
-        </LinearGradient>
+        </View>
 
         {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
@@ -667,38 +658,18 @@ const styles = StyleSheet.create({
   railScroll: { marginHorizontal: -16 },
   statHero: {
     borderRadius: 26,
+    borderWidth: 1.5,
     paddingTop: 16,
     paddingBottom: 16,
     paddingHorizontal: 12,
     gap: 14,
-    overflow: "hidden",
-  },
-  statHeroGlow: {
-    position: "absolute",
-    top: -46,
-    right: -30,
-    width: 150,
-    height: 150,
-    borderRadius: 75,
-    backgroundColor: "rgba(255,255,255,0.14)",
-  },
-  statHeroGlowSecondary: {
-    position: "absolute",
-    bottom: -52,
-    left: -32,
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: "rgba(255,255,255,0.08)",
   },
   statHeroTopRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    zIndex: 2,
   },
   statHeroEyebrow: {
-    color: "rgba(255,255,255,0.85)",
     fontSize: 11,
     fontWeight: "800",
     textTransform: "uppercase",
@@ -708,7 +679,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    backgroundColor: "rgba(255,255,255,0.16)",
     borderRadius: 999,
     paddingHorizontal: 9,
     paddingVertical: 4,
@@ -720,7 +690,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#8CE7B8",
   },
   liveBadgeText: {
-    color: "#FFFFFF",
     fontSize: 10,
     fontWeight: "800",
     letterSpacing: 0.4,
@@ -728,7 +697,6 @@ const styles = StyleSheet.create({
   statHeroRow: {
     flexDirection: "row",
     gap: 6,
-    zIndex: 2,
   },
   statCell: {
     flex: 1,

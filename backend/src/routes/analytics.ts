@@ -19,7 +19,7 @@ interface TrendQuery {
 const analyticsGuard = (app: FastifyInstance) => [
   app.authenticate,
   app.requireSchoolScope,
-  requireRoles("admin", "principal", "leadership", PLATFORM_ADMIN_ROLE),
+  requireRoles("admin", "principal", "leadership", "counsellor", "front_desk", PLATFORM_ADMIN_ROLE),
 ];
 
 function dateRangeFilter(query: DateRangeQuery) {
@@ -232,6 +232,191 @@ export async function analyticsRoutes(app: FastifyInstance) {
             period,
             newEnquiries: newByPeriod[period],
             converted: convertedByPeriod[period],
+          })),
+        },
+        meta: {},
+      };
+    }
+  );
+
+  app.get<{ Querystring: DateRangeQuery }>(
+    "/analytics/enrolment/stage-velocity",
+    { onRequest: analyticsGuard(app) },
+    async (request) => {
+      const stages = await getStages(request.schoolId);
+
+      const enquiries = await prisma.enquiry.findMany({
+        where: {
+          schoolId: request.schoolId,
+          duplicateOfEnquiryId: null,
+          ...academicYearFilter(request.query.academicYearId),
+          ...dateRangeFilter(request.query),
+        },
+        select: { id: true, createdAt: true },
+      });
+      const createdAtByEnquiry = new Map(enquiries.map((e) => [e.id, e.createdAt]));
+
+      const history = await prisma.enquiryStageHistory.findMany({
+        where: { enquiryId: { in: enquiries.map((e) => e.id) } },
+        orderBy: [{ enquiryId: "asc" }, { changedAt: "asc" }],
+        select: { enquiryId: true, fromStatus: true, changedAt: true },
+      });
+
+      const durationByStage = new Map<string, { totalMs: number; count: number }>();
+      let previousEnquiryId: string | null = null;
+      let previousAt: Date | null = null;
+
+      for (const row of history) {
+        if (row.enquiryId !== previousEnquiryId) {
+          previousAt = createdAtByEnquiry.get(row.enquiryId) ?? null;
+          previousEnquiryId = row.enquiryId;
+        }
+        if (previousAt && row.fromStatus) {
+          const durationMs = row.changedAt.getTime() - previousAt.getTime();
+          const bucket = durationByStage.get(row.fromStatus) ?? { totalMs: 0, count: 0 };
+          bucket.totalMs += durationMs;
+          bucket.count += 1;
+          durationByStage.set(row.fromStatus, bucket);
+        }
+        previousAt = row.changedAt;
+      }
+
+      const data = stages.map((stage) => {
+        const bucket = durationByStage.get(stage.key);
+        return {
+          stageKey: stage.key,
+          stageLabel: stage.label,
+          avgDays: bucket && bucket.count > 0 ? Math.round((bucket.totalMs / bucket.count / 86400000) * 10) / 10 : null,
+          sampleCount: bucket?.count ?? 0,
+        };
+      });
+
+      return { data, meta: {} };
+    }
+  );
+
+  app.get<{ Querystring: DateRangeQuery }>(
+    "/analytics/enrolment/lost-reasons",
+    { onRequest: analyticsGuard(app) },
+    async (request) => {
+      const where = {
+        schoolId: request.schoolId,
+        duplicateOfEnquiryId: null,
+        lostReason: { not: null },
+        ...academicYearFilter(request.query.academicYearId),
+        ...dateRangeFilter(request.query),
+      };
+
+      const enquiries = await prisma.enquiry.findMany({ where, select: { lostReason: true } });
+
+      const byReason: Record<string, number> = {};
+      for (const enquiry of enquiries) {
+        const reason = enquiry.lostReason ?? "Unspecified";
+        byReason[reason] = (byReason[reason] ?? 0) + 1;
+      }
+
+      return { data: { byReason, totalCount: enquiries.length }, meta: {} };
+    }
+  );
+
+  app.get<{ Querystring: DateRangeQuery }>(
+    "/analytics/enrolment/task-outcomes",
+    { onRequest: analyticsGuard(app) },
+    async (request) => {
+      const tasks = await prisma.followUpTask.findMany({
+        where: {
+          enquiry: { schoolId: request.schoolId, duplicateOfEnquiryId: null, ...academicYearFilter(request.query.academicYearId) },
+          ...dateRangeFilter(request.query),
+        },
+        select: { status: true, channel: true },
+      });
+
+      const byStatus: Record<string, number> = {};
+      const byChannel: Record<string, { total: number; sent: number }> = {};
+      for (const task of tasks) {
+        byStatus[task.status] = (byStatus[task.status] ?? 0) + 1;
+        const channelStats = byChannel[task.channel] ?? { total: 0, sent: 0 };
+        channelStats.total += 1;
+        if (task.status === "sent") channelStats.sent += 1;
+        byChannel[task.channel] = channelStats;
+      }
+
+      const channelEffectiveness = Object.entries(byChannel).map(([channel, stats]) => ({
+        channel,
+        total: stats.total,
+        sent: stats.sent,
+        sentRate: stats.total === 0 ? 0 : stats.sent / stats.total,
+      }));
+
+      return { data: { byStatus, channelEffectiveness, totalCount: tasks.length }, meta: {} };
+    }
+  );
+
+  app.get<{ Querystring: DateRangeQuery }>(
+    "/analytics/enrolment/grade-demand",
+    { onRequest: analyticsGuard(app) },
+    async (request) => {
+      const where = {
+        schoolId: request.schoolId,
+        duplicateOfEnquiryId: null,
+        ...academicYearFilter(request.query.academicYearId),
+        ...dateRangeFilter(request.query),
+      };
+
+      const enquiries = await prisma.enquiry.findMany({ where, select: { gradeInterest: true } });
+
+      const byGrade: Record<string, number> = {};
+      for (const enquiry of enquiries) {
+        const grade = enquiry.gradeInterest ?? "Not specified";
+        byGrade[grade] = (byGrade[grade] ?? 0) + 1;
+      }
+
+      return { data: { byGrade, totalCount: enquiries.length }, meta: {} };
+    }
+  );
+
+  app.get(
+    "/analytics/enrolment/yearly-trend",
+    { onRequest: analyticsGuard(app) },
+    async (request) => {
+      const stages = await getStages(request.schoolId);
+      const convertedKeys = stages.filter((s) => s.isConverted).map((s) => s.key);
+
+      const enquiries = await prisma.enquiry.findMany({
+        where: { schoolId: request.schoolId, duplicateOfEnquiryId: null },
+        select: { createdAt: true },
+      });
+      const newByYear: Record<string, number> = {};
+      for (const enquiry of enquiries) {
+        const year = String(enquiry.createdAt.getUTCFullYear());
+        newByYear[year] = (newByYear[year] ?? 0) + 1;
+      }
+
+      const conversions = await prisma.enquiryStageHistory.findMany({
+        where: {
+          toStatus: { in: convertedKeys },
+          enquiry: { schoolId: request.schoolId, duplicateOfEnquiryId: null },
+        },
+        select: { enquiryId: true, changedAt: true },
+        orderBy: { changedAt: "asc" },
+      });
+      const convertedByYear: Record<string, number> = {};
+      const seenEnquiryIds = new Set<string>();
+      for (const row of conversions) {
+        if (seenEnquiryIds.has(row.enquiryId)) continue;
+        seenEnquiryIds.add(row.enquiryId);
+        const year = String(row.changedAt.getUTCFullYear());
+        convertedByYear[year] = (convertedByYear[year] ?? 0) + 1;
+      }
+
+      const years = [...new Set([...Object.keys(newByYear), ...Object.keys(convertedByYear)])].sort();
+
+      return {
+        data: {
+          years: years.map((year) => ({
+            year,
+            newEnquiries: newByYear[year] ?? 0,
+            converted: convertedByYear[year] ?? 0,
           })),
         },
         meta: {},

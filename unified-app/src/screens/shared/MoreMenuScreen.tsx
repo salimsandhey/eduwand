@@ -1,4 +1,4 @@
-import { Alert, Image, ImageSourcePropType, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Image, ImageSourcePropType, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useNavigation } from "@react-navigation/native";
@@ -6,7 +6,6 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { resolveUserImageSource } from "../../theme/avatars";
-import { decorativeAssets } from "../../theme/decorativeAssets";
 import { api, CurrentUser } from "../../api/client";
 
 const ENROLMENT_ROLES = ["front_desk", "counsellor"];
@@ -128,6 +127,7 @@ function EnrolmentMoreScreen({
       rows: [
         { title: "Bulk Upload", caption: "Import multiple enquiries", icon: "cloud-upload-outline", onPress: () => root?.navigate("BulkUpload") },
         { title: "CSV Export", caption: "Export enquiry data", icon: "download-outline", onPress: () => navigation.navigate("CsvExport") },
+        { title: "Pipeline board", caption: "Kanban view of every stage", icon: "git-network-outline", onPress: () => root?.navigate("Pipeline") },
         { title: "Notifications", caption: "View recent updates", icon: "notifications-outline", onPress: () => root?.navigate("Notifications") },
       ],
     },
@@ -135,7 +135,7 @@ function EnrolmentMoreScreen({
       title: "Manage",
       rows: [
         { title: "Enquiries", caption: "View and manage all leads", icon: "people-outline", onPress: () => parentTabs?.navigate("Enquiries") },
-        { title: "Pipeline", caption: "Track admissions stages", icon: "git-network-outline", onPress: () => parentTabs?.navigate("Pipeline") },
+        { title: "Analytics", caption: "Trends, sources, and funnel", icon: "bar-chart-outline", onPress: () => parentTabs?.navigate("Analytics") },
         { title: "Tasks", caption: "Manage follow-ups", icon: "checkbox-outline", onPress: () => parentTabs?.navigate("Tasks") },
       ],
     },
@@ -147,7 +147,7 @@ function EnrolmentMoreScreen({
           title: "Help & support",
           caption: "Get help and contact support",
           icon: "help-circle-outline",
-          onPress: () => Alert.alert("Help & support", "Reach the EduWand team at support@eduwand.com for help with your account."),
+          onPress: () => root?.navigate("HelpSupport"),
         },
       ],
     },
@@ -171,60 +171,47 @@ function EnrolmentMoreScreen({
           </Pressable>
         </View>
 
-        <View style={[styles.idCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
-          <Image source={decorativeAssets.idCard} style={styles.idCardWatermark} resizeMode="contain" />
-
-          <View style={styles.idTopRow}>
-            <View style={[styles.idAvatarRing, { borderColor: colors.accent }]}>
-              <View style={[styles.idAvatar, { backgroundColor: colors.accentSoft }]}>
-                <Image
-                  source={avatarSource}
-                  style={user.photoMimeType ? styles.idAvatarPhoto : styles.idAvatarIllustration}
-                  resizeMode={user.photoMimeType ? "cover" : "contain"}
-                />
-              </View>
-            </View>
-
-            <View style={styles.idNameCol}>
-              <Text style={[styles.idName, { color: colors.textPrimary }]} numberOfLines={1}>
-                {user.fullName}
-              </Text>
-              <View style={[styles.idRoleBadge, { backgroundColor: colors.accentSoft }]}>
-                <Ionicons name="shield-checkmark-outline" size={11} color={colors.accent} />
-                <Text style={[styles.idRoleBadgeText, { color: colors.accent }]} numberOfLines={1}>
-                  {formatRole(user.role)}
-                </Text>
-              </View>
-            </View>
-          </View>
-
-          <View style={[styles.idDivider, { backgroundColor: colors.border }]} />
-
-          <View style={styles.idContactRow}>
-            <View style={styles.idContactItem}>
-              <Ionicons name="mail-outline" size={13} color={colors.textMuted} />
-              <Text style={[styles.idContactText, { color: colors.textSecondary }]} numberOfLines={1}>
-                {user.email}
-              </Text>
-            </View>
-            <View style={styles.idContactItem}>
-              <Ionicons name="call-outline" size={13} color={colors.textMuted} />
-              <Text style={[styles.idContactText, { color: colors.textSecondary }]} numberOfLines={1}>
-                {user.phone || "Not set"}
-              </Text>
-            </View>
-          </View>
+        <LinearGradient colors={[colors.accent, colors.accentDark]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.profileGradient}>
+          <View style={styles.profileGlowLarge} />
+          <View style={styles.profileGlowSmall} />
 
           <Pressable
+            style={({ pressed }) => [styles.profileArrow, pressed && { opacity: pressedOpacity }]}
             onPress={() => navigation.navigate("Profile")}
-            style={({ pressed }) => [styles.idManageBtn, { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]}
             accessibilityRole="button"
-            accessibilityLabel="Manage profile"
+            accessibilityLabel="Edit profile"
+            hitSlop={6}
           >
-            <Text style={[styles.idManageBtnText, { color: colors.accentOn }]}>Manage profile</Text>
-            <Ionicons name="arrow-forward" size={14} color={colors.accentOn} />
+            <Ionicons name="create-outline" size={17} color={colors.accentOn} />
           </Pressable>
-        </View>
+
+          <View style={styles.profileHeroRow}>
+            <View style={[styles.avatarFrame, { backgroundColor: colors.accentSoft }]}>
+              <Image
+                source={avatarSource}
+                style={user.photoMimeType ? styles.avatarPhoto : styles.avatarImage}
+                resizeMode={user.photoMimeType ? "cover" : "contain"}
+              />
+            </View>
+
+            <View style={styles.profileDivider} />
+
+            <View style={styles.profileRightCol}>
+              <Text style={[styles.profileName, { color: colors.accentOn }]} numberOfLines={1}>
+                {user.fullName}
+              </Text>
+              <Text style={[styles.profileRole, { color: colors.accentSoft }]} numberOfLines={1}>
+                {formatRole(user.role)}
+              </Text>
+
+              <View style={styles.profileInfoList}>
+                <HeroInfoItem icon="mail-outline" label="Email" value={user.email} colors={colors} />
+                <HeroInfoItem icon="call-outline" label="Phone" value={user.phone || "Not set"} colors={colors} />
+                <HeroInfoItem icon="shield-checkmark-outline" label="Status" value={formatRole(user.status)} colors={colors} />
+              </View>
+            </View>
+          </View>
+        </LinearGradient>
 
         {sections.map((section) => (
           <View key={section.title} style={styles.eSection}>
@@ -313,73 +300,6 @@ const styles = StyleSheet.create({
   ePageTitle: { fontSize: 30, fontWeight: "800", letterSpacing: -0.6 },
   ePageSubtitle: { marginTop: 4, fontSize: 13, fontWeight: "500" },
   eBell: { width: 40, height: 40, borderRadius: 20, borderWidth: 1, alignItems: "center", justifyContent: "center" },
-  idCard: {
-    borderRadius: 22,
-    borderWidth: 1,
-    padding: 18,
-    gap: 14,
-    overflow: "hidden",
-  },
-  idCardWatermark: {
-    position: "absolute",
-    right: -18,
-    bottom: -18,
-    width: 96,
-    height: 96,
-    opacity: 0.08,
-  },
-  idTopRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-    zIndex: 2,
-  },
-  idAvatarRing: {
-    width: 68,
-    height: 68,
-    borderRadius: 22,
-    borderWidth: 2,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 3,
-  },
-  idAvatar: {
-    width: "100%",
-    height: "100%",
-    borderRadius: 17,
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-  },
-  idAvatarPhoto: { width: "100%", height: "100%" },
-  idAvatarIllustration: { width: "78%", height: "78%" },
-  idNameCol: { flex: 1, gap: 6 },
-  idName: { fontSize: 18, fontWeight: "800", letterSpacing: -0.3 },
-  idRoleBadge: {
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  idRoleBadgeText: { fontSize: 11, fontWeight: "800" },
-  idDivider: { height: 1, zIndex: 2 },
-  idContactRow: { gap: 8, zIndex: 2 },
-  idContactItem: { flexDirection: "row", alignItems: "center", gap: 8 },
-  idContactText: { flex: 1, fontSize: 12.5, fontWeight: "600" },
-  idManageBtn: {
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 11,
-    zIndex: 2,
-  },
-  idManageBtnText: { fontSize: 13, fontWeight: "800" },
   eSection: { gap: 10 },
   eSectionTitle: { fontSize: 16, fontWeight: "800", letterSpacing: -0.3, paddingLeft: 4 },
   eGroup: { borderWidth: 1, borderRadius: 18, overflow: "hidden" },

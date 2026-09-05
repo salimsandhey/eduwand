@@ -20,6 +20,7 @@ import { EnrolmentTabParamList, RootStackParamList } from "../../navigation/type
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
+import { Dropdown } from "../../components/Dropdown";
 import { getStatusColor } from "../../theme/statusColors";
 import { usePipelineStages } from "../../hooks/usePipelineStages";
 import { api, AcademicYear, Enquiry, EnquiryStatus } from "../../api/client";
@@ -319,8 +320,6 @@ export function EnquiryListScreen({ navigation }: Props) {
     [stats]
   );
 
-  const cycleSort = () => setSortBy((current) => SORT_ORDER[(SORT_ORDER.indexOf(current) + 1) % SORT_ORDER.length]);
-
   const getFilterCount = (status: EnquiryStatus | "all") => {
     if (status === "all") return enquiries.length;
     return enquiries.filter((entry) => entry.status === status).length;
@@ -438,97 +437,56 @@ export function EnquiryListScreen({ navigation }: Props) {
               ) : null}
             </View>
 
-            {academicYears.length > 0 ? (
-              <>
-                <Text style={[styles.yearLabel, { color: colors.textMuted }]}>Academic year</Text>
-                <FlatList
-                  horizontal
-                  data={academicYears}
-                  keyExtractor={(item) => item.id}
-                  contentContainerStyle={styles.yearRow}
-                  showsHorizontalScrollIndicator={false}
-                  renderItem={({ item }) => {
-                    const active = item.id === academicYearId;
-                    return (
-                      <Pressable
-                        onPress={() => setAcademicYearId(item.id)}
-                        style={({ pressed }) => [
-                          styles.yearChip,
-                          active
-                            ? { backgroundColor: colors.accent, borderColor: colors.accent }
-                            : { backgroundColor: colors.surface, borderColor: colors.border },
-                          active && cardShadow,
-                          pressed && { opacity: pressedOpacity },
-                        ]}
-                      >
-                        <Ionicons
-                          name="calendar-outline"
-                          size={13}
-                          color={active ? colors.accentOn : colors.textMuted}
-                        />
-                        <Text style={[styles.yearChipText, { color: active ? colors.accentOn : colors.textSecondary }]}>
-                          {item.label}
-                        </Text>
-                        {active ? <View style={styles.yearChipDot} /> : null}
-                      </Pressable>
-                    );
-                  }}
-                />
-              </>
-            ) : null}
+            <View style={styles.filtersRow}>
+              {academicYears.length > 0 ? (
+                <View style={styles.filterCol}>
+                  <Text style={[styles.filterColLabel, { color: colors.textMuted }]}>Academic year</Text>
+                  <Dropdown
+                    title="Academic year"
+                    triggerIcon="calendar-outline"
+                    triggerLabel={academicYears.find((year) => year.id === academicYearId)?.label ?? "Select year"}
+                    selectedKey={academicYearId ?? ""}
+                    onSelect={(key) => setAcademicYearId(key)}
+                    options={academicYears.map((year) => ({
+                      key: year.id,
+                      label: year.label,
+                      meta: year.isCurrent ? "Current" : undefined,
+                    }))}
+                  />
+                </View>
+              ) : null}
 
-            <FlatList
-              horizontal
-              data={statusFilters}
-              keyExtractor={(item) => item}
-              contentContainerStyle={styles.filterRow}
-              showsHorizontalScrollIndicator={false}
-              renderItem={({ item }) => {
-                const active = item === statusFilter;
-                const count = getFilterCount(item);
-                return (
-                  <Pressable
-                    onPress={() => setStatusFilter(item)}
-                    style={({ pressed }) => [
-                      styles.filterChip,
-                      {
-                        backgroundColor: active ? colors.accent : colors.surface,
-                        borderColor: active ? colors.accent : colors.border,
-                      },
-                      pressed && { opacity: pressedOpacity },
-                    ]}
-                  >
-                    <Text style={[styles.filterChipText, { color: active ? colors.accentOn : colors.textSecondary }]}>
-                      {labelFor(item)}
-                    </Text>
-                    <View
-                      style={[
-                        styles.filterChipBadge,
-                        { backgroundColor: active ? "rgba(255,255,255,0.18)" : colors.backgroundMuted },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.filterChipBadgeText,
-                          { color: active ? colors.accentOn : colors.textMuted },
-                        ]}
-                      >
-                        {count}
-                      </Text>
-                    </View>
-                  </Pressable>
-                );
-              }}
-            />
+              <View style={styles.filterCol}>
+                <Text style={[styles.filterColLabel, { color: colors.textMuted }]}>Status</Text>
+                <Dropdown
+                  title="Filter by status"
+                  triggerIcon="funnel-outline"
+                  triggerLabel={labelFor(statusFilter)}
+                  selectedKey={statusFilter}
+                  onSelect={(key) => setStatusFilter(key as EnquiryStatus | "all")}
+                  active={statusFilter !== "all"}
+                  options={statusFilters.map((key) => ({
+                    key,
+                    label: labelFor(key),
+                    meta: String(getFilterCount(key)),
+                  }))}
+                />
+              </View>
+            </View>
 
             <View style={styles.listHeaderRow}>
               <Text style={[styles.listCount, { color: colors.textPrimary }]}>
                 {filtered.length} {filtered.length === 1 ? "enquiry" : "enquiries"}
               </Text>
-              <Pressable onPress={cycleSort} hitSlop={8} style={({ pressed }) => [styles.sortBtn, pressed && { opacity: pressedOpacity }]}>
-                <Text style={[styles.sortLabel, { color: colors.textSecondary }]}>Sort by: {SORT_LABEL[sortBy]}</Text>
-                <Ionicons name="chevron-down" size={14} color={colors.textSecondary} />
-              </Pressable>
+              <Dropdown
+                variant="plain"
+                title="Sort by"
+                triggerLabel={`Sort by: ${SORT_LABEL[sortBy]}`}
+                selectedKey={sortBy}
+                onSelect={(key) => setSortBy(key as SortKey)}
+                active={sortBy !== "updated"}
+                options={SORT_ORDER.map((key) => ({ key, label: SORT_LABEL[key] }))}
+              />
             </View>
 
             {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
@@ -794,68 +752,20 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: -0.4,
   },
-  sortBtn: {
+  filtersRow: {
+    marginTop: 16,
     flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
+    gap: 10,
   },
-  sortLabel: {
-    fontSize: 13,
-    fontWeight: "700",
+  filterCol: {
+    flex: 1,
+    gap: 6,
   },
-  yearLabel: {
-    marginTop: 14,
+  filterColLabel: {
     fontSize: 11,
     fontWeight: "700",
     textTransform: "uppercase",
     letterSpacing: 0.8,
-  },
-  yearRow: { paddingTop: 8, paddingBottom: 2, gap: 8 },
-  yearChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-  },
-  yearChipText: { fontSize: 12, fontWeight: "800" },
-  yearChipDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-    backgroundColor: "rgba(255,255,255,0.9)",
-  },
-  filterRow: {
-    paddingTop: 12,
-    paddingBottom: 8,
-    gap: 10,
-  },
-  filterChip: {
-    minHeight: 40,
-    borderRadius: 999,
-    borderWidth: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 16,
-  },
-  filterChipText: {
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  filterChipBadge: {
-    minWidth: 22,
-    height: 22,
-    borderRadius: 11,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 7,
-  },
-  filterChipBadgeText: {
-    fontSize: 11,
-    fontWeight: "700",
   },
   error: {
     marginTop: 8,

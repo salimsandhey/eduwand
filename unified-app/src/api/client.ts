@@ -700,6 +700,58 @@ export interface TeacherDashboardSummary {
   recentActivity: TeacherDashboardActivityItem[];
 }
 
+export interface EnrolmentFunnel {
+  byStatus: Record<string, number>;
+  totalCount: number;
+  convertedCount: number;
+  conversionRate: number;
+}
+
+export interface EnrolmentBySource {
+  bySource: Record<string, number>;
+  totalCount: number;
+}
+
+export interface EnrolmentCounsellorPerformance {
+  ownerUserId: string;
+  fullName: string;
+  totalCount: number;
+  convertedCount: number;
+  conversionRate: number;
+  avgResponseHours: number | null;
+}
+
+export interface EnrolmentTrend {
+  periods: { period: string; newEnquiries: number; converted: number }[];
+}
+
+export interface EnrolmentStageVelocity {
+  stageKey: string;
+  stageLabel: string;
+  avgDays: number | null;
+  sampleCount: number;
+}
+
+export interface EnrolmentLostReasons {
+  byReason: Record<string, number>;
+  totalCount: number;
+}
+
+export interface EnrolmentTaskOutcomes {
+  byStatus: Record<string, number>;
+  channelEffectiveness: { channel: string; total: number; sent: number; sentRate: number }[];
+  totalCount: number;
+}
+
+export interface EnrolmentGradeDemand {
+  byGrade: Record<string, number>;
+  totalCount: number;
+}
+
+export interface EnrolmentYearlyTrend {
+  years: { year: string; newEnquiries: number; converted: number }[];
+}
+
 // documentType keys are driven by the school's active document_checklist
 // FormDefinition (Docs/Dev/GrowthEngine_Rebuild_Plan.md Phase 2) plus the
 // always-accepted "other" catch-all - no longer a fixed union, since the
@@ -1004,6 +1056,24 @@ export const api = {
     request<StudentAnalytics>(`/analytics/ai/student/${studentStubId}`, {}, token),
   getTeacherDashboardSummary: (token: string) =>
     request<TeacherDashboardSummary>("/dashboard/teacher-summary", {}, token),
+  getEnrolmentFunnel: (token: string) =>
+    request<EnrolmentFunnel>("/analytics/enrolment/funnel", {}, token),
+  getEnrolmentBySource: (token: string) =>
+    request<EnrolmentBySource>("/analytics/enrolment/by-source", {}, token),
+  getEnrolmentCounsellorPerformance: (token: string) =>
+    request<EnrolmentCounsellorPerformance[]>("/analytics/enrolment/counsellor-performance", {}, token),
+  getEnrolmentTrend: (token: string, months = 6) =>
+    request<EnrolmentTrend>(`/analytics/enrolment/trend?months=${months}`, {}, token),
+  getEnrolmentStageVelocity: (token: string) =>
+    request<EnrolmentStageVelocity[]>("/analytics/enrolment/stage-velocity", {}, token),
+  getEnrolmentLostReasons: (token: string) =>
+    request<EnrolmentLostReasons>("/analytics/enrolment/lost-reasons", {}, token),
+  getEnrolmentTaskOutcomes: (token: string) =>
+    request<EnrolmentTaskOutcomes>("/analytics/enrolment/task-outcomes", {}, token),
+  getEnrolmentGradeDemand: (token: string) =>
+    request<EnrolmentGradeDemand>("/analytics/enrolment/grade-demand", {}, token),
+  getEnrolmentYearlyTrend: (token: string) =>
+    request<EnrolmentYearlyTrend>("/analytics/enrolment/yearly-trend", {}, token),
 
   listCommunicationsWithStudent: (token: string, studentStubId: string) =>
     request<CommunicationMessage[]>(`/communications${toQueryString({ studentStubId })}`, {}, token),

@@ -31,6 +31,8 @@ import { AttainmentReportScreen } from "../screens/analytics/AttainmentReportScr
 import { CommunicationHubScreen } from "../screens/enrolment/CommunicationHubScreen";
 import { NotificationScreen } from "../screens/shared/NotificationScreen";
 import { ProfileScreen } from "../screens/shared/ProfileScreen";
+import { HelpSupportScreen } from "../screens/shared/HelpSupportScreen";
+import { PipelineBoardScreen } from "../screens/enrolment/PipelineBoardScreen";
 import { StudentAssignmentSubmitScreen } from "../screens/student/StudentAssignmentSubmitScreen";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -120,6 +122,8 @@ export function AppNavigator() {
         <Stack.Screen name="CommunicationHub" component={CommunicationHubScreen} options={{ title: "Communication Hub" }} />
         <Stack.Screen name="Notifications" component={NotificationScreen} options={{ title: "Notifications" }} />
         <Stack.Screen name="Profile" component={ProfileScreen} options={{ title: "Edit Profile" }} />
+        <Stack.Screen name="HelpSupport" component={HelpSupportScreen} options={{ title: "Help & Support" }} />
+        <Stack.Screen name="Pipeline" component={PipelineBoardScreen} options={{ headerShown: false }} />
         <Stack.Screen
           name="StudentAssignmentSubmit"
           component={StudentAssignmentSubmitScreen}

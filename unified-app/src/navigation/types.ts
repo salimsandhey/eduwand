@@ -25,13 +25,15 @@ export type RootStackParamList = {
   CommunicationHub: undefined;
   Notifications: undefined;
   Profile: undefined;
+  HelpSupport: undefined;
+  Pipeline: undefined;
   StudentAssignmentSubmit: { assignmentId: string; questions: AssignmentQuestion[]; title: string };
 };
 
 export type EnrolmentTabParamList = {
   Home: undefined;
   Enquiries: undefined;
-  Pipeline: undefined;
+  Analytics: undefined;
   Tasks: undefined;
   More: NavigatorScreenParams<MoreStackParamList>;
 };
