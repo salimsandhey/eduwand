@@ -66,6 +66,35 @@ export interface AnswerKeyQuestionInput {
   marks: number;
 }
 
+export type AssignmentQuestionType = "short_answer" | "mcq";
+
+export interface AssignmentGenInput {
+  // Plain-text summary of what was taught for this topic (assembled from the
+  // topic's lesson generations, or its context sources as a fallback).
+  taughtContent: string;
+  objectives: string[];
+  questionCount: number;
+  difficultyMix: { easy: number; medium: number; hard: number };
+  // "mixed" lets the model choose per question; the others force one type.
+  questionTypes: "short_answer" | "mcq" | "mixed";
+  focusPrompt: string | null;
+  subject: string;
+  board: string;
+  classLabel: string;
+  schoolFormatInstructions: string | null;
+}
+
+export interface GeneratedAssignmentQuestion {
+  prompt: string;
+  type: AssignmentQuestionType;
+  difficulty: "easy" | "medium" | "hard";
+  // Present only when type === "mcq": 3-5 options, exactly one correct.
+  options?: string[];
+  correctOptionIndex?: number;
+  // The model answer (for mcq, the correct option's text). Seeds the answer key.
+  modelAnswer: string;
+}
+
 export interface OcrInput {
   fileLocation: string;
   // When provided, the OCR pass tries to segment the transcribed text per
@@ -116,9 +145,190 @@ function scaleMixToQuestionCount(base: Record<string, number>, questionCount: nu
   return scaled;
 }
 
+// Expands a difficulty mix into a flat list of difficulty labels, one per
+// question, padded/truncated to exactly questionCount (drift lands on medium).
+export function expandDifficultyMix(
+  mix: { easy: number; medium: number; hard: number },
+  questionCount: number
+): ("easy" | "medium" | "hard")[] {
+  const scaled = scaleMixToQuestionCount(
+    { easy: Math.max(0, mix.easy), medium: Math.max(0, mix.medium), hard: Math.max(0, mix.hard) },
+    questionCount
+  );
+  const out: ("easy" | "medium" | "hard")[] = [
+    ...Array<"easy">(scaled.easy).fill("easy"),
+    ...Array<"medium">(scaled.medium).fill("medium"),
+    ...Array<"hard">(scaled.hard).fill("hard"),
+  ];
+  while (out.length < questionCount) out.push("medium");
+  return out.slice(0, questionCount);
+}
+
+function normaliseOption(value: string): string {
+  // Drop a leading "A) " / "A. " / "A - " style label so "B) 42" matches "42".
+  return value
+    .trim()
+    .replace(/^[A-Za-z][).\-:]\s+/, "")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+// Settles every multiple-choice question deterministically (exact option
+// match) so they never reach the grading model, and returns the remaining
+// short-answer questions for the model / heuristic to grade.
+export function settleMcqQuestions(
+  questions: GradingQuestion[],
+  answers: Record<string, string>,
+  answerKey?: AnswerKeyContext[]
+): { mcqDetails: QuestionGradeDetail[]; shortAnswerQuestions: GradingQuestion[] } {
+  const marksById = new Map((answerKey ?? []).map((k) => [k.questionId, k.marks]));
+  const mcqDetails: QuestionGradeDetail[] = [];
+  const shortAnswerQuestions: GradingQuestion[] = [];
+
+  for (const q of questions) {
+    const isMcq =
+      q.type === "mcq" &&
+      Array.isArray(q.options) &&
+      q.options.length > 0 &&
+      typeof q.correctOptionIndex === "number" &&
+      q.correctOptionIndex >= 0 &&
+      q.correctOptionIndex < q.options.length;
+
+    if (!isMcq) {
+      shortAnswerQuestions.push(q);
+      continue;
+    }
+
+    const correctText = String(q.options![q.correctOptionIndex!] ?? "");
+    const given = (answers[q.id] ?? "").trim();
+    const answered = given.length > 0;
+    const correct = answered && normaliseOption(given) === normaliseOption(correctText);
+    const marks = marksById.get(q.id) ?? 1;
+
+    mcqDetails.push({
+      questionId: q.id,
+      correct: answered ? correct : false,
+      marksAwarded: correct ? marks : 0,
+      note: !answered
+        ? "No option selected."
+        : correct
+        ? "Correct option selected."
+        : `Incorrect option selected ("${given}").`,
+    });
+  }
+
+  return { mcqDetails, shortAnswerQuestions };
+}
+
+// Offline fallback for generateAssignmentFromTopic: builds plausible-shaped
+// questions from the selected objectives (or generic prompts) so the flow
+// still produces an editable draft when no model is configured or the model
+// response is unusable. Answers are always flagged for teacher review.
+export function heuristicAssignmentQuestions(input: AssignmentGenInput): GeneratedAssignmentQuestion[] {
+  const count = Math.max(1, Math.min(20, Math.round(input.questionCount) || 1));
+  const difficulties = expandDifficultyMix(input.difficultyMix, count);
+  const seeds =
+    input.objectives.length > 0
+      ? input.objectives
+      : [`the key ideas of ${input.subject}`, `applying ${input.subject} to an example`, `a common mistake in ${input.subject}`];
+
+  return Array.from({ length: count }, (_, i) => {
+    const seed = seeds[i % seeds.length];
+    const wantMcq = input.questionTypes === "mcq" || (input.questionTypes === "mixed" && i % 2 === 1);
+    const difficulty = difficulties[i];
+
+    if (wantMcq) {
+      const options = ["Option A", "Option B", "Option C", "Option D"];
+      return {
+        prompt: `Which statement best relates to ${seed}?`,
+        type: "mcq" as const,
+        difficulty,
+        options,
+        correctOptionIndex: 0,
+        modelAnswer: `${options[0]} — teacher review required.`,
+      };
+    }
+
+    return {
+      prompt: `Explain ${seed}. Give an example in your answer.`,
+      type: "short_answer" as const,
+      difficulty,
+      modelAnswer: `Draft model answer covering ${seed}. Teacher review required before use.`,
+    };
+  });
+}
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+// Cleans a model's raw question rows into well-formed GeneratedAssignmentQuestion
+// objects: enforces the requested type mode, valid options + correct index for
+// MCQ, a difficulty per the requested order, and a non-empty model answer.
+export function normaliseGeneratedQuestions(
+  rows: any[],
+  difficultyByIndex: ("easy" | "medium" | "hard")[],
+  mode: "short_answer" | "mcq" | "mixed"
+): GeneratedAssignmentQuestion[] {
+  const out: GeneratedAssignmentQuestion[] = [];
+  rows.forEach((row, i) => {
+    const prompt = typeof row?.prompt === "string" ? row.prompt.trim() : "";
+    if (!prompt) return;
+
+    const difficulty = difficultyByIndex[i] ?? "medium";
+    const rawOptions = Array.isArray(row?.options)
+      ? row.options.map((o: any) => String(o ?? "").trim()).filter(Boolean)
+      : [];
+    const wantMcq =
+      mode === "mcq" || (mode === "mixed" && row?.type === "mcq" && rawOptions.length >= 2);
+
+    if (wantMcq && rawOptions.length >= 2) {
+      const options = rawOptions.slice(0, 5);
+      let correctOptionIndex = Number.isInteger(row?.correctOptionIndex) ? row.correctOptionIndex : 0;
+      if (correctOptionIndex < 0 || correctOptionIndex >= options.length) {
+        const byText = options.findIndex(
+          (o: string) => o.toLowerCase() === String(row?.modelAnswer ?? "").trim().toLowerCase()
+        );
+        correctOptionIndex = byText >= 0 ? byText : 0;
+      }
+      out.push({
+        prompt,
+        type: "mcq",
+        difficulty,
+        options,
+        correctOptionIndex,
+        modelAnswer: String(row?.modelAnswer ?? "").trim() || options[correctOptionIndex],
+      });
+      return;
+    }
+
+    out.push({
+      prompt,
+      type: "short_answer",
+      difficulty,
+      modelAnswer: String(row?.modelAnswer ?? "").trim() || "Teacher review required before use.",
+    });
+  });
+  return out;
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+// Orders merged per-question grade details to match the assignment's question
+// order, so the grading review screen and item analysis line up.
+function orderQuestionDetails(
+  questions: { id: string }[],
+  details: QuestionGradeDetail[]
+): QuestionGradeDetail[] {
+  const byId = new Map(details.map((d) => [d.questionId, d]));
+  return questions.map((q) => byId.get(q.id)).filter((d): d is QuestionGradeDetail => !!d);
+}
+
 export interface GradingQuestion {
   id: string;
   prompt: string;
+  // Set for AI-generated multiple-choice questions - when present with
+  // options, the question is settled by exact option match and never sent to
+  // the model (see settleMcqQuestions).
+  type?: string;
+  options?: string[];
+  correctOptionIndex?: number;
 }
 
 // A teacher-verified answer key entry, when one exists, is passed into
@@ -163,6 +373,12 @@ export interface AiProvider {
   }>;
 
   generateContent(input: GenerationInput): Promise<{ content: string; model: string }>;
+  // Drafts a set of assignment questions AND their model answers in one pass,
+  // grounded in the topic's taught content. Used by
+  // POST /topics/:id/assignment-draft (backend/src/routes/assignments.ts).
+  generateAssignmentFromTopic(
+    input: AssignmentGenInput
+  ): Promise<{ questions: GeneratedAssignmentQuestion[]; model: string }>;
   // Keyed by question id (not array position) - AnswerKey rows are id-keyed
   // so personalised delivery can hand different students a different
   // subset/order of the same assignment's questions (see lib/personalisation.ts).
@@ -273,11 +489,14 @@ class StubAiProvider implements AiProvider {
     };
   }
 
-  async gradeSubmission({ questions, answers }: GradingInput) {
+  async gradeSubmission({ questions, answers, answerKey }: GradingInput) {
+    // MCQ questions are settled by exact option match, never by the heuristic.
+    const { mcqDetails, shortAnswerQuestions } = settleMcqQuestions(questions, answers, answerKey);
+
     const total = Math.max(1, questions.length);
     let answered = 0;
     let totalLength = 0;
-    const questionDetails: QuestionGradeDetail[] = questions.map((q) => {
+    const saDetails: QuestionGradeDetail[] = shortAnswerQuestions.map((q) => {
       const a = answers[q.id];
       const trimmed = a?.trim() ?? "";
       if (trimmed.length > 0) {
@@ -294,19 +513,36 @@ class StubAiProvider implements AiProvider {
         note: trimmed.length > 0 ? "Answered - completeness heuristic only, not verified for correctness." : "No answer recorded.",
       };
     });
-    const completeness = answered / total;
+
+    const saCount = shortAnswerQuestions.length;
+    const completeness = saCount > 0 ? answered / saCount : 1;
     const avgLength = answered > 0 ? totalLength / answered : 0;
     const depth = Math.min(1, avgLength / 80);
-    const score = Math.round((completeness * 0.6 + depth * 0.4) * 100);
-    const flagged = completeness < 0.5 || score < 40;
+    const saScore = saCount > 0 ? completeness * 0.6 + depth * 0.4 : 1;
+
+    const mcqCorrect = mcqDetails.filter((d) => d.correct).length;
+    // Each MCQ counts as 1, each short-answer as its heuristic fraction.
+    const combined = (mcqCorrect + saScore * saCount) / total;
+    const score = Math.round(combined * 100);
+
+    const unanswered = saCount - answered;
+    const mcqWrong = mcqDetails.length - mcqCorrect;
+    const flagged = score < 40 || (saCount > 0 && completeness < 0.5) || mcqWrong > 0;
     const feedback = flagged
-      ? `This submission leaves ${total - answered} of ${total} question(s) unanswered or very brief. Recommend reviewing with the student before releasing.`
-      : `Solid attempt across ${answered} of ${total} question(s). Consider adding more supporting detail on shorter answers to strengthen the response.`;
+      ? `This submission has ${unanswered} unanswered/brief written question(s) and ${mcqWrong} incorrect multiple-choice answer(s). Recommend reviewing with the student before releasing.`
+      : `Solid attempt: ${mcqCorrect}/${mcqDetails.length} multiple-choice correct and ${answered}/${saCount} written question(s) answered. Consider adding supporting detail on shorter answers.`;
     const nextStep = flagged
-      ? "Revisit the unanswered/brief questions with the student one-to-one before the next assignment on this topic."
+      ? "Revisit the weak questions with the student one-to-one before the next assignment on this topic."
       : "Ready for a slightly harder question set on this topic next time.";
 
-    return { score, feedback, flagged, nextStep, model: MODEL_HAIKU, questionDetails };
+    return {
+      score,
+      feedback,
+      flagged,
+      nextStep,
+      model: MODEL_HAIKU,
+      questionDetails: orderQuestionDetails(questions, [...mcqDetails, ...saDetails]),
+    };
   }
 
   async generateContent({
@@ -415,6 +651,10 @@ class StubAiProvider implements AiProvider {
       answers[q.id] = `Draft answer for: "${q.prompt}" — worth ${q.marks} mark(s). Teacher review required before use.`;
     }
     return { answers, model: MODEL_HAIKU };
+  }
+
+  async generateAssignmentFromTopic(input: AssignmentGenInput) {
+    return { questions: heuristicAssignmentQuestions(input), model: MODEL_SONNET };
   }
 
   // No OCR model without a Gemini key. Return genuinely empty text (not a
@@ -533,14 +773,55 @@ class GeminiAiProvider implements AiProvider {
   }
 
   async gradeSubmission({ questions, answers, answerKey }: GradingInput) {
-    if (questions.every((q) => !answers[q.id]?.trim())) {
-      // Nothing to grade - same "unknown, not zero" contract as the stub,
-      // skip the model call entirely.
-      return stubProvider.gradeSubmission({ questions, answers, answerKey });
+    // Settle multiple-choice deterministically first - only short-answer
+    // questions ever reach the model.
+    const { mcqDetails, shortAnswerQuestions } = settleMcqQuestions(questions, answers, answerKey);
+    const keyByQuestion = new Map((answerKey ?? []).map((k) => [k.questionId, k]));
+    const marksFor = (id: string) => keyByQuestion.get(id)?.marks ?? 1;
+
+    const finalise = (
+      details: QuestionGradeDetail[],
+      modelFeedback: string | null,
+      modelNextStep: string | null,
+      model: string
+    ) => {
+      const ordered = orderQuestionDetails(questions, details);
+      const totalMarks = questions.reduce((sum, q) => sum + marksFor(q.id), 0) || 1;
+      const earnedMarks = ordered.reduce((sum, d) => sum + (d.marksAwarded ?? 0), 0);
+      const score = Math.round(Math.min(1, earnedMarks / totalMarks) * 100);
+      const flagged = score < 50 || ordered.some((d) => d.correct === false);
+      const wrong = ordered.filter((d) => d.correct === false).length;
+      return {
+        score,
+        feedback:
+          modelFeedback ??
+          (wrong === 0
+            ? `All ${ordered.length} question(s) answered correctly.`
+            : `${wrong} of ${ordered.length} question(s) answered incorrectly - review with the student before releasing.`),
+        flagged,
+        nextStep: modelNextStep ?? "Review the incorrect questions with the student before the next assignment on this topic.",
+        model,
+        questionDetails: ordered,
+      };
+    };
+
+    // Every remaining short-answer question is blank (or there are none) -
+    // skip the model call, grade on MCQ alone with the "unknown, not zero"
+    // contract for the blanks.
+    if (shortAnswerQuestions.every((q) => !answers[q.id]?.trim())) {
+      const blankDetails: QuestionGradeDetail[] = shortAnswerQuestions.map((q) => ({
+        questionId: q.id,
+        correct: null,
+        marksAwarded: null,
+        note: "No answer recorded.",
+      }));
+      if (shortAnswerQuestions.length > 0 && mcqDetails.length === 0) {
+        return stubProvider.gradeSubmission({ questions, answers, answerKey });
+      }
+      return finalise([...mcqDetails, ...blankDetails], null, null, MODEL_GEMINI_FLASH);
     }
 
-    const keyByQuestion = new Map((answerKey ?? []).map((k) => [k.questionId, k]));
-    const questionBlock = questions
+    const questionBlock = shortAnswerQuestions
       .map((q, i) => {
         const key = keyByQuestion.get(q.id);
         const lines = [
@@ -582,25 +863,21 @@ class GeminiAiProvider implements AiProvider {
       };
       if (!parsed.questionDetails || !parsed.overallFeedback) throw new Error("Malformed grading response");
 
-      const questionDetails: QuestionGradeDetail[] = parsed.questionDetails.map((d) => ({
+      const saDetails: QuestionGradeDetail[] = parsed.questionDetails.map((d) => ({
         questionId: d.questionId,
         correct: !!d.correct,
         marksAwarded: Math.max(0, Number(d.marksAwarded) || 0),
         note: d.note ?? "",
       }));
-      const totalMarks = questions.reduce((sum, q) => sum + (keyByQuestion.get(q.id)?.marks ?? 1), 0) || 1;
-      const earnedMarks = questionDetails.reduce((sum, d) => sum + (d.marksAwarded ?? 0), 0);
-      const score = Math.round(Math.min(1, earnedMarks / totalMarks) * 100);
-      const flagged = score < 50 || questionDetails.some((d) => !d.correct);
 
-      return {
-        score,
-        feedback: parsed.overallFeedback,
-        flagged,
-        nextStep: parsed.nextStep ?? "Review with the student before releasing.",
-        model: MODEL_GEMINI_FLASH,
-        questionDetails,
-      };
+      // Merge the deterministic MCQ verdicts back in and score across every
+      // question, not just the ones the model saw.
+      return finalise(
+        [...mcqDetails, ...saDetails],
+        parsed.overallFeedback,
+        parsed.nextStep ?? "Review with the student before releasing.",
+        MODEL_GEMINI_FLASH
+      );
     } catch (err) {
       console.error("[ai] gradeSubmission fell back to heuristic:", err);
       return stubProvider.gradeSubmission({ questions, answers, answerKey });
@@ -638,6 +915,64 @@ class GeminiAiProvider implements AiProvider {
     } catch (err) {
       console.error("[ai] generateAnswerKey fell back to template:", err);
       return stubProvider.generateAnswerKey(questions);
+    }
+  }
+
+  async generateAssignmentFromTopic(input: AssignmentGenInput) {
+    const count = Math.max(1, Math.min(20, Math.round(input.questionCount) || 1));
+    const mix = expandDifficultyMix(input.difficultyMix, count);
+    const typeInstruction =
+      input.questionTypes === "mcq"
+        ? "Every question MUST be multiple-choice."
+        : input.questionTypes === "short_answer"
+        ? "Every question MUST be short-answer (no options)."
+        : "Use a mix of short-answer and multiple-choice questions.";
+
+    const prompt = [
+      `You are an experienced ${input.board} curriculum teacher writing an assignment for ${input.classLabel} students in ${input.subject}.`,
+      `Write exactly ${count} question(s). Difficulty for each, in order: ${mix.join(", ")}.`,
+      typeInstruction,
+      input.objectives.length > 0
+        ? `Assess these learning objectives: ${input.objectives.map((o) => `"${o}"`).join("; ")}.`
+        : "Assess the core understanding a student should have after this topic.",
+      input.focusPrompt ? `Additional instructions from the teacher: ${input.focusPrompt}` : "",
+      "",
+      "Base every question strictly on the following record of what was taught for this topic. " +
+        "Prioritise its specifics over general knowledge; do not copy sentences verbatim.",
+      `"""\n${input.taughtContent || "(no taught-content record available)"}\n"""`,
+      input.schoolFormatInstructions
+        ? `The school requires this style - follow it:\n"""\n${input.schoolFormatInstructions}\n"""`
+        : "",
+      "",
+      'Respond with ONLY a JSON object of this exact shape (no prose, no markdown fences): ' +
+        '{"questions": {"prompt": string, "type": "short_answer"|"mcq", "difficulty": "easy"|"medium"|"hard", ' +
+        '"options": string[] (3-5 items, ONLY for type "mcq"), "correctOptionIndex": number (0-based into options, ONLY for "mcq"), ' +
+        '"modelAnswer": string (for "mcq" this is the exact text of the correct option)}[]} ' +
+        `- exactly ${count} entries, in the difficulty order given above.`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    try {
+      const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+      });
+      if (!response.ok) throw new Error(`Gemini request failed (${response.status})`);
+      const data = (await response.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) throw new Error("Gemini returned no text");
+      const parsed = JSON.parse(stripJsonFence(text)) as { questions?: unknown };
+      const rows = Array.isArray(parsed.questions) ? parsed.questions : Array.isArray(parsed) ? parsed : null;
+      if (!rows || rows.length === 0) throw new Error("Malformed assignment-generation response");
+
+      const questions = normaliseGeneratedQuestions(rows, mix, input.questionTypes);
+      if (questions.length === 0) throw new Error("No usable questions in response");
+      return { questions, model: MODEL_GEMINI_FLASH };
+    } catch (err) {
+      console.error("[ai] generateAssignmentFromTopic fell back to heuristic:", err);
+      return { questions: heuristicAssignmentQuestions(input), model: MODEL_GEMINI_FLASH };
     }
   }
 

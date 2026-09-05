@@ -23,6 +23,10 @@ export function StudentAssignmentSubmitScreen({ route, navigation }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const parsedQuestions: AssignmentQuestion[] = questions;
+  // A photo covers handwritten working for free-text questions - it can't
+  // reliably capture which multiple-choice option was picked, so don't offer
+  // it when there's nothing but MCQ to photograph.
+  const allowsPhoto = parsedQuestions.some((q) => q.type !== "mcq");
 
   async function pickPhoto() {
     const result = await DocumentPicker.getDocumentAsync({ type: "image/*", copyToCacheDirectory: true });
@@ -78,47 +82,77 @@ export function StudentAssignmentSubmitScreen({ route, navigation }: Props) {
               <Text style={[styles.questionText, { color: colors.textSecondary }]}>
                 {i + 1}. {q.prompt}
               </Text>
-              <TextInput
-                style={[styles.answerInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
-                value={answers[q.id] ?? ""}
-                onChangeText={(text) => {
-                  setPhoto(null);
-                  setAnswers((prev) => ({ ...prev, [q.id]: text }));
-                }}
-                placeholder="Your answer"
-                placeholderTextColor={colors.textMuted}
-                multiline
-              />
+              {q.type === "mcq" ? (
+                <View style={styles.optionList}>
+                  {(q.options ?? []).map((option, idx) => {
+                    const selected = (answers[q.id] ?? "") === option;
+                    return (
+                      <Pressable
+                        key={idx}
+                        style={[
+                          styles.optionRow,
+                          { borderColor: selected ? colors.accent : colors.border, backgroundColor: selected ? colors.accentSoft : colors.surfaceRaised },
+                        ]}
+                        onPress={() => {
+                          setPhoto(null);
+                          setAnswers((prev) => ({ ...prev, [q.id]: option }));
+                        }}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected }}
+                      >
+                        <View style={[styles.optionDot, { borderColor: selected ? colors.accent : colors.textMuted }]}>
+                          {selected ? <View style={[styles.optionDotFill, { backgroundColor: colors.accent }]} /> : null}
+                        </View>
+                        <Text style={[styles.optionText, { color: colors.textPrimary }]}>{option}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : (
+                <TextInput
+                  style={[styles.answerInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
+                  value={answers[q.id] ?? ""}
+                  onChangeText={(text) => {
+                    setPhoto(null);
+                    setAnswers((prev) => ({ ...prev, [q.id]: text }));
+                  }}
+                  placeholder="Your answer"
+                  placeholderTextColor={colors.textMuted}
+                  multiline
+                />
+              )}
             </View>
           ))}
         </View>
 
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
-          <Text style={[styles.label, { color: colors.textSecondary }]}>Or upload a photo instead</Text>
-          <Text style={[styles.meta, { color: colors.textMuted, marginBottom: 8 }]}>
-            Use this if a question needs handwritten working - covers the whole assignment in one photo.
-          </Text>
-          {photo ? (
-            <View style={[styles.photoRow, { borderColor: colors.border }]}>
-              <Ionicons name="image-outline" size={18} color={colors.accent} />
-              <Text style={[styles.meta, { color: colors.textPrimary, flex: 1 }]} numberOfLines={1}>
-                {photo.name}
-              </Text>
-              <Pressable onPress={() => setPhoto(null)} hitSlop={8} accessibilityRole="button">
-                <Ionicons name="close-circle-outline" size={20} color={colors.textMuted} />
+        {allowsPhoto ? (
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Or upload a photo instead</Text>
+            <Text style={[styles.meta, { color: colors.textMuted, marginBottom: 8 }]}>
+              Use this if a question needs handwritten working - covers the whole assignment in one photo.
+            </Text>
+            {photo ? (
+              <View style={[styles.photoRow, { borderColor: colors.border }]}>
+                <Ionicons name="image-outline" size={18} color={colors.accent} />
+                <Text style={[styles.meta, { color: colors.textPrimary, flex: 1 }]} numberOfLines={1}>
+                  {photo.name}
+                </Text>
+                <Pressable onPress={() => setPhoto(null)} hitSlop={8} accessibilityRole="button">
+                  <Ionicons name="close-circle-outline" size={20} color={colors.textMuted} />
+                </Pressable>
+              </View>
+            ) : (
+              <Pressable
+                style={({ pressed }) => [styles.photoButton, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+                onPress={pickPhoto}
+                accessibilityRole="button"
+              >
+                <Ionicons name="camera-outline" size={18} color={colors.textSecondary} />
+                <Text style={[styles.photoButtonText, { color: colors.textSecondary }]}>Choose photo</Text>
               </Pressable>
-            </View>
-          ) : (
-            <Pressable
-              style={({ pressed }) => [styles.photoButton, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
-              onPress={pickPhoto}
-              accessibilityRole="button"
-            >
-              <Ionicons name="camera-outline" size={18} color={colors.textSecondary} />
-              <Text style={[styles.photoButtonText, { color: colors.textSecondary }]}>Choose photo</Text>
-            </Pressable>
-          )}
-        </View>
+            )}
+          </View>
+        ) : null}
 
         {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
@@ -145,6 +179,11 @@ const styles = StyleSheet.create({
   meta: { fontSize: 12, lineHeight: 16 },
   questionText: { fontSize: 13, marginBottom: 6 },
   answerInput: { borderWidth: 1, borderRadius: 8, padding: 10, minHeight: 50, fontSize: 13 },
+  optionList: { gap: 8 },
+  optionRow: { flexDirection: "row", alignItems: "center", gap: 10, borderWidth: 1, borderRadius: 10, padding: 10 },
+  optionDot: { width: 18, height: 18, borderRadius: 9, borderWidth: 1.5, alignItems: "center", justifyContent: "center" },
+  optionDotFill: { width: 10, height: 10, borderRadius: 5 },
+  optionText: { flex: 1, fontSize: 13 },
   photoRow: { flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, borderRadius: 8, padding: 10 },
   photoButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderWidth: 1, borderStyle: "dashed", borderRadius: 8, height: 44 },
   photoButtonText: { fontSize: 13, fontWeight: "700" },

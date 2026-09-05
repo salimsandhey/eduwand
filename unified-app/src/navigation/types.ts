@@ -9,7 +9,10 @@ export type RootStackParamList = {
   AdmissionConfirmation: { enquiryId: string };
   BulkUpload: undefined;
   CreateAssignment: { topicId?: string; assignmentId?: string } | undefined;
+  AssignmentAiSetup: { topicId: string };
+  AssignmentDraftReview: { assignmentId: string };
   AssignmentDetail: { assignmentId: string };
+  LogSubmission: { assignmentId: string };
   PersonalisationReview: { assignmentId: string };
   GradingReview: { assignmentId: string };
   TopicList: { classSectionId: string; className: string; sectionName: string };

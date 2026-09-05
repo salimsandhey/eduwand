@@ -15,7 +15,10 @@ import { EditEnquiryScreen } from "../screens/enrolment/EditEnquiryScreen";
 import { AdmissionConfirmationScreen } from "../screens/enrolment/AdmissionConfirmationScreen";
 import { BulkUploadScreen } from "../screens/enrolment/BulkUploadScreen";
 import { CreateAssignmentScreen } from "../screens/assignments/CreateAssignmentScreen";
+import { AssignmentAiSetupScreen } from "../screens/assignments/AssignmentAiSetupScreen";
+import { AssignmentDraftReviewScreen } from "../screens/assignments/AssignmentDraftReviewScreen";
 import { AssignmentDetailScreen } from "../screens/assignments/AssignmentDetailScreen";
+import { LogSubmissionScreen } from "../screens/assignments/LogSubmissionScreen";
 import { PersonalisationReviewScreen } from "../screens/studio/PersonalisationReviewScreen";
 import { GradingReviewScreen } from "../screens/assignments/GradingReviewScreen";
 import { TopicListScreen } from "../screens/studio/TopicListScreen";
@@ -93,7 +96,10 @@ export function AppNavigator() {
         />
         <Stack.Screen name="BulkUpload" component={BulkUploadScreen} options={{ title: "Bulk Upload" }} />
         <Stack.Screen name="CreateAssignment" component={CreateAssignmentScreen} options={{ title: "New Assignment" }} />
-        <Stack.Screen name="AssignmentDetail" component={AssignmentDetailScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="AssignmentAiSetup" component={AssignmentAiSetupScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="AssignmentDraftReview" component={AssignmentDraftReviewScreen} options={{ title: "Review Draft" }} />
+        <Stack.Screen name="AssignmentDetail" component={AssignmentDetailScreen} options={{ headerShown: false, gestureEnabled: false }} />
+        <Stack.Screen name="LogSubmission" component={LogSubmissionScreen} options={{ title: "Log Submission" }} />
         <Stack.Screen
           name="PersonalisationReview"
           component={PersonalisationReviewScreen}

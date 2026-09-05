@@ -539,12 +539,31 @@ export interface TopicDetail extends Topic {
 }
 
 export type QuestionDifficulty = "easy" | "medium" | "hard";
+export type QuestionType = "short_answer" | "mcq";
 
 export interface AssignmentQuestion {
   id: string;
   prompt: string;
-  type?: string;
+  type?: QuestionType;
   difficulty?: QuestionDifficulty;
+  // mcq only: 2-5 options, correctOptionIndex is 0-based into options.
+  options?: string[];
+  correctOptionIndex?: number;
+}
+
+export interface AssignmentDraftOptions {
+  objectives: string[];
+  hasGenerations: boolean;
+  hasContextSources: boolean;
+  classSection: { className: string; sectionName: string };
+}
+
+export interface CreateAssignmentDraftInput {
+  questionCount: number;
+  difficultyMix: { easy: number; medium: number; hard: number };
+  objectives?: string[];
+  questionTypes?: "short_answer" | "mcq" | "mixed";
+  focusPrompt?: string;
 }
 
 export interface Assignment {
@@ -933,7 +952,18 @@ export const api = {
     id: string,
     input: { title?: string; questions?: AssignmentQuestion[]; personalisationEnabled?: boolean }
   ) => request<Assignment>(`/assignments/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
-  publishAssignment: (token: string, id: string) => request<Assignment>(`/assignments/${id}/publish`, { method: "POST" }, token),
+  getAssignmentDraftOptions: (token: string, topicId: string) =>
+    request<AssignmentDraftOptions>(`/topics/${topicId}/assignment-draft/options`, {}, token),
+  createAssignmentDraft: (token: string, topicId: string, input: CreateAssignmentDraftInput) =>
+    request<AssignmentDetail>(`/topics/${topicId}/assignment-draft`, { method: "POST", body: JSON.stringify(input) }, token),
+  regenerateAssignmentQuestion: (token: string, assignmentId: string, questionId: string, instruction?: string) =>
+    request<AssignmentDetail>(
+      `/assignments/${assignmentId}/questions/${questionId}/regenerate`,
+      { method: "POST", body: JSON.stringify({ instruction }) },
+      token
+    ),
+  publishAssignment: (token: string, id: string, confirmUnverified?: boolean) =>
+    request<Assignment>(`/assignments/${id}/publish`, { method: "POST", body: JSON.stringify({ confirmUnverified }) }, token),
   unpublishAssignment: (token: string, id: string) => request<Assignment>(`/assignments/${id}/unpublish`, { method: "POST" }, token),
   deleteAssignment: (token: string, id: string) => request<{ id: string }>(`/assignments/${id}`, { method: "DELETE" }, token),
   generatePersonalisationSuggestions: (token: string, assignmentId: string) =>

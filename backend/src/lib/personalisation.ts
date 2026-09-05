@@ -15,6 +15,10 @@ export interface DifficultyTaggedQuestion {
   prompt: string;
   type?: string;
   difficulty?: string;
+  // Carried through for AI-generated multiple-choice questions so grading can
+  // settle them by exact option match (see lib/ai.ts settleMcqQuestions).
+  options?: string[];
+  correctOptionIndex?: number;
 }
 
 const DIFFICULTIES: QuestionDifficulty[] = ["easy", "medium", "hard"];

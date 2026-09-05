@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Switch, Platform, KeyboardAvoidingView } from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Switch, Platform, KeyboardAvoidingView, Alert } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
-import { api, ClassSection, AssignmentQuestion, QuestionDifficulty } from "../../api/client";
+import { api, ApiError, ClassSection, AssignmentQuestion, QuestionDifficulty } from "../../api/client";
 
 type Props = NativeStackScreenProps<RootStackParamList, "CreateAssignment">;
 
@@ -117,7 +117,8 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
           ).id;
 
       if (publish) {
-        await api.publishAssignment(accessToken, id);
+        const publishedOk = await tryPublish(id);
+        if (!publishedOk) return; // teacher is being asked to confirm; leave them on this screen
         if (personalisationEnabled) {
           await api.generatePersonalisationSuggestions(accessToken, id);
           navigation.replace("PersonalisationReview", { assignmentId: id });
@@ -130,6 +131,43 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
       setError(err instanceof Error ? err.message : "Failed to save assignment");
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  // Publishing warns (via a 409) instead of blocking when the answer key
+  // hasn't been reviewed yet - resolved here with a native confirm rather
+  // than a custom modal, since this screen doesn't otherwise need one.
+  // Returns true once the assignment is actually published.
+  async function tryPublish(id: string, confirmUnverified = false): Promise<boolean> {
+    if (!accessToken) return false;
+    try {
+      await api.publishAssignment(accessToken, id, confirmUnverified);
+      return true;
+    } catch (err) {
+      if (err instanceof ApiError && err.code === "unverified_answers") {
+        Alert.alert("Answer key not fully reviewed", `${err.message} Publish anyway?`, [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Publish anyway",
+            style: "destructive",
+            onPress: async () => {
+              setIsSaving(true);
+              const ok = await tryPublish(id, true);
+              if (ok) {
+                if (personalisationEnabled) {
+                  await api.generatePersonalisationSuggestions(accessToken, id);
+                  navigation.replace("PersonalisationReview", { assignmentId: id });
+                } else {
+                  navigation.replace("AssignmentDetail", { assignmentId: id });
+                }
+              }
+              setIsSaving(false);
+            },
+          },
+        ]);
+        return false;
+      }
+      throw err;
     }
   }
 

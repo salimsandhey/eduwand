@@ -479,7 +479,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
                 <Text style={[styles.heroGenerateButtonText, { color: colors.accent }]}>Generate</Text>
                 <Ionicons name="arrow-forward" size={15} color={colors.accent} />
               </Pressable>
-              <Pressable style={({ pressed }) => [styles.heroIconAction, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.navigate("CreateAssignment", { topicId })} accessibilityRole="button" accessibilityLabel="Create assignment"><Ionicons name="document-text-outline" size={18} color="#FFFFFF" /></Pressable>
+              <Pressable style={({ pressed }) => [styles.heroIconAction, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.navigate("AssignmentAiSetup", { topicId })} accessibilityRole="button" accessibilityLabel="Generate assignment with AI"><Ionicons name="document-text-outline" size={18} color="#FFFFFF" /></Pressable>
               <Pressable style={({ pressed }) => [styles.heroIconAction, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.navigate("AttainmentReport", { topicId })} accessibilityRole="button" accessibilityLabel="View attainment report"><Ionicons name="bar-chart-outline" size={18} color="#FFFFFF" /></Pressable>
             </View>
           </View>
@@ -1106,7 +1106,7 @@ const styles = StyleSheet.create({
   sourcePreview: { flex: 1, width: "100%", borderRadius: radius.sm, marginTop: spacing.sm, overflow: "hidden", alignItems: "center", justifyContent: "center" },
   sourceThumbnail: { width: "100%", height: "100%" },
   modalRoot: { flex: 1, justifyContent: "flex-end" },
-  modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(22, 15, 20, 0.5)" },
+  modalBackdrop: { ...StyleSheet.absoluteFill, backgroundColor: "rgba(22, 15, 20, 0.5)" },
   modalSheet: { borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 24, paddingBottom: 28 },
   modalHandle: { width: 42, height: 4, borderRadius: 2, alignSelf: "center", marginTop: 10, marginBottom: 16 },
   modalHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between" },

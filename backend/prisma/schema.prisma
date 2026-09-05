@@ -78,6 +78,7 @@ model School {
   formDefinitions   FormDefinition[]
   feePlans          FeePlan[]
   approvalChainSteps ApprovalChainStep[]
+  aiConversations AiConversation[]
 
   @@map("school")
 }
@@ -202,6 +203,7 @@ model AppUser {
   roleGrants UserRoleGrant[]
   interviews InterviewRecord[] @relation("InterviewConductedBy")
   approvals  EnquiryApproval[] @relation("ApprovalDecidedBy")
+  aiConversation AiConversation?
 
   @@map("app_user")
 }
@@ -849,6 +851,11 @@ model Assignment {
   classSection           ClassSection @relation(fields: [classSectionId], references: [id])
   title                  String
   questions              Json
+  // The setup params from the "Generate assignment with AI" flow
+  // (backend/src/routes/assignments.ts POST /topics/:id/assignment-draft) -
+  // stored so a single question can be regenerated later against the same
+  // taught content and options. Null for manually created assignments.
+  aiGenParams            Json?        @map("ai_gen_params")
   personalisationEnabled Boolean      @default(false) @map("personalisation_enabled")
   status                 String       @default("draft")
   publishedAt            DateTime?    @map("published_at")
@@ -1091,4 +1098,33 @@ model AuditLog {
   @@index([schoolId, createdAt])
   @@index([trustId, createdAt])
   @@map("audit_log")
+}
+
+// AI Assistant Phase 1 - one rolling conversation per user (no thread list).
+// See docs/superpowers/specs/2026-09-04-ai-assistant-phase1-design.md
+model AiConversation {
+  id        String      @id @default(uuid()) @db.Uuid
+  userId    String      @map("user_id") @db.Uuid
+  user      AppUser     @relation(fields: [userId], references: [id])
+  schoolId  String      @map("school_id") @db.Uuid
+  school    School      @relation(fields: [schoolId], references: [id])
+  createdAt DateTime    @default(now()) @map("created_at")
+  updatedAt DateTime    @updatedAt @map("updated_at")
+  messages  AiMessage[]
+
+  @@unique([userId])
+  @@map("ai_conversation")
+}
+
+// from is one of: user, assistant
+model AiMessage {
+  id             String         @id @default(uuid()) @db.Uuid
+  conversationId String         @map("conversation_id") @db.Uuid
+  conversation   AiConversation @relation(fields: [conversationId], references: [id])
+  from           String
+  text           String
+  createdAt      DateTime       @default(now()) @map("created_at")
+
+  @@index([conversationId, createdAt])
+  @@map("ai_message")
 }

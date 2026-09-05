@@ -13,6 +13,23 @@ interface CreateStudentSubmissionBody {
 
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope, requireRoles("student")];
 
+interface StoredQuestion {
+  id: string;
+  prompt: string;
+  difficulty?: string;
+  type?: string;
+  options?: string[];
+  correctOptionIndex?: number;
+}
+
+// The stored question JSON carries correctOptionIndex for MCQ questions - it
+// must never reach the student client (it would hand them the answer key).
+// Options themselves are kept; only the marker of which one is right is dropped.
+function sanitiseQuestionForStudent(question: StoredQuestion) {
+  const { correctOptionIndex: _drop, ...safe } = question;
+  return safe;
+}
+
 export async function studentPortalRoutes(app: FastifyInstance) {
   app.get("/student/me", { onRequest: scoped(app) }, async (request, reply) => {
     const student = await prisma.studentStub.findFirst({
@@ -66,10 +83,11 @@ export async function studentPortalRoutes(app: FastifyInstance) {
             }
           : null;
 
-      const allQuestions = assignment.questions as unknown as { id: string; prompt: string; difficulty?: string }[];
-      const questions = assignment.personalisationEnabled
+      const allQuestions = assignment.questions as unknown as StoredQuestion[];
+      const selected = assignment.personalisationEnabled
         ? selectQuestionsForMix(allQuestions, mixByAssignment.get(assignment.id))
         : allQuestions;
+      const questions = selected.map(sanitiseQuestionForStudent);
 
       return {
         id: assignment.id,

@@ -12,11 +12,6 @@
       "assets/avatars/*"
     ],
     "userInterfaceStyle": "light",
-    "splash": {
-      "image": "./assets/brand/eduwand-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#FFFFFF"
-    },
     "ios": {
       "supportsTablet": true
     },
@@ -110,7 +105,9 @@
           "cameraPermission": "Used to take a profile photo of a lead directly in the app."
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "@react-native-community/datetimepicker",
+      "expo-status-bar"
     ]
   }
 }

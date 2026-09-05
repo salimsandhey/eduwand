@@ -57,18 +57,18 @@ export function getCardShadow(mode: "light" | "dark") {
   if (mode === "dark") {
     return {
       shadowColor: "#000000",
-      shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: 0.28,
-      shadowRadius: 18,
-      elevation: 8,
+      shadowOffset: { width: 0, height: 3 },
+      shadowOpacity: 0.14,
+      shadowRadius: 8,
+      elevation: 2,
     };
   }
   return {
-    shadowColor: "#7C005A",
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.13,
-    shadowRadius: 20,
-    elevation: 6,
+    shadowColor: "#1F1F1F",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.045,
+    shadowRadius: 8,
+    elevation: 1,
   };
 }
 

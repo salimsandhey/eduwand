@@ -199,7 +199,7 @@ export function AiAssistChatModal({ visible, onClose }: { visible: boolean; onCl
 
 const styles = StyleSheet.create({
   root: { flex: 1, justifyContent: "flex-end" },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(22, 15, 20, 0.48)" },
+  backdrop: { ...StyleSheet.absoluteFill, backgroundColor: "rgba(22, 15, 20, 0.48)" },
   sheet: { borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 16 },
   handle: { width: 42, height: 4, borderRadius: 2, alignSelf: "center", marginTop: 10, marginBottom: 6 },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 10 },

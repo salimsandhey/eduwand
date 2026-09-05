@@ -2,7 +2,8 @@ import { FastifyInstance } from "fastify";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
-import { aiProvider, logAiUsage } from "../lib/ai";
+import { aiProvider, logAiUsage, AssignmentGenInput, GeneratedAssignmentQuestion } from "../lib/ai";
+import { buildTaughtContentText, buildContextSourceText } from "../lib/generation-content";
 
 interface Question {
   id: string;
@@ -25,6 +26,12 @@ interface UpdateAssignmentBody {
   personalisationEnabled?: boolean;
 }
 
+interface PublishAssignmentBody {
+  // Set once the teacher has already been warned that the answer key isn't
+  // fully reviewed and chose to publish anyway.
+  confirmUnverified?: boolean;
+}
+
 interface UpdatePersonalisationBody {
   status: "approved" | "overridden" | "opted_out";
   appliedMix?: Record<string, number>;
@@ -35,10 +42,56 @@ interface UpdateAnswerKeyBody {
   marks?: number;
 }
 
+interface DifficultyMix {
+  easy: number;
+  medium: number;
+  hard: number;
+}
+
+interface CreateAssignmentDraftBody {
+  questionCount: number;
+  difficultyMix: DifficultyMix;
+  objectives?: string[];
+  questionTypes?: "short_answer" | "mcq" | "mixed";
+  focusPrompt?: string;
+}
+
+interface RegenerateQuestionBody {
+  instruction?: string;
+}
+
+interface StoredAiGenParams {
+  questionCount: number;
+  difficultyMix: DifficultyMix;
+  objectives: string[];
+  questionTypes: "short_answer" | "mcq" | "mixed";
+  focusPrompt: string | null;
+}
+
 const VALID_DECISIONS = ["approved", "overridden", "opted_out"];
+const VALID_QUESTION_TYPE_MODES = ["short_answer", "mcq", "mixed"];
 const PERSONALISATION_PREREQUISITE_COUNT = 2;
 
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope, requireRoles("teacher")];
+
+// Shape a generated question into the JSON we persist on Assignment.questions,
+// stamping a stable id.
+function toStoredQuestion(q: GeneratedAssignmentQuestion, id: string) {
+  const base: Record<string, unknown> = { id, prompt: q.prompt, difficulty: q.difficulty, type: q.type };
+  if (q.type === "mcq") {
+    base.options = q.options ?? [];
+    base.correctOptionIndex = q.correctOptionIndex ?? 0;
+  }
+  return base;
+}
+
+function mixFromDifficulty(difficulty: string): DifficultyMix {
+  return {
+    easy: difficulty === "easy" ? 1 : 0,
+    medium: difficulty === "hard" || difficulty === "easy" ? 0 : 1,
+    hard: difficulty === "hard" ? 1 : 0,
+  };
+}
 
 async function personalisationEligible(schoolId: string, topicId: string | null, studentStubId: string): Promise<boolean> {
   if (!topicId) return false;
@@ -441,7 +494,11 @@ export async function assignmentRoutes(app: FastifyInstance) {
     }
   );
 
-  app.post<{ Params: { id: string } }>("/assignments/:id/publish", { onRequest: scoped(app) }, async (request, reply) => {
+  app.post<{ Params: { id: string }; Body: PublishAssignmentBody }>(
+    "/assignments/:id/publish",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+    const body = request.body ?? ({} as PublishAssignmentBody);
     const assignment = await prisma.assignment.findFirst({
       where: { id: request.params.id, schoolId: request.schoolId },
     });
@@ -452,11 +509,302 @@ export async function assignmentRoutes(app: FastifyInstance) {
       return reply.code(400).send({ data: null, error: { code: "validation_error", message: "Already published" } });
     }
 
+    // The answer key is only ever a UI nudge, not a hard requirement - a
+    // teacher can always choose to publish anyway (confirmUnverified) - but
+    // publishing used to skip this check entirely, so an AI draft answer key
+    // could go out to students having never been looked at. Warn once.
+    if (!body.confirmUnverified) {
+      const answerKeys = await prisma.answerKey.findMany({ where: { assignmentId: assignment.id } });
+      const verifiedCount = answerKeys.filter((k) => !!k.teacherVerifiedAnswer).length;
+      if (answerKeys.length === 0) {
+        return reply.code(409).send({
+          data: null,
+          error: { code: "unverified_answers", message: "No answer key has been generated for this assignment yet." },
+        });
+      }
+      if (verifiedCount < answerKeys.length) {
+        return reply.code(409).send({
+          data: null,
+          error: {
+            code: "unverified_answers",
+            message: `${answerKeys.length - verifiedCount} of ${answerKeys.length} answer(s) haven't been reviewed yet.`,
+          },
+        });
+      }
+    }
+
     const updated = await prisma.assignment.update({
       where: { id: assignment.id },
       data: { status: "published", publishedAt: new Date() },
     });
 
     return { data: updated, meta: {} };
-  });
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // "Generate assignment with AI" flow (from a topic)
+  // ---------------------------------------------------------------------------
+
+  // Populates the AI setup wizard: the objectives it can target, and whether
+  // the topic has anything to ground on at all.
+  app.get<{ Params: { id: string } }>(
+    "/topics/:id/assignment-draft/options",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const topic = await prisma.topic.findFirst({
+        where: { id: request.params.id, schoolId: request.schoolId },
+        include: {
+          classSection: true,
+          contextSources: true,
+          generations: { orderBy: { generatedAt: "desc" } },
+        },
+      });
+      if (!topic) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Topic not found" } });
+      }
+
+      const taught = buildTaughtContentText(topic.generations);
+      const hasGenerations = topic.generations.some((g) => g.generationStatus === "succeeded");
+      const hasContextSources = topic.contextSources.some(
+        (s) => s.extractionStatus === "extracted" && !!s.extractedText
+      );
+
+      return {
+        data: {
+          objectives: taught.objectives,
+          hasGenerations,
+          hasContextSources,
+          classSection: { className: topic.classSection.className, sectionName: topic.classSection.sectionName },
+        },
+        meta: {},
+      };
+    }
+  );
+
+  // Generates questions + model answers and persists them as a draft
+  // Assignment (+ AnswerKey rows) straight away - the review screen then edits
+  // that draft in place.
+  app.post<{ Params: { id: string }; Body: CreateAssignmentDraftBody }>(
+    "/topics/:id/assignment-draft",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const body = request.body ?? ({} as CreateAssignmentDraftBody);
+      const questionCount = Math.max(1, Math.min(20, Math.round(Number(body.questionCount)) || 0));
+      if (!questionCount) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "questionCount (1-20) is required" },
+        });
+      }
+      const questionTypes =
+        body.questionTypes && VALID_QUESTION_TYPE_MODES.includes(body.questionTypes) ? body.questionTypes : "short_answer";
+      const difficultyMix: DifficultyMix = {
+        easy: Math.max(0, Math.round(Number(body.difficultyMix?.easy)) || 0),
+        medium: Math.max(0, Math.round(Number(body.difficultyMix?.medium)) || 0),
+        hard: Math.max(0, Math.round(Number(body.difficultyMix?.hard)) || 0),
+      };
+      if (difficultyMix.easy + difficultyMix.medium + difficultyMix.hard === 0) {
+        difficultyMix.medium = questionCount;
+      }
+      const objectives = Array.isArray(body.objectives)
+        ? body.objectives.map((o) => String(o).trim()).filter(Boolean).slice(0, 20)
+        : [];
+      const focusPrompt = body.focusPrompt?.trim() || null;
+
+      const topic = await prisma.topic.findFirst({
+        where: { id: request.params.id, schoolId: request.schoolId },
+        include: {
+          classSection: true,
+          contextSources: true,
+          generations: { orderBy: { generatedAt: "desc" } },
+        },
+      });
+      if (!topic) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Topic not found" } });
+      }
+
+      const taught = buildTaughtContentText(topic.generations);
+      const taughtContent = taught.text || buildContextSourceText(topic.contextSources);
+      if (!taughtContent) {
+        return reply.code(422).send({
+          data: null,
+          error: {
+            code: "no_taught_content",
+            message: "Generate a lesson (or add context sources) for this topic first so the AI knows what was taught.",
+          },
+        });
+      }
+
+      const formatTemplate = await prisma.schoolFormatTemplate.findUnique({
+        where: { schoolId_appliesTo: { schoolId: request.schoolId, appliesTo: "generation" } },
+      });
+
+      const genInput: AssignmentGenInput = {
+        taughtContent,
+        objectives: objectives.length > 0 ? objectives : taught.objectives,
+        questionCount,
+        difficultyMix,
+        questionTypes,
+        focusPrompt,
+        subject: topic.subject,
+        board: topic.board,
+        classLabel: `${topic.classSection.className} ${topic.classSection.sectionName}`,
+        schoolFormatInstructions: formatTemplate?.templateBody ?? null,
+      };
+
+      const start = Date.now();
+      const { questions: generated, model } = await aiProvider.generateAssignmentFromTopic(genInput);
+      if (generated.length === 0) {
+        return reply.code(502).send({
+          data: null,
+          error: { code: "generation_failed", message: "The AI did not return any usable questions. Try again." },
+        });
+      }
+
+      const storedQuestions = generated.map((q, i) => toStoredQuestion(q, `q${i + 1}`));
+      const aiGenParams: StoredAiGenParams = { questionCount, difficultyMix, objectives, questionTypes, focusPrompt };
+
+      const assignment = await prisma.assignment.create({
+        data: {
+          schoolId: request.schoolId,
+          topicId: topic.id,
+          teacherUserId: request.user.sub,
+          classSectionId: topic.classSectionId,
+          title: `${topic.name} – Assignment`,
+          questions: storedQuestions as unknown as Prisma.InputJsonValue,
+          aiGenParams: aiGenParams as unknown as Prisma.InputJsonValue,
+          personalisationEnabled: false,
+          status: "draft",
+        },
+      });
+
+      await prisma.answerKey.createMany({
+        data: generated.map((q, i) => ({
+          assignmentId: assignment.id,
+          questionId: `q${i + 1}`,
+          questionIndex: i,
+          aiAnswer: q.modelAnswer,
+        })),
+      });
+
+      await logAiUsage({
+        schoolId: request.schoolId,
+        teacherUserId: request.user.sub,
+        feature: "assignment_generation",
+        model,
+        durationMs: Date.now() - start,
+      });
+
+      return reply.code(201).send({ data: assignment, meta: {} });
+    }
+  );
+
+  // Redrafts a single question (and its model answer) against the same taught
+  // content, keeping the question's id so the answer key stays aligned.
+  app.post<{ Params: { id: string; questionId: string }; Body: RegenerateQuestionBody }>(
+    "/assignments/:id/questions/:questionId/regenerate",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const body = request.body ?? ({} as RegenerateQuestionBody);
+      const assignment = await prisma.assignment.findFirst({
+        where: { id: request.params.id, schoolId: request.schoolId },
+      });
+      if (!assignment) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Assignment not found" } });
+      }
+      if (assignment.status !== "draft") {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "Only a draft assignment can be edited - unpublish it first" },
+        });
+      }
+      if (!assignment.topicId) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "Regenerate is only available for AI-generated assignments" },
+        });
+      }
+
+      const questions = (assignment.questions as unknown as {
+        id: string;
+        prompt: string;
+        difficulty?: string;
+        type?: string;
+      }[]) ?? [];
+      const targetIndex = questions.findIndex((q) => q.id === request.params.questionId);
+      if (targetIndex === -1) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Question not found" } });
+      }
+      const target = questions[targetIndex];
+
+      const topic = await prisma.topic.findFirst({
+        where: { id: assignment.topicId, schoolId: request.schoolId },
+        include: { classSection: true, contextSources: true, generations: { orderBy: { generatedAt: "desc" } } },
+      });
+      if (!topic) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Topic not found" } });
+      }
+
+      const stored = (assignment.aiGenParams as unknown as StoredAiGenParams | null) ?? null;
+      const taught = buildTaughtContentText(topic.generations);
+      const taughtContent = taught.text || buildContextSourceText(topic.contextSources);
+
+      const formatTemplate = await prisma.schoolFormatTemplate.findUnique({
+        where: { schoolId_appliesTo: { schoolId: request.schoolId, appliesTo: "generation" } },
+      });
+
+      const genInput: AssignmentGenInput = {
+        taughtContent,
+        objectives: stored?.objectives?.length ? stored.objectives : taught.objectives,
+        questionCount: 1,
+        difficultyMix: mixFromDifficulty(target.difficulty ?? "medium"),
+        questionTypes: target.type === "mcq" ? "mcq" : "short_answer",
+        focusPrompt: [stored?.focusPrompt ?? null, body.instruction?.trim() || null].filter(Boolean).join("\n") || null,
+        subject: topic.subject,
+        board: topic.board,
+        classLabel: `${topic.classSection.className} ${topic.classSection.sectionName}`,
+        schoolFormatInstructions: formatTemplate?.templateBody ?? null,
+      };
+
+      const start = Date.now();
+      const { questions: generated, model } = await aiProvider.generateAssignmentFromTopic(genInput);
+      const replacement = generated[0];
+      if (!replacement) {
+        return reply.code(502).send({
+          data: null,
+          error: { code: "generation_failed", message: "The AI did not return a replacement question. Try again." },
+        });
+      }
+
+      questions[targetIndex] = toStoredQuestion(replacement, target.id) as unknown as (typeof questions)[number];
+
+      const [updated] = await prisma.$transaction([
+        prisma.assignment.update({
+          where: { id: assignment.id },
+          data: { questions: questions as unknown as Prisma.InputJsonValue },
+        }),
+        prisma.answerKey.upsert({
+          where: { assignmentId_questionId: { assignmentId: assignment.id, questionId: target.id } },
+          create: {
+            assignmentId: assignment.id,
+            questionId: target.id,
+            questionIndex: targetIndex,
+            aiAnswer: replacement.modelAnswer,
+          },
+          update: { aiAnswer: replacement.modelAnswer, teacherVerifiedAnswer: null, questionIndex: targetIndex },
+        }),
+      ]);
+
+      await logAiUsage({
+        schoolId: request.schoolId,
+        teacherUserId: request.user.sub,
+        feature: "assignment_generation",
+        model,
+        durationMs: Date.now() - start,
+      });
+
+      return { data: updated, meta: {} };
+    }
+  );
 }

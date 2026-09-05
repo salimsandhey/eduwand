@@ -376,7 +376,7 @@ const styles = StyleSheet.create({
   topicName: { fontSize: 15, lineHeight: 20, fontWeight: "800", letterSpacing: -0.2 },
   topicMeta: { marginTop: 3, fontSize: 11, lineHeight: 16, fontWeight: "600" },
   modalRoot: { flex: 1, justifyContent: "flex-end" },
-  modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(22, 15, 20, 0.48)" },
+  modalBackdrop: { ...StyleSheet.absoluteFill, backgroundColor: "rgba(22, 15, 20, 0.48)" },
   modalSheet: { maxHeight: "78%", borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 24, paddingBottom: 28 },
   modalHandle: { width: 42, height: 4, borderRadius: 2, alignSelf: "center", marginTop: 10, marginBottom: 16 },
   modalHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between" },

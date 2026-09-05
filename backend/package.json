@@ -11,7 +11,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "tsx prisma/seed.ts",
-    "test": "node --import tsx --test src/lib/extraction.test.ts src/lib/context-extraction.test.ts src/lib/ai.test.ts src/lib/personalisation.test.ts",
+    "test": "node --import tsx --test src/lib/extraction.test.ts src/lib/context-extraction.test.ts src/lib/ai.test.ts src/lib/personalisation.test.ts src/lib/generation-content.test.ts",
     "eval:extraction": "tsx eval/run-extraction.ts",
     "eval:workbook": "tsx eval/build-workbook.ts",
     "eval:grounding": "tsx eval/run-grounding.ts",

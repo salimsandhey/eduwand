@@ -1,6 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { stubProvider, GenerationInput } from "./ai";
+import {
+  stubProvider,
+  GenerationInput,
+  AssignmentGenInput,
+  GradingQuestion,
+  settleMcqQuestions,
+  expandDifficultyMix,
+  heuristicAssignmentQuestions,
+  normaliseGeneratedQuestions,
+} from "./ai";
 
 // Test the offline stub directly - it is the dev default and the offline
 // fallback, and the frontend's parseGenerationContent relies on this JSON shape.
@@ -48,4 +57,132 @@ test("stub generateContent(custom_activity_report) has objective + activities + 
   assert.equal(typeof parsed.objective, "string");
   assert.ok(Array.isArray(parsed.activities));
   assert.equal(typeof parsed.reportFormat, "string");
+});
+
+// --- generateAssignmentFromTopic -------------------------------------------
+
+const baseAssignmentInput: AssignmentGenInput = {
+  taughtContent: "Photosynthesis converts light energy into chemical energy stored in glucose.",
+  objectives: ["[Understand] Explain photosynthesis", "[Apply] Apply the concept to a real plant"],
+  questionCount: 4,
+  difficultyMix: { easy: 1, medium: 2, hard: 1 },
+  questionTypes: "short_answer",
+  focusPrompt: null,
+  subject: "Biology",
+  board: "CBSE",
+  classLabel: "Grade 8 A",
+  schoolFormatInstructions: null,
+};
+
+test("stub generateAssignmentFromTopic returns the requested count with a model answer each", async () => {
+  const { questions } = await aiProvider.generateAssignmentFromTopic(baseAssignmentInput);
+  assert.equal(questions.length, 4);
+  for (const q of questions) {
+    assert.ok(q.prompt.length > 0);
+    assert.ok(q.modelAnswer.length > 0);
+    assert.equal(q.type, "short_answer");
+  }
+});
+
+test("stub generateAssignmentFromTopic(mcq) produces valid options and a correct index", async () => {
+  const { questions } = await aiProvider.generateAssignmentFromTopic({ ...baseAssignmentInput, questionTypes: "mcq" });
+  for (const q of questions) {
+    assert.equal(q.type, "mcq");
+    assert.ok(Array.isArray(q.options) && q.options.length >= 2);
+    assert.ok(typeof q.correctOptionIndex === "number" && q.correctOptionIndex >= 0 && q.correctOptionIndex < q.options!.length);
+  }
+});
+
+test("expandDifficultyMix pads/truncates to exactly questionCount", () => {
+  assert.deepEqual(expandDifficultyMix({ easy: 1, medium: 2, hard: 1 }, 4), ["easy", "medium", "medium", "hard"]);
+  assert.equal(expandDifficultyMix({ easy: 0, medium: 0, hard: 0 }, 3).length, 3);
+});
+
+test("heuristicAssignmentQuestions falls back to generic seeds when there are no objectives", () => {
+  const questions = heuristicAssignmentQuestions({ ...baseAssignmentInput, objectives: [], questionCount: 3 });
+  assert.equal(questions.length, 3);
+  assert.ok(questions.every((q) => q.prompt.includes("Biology")));
+});
+
+test("normaliseGeneratedQuestions drops rows with no prompt and defaults a missing model answer", () => {
+  const rows = [{ prompt: "What is X?" }, { prompt: "" }, { prompt: "Explain Y", modelAnswer: "Because Z" }];
+  const out = normaliseGeneratedQuestions(rows, ["easy", "medium", "hard"], "short_answer");
+  assert.equal(out.length, 2);
+  assert.equal(out[0].modelAnswer, "Teacher review required before use.");
+  assert.equal(out[1].modelAnswer, "Because Z");
+});
+
+test("normaliseGeneratedQuestions in mcq mode requires >=2 options or falls back to short-answer", () => {
+  const rows = [
+    { prompt: "Pick one", type: "mcq", options: ["A", "B", "C"], correctOptionIndex: 1, modelAnswer: "B" },
+    { prompt: "Not enough options", type: "mcq", options: ["only one"] },
+  ];
+  const out = normaliseGeneratedQuestions(rows, ["easy", "medium"], "mcq");
+  assert.equal(out[0].type, "mcq");
+  assert.equal(out[0].correctOptionIndex, 1);
+  assert.equal(out[1].type, "short_answer");
+});
+
+// --- MCQ grading -------------------------------------------------------------
+
+const mcqQuestion: GradingQuestion = {
+  id: "q1",
+  prompt: "2 + 2 = ?",
+  type: "mcq",
+  options: ["3", "4", "5"],
+  correctOptionIndex: 1,
+};
+const shortAnswerQuestion: GradingQuestion = { id: "q2", prompt: "Explain photosynthesis." };
+
+test("settleMcqQuestions grades a correct option, an incorrect one, and a blank", () => {
+  const { mcqDetails, shortAnswerQuestions } = settleMcqQuestions(
+    [mcqQuestion, shortAnswerQuestion],
+    { q1: "4", q2: "It converts light to energy." }
+  );
+  assert.equal(shortAnswerQuestions.length, 1);
+  assert.equal(shortAnswerQuestions[0].id, "q2");
+  assert.equal(mcqDetails.length, 1);
+  assert.equal(mcqDetails[0].correct, true);
+  assert.equal(mcqDetails[0].marksAwarded, 1);
+});
+
+test("settleMcqQuestions marks a wrong option incorrect with zero marks", () => {
+  const { mcqDetails } = settleMcqQuestions([mcqQuestion], { q1: "3" });
+  assert.equal(mcqDetails[0].correct, false);
+  assert.equal(mcqDetails[0].marksAwarded, 0);
+});
+
+test("settleMcqQuestions treats a blank MCQ answer as incorrect, not unknown", () => {
+  const { mcqDetails } = settleMcqQuestions([mcqQuestion], {});
+  assert.equal(mcqDetails[0].correct, false);
+  assert.equal(mcqDetails[0].marksAwarded, 0);
+});
+
+test("settleMcqQuestions respects the answer key's marks for that question", () => {
+  const { mcqDetails } = settleMcqQuestions([mcqQuestion], { q1: "4" }, [
+    { questionId: "q1", verifiedAnswer: "4", marks: 3 },
+  ]);
+  assert.equal(mcqDetails[0].marksAwarded, 3);
+});
+
+test("stub gradeSubmission grades an all-MCQ submission without touching the completeness heuristic", async () => {
+  const result = await aiProvider.gradeSubmission({
+    questions: [mcqQuestion, { ...mcqQuestion, id: "q3", correctOptionIndex: 2 }],
+    answers: { q1: "4", q3: "3" },
+  });
+  assert.equal(result.score, 50);
+  assert.equal(result.questionDetails.find((d) => d.questionId === "q1")?.correct, true);
+  assert.equal(result.questionDetails.find((d) => d.questionId === "q3")?.correct, false);
+});
+
+test("stub gradeSubmission grades a mixed MCQ + short-answer submission and keeps question order", async () => {
+  const result = await aiProvider.gradeSubmission({
+    questions: [shortAnswerQuestion, mcqQuestion],
+    answers: { q2: "Chlorophyll absorbs light and produces glucose.", q1: "4" },
+  });
+  assert.deepEqual(
+    result.questionDetails.map((d) => d.questionId),
+    ["q2", "q1"]
+  );
+  assert.equal(result.questionDetails.find((d) => d.questionId === "q1")?.correct, true);
 });
