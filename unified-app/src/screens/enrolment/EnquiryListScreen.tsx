@@ -15,7 +15,6 @@ import type { CompositeScreenProps } from "@react-navigation/native";
 import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import { EnrolmentTabParamList, RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
@@ -53,31 +52,38 @@ function StatCell({
   value,
   label,
   percent,
+  colors,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   tint: string;
   value: number;
   label: string;
   percent: number;
+  colors: ReturnType<typeof useTheme>["colors"];
 }) {
   return (
-    <View style={[styles.statCell, { backgroundColor: tint }]}>
+    <View style={[styles.statCell, { backgroundColor: tint + "12", borderColor: tint + "26" }]}>
       <View style={styles.statCellTopRow}>
-        <View style={styles.statIconChip}>
-          <Ionicons name={icon} size={14} color={tint} />
+        <View style={[styles.statIconChip, { backgroundColor: tint }]}>
+          <Ionicons name={icon} size={14} color="#FFFFFF" />
         </View>
-        <Text style={styles.statPercentText} numberOfLines={1}>
+        <Text style={[styles.statPercentText, { color: tint }]} numberOfLines={1}>
           {percent}%
         </Text>
       </View>
-      <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+      <Text
+        style={[styles.statValue, { color: colors.textPrimary }]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.75}
+      >
         {value}
       </Text>
-      <Text style={styles.statLabel} numberOfLines={1}>
+      <Text style={[styles.statLabel, { color: colors.textMuted }]} numberOfLines={1}>
         {label}
       </Text>
-      <View style={styles.statProgressTrack}>
-        <View style={[styles.statProgressFill, { width: `${percent}%` }]} />
+      <View style={[styles.statProgressTrack, { backgroundColor: tint + "1F" }]}>
+        <View style={[styles.statProgressFill, { width: `${percent}%`, backgroundColor: tint }]} />
       </View>
     </View>
   );
@@ -273,19 +279,6 @@ export function EnquiryListScreen({ navigation }: Props) {
   const [searchFocused, setSearchFocused] = useState(false);
   const [sortBy, setSortBy] = useState<SortKey>("updated");
   const fabScale = useRef(new Animated.Value(1)).current;
-  const liveDotPulse = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(liveDotPulse, { toValue: 1, duration: 900, useNativeDriver: true }),
-        Animated.timing(liveDotPulse, { toValue: 0, duration: 900, useNativeDriver: true }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [liveDotPulse]);
-  const liveDotOpacity = liveDotPulse.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] });
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -424,35 +417,24 @@ export function EnquiryListScreen({ navigation }: Props) {
             </View>
 
             {/* Enrolment overview hero card — commented out per request
-            <LinearGradient
-              colors={[colors.accent, colors.accentDark]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.statHero}
-            >
-              <View style={styles.statHeroGlow} pointerEvents="none" />
-              <View style={styles.statHeroGlowSecondary} pointerEvents="none" />
-
+            <View style={[styles.statHero, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
               <View style={styles.statHeroTopRow}>
-                <Text style={styles.statHeroEyebrow}>Enrolment overview</Text>
-                <View style={styles.liveBadge}>
-                  <Animated.View style={[styles.liveDot, { opacity: liveDotOpacity }]} />
-                  <Text style={styles.liveBadgeText}>Live</Text>
-                </View>
+                <Text style={[styles.statHeroEyebrow, { color: colors.textMuted }]}>Enrolment overview</Text>
               </View>
 
               <View style={styles.statHeroRow}>
-                <StatCell icon="people-outline" tint="#7359D9" value={stats.total} label="Total" percent={100} />
-                <StatCell icon="person-outline" tint="#2FA678" value={stats.fresh} label="Fresh" percent={statPercents.fresh} />
+                <StatCell icon="people-outline" tint="#7359D9" value={stats.total} label="Total" percent={100} colors={colors} />
+                <StatCell icon="person-outline" tint="#2FA678" value={stats.fresh} label="Fresh" percent={statPercents.fresh} colors={colors} />
                 <StatCell
                   icon="trending-up-outline"
                   tint="#E5A72D"
                   value={stats.converted}
                   label="Converted"
                   percent={statPercents.converted}
+                  colors={colors}
                 />
               </View>
-            </LinearGradient>
+            </View>
             */}
 
             <View
@@ -652,68 +634,25 @@ const styles = StyleSheet.create({
   statHero: {
     marginTop: 16,
     borderRadius: 26,
+    borderWidth: 1,
     paddingTop: 16,
     paddingBottom: 16,
     paddingHorizontal: 14,
     gap: 14,
-    overflow: "hidden",
-  },
-  statHeroGlow: {
-    position: "absolute",
-    top: -46,
-    right: -30,
-    width: 150,
-    height: 150,
-    borderRadius: 75,
-    backgroundColor: "rgba(255,255,255,0.14)",
-  },
-  statHeroGlowSecondary: {
-    position: "absolute",
-    bottom: -52,
-    left: -32,
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: "rgba(255,255,255,0.08)",
   },
   statHeroTopRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    zIndex: 2,
   },
   statHeroEyebrow: {
-    color: "rgba(255,255,255,0.85)",
     fontSize: 11,
     fontWeight: "800",
     textTransform: "uppercase",
     letterSpacing: 0.6,
   },
-  liveBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    backgroundColor: "rgba(255,255,255,0.16)",
-    borderRadius: 999,
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-  },
-  liveDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: "#8CE7B8",
-  },
-  liveBadgeText: {
-    color: "#FFFFFF",
-    fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 0.4,
-  },
   statHeroRow: {
     flexDirection: "row",
     gap: 10,
-    zIndex: 2,
   },
   statCell: {
     flex: 1,
@@ -721,8 +660,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 5,
     borderRadius: 18,
-    paddingVertical: 12,
+    paddingVertical: 14,
     paddingHorizontal: 10,
+    borderWidth: 1,
   },
   statCellTopRow: {
     width: "100%",
@@ -735,28 +675,24 @@ const styles = StyleSheet.create({
     height: 28,
     borderRadius: 14,
     flexShrink: 0,
-    backgroundColor: "#FFFFFF",
     alignItems: "center",
     justifyContent: "center",
   },
   statPercentText: {
     flexShrink: 1,
     marginLeft: 4,
-    color: "#FFFFFF",
     fontSize: 11,
     fontWeight: "800",
   },
   statValue: {
     marginTop: 2,
     alignSelf: "flex-start",
-    color: "#FFFFFF",
     fontSize: 20,
     fontWeight: "800",
     letterSpacing: -0.4,
   },
   statLabel: {
     alignSelf: "flex-start",
-    color: "rgba(255,255,255,0.9)",
     fontSize: 11,
     fontWeight: "700",
   },
@@ -765,7 +701,6 @@ const styles = StyleSheet.create({
     height: 4,
     borderRadius: 2,
     marginTop: 4,
-    backgroundColor: "rgba(255,255,255,0.3)",
     overflow: "hidden",
   },
   statProgressFill: {

@@ -1,5 +1,6 @@
 import { ReactNode, useCallback, useState } from "react";
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import Svg, { Circle, Defs, LinearGradient as SvgLinearGradient, Path, Stop } from "react-native-svg";
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../context/AuthContext";
@@ -132,11 +133,11 @@ export function EnrolmentAnalyticsScreen() {
         ) : (
           <>
             <ChartCard title="Enquiry trend" subtitle="New enquiries vs. conversions, last 6 months" icon="trending-up-outline" colors={colors} cardShadow={cardShadow}>
-              <TrendChart series={trend?.periods.map((p) => ({ key: p.period, label: monthLabel(p.period), newEnquiries: p.newEnquiries, converted: p.converted })) ?? []} colors={colors} />
+              <AreaTrendChart series={trend?.periods.map((p) => ({ key: p.period, label: monthLabel(p.period), newEnquiries: p.newEnquiries, converted: p.converted })) ?? []} colors={colors} />
             </ChartCard>
 
             <ChartCard title="Year-on-year growth" subtitle="New enquiries vs. conversions, by year" icon="stats-chart-outline" colors={colors} cardShadow={cardShadow}>
-              <TrendChart series={yearlyTrend?.years.map((y) => ({ key: y.year, label: y.year, newEnquiries: y.newEnquiries, converted: y.converted })) ?? []} colors={colors} />
+              <AreaTrendChart series={yearlyTrend?.years.map((y) => ({ key: y.year, label: y.year, newEnquiries: y.newEnquiries, converted: y.converted })) ?? []} colors={colors} />
             </ChartCard>
 
             <ChartCard title="Source breakdown" subtitle="Where your enquiries are coming from" icon="pie-chart-outline" colors={colors} cardShadow={cardShadow}>
@@ -245,49 +246,145 @@ function BarChart({
   );
 }
 
-function TrendChart({
+function AreaTrendChart({
   series,
   colors,
 }: {
   series: { key: string; label: string; newEnquiries: number; converted: number }[];
   colors: ThemeColors;
 }) {
+  const [width, setWidth] = useState(280);
   if (series.length === 0) {
     return <Text style={[styles.chartEmpty, { color: colors.textMuted }]}>No data yet.</Text>;
   }
+
+  const height = 140;
+  const paddingX = 6;
+  const paddingY = 14;
+  const innerWidth = Math.max(1, width - paddingX * 2);
+  const innerHeight = height - paddingY * 2;
   const maxValue = Math.max(1, ...series.flatMap((p) => [p.newEnquiries, p.converted]));
+  const stepX = series.length > 1 ? innerWidth / (series.length - 1) : 0;
+
+  const pointsFor = (key: "newEnquiries" | "converted") =>
+    series.map((p, i) => ({
+      x: paddingX + i * stepX,
+      y: paddingY + innerHeight - (p[key] / maxValue) * innerHeight,
+    }));
+
+  const linePath = (points: { x: number; y: number }[]) =>
+    points.map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x.toFixed(1)} ${pt.y.toFixed(1)}`).join(" ");
+
+  const areaPath = (points: { x: number; y: number }[]) => {
+    if (points.length === 0) return "";
+    const floorY = paddingY + innerHeight;
+    return `${linePath(points)} L ${points[points.length - 1].x.toFixed(1)} ${floorY} L ${points[0].x.toFixed(1)} ${floorY} Z`;
+  };
+
+  const newPoints = pointsFor("newEnquiries");
+  const convertedPoints = pointsFor("converted");
+
   return (
-    <>
-      <View style={styles.chartRow}>
+    <View style={{ width: "100%" }} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
+      <Svg width={width} height={height}>
+        <Defs>
+          <SvgLinearGradient id="trendAreaFill" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor="#7359D9" stopOpacity={0.32} />
+            <Stop offset="1" stopColor="#7359D9" stopOpacity={0} />
+          </SvgLinearGradient>
+        </Defs>
+        <Path d={areaPath(newPoints)} fill="url(#trendAreaFill)" />
+        <Path d={linePath(newPoints)} stroke="#7359D9" strokeWidth={2.5} fill="none" strokeLinejoin="round" strokeLinecap="round" />
+        <Path
+          d={linePath(convertedPoints)}
+          stroke="#2FA678"
+          strokeWidth={2.5}
+          fill="none"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          strokeDasharray="6,5"
+        />
+        {newPoints.map((pt, i) => (
+          <Circle key={`n-${i}`} cx={pt.x} cy={pt.y} r={3} fill="#7359D9" />
+        ))}
+        {convertedPoints.map((pt, i) => (
+          <Circle key={`c-${i}`} cx={pt.x} cy={pt.y} r={3} fill="#2FA678" />
+        ))}
+      </Svg>
+      <View style={styles.trendLabelRow}>
         {series.map((p) => (
-          <View key={p.key} style={styles.chartCol}>
-            <View style={styles.chartGroupTrack}>
-              <View style={[styles.chartTrack, styles.chartTrackNarrow, { backgroundColor: colors.surfaceRaised }]}>
-                <View
-                  style={[
-                    styles.chartFill,
-                    { height: `${Math.max(4, (p.newEnquiries / maxValue) * 100)}%`, backgroundColor: "#7359D9" },
-                  ]}
-                />
-              </View>
-              <View style={[styles.chartTrack, styles.chartTrackNarrow, { backgroundColor: colors.surfaceRaised }]}>
-                <View
-                  style={[
-                    styles.chartFill,
-                    { height: `${Math.max(4, (p.converted / maxValue) * 100)}%`, backgroundColor: "#2FA678" },
-                  ]}
-                />
-              </View>
-            </View>
-            <Text style={[styles.chartLabel, { color: colors.textMuted }]}>{p.label}</Text>
-          </View>
+          <Text key={p.key} style={[styles.chartLabel, styles.trendLabel, { color: colors.textMuted }]} numberOfLines={1}>
+            {p.label}
+          </Text>
         ))}
       </View>
       <View style={styles.chartLegendRow}>
         <LegendDot color="#7359D9" label="New" colors={colors} />
         <LegendDot color="#2FA678" label="Converted" colors={colors} />
       </View>
-    </>
+    </View>
+  );
+}
+
+function DonutChart({
+  items,
+  colors,
+  valueSuffix = "",
+}: {
+  items: { label: string; value: number; color: string }[];
+  colors: ThemeColors;
+  valueSuffix?: string;
+}) {
+  if (items.length === 0) {
+    return <Text style={[styles.chartEmpty, { color: colors.textMuted }]}>No data yet.</Text>;
+  }
+  const total = items.reduce((sum, item) => sum + item.value, 0) || 1;
+  const size = 132;
+  const strokeWidth = 20;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+
+  let cumulative = 0;
+  const segments = items.map((item) => {
+    const fraction = item.value / total;
+    const dash = Math.max(0, fraction * circumference - 2);
+    const rotation = (cumulative / total) * 360 - 90;
+    cumulative += item.value;
+    return { ...item, dash, rotation };
+  });
+
+  return (
+    <View style={styles.donutWrap}>
+      <Svg width={size} height={size}>
+        <Circle cx={size / 2} cy={size / 2} r={radius} stroke={colors.surfaceRaised} strokeWidth={strokeWidth} fill="none" />
+        {segments.map((seg, i) => (
+          <Circle
+            key={i}
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            stroke={seg.color}
+            strokeWidth={strokeWidth}
+            fill="none"
+            strokeDasharray={`${seg.dash} ${circumference}`}
+            strokeLinecap="round"
+            origin={`${size / 2}, ${size / 2}`}
+            rotation={seg.rotation}
+          />
+        ))}
+      </Svg>
+      <View style={styles.donutLegend}>
+        {items.map((item) => (
+          <View key={item.label} style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: item.color }]} />
+            <Text style={[styles.donutLegendLabel, { color: colors.textSecondary }]} numberOfLines={1}>
+              {item.label} · {item.value}
+              {valueSuffix}
+            </Text>
+          </View>
+        ))}
+      </View>
+    </View>
   );
 }
 
@@ -295,12 +392,12 @@ function SourceChart({ bySource, colors }: { bySource: EnrolmentBySource | null;
   const entries = Object.entries(bySource?.bySource ?? {})
     .sort((a, b) => b[1] - a[1])
     .slice(0, 6);
-  const bars = entries.map(([source, value], index) => ({
+  const items = entries.map(([source, value], index) => ({
     label: formatSource(source),
     value,
     color: PALETTE[index % PALETTE.length],
   }));
-  return <BarChart bars={bars} colors={colors} />;
+  return <DonutChart items={items} colors={colors} />;
 }
 
 function GradeDemandChart({ gradeDemand, colors }: { gradeDemand: EnrolmentGradeDemand | null; colors: ThemeColors }) {
@@ -445,5 +542,10 @@ const styles = StyleSheet.create({
   chartLegendRow: { flexDirection: "row", justifyContent: "center", gap: 18, marginTop: 14 },
   legendItem: { flexDirection: "row", alignItems: "center", gap: 6 },
   legendDot: { width: 8, height: 8, borderRadius: 4 },
-  legendLabel: { fontSize: 11, fontWeight: "600" },
+  legendLabel: { fontSize: 11, fontWeight: "700" },
+  trendLabelRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 2 },
+  trendLabel: { flex: 1, textAlign: "center" },
+  donutWrap: { flexDirection: "row", alignItems: "center", gap: 18, alignSelf: "stretch" },
+  donutLegend: { flex: 1, gap: 8 },
+  donutLegendLabel: { flex: 1, fontSize: 12, fontWeight: "600" },
 });
