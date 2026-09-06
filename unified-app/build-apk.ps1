@@ -16,8 +16,10 @@ if (-not $env:JAVA_HOME) {
     $jbrPath = "C:\Program Files\Android\Android Studio\jbr"
     if (Test-Path $jbrPath) {
         $env:JAVA_HOME = $jbrPath
-        $env:Path = "$jbrPath\bin;" + $env:Path
     }
+}
+if ($env:JAVA_HOME -and (Test-Path "$env:JAVA_HOME\bin") -and ($env:Path -notlike "*$env:JAVA_HOME\bin*")) {
+    $env:Path = "$env:JAVA_HOME\bin;" + $env:Path
 }
 
 # Ensure local.properties exists
