@@ -34,6 +34,54 @@ import { capitalizeFirst } from "../../utils/text";
 
 const ENROLMENT_ROLES = ["front_desk", "counsellor", "admin", "leadership"];
 
+function TypingName({ text, color, style }: { text: string; color: string; style: object }) {
+  const [visibleChars, setVisibleChars] = useState(0);
+  const cursorOpacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    setVisibleChars(0);
+    if (!text) return;
+    let interval: ReturnType<typeof setInterval> | null = null;
+    const startDelay = setTimeout(() => {
+      interval = setInterval(() => {
+        setVisibleChars((current) => {
+          if (current >= text.length) {
+            if (interval) clearInterval(interval);
+            return current;
+          }
+          return current + 1;
+        });
+      }, 90);
+    }, 250);
+    return () => {
+      clearTimeout(startDelay);
+      if (interval) clearInterval(interval);
+    };
+  }, [text]);
+
+  useEffect(() => {
+    const blink = Animated.loop(
+      Animated.sequence([
+        Animated.timing(cursorOpacity, { toValue: 0, duration: 450, useNativeDriver: true }),
+        Animated.timing(cursorOpacity, { toValue: 1, duration: 450, useNativeDriver: true }),
+      ])
+    );
+    blink.start();
+    return () => blink.stop();
+  }, [cursorOpacity]);
+
+  const done = visibleChars >= text.length;
+
+  return (
+    <Text style={style}>
+      <Text style={{ color }}>{text.slice(0, visibleChars)}</Text>
+      {!done ? (
+        <Animated.Text style={{ color, opacity: cursorOpacity }}>|</Animated.Text>
+      ) : null}
+    </Text>
+  );
+}
+
 const TEACHER_SUMMARY_CARD_CONFIG = [
   { key: "lessons", title: "Lessons", accent: "#5B3FD6", icon: "book-outline" as const, graphic: decorativeAssets.teacherLessonCat },
   { key: "assignments", title: "Assignments", accent: "#F46B5B", icon: "clipboard-outline" as const, graphic: decorativeAssets.teacherAssignment },
@@ -334,7 +382,7 @@ export function HomeScreen() {
                 <View style={styles.profileBlock}>
                   <View style={styles.profileTextBlock}>
                     <Text style={[styles.eyebrow, { color: colors.textMuted }]}>{greeting()},</Text>
-                    <Text style={[styles.heroTitle, { color: colors.textPrimary }]}>{user.fullName}!</Text>
+                    <TypingName text={`${user.fullName}!`} color={colors.primaryBrand} style={styles.heroTitle} />
                     <Text style={[styles.heroSubtitle, { color: colors.textMuted }]}> 
                       Here&apos;s what&apos;s happening at your school today.
                     </Text>

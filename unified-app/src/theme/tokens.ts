@@ -15,6 +15,7 @@ export interface ThemeColors {
   textMuted: string;
   danger: string;
   warning: string;
+  primaryBrand: string;
 }
 
 export const brandPalette = {
@@ -51,6 +52,7 @@ export const darkColors: ThemeColors = {
   textMuted: "#BDB7AC",
   danger: "#FB5F7E",
   warning: "#FBAA0A",
+  primaryBrand: brandPalette.deepPlum,
 };
 
 export function getCardShadow(mode: "light" | "dark") {
@@ -94,4 +96,5 @@ export const lightColors: ThemeColors = {
   textMuted: "#756C72",
   danger: "#FB5F7E",
   warning: "#FBAA0A",
+  primaryBrand: brandPalette.deepPlum,
 };
