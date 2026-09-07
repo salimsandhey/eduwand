@@ -239,6 +239,12 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
   const pillLabelMarginLeft = collapse.interpolate({ inputRange: [0, 0.55, 1], outputRange: [6, 0, 0] });
   const phoneLabelMaxWidth = collapse.interpolate({ inputRange: [0, 0.55, 1], outputRange: [130, 0, 0] });
   const actionLabelMaxWidth = collapse.interpolate({ inputRange: [0, 0.55, 1], outputRange: [46, 0, 0] });
+  // Hero status tag's label (Application/Contacted/...): fades and collapses
+  // to icon-only on scroll, same treatment as the phone/edit/share labels
+  // above - only the hero tag, not the (static, always-labelled) status tag
+  // reused further down in the Lead tab body.
+  const statusLabelMaxWidth = collapse.interpolate({ inputRange: [0, 0.55, 1], outputRange: [110, 0, 0] });
+  const statusLabelMarginLeft = collapse.interpolate({ inputRange: [0, 0.55, 1], outputRange: [4, 0, 0] });
   // The "Phone"/guardian subtitle line fades and collapses to zero height as
   // you scroll, clearing its spot for the status tag to slide into.
   const headSubOpacity = collapse.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 0, 0] });
@@ -585,9 +591,15 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
                 { position: "absolute", top: 40, left: 0, transform: [{ translateY: tagTranslateY }] },
               ]}
             >
-              <View style={[styles.statusPill, { backgroundColor: currentStatusColor.bg }]}>
+              <View style={[styles.statusPill, { backgroundColor: currentStatusColor.bg, gap: 0 }]}>
                 <Ionicons name="globe-outline" size={11} color={currentStatusColor.text} />
-                <Text style={[styles.statusPillText, { color: currentStatusColor.text }]}>{formatStageLabel(enquiry.status)}</Text>
+                <Animated.View
+                  style={{ overflow: "hidden", maxWidth: statusLabelMaxWidth, opacity: pillLabelOpacity, marginLeft: statusLabelMarginLeft }}
+                >
+                  <Text style={[styles.statusPillText, { color: currentStatusColor.text }]} numberOfLines={1}>
+                    {formatStageLabel(enquiry.status)}
+                  </Text>
+                </Animated.View>
               </View>
               {overdueTasksCount > 0 ? (
                 <View style={[styles.headMetaChip, { backgroundColor: colors.accentSoft, borderColor: colors.accentSoftAlt }]}>

@@ -102,14 +102,33 @@ async function requestText(path: string, token: string, isRetry = false): Promis
   return response.text();
 }
 
-async function requestMultipart<T>(path: string, formData: FormData, token: string, isRetry = false): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body: formData,
+// Deliberately XMLHttpRequest, not fetch: Expo's SDK 54+ runtime replaces the
+// global fetch with its own spec-compliant implementation, which requires a
+// real Blob/File for every FormData part and rejects the classic React Native
+// { uri, name, type } file shape used below with "Unsupported FormDataPart
+// implementation". XMLHttpRequest is untouched by that override and still
+// goes through React Native's native networking module, which handles that
+// shape correctly.
+function xhrRequest(path: string, formData: FormData, token: string): Promise<{ status: number; text: string }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_URL}${path}`);
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.onload = () => resolve({ status: xhr.status, text: xhr.responseText });
+    xhr.onerror = () => reject(new ApiError("network_error", "Upload failed"));
+    xhr.send(formData);
   });
-  const body: ApiEnvelope<T> = await response.json();
-  if (!response.ok || body.error) {
+}
+
+async function requestMultipart<T>(path: string, formData: FormData, token: string, isRetry = false): Promise<T> {
+  const { status, text } = await xhrRequest(path, formData, token);
+  let body: ApiEnvelope<T>;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw new ApiError("unknown_error", "Request failed");
+  }
+  if (status < 200 || status >= 300 || body.error) {
     if (!isRetry && isExpiredAccessToken(token, body)) {
       const newAccessToken = await refreshAccessToken();
       if (newAccessToken) {
