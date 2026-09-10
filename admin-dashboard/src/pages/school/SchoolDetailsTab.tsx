@@ -4,7 +4,9 @@ import { api } from "../../api/client";
 import { Card } from "../../components/Card";
 import type { SchoolOutletContext } from "./SchoolLayout";
 
-const BOARDS = ["CBSE", "ICSE", "State"];
+// Same board list unified-app's signup screen uses (src/constants/boards.ts)
+// - keep these in sync.
+const BOARDS = ["CBSE", "ICSE", "IB"];
 const STATUSES = ["onboarding", "active", "suspended"];
 
 export function SchoolDetailsTab() {
@@ -12,7 +14,6 @@ export function SchoolDetailsTab() {
   const navigate = useNavigate();
 
   const [name, setName] = useState(school.name);
-  const [board, setBoard] = useState(school.board);
   const [address, setAddress] = useState(school.address ?? "");
   const [principalName, setPrincipalName] = useState(school.principalName ?? "");
   const [principalPhone, setPrincipalPhone] = useState(school.principalPhone ?? "");
@@ -25,9 +26,15 @@ export function SchoolDetailsTab() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  const [showBoardRequest, setShowBoardRequest] = useState(false);
+  const [requestedBoard, setRequestedBoard] = useState(school.board);
+  const [boardRequestMessage, setBoardRequestMessage] = useState<string | null>(null);
+  const [boardRequestError, setBoardRequestError] = useState<string | null>(null);
+  const [isSubmittingBoardRequest, setIsSubmittingBoardRequest] = useState(false);
+
   useEffect(() => {
     setName(school.name);
-    setBoard(school.board);
+    setRequestedBoard(school.board);
     setAddress(school.address ?? "");
     setPrincipalName(school.principalName ?? "");
     setPrincipalPhone(school.principalPhone ?? "");
@@ -42,7 +49,6 @@ export function SchoolDetailsTab() {
     try {
       await api.updateSchool(accessToken, id, {
         name,
-        board,
         address: address || undefined,
         principalName: principalName || undefined,
         principalPhone: principalPhone || undefined,
@@ -54,6 +60,26 @@ export function SchoolDetailsTab() {
       setSaveError(err instanceof Error ? err.message : "Failed to save");
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  // Board is request/approval-only for every school - no self-service edit
+  // path (backend/src/routes/schools.ts rejects any board change on PATCH
+  // /schools/:id outside an approved ticket). See Docs/superpowers/plans/
+  // 2026-09-09-individual-teacher-onboarding-and-credits.md.
+  async function requestBoardChange() {
+    if (!accessToken || !id || requestedBoard === school.board) return;
+    setBoardRequestError(null);
+    setBoardRequestMessage(null);
+    setIsSubmittingBoardRequest(true);
+    try {
+      await api.createBoardChangeTicket(accessToken, id, { requestedBoard });
+      setBoardRequestMessage("Request submitted - a platform admin will review it.");
+      setShowBoardRequest(false);
+    } catch (err) {
+      setBoardRequestError(err instanceof Error ? err.message : "Failed to submit request");
+    } finally {
+      setIsSubmittingBoardRequest(false);
     }
   }
 
@@ -95,13 +121,37 @@ export function SchoolDetailsTab() {
         </div>
         <div style={styles.field}>
           <label style={styles.label}>Board</label>
-          <select style={styles.input} value={board} onChange={(e) => setBoard(e.target.value)} disabled={!canEditSchoolProfile}>
-            {BOARDS.map((b) => (
-              <option key={b} value={b}>
-                {b}
-              </option>
-            ))}
-          </select>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 14 }}>{school.board}</span>
+            {canEditSchoolProfile ? (
+              <button style={styles.linkButton} onClick={() => setShowBoardRequest((v) => !v)}>
+                Request change
+              </button>
+            ) : null}
+          </div>
+          {showBoardRequest ? (
+            <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+              <select style={styles.input} value={requestedBoard} onChange={(e) => setRequestedBoard(e.target.value)}>
+                {BOARDS.map((b) => (
+                  <option key={b} value={b}>
+                    {b}
+                  </option>
+                ))}
+              </select>
+              <button
+                style={styles.secondaryButton}
+                onClick={requestBoardChange}
+                disabled={isSubmittingBoardRequest || requestedBoard === school.board}
+              >
+                {isSubmittingBoardRequest ? "Submitting…" : "Submit"}
+              </button>
+            </div>
+          ) : null}
+          {boardRequestMessage ? <p style={styles.success}>{boardRequestMessage}</p> : null}
+          {boardRequestError ? <p style={styles.error}>{boardRequestError}</p> : null}
+          <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, marginBottom: 0 }}>
+            Board is a backend setting - changes go through platform admin review.
+          </p>
         </div>
       </div>
       <div style={{ ...styles.row, marginTop: 12 }}>
@@ -184,6 +234,15 @@ const styles: Record<string, React.CSSProperties> = {
   field: { display: "flex", flexDirection: "column", gap: 6, flex: 1, minWidth: 200 },
   label: { fontSize: 12, fontWeight: 700, color: "var(--text-muted)" },
   input: { padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 14 },
+  linkButton: {
+    background: "none",
+    border: "none",
+    color: "var(--accent)",
+    fontWeight: 600,
+    fontSize: 13,
+    cursor: "pointer",
+    padding: 0,
+  },
   actionRow: { display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" },
   button: {
     background: "var(--accent)",

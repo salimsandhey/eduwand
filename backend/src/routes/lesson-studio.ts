@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { aiProvider, logAiUsage } from "../lib/ai";
+import { hasSufficientCredits, getFeatureCost } from "../lib/credits";
 
 const VALID_BOARDS = ["CBSE", "ICSE", "State"];
 const VALID_FORMATS = ["lesson_plan", "learning_material"];
@@ -56,6 +57,10 @@ export async function lessonStudioRoutes(app: FastifyInstance) {
           return reply.code(404).send({ data: null, error: { code: "not_found", message: "Class section not found" } });
         }
         classLabel = `${classSection.className} ${classSection.sectionName}`;
+      }
+
+      if (!(await hasSufficientCredits(request.user.sub, getFeatureCost("lesson_plan")))) {
+        return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to generate this lesson plan" } });
       }
 
       const start = Date.now();
@@ -115,6 +120,10 @@ export async function lessonStudioRoutes(app: FastifyInstance) {
           data: null,
           error: { code: "validation_error", message: `board must be one of ${VALID_BOARDS.join(", ")}` },
         });
+      }
+
+      if (!(await hasSufficientCredits(request.user.sub, getFeatureCost("research_report")))) {
+        return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to generate this research report" } });
       }
 
       const start = Date.now();

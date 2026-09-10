@@ -27,6 +27,7 @@ import {
   EnquiryDocument,
   FormField,
 } from "../../api/client";
+import { capitalizeFirst } from "../../utils/text";
 
 const ACTIVITY_ICON: Record<ActivityType, keyof typeof Ionicons.glyphMap> = {
   stage_change: "swap-horizontal-outline",
@@ -1215,7 +1216,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
                 enquiry.notes.map((note) => (
                   <View key={note.id} style={[styles.noteCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                     <View style={styles.noteHead}>
-                      <Text style={[styles.noteAuthor, { color: colors.textPrimary }]}>{note.author?.fullName ?? "System"}</Text>
+                      <Text style={[styles.noteAuthor, { color: colors.textPrimary }]}>{note.author?.fullName ? capitalizeFirst(note.author.fullName) : "System"}</Text>
                       <Text style={[styles.noteDate, { color: colors.textMuted }]}>{new Date(note.createdAt).toLocaleString("en-IN")}</Text>
                     </View>
                     <Text style={[styles.noteBody, { color: colors.textSecondary }]}>{note.body}</Text>

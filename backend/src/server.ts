@@ -8,6 +8,7 @@ import { scopePlugin } from "./plugins/scope";
 import { healthRoutes } from "./routes/health";
 import { authRoutes } from "./routes/auth";
 import { authMeRoutes } from "./routes/auth-me";
+import { authSignupRoutes } from "./routes/auth-signup";
 import { studentAuthRoutes } from "./routes/student-auth";
 import { studentPortalRoutes } from "./routes/student-portal";
 import { enquiryRoutes } from "./routes/enquiries";
@@ -40,6 +41,11 @@ import { aiAnalyticsRoutes } from "./routes/ai-analytics";
 import { auditLogRoutes } from "./routes/audit-log";
 import { aiPromptRoutes } from "./routes/ai-prompts";
 import { admissionsWorkflowRoutes } from "./routes/admissions-workflow";
+import { subjectChangeRequestRoutes } from "./routes/subject-change-requests";
+import { boardChangeTicketRoutes } from "./routes/board-change-tickets";
+import { platformSettingRoutes } from "./routes/platform-settings";
+import { teacherCreditRoutes } from "./routes/teacher-credits";
+import { planRoutes } from "./routes/plans";
 
 const app = Fastify({ logger: true });
 
@@ -51,6 +57,7 @@ app.register(scopePlugin);
 app.register(healthRoutes, { prefix: "/api/v1" });
 app.register(authRoutes, { prefix: "/api/v1" });
 app.register(authMeRoutes, { prefix: "/api/v1" });
+app.register(authSignupRoutes, { prefix: "/api/v1" });
 app.register(studentAuthRoutes, { prefix: "/api/v1" });
 app.register(studentPortalRoutes, { prefix: "/api/v1" });
 app.register(enquiryRoutes, { prefix: "/api/v1" });
@@ -83,6 +90,11 @@ app.register(aiAnalyticsRoutes, { prefix: "/api/v1" });
 app.register(auditLogRoutes, { prefix: "/api/v1" });
 app.register(aiPromptRoutes, { prefix: "/api/v1" });
 app.register(admissionsWorkflowRoutes, { prefix: "/api/v1" });
+app.register(subjectChangeRequestRoutes, { prefix: "/api/v1" });
+app.register(boardChangeTicketRoutes, { prefix: "/api/v1" });
+app.register(platformSettingRoutes, { prefix: "/api/v1" });
+app.register(teacherCreditRoutes, { prefix: "/api/v1" });
+app.register(planRoutes, { prefix: "/api/v1" });
 
 const port = Number(process.env.PORT) || 4000;
 

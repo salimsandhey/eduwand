@@ -19,9 +19,11 @@ import { getCardShadow, lightColors, PRESSED_OPACITY, typography } from "../../t
 import { Screen } from "../../components/Screen";
 import { brandAssets } from "../../theme/brandAssets";
 import { BlinkingMascot } from "../../components/BlinkingMascot";
+import { capitalizeFirst } from "../../utils/text";
+import { BOARDS } from "../../constants/boards";
 
 type AuthTab = "staff" | "student";
-type StaffMode = "login" | "forgot-request" | "forgot-reset";
+type StaffMode = "login" | "forgot-request" | "forgot-reset" | "signup";
 type StudentStep = "phone" | "code" | "select";
 
 const STUDENT_STEP_ORDER: StudentStep[] = ["phone", "code", "select"];
@@ -47,7 +49,7 @@ const DEV_QUICK_LOGIN_ACCOUNTS = [
 ];
 
 export function AuthScreen() {
-  const { login, isLoading, error, requestStudentOtp, verifyStudentOtp, selectStudent } = useAuth();
+  const { login, isLoading, error, signupTeacher, requestStudentOtp, verifyStudentOtp, selectStudent } = useAuth();
   const colors = lightColors;
   const pressedOpacity = PRESSED_OPACITY;
   const cardShadow = getCardShadow("light");
@@ -75,6 +77,17 @@ export function AuthScreen() {
   const [resetError, setResetError] = useState<string | null>(null);
   const [resetMessage, setResetMessage] = useState<string | null>(null);
   const [devResetOtp, setDevResetOtp] = useState<string | null>(null);
+
+  // Individual-teacher signup state - board is a one-time, permanent choice
+  // for a solo-teacher account (Docs/superpowers/plans/2026-09-09-
+  // individual-teacher-onboarding-and-credits.md), so boardConfirmed gates
+  // the submit button until the teacher has explicitly acknowledged that.
+  const [signupFullName, setSignupFullName] = useState("");
+  const [signupEmail, setSignupEmail] = useState("");
+  const [signupPassword, setSignupPassword] = useState("");
+  const [signupWorkspaceName, setSignupWorkspaceName] = useState("");
+  const [signupBoard, setSignupBoard] = useState<string>(BOARDS[0]);
+  const [boardConfirmed, setBoardConfirmed] = useState(false);
 
   // Student login state
   const [studentStep, setStudentStep] = useState<StudentStep>("phone");
@@ -233,6 +246,19 @@ export function AuthScreen() {
     login(accountEmail, accountPassword);
   }
 
+  function handleSignup() {
+    signupTeacher({
+      fullName: signupFullName.trim(),
+      email: signupEmail.trim(),
+      password: signupPassword,
+      board: signupBoard,
+      workspaceName: signupWorkspaceName.trim() || undefined,
+    });
+  }
+
+  const signupValid =
+    signupFullName.trim().length >= 2 && signupEmail.includes("@") && signupPassword.length >= 8 && boardConfirmed;
+
   // --- Student login handlers ---
 
   function startResendCooldown() {
@@ -331,13 +357,21 @@ export function AuthScreen() {
                 </View>
               )}
               <Text style={[styles.mainTitle, isLandingState && styles.loginTitleSmall, { color: colors.textPrimary }]}>
-                {isLandingState ? "Welcome back" : authTab === "staff" ? "Reset password" : studentCopy.title}
+                {isLandingState
+                  ? "Welcome back"
+                  : authTab === "staff"
+                  ? staffMode === "signup"
+                    ? "Create your workspace"
+                    : "Reset password"
+                  : studentCopy.title}
               </Text>
               <Text style={[styles.subTitle, isLandingState && styles.loginSubtitle, { color: colors.textMuted }]}>
                 {isLandingState
                   ? "Sign in to continue to your school workspace."
                   : authTab === "staff"
-                  ? staffMode === "forgot-request"
+                  ? staffMode === "signup"
+                    ? "Set up your own personal classroom - no school invite needed."
+                    : staffMode === "forgot-request"
                     ? "Enter your account email and we'll send you a reset code."
                     : `Enter the code sent to ${resetEmail} and choose a new password.`
                   : studentStep === "code"
@@ -429,6 +463,10 @@ export function AuthScreen() {
 
                       <Pressable hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} onPress={() => setStaffMode("forgot-request")} style={styles.forgotPasswordButton}>
                         <Text style={[styles.forgotPasswordText, { color: colors.accent }]}>Forgot password?</Text>
+                      </Pressable>
+
+                      <Pressable hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} onPress={() => setStaffMode("signup")} style={styles.forgotPasswordButton}>
+                        <Text style={[styles.forgotPasswordText, { color: colors.accent }]}>New teacher? Create your own workspace</Text>
                       </Pressable>
 
                       {error ? (
@@ -568,6 +606,124 @@ export function AuthScreen() {
                       ) : null}
                     </View>
                   ) : null}
+
+                  {staffMode === "signup" ? (
+                    <View style={[styles.formContainer, styles.authCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                      <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Full name</Text>
+                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                        <Ionicons name="person-outline" size={20} color={colors.accent} style={styles.inputIcon} />
+                        <TextInput
+                          style={[styles.input, { color: colors.textPrimary }]}
+                          placeholder="Your full name"
+                          placeholderTextColor={colors.textMuted}
+                          value={signupFullName}
+                          onChangeText={setSignupFullName}
+                        />
+                      </View>
+
+                      <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Email</Text>
+                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                        <Ionicons name="mail-outline" size={20} color={colors.accent} style={styles.inputIcon} />
+                        <TextInput
+                          style={[styles.input, { color: colors.textPrimary }]}
+                          placeholder="you@example.com"
+                          placeholderTextColor={colors.textMuted}
+                          autoCapitalize="none"
+                          keyboardType="email-address"
+                          value={signupEmail}
+                          onChangeText={setSignupEmail}
+                        />
+                      </View>
+
+                      <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Password</Text>
+                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                        <Ionicons name="lock-closed-outline" size={20} color={colors.accent} style={styles.inputIcon} />
+                        <TextInput
+                          style={[styles.input, { color: colors.textPrimary }]}
+                          placeholder="At least 8 characters"
+                          placeholderTextColor={colors.textMuted}
+                          secureTextEntry
+                          value={signupPassword}
+                          onChangeText={setSignupPassword}
+                        />
+                      </View>
+
+                      <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Workspace name (optional)</Text>
+                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                        <Ionicons name="home-outline" size={20} color={colors.accent} style={styles.inputIcon} />
+                        <TextInput
+                          style={[styles.input, { color: colors.textPrimary }]}
+                          placeholder={signupFullName ? `${signupFullName}'s Classroom` : "e.g. My Classroom"}
+                          placeholderTextColor={colors.textMuted}
+                          value={signupWorkspaceName}
+                          onChangeText={setSignupWorkspaceName}
+                        />
+                      </View>
+
+                      <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Board</Text>
+                      <View style={styles.quickLoginGrid}>
+                        {BOARDS.map((b) => {
+                          const active = signupBoard === b;
+                          return (
+                            <Pressable
+                              key={b}
+                              onPress={() => {
+                                setSignupBoard(b);
+                                setBoardConfirmed(false);
+                              }}
+                              style={[
+                                styles.quickLoginIcon,
+                                {
+                                  width: undefined,
+                                  paddingHorizontal: 16,
+                                  backgroundColor: active ? colors.accent : colors.surfaceAccent,
+                                },
+                              ]}
+                              accessibilityRole="button"
+                            >
+                              <Text style={{ color: active ? colors.accentOn : colors.textPrimary, fontWeight: "700" }}>{b}</Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+
+                      <Pressable
+                        onPress={() => setBoardConfirmed((v) => !v)}
+                        style={[styles.errorRow, { marginTop: 14 }]}
+                        accessibilityRole="checkbox"
+                        accessibilityState={{ checked: boardConfirmed }}
+                      >
+                        <Ionicons
+                          name={boardConfirmed ? "checkbox" : "square-outline"}
+                          size={20}
+                          color={boardConfirmed ? colors.accent : colors.textMuted}
+                        />
+                        <Text style={[styles.errorText, { color: colors.textPrimary }]}>
+                          I understand the board ({signupBoard}) is permanent and can't be changed later.
+                        </Text>
+                      </Pressable>
+
+                      {error ? (
+                        <View style={styles.errorRow}>
+                          <Ionicons name="alert-circle" size={16} color={colors.danger} />
+                          <Text style={[styles.errorText, { color: colors.danger }]}>{error}</Text>
+                        </View>
+                      ) : null}
+
+                      <Pressable
+                        onPress={handleSignup}
+                        disabled={isLoading || !signupValid}
+                        accessibilityRole="button"
+                        style={[styles.saveButton, { backgroundColor: colors.accent }, (isLoading || !signupValid) && styles.buttonDisabled]}
+                      >
+                        {isLoading ? (
+                          <ActivityIndicator color={colors.accentOn} />
+                        ) : (
+                          <Text style={[styles.saveButtonText, { color: colors.accentOn }]}>Create workspace</Text>
+                        )}
+                      </Pressable>
+                    </View>
+                  ) : null}
                 </>
               ) : (
                 <>
@@ -620,7 +776,7 @@ export function AuthScreen() {
                       {candidates.map((student) => (
                         <Pressable key={student.id} onPress={() => selectStudent(student.id)} disabled={isLoading} style={({ pressed }) => [styles.studentRow, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: PRESSED_OPACITY }]}>
                           <View style={[styles.studentAvatar, { backgroundColor: colors.accentSoft }]}><Text style={[styles.studentAvatarText, { color: colors.accent }]}>{student.fullName.slice(0, 1).toUpperCase()}</Text></View>
-                          <Text style={[styles.studentName, { color: colors.textPrimary }]}>{student.fullName}</Text>
+                          <Text style={[styles.studentName, { color: colors.textPrimary }]}>{capitalizeFirst(student.fullName)}</Text>
                           <Ionicons name="chevron-forward" size={18} color={colors.accent} />
                         </Pressable>
                       ))}

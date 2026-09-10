@@ -13,6 +13,7 @@ import { Screen } from "../../components/Screen";
 import { api, TopicDetail, ContextSource, Generation, GenerationOutputType, Observation } from "../../api/client";
 import { parseGenerationContent } from "./generation/content";
 import { OUTPUT_TYPE_LABELS, OUTPUT_TYPE_ICONS, OUTPUT_TYPE_ORDER } from "./generation/outputTypeMeta";
+import { capitalizeFirst } from "../../utils/text";
 import { useKeyboardHeight } from "../../hooks/useKeyboardHeight";
 
 type Props = NativeStackScreenProps<RootStackParamList, "TopicDetail">;
@@ -464,14 +465,14 @@ export function TopicDetailScreen({ route, navigation }: Props) {
           <View style={styles.topicHeroGlowLarge} />
           <View style={styles.topicHeroGlowSmall} />
           <View style={styles.topicHeroCopy}>
-            <Text style={styles.topicHeroTitle} numberOfLines={2}>{topic.name}</Text>
-            <Text style={styles.topicHeroMeta} numberOfLines={1}>{topic.subject} · {topic.board}</Text>
+            <Text style={styles.topicHeroTitle} numberOfLines={2}>{capitalizeFirst(topic.name)}</Text>
+            <Text style={styles.topicHeroMeta} numberOfLines={1}>{capitalizeFirst(topic.subject)} · {topic.board}</Text>
             <View style={styles.topicHeroStats}>
-              <View style={styles.topicHeroStat}><Text style={styles.topicHeroStatValue}>{topic.contextSources.length}</Text><Text style={styles.topicHeroStatLabel}>sources</Text></View>
+              <View style={styles.topicHeroStat}><Text style={styles.topicHeroStatValue}>{topic.contextSources.length}</Text><Text style={styles.topicHeroStatLabel}>Sources</Text></View>
               <View style={styles.topicHeroStatDivider} />
-              <View style={styles.topicHeroStat}><Text style={styles.topicHeroStatValue}>{topic.generations.length}</Text><Text style={styles.topicHeroStatLabel}>created</Text></View>
+              <View style={styles.topicHeroStat}><Text style={styles.topicHeroStatValue}>{topic.generations.length}</Text><Text style={styles.topicHeroStatLabel}>Created</Text></View>
               <View style={styles.topicHeroStatDivider} />
-              <View style={styles.topicHeroStat}><Text style={styles.topicHeroStatValue}>{topic.observations.length}</Text><Text style={styles.topicHeroStatLabel}>notes</Text></View>
+              <View style={styles.topicHeroStat}><Text style={styles.topicHeroStatValue}>{topic.observations.length}</Text><Text style={styles.topicHeroStatLabel}>Notes</Text></View>
             </View>
             <View style={styles.heroActions}>
               <Pressable style={({ pressed }) => [styles.heroGenerateButton, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.navigate("GenerationSetup", { topicId })} accessibilityRole="button">

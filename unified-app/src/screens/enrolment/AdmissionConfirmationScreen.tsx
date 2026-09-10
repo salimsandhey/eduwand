@@ -10,6 +10,7 @@ import { StageRail } from "../../components/StageRail";
 import { DocumentChecklist, requiredDocumentCompletion, ChecklistItem, FALLBACK_DOCUMENT_CHECKLIST } from "../../components/DocumentChecklist";
 import { DynamicFormFields } from "../../components/DynamicFormFields";
 import { api, ClassSection, EnquiryDocument, AdmissionInfo, DocumentType, PipelineStage, FormField } from "../../api/client";
+import { capitalizeFirst } from "../../utils/text";
 
 const DRAFT_SAVE_DELAY_MS = 800;
 
@@ -246,7 +247,7 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
             <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Student</Text>
             <ReviewRow label="Full name" value={fullName} colors={colors} />
             <ReviewRow label="Date of birth" value={dateOfBirth} colors={colors} />
-            <ReviewRow label="Class / section" value={selectedClassSection ? `${selectedClassSection.className} ${selectedClassSection.sectionName}` : "—"} colors={colors} />
+            <ReviewRow label="Class / section" value={selectedClassSection ? `${capitalizeFirst(selectedClassSection.className)} ${capitalizeFirst(selectedClassSection.sectionName)}` : "—"} colors={colors} />
           </View>
 
           <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
@@ -341,7 +342,7 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
                       accessibilityRole="button"
                     >
                       <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>
-                        {cs.className} {cs.sectionName}
+                        {capitalizeFirst(cs.className)} {capitalizeFirst(cs.sectionName)}
                       </Text>
                     </Pressable>
                   );
@@ -433,7 +434,7 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
               <Text style={[styles.reviewSectionLabel, { color: colors.textMuted }]}>Student</Text>
               <ReviewRow label="Full name" value={fullName || "—"} colors={colors} />
               <ReviewRow label="Date of birth" value={dateOfBirth || "—"} colors={colors} />
-              <ReviewRow label="Class / section" value={selectedClassSection ? `${selectedClassSection.className} ${selectedClassSection.sectionName}` : "—"} colors={colors} />
+              <ReviewRow label="Class / section" value={selectedClassSection ? `${capitalizeFirst(selectedClassSection.className)} ${capitalizeFirst(selectedClassSection.sectionName)}` : "—"} colors={colors} />
 
               <Text style={[styles.reviewSectionLabel, { color: colors.textMuted, marginTop: 14 }]}>Guardian</Text>
               <ReviewRow label="Name" value={guardianName || "—"} colors={colors} />

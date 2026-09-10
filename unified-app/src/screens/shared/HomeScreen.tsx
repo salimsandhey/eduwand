@@ -147,7 +147,7 @@ function getAvatarSource(seed: string) {
 
 function teacherFirstName(fullName?: string) {
   if (!fullName) return "Teacher";
-  return fullName.trim().split(/\s+/)[0] ?? "Teacher";
+  return capitalizeFirst(fullName.trim().split(/\s+/)[0] ?? "Teacher");
 }
 
 function getWeekDates(referenceDate: Date): Date[] {
@@ -404,7 +404,7 @@ export function HomeScreen() {
                 <View style={styles.profileBlock}>
                   <View style={styles.profileTextBlock}>
                     <Text style={[styles.eyebrow, { color: colors.textMuted }]}>{greeting()},</Text>
-                    <TypingName text={`${user.fullName}!`} color={colors.primaryBrand} style={styles.heroTitle} />
+                    <TypingName text={`${capitalizeFirst(user.fullName)}!`} color={colors.primaryBrand} style={styles.heroTitle} />
                     <Text style={[styles.heroSubtitle, { color: colors.textMuted }]}> 
                       Here&apos;s what&apos;s happening at your school today.
                     </Text>
@@ -740,7 +740,7 @@ export function HomeScreen() {
                       <>
                         <Text style={styles.teacherHeroTitle} numberOfLines={2}>{capitalizeFirst(teacherSummary.continueTopic.name)}</Text>
                         <View style={styles.teacherHeroChip}>
-                          <Text style={[styles.teacherHeroChipText, { color: colors.textPrimary }]}>{teacherSummary.continueTopic.subject}</Text>
+                          <Text style={[styles.teacherHeroChipText, { color: colors.textPrimary }]}>{capitalizeFirst(teacherSummary.continueTopic.subject)}</Text>
                         </View>
                         <Text style={styles.teacherHeroSubtitle}>Updated {formatRelativeTime(teacherSummary.continueTopic.updatedAt)}</Text>
                       </>
@@ -808,7 +808,7 @@ export function HomeScreen() {
                     <Text style={styles.teacherSummaryTitle}>{card.title}</Text>
                     <View style={styles.teacherSummaryCountRow}>
                       <Text style={styles.teacherSummaryValue}>{value}</Text>
-                      <Text style={styles.teacherSummaryCountLabel}>total</Text>
+                      <Text style={styles.teacherSummaryCountLabel}>Total</Text>
                     </View>
                     <View style={styles.teacherSummaryStatusRow}>
                       <View style={styles.teacherSummaryStatusDot} />

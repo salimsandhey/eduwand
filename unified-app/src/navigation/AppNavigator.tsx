@@ -11,6 +11,9 @@ import { StudentTabNavigator } from "./StudentTabNavigator";
 import { NoAccessScreen } from "../screens/auth/NoAccessScreen";
 import { EnquiryDetailScreen } from "../screens/enrolment/EnquiryDetailScreen";
 import { NewEnquiryFormScreen } from "../screens/enrolment/NewEnquiryFormScreen";
+import { CreateFirstClassScreen } from "../screens/studio/CreateFirstClassScreen";
+import { CreditsScreen } from "../screens/studio/CreditsScreen";
+import { RequestSubjectChangeScreen } from "../screens/studio/RequestSubjectChangeScreen";
 import { EditEnquiryScreen } from "../screens/enrolment/EditEnquiryScreen";
 import { AdmissionConfirmationScreen } from "../screens/enrolment/AdmissionConfirmationScreen";
 import { BulkUploadScreen } from "../screens/enrolment/BulkUploadScreen";
@@ -129,6 +132,9 @@ export function AppNavigator() {
           component={StudentAssignmentSubmitScreen}
           options={{ title: "Submit Assignment" }}
         />
+        <Stack.Screen name="CreateFirstClass" component={CreateFirstClassScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="Credits" component={CreditsScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="RequestSubjectChange" component={RequestSubjectChangeScreen} options={{ headerShown: false }} />
       </Stack.Navigator>
     </NavigationContainer>
   );

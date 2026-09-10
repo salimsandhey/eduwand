@@ -142,6 +142,7 @@ export async function authRoutes(app: FastifyInstance) {
           classSectionId: student.classSectionId,
           photoMimeType: null,
           avatarKey: null,
+          accountType: null,
         },
         meta: {},
       };
@@ -160,10 +161,20 @@ export async function authRoutes(app: FastifyInstance) {
         status: true,
         photoMimeType: true,
         avatarKey: true,
+        school: { select: { accountType: true } },
       },
     });
 
-    return { data: user, meta: {} };
+    if (!user) {
+      return { data: null, meta: {} };
+    }
+
+    // accountType flattened onto the response - "individual" gates the
+    // self-serve class/subject setup UI in the mobile app (see Docs/
+    // superpowers/plans/2026-09-09-individual-teacher-onboarding-and-
+    // credits.md). null for staff with no school (e.g. platform_admin).
+    const { school, ...rest } = user;
+    return { data: { ...rest, accountType: school?.accountType ?? null }, meta: {} };
   });
 
   app.post<{ Body: RequestPasswordResetBody }>(

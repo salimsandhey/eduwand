@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { PLATFORM_ADMIN_ROLE, INVITABLE_ROLES } from "../lib/roles";
 import { recordAuditEvent } from "../lib/audit";
+import { grantInitialCredits } from "../lib/credits";
 
 interface InviteUserBody {
   fullName: string;
@@ -150,6 +151,15 @@ export async function userRoutes(app: FastifyInstance) {
       },
       select: { id: true, fullName: true, email: true, role: true, status: true },
     });
+
+    // Credits are billed per teacher seat regardless of account type - grant
+    // at whichever path creates the AppUser (individual signup handles its
+    // own grant inside its transaction; this is the institutional-invite
+    // path). See Docs/superpowers/plans/2026-09-09-individual-teacher-
+    // onboarding-and-credits.md.
+    if (body.role === "teacher") {
+      await grantInitialCredits(prisma, user.id, trustId);
+    }
 
     await recordAuditEvent({
       actorUserId: caller.sub,

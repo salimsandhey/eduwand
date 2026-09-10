@@ -136,7 +136,7 @@ export async function schoolRoutes(app: FastifyInstance) {
       if (caller.role === PLATFORM_ADMIN_ROLE) {
         const schools = await prisma.school.findMany({
           where: request.query.trustId ? { trustId: request.query.trustId } : {},
-          select: { id: true, trustId: true, name: true, board: true, status: true },
+          select: { id: true, trustId: true, name: true, board: true, accountType: true, status: true },
           orderBy: { name: "asc" },
         });
         return { data: schools, meta: {} };
@@ -148,7 +148,7 @@ export async function schoolRoutes(app: FastifyInstance) {
         }
         const schools = await prisma.school.findMany({
           where: { trustId: caller.trustId },
-          select: { id: true, trustId: true, name: true, board: true, status: true },
+          select: { id: true, trustId: true, name: true, board: true, accountType: true, status: true },
           orderBy: { name: "asc" },
         });
         return { data: schools, meta: {} };
@@ -157,7 +157,7 @@ export async function schoolRoutes(app: FastifyInstance) {
       if (caller.schoolId) {
         const schools = await prisma.school.findMany({
           where: { id: caller.schoolId },
-          select: { id: true, trustId: true, name: true, board: true, status: true },
+          select: { id: true, trustId: true, name: true, board: true, accountType: true, status: true },
         });
         return { data: schools, meta: {} };
       }
@@ -209,6 +209,21 @@ export async function schoolRoutes(app: FastifyInstance) {
       }
       if (caller.role === "leadership" && existing.trustId !== caller.trustId) {
         return reply.code(403).send({ data: null, error: { code: "forbidden", message: "School not in your trust" } });
+      }
+
+      // Board is a request/approval-only setting for every school, individual
+      // or institutional - there is no self-service edit path. Raise a
+      // BoardChangeTicket (POST /schools/:id/board-change-tickets) instead.
+      // See Docs/superpowers/plans/2026-09-09-individual-teacher-onboarding-
+      // and-credits.md.
+      if (body.board !== undefined && body.board !== existing.board) {
+        return reply.code(400).send({
+          data: null,
+          error: {
+            code: "board_change_requires_ticket",
+            message: "Board can't be changed directly - submit a board change ticket for approval",
+          },
+        });
       }
 
       if (body.status === "active" && existing.status !== "active") {

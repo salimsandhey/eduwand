@@ -7,6 +7,7 @@ import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, StudentMaterial } from "../../api/client";
 import { decorativeAssets } from "../../theme/decorativeAssets";
+import { capitalizeFirst } from "../../utils/text";
 
 const OUTPUT_TYPE_LABELS: Record<string, string> = {
   lesson_plan: "Lesson Plan",
@@ -64,9 +65,9 @@ export function StudentMaterialsScreen() {
           }
           renderItem={({ item }) => (
             <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, borderLeftColor: colors.accent }, cardShadow]}>
-              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{item.topic.name}</Text>
+              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{capitalizeFirst(item.topic.name)}</Text>
               <Text style={[styles.cardMeta, { color: colors.textMuted }]}>
-                {OUTPUT_TYPE_LABELS[item.outputType] ?? item.outputType} · {item.topic.subject}
+                {OUTPUT_TYPE_LABELS[item.outputType] ?? item.outputType} · {capitalizeFirst(item.topic.subject)}
               </Text>
               <Text style={[styles.body, { color: colors.textSecondary }]} numberOfLines={4}>
                 {item.content}

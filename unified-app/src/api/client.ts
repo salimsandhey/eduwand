@@ -162,6 +162,10 @@ export interface CurrentUser {
   status: string;
   photoMimeType: string | null;
   avatarKey: string | null;
+  // "individual" gates the self-serve class/subject setup UI and Credits
+  // screen behaviors specific to solo-teacher accounts. null for roles with
+  // no school (e.g. platform_admin) or the student branch of /auth/me.
+  accountType: string | null;
 }
 
 export interface UpdateProfileInput {
@@ -466,6 +470,35 @@ export interface Subject {
   id: string;
   schoolId: string;
   name: string;
+}
+
+// reason is one of: plan_grant, admin_topup, ai_usage
+export interface CreditLedgerEntry {
+  id: string;
+  teacherUserId: string;
+  delta: number;
+  reason: string;
+  balanceAfter: number;
+  note: string | null;
+  createdAt: string;
+}
+
+export interface CreditAccountSummary {
+  balance: number;
+  ledgerEntries: CreditLedgerEntry[];
+}
+
+// status is one of: pending, approved, rejected
+export interface SubjectChangeRequest {
+  id: string;
+  teacherUserId: string;
+  schoolId: string;
+  currentSubjects: string[];
+  requestedSubjects: string[];
+  status: string;
+  requestedAt: string;
+  decidedAt: string | null;
+  note: string | null;
 }
 
 export interface StudentStub {
@@ -956,6 +989,20 @@ export const api = {
   listClassSections: (token: string) => request<ClassSection[]>("/class-sections", {}, token),
   listAcademicYears: (token: string) => request<AcademicYear[]>("/academic-years", {}, token),
   listSubjects: (token: string) => request<Subject[]>("/subjects", {}, token),
+
+  signupTeacher: (input: { fullName: string; email: string; password: string; board: string; phone?: string; workspaceName?: string }) =>
+    request<AuthTokens>("/auth/signup/teacher", { method: "POST", body: JSON.stringify(input) }),
+
+  createClassSection: (token: string, schoolId: string, input: { academicYearId: string; className: string; sectionName: string }) =>
+    request<ClassSection>(`/schools/${schoolId}/class-sections`, { method: "POST", body: JSON.stringify(input) }, token),
+  createSubject: (token: string, schoolId: string, input: { name: string }) =>
+    request<Subject>(`/schools/${schoolId}/subjects`, { method: "POST", body: JSON.stringify(input) }, token),
+  assignTeacherToClassSection: (token: string, schoolId: string, classSectionId: string, teacherUserId: string) =>
+    request<{ id: string }>(`/schools/${schoolId}/class-sections/${classSectionId}/teachers`, { method: "POST", body: JSON.stringify({ teacherUserId }) }, token),
+
+  getMyCredits: (token: string) => request<CreditAccountSummary>("/me/credits", {}, token),
+  requestSubjectChange: (token: string, schoolId: string, input: { requestedSubjects: string[]; note?: string }) =>
+    request<SubjectChangeRequest>(`/schools/${schoolId}/subject-change-requests`, { method: "POST", body: JSON.stringify(input) }, token),
 
   listPipelineStages: (token: string) => request<PipelineStage[]>("/pipeline-stages", {}, token),
 

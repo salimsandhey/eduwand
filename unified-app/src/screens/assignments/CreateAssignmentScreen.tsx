@@ -7,6 +7,7 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, ApiError, ClassSection, AssignmentQuestion, QuestionDifficulty } from "../../api/client";
+import { capitalizeFirst } from "../../utils/text";
 
 type Props = NativeStackScreenProps<RootStackParamList, "CreateAssignment">;
 
@@ -218,8 +219,8 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
             <Text style={[styles.meta, { color: colors.textMuted }]}>No class sections configured</Text>
           ) : isEditMode ? (
             <Text style={[styles.meta, { color: colors.textMuted, marginTop: 4 }]}>
-              {classSections.find((cs) => cs.id === classSectionId)?.className ?? ""}{" "}
-              {classSections.find((cs) => cs.id === classSectionId)?.sectionName ?? ""} (class can't be changed after creation)
+              {capitalizeFirst(classSections.find((cs) => cs.id === classSectionId)?.className ?? "")}{" "}
+              {capitalizeFirst(classSections.find((cs) => cs.id === classSectionId)?.sectionName ?? "")} (class can't be changed after creation)
             </Text>
           ) : (
             <View style={styles.chipRow}>
@@ -237,7 +238,7 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
                     accessibilityRole="button"
                   >
                     <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>
-                      {cs.className} {cs.sectionName}
+                      {capitalizeFirst(cs.className)} {capitalizeFirst(cs.sectionName)}
                     </Text>
                   </Pressable>
                 );

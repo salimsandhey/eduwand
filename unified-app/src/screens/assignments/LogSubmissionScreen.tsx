@@ -8,6 +8,7 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, AssignmentDetail, StudentStub } from "../../api/client";
+import { capitalizeFirst } from "../../utils/text";
 
 type Props = NativeStackScreenProps<RootStackParamList, "LogSubmission">;
 
@@ -114,7 +115,7 @@ export function LogSubmissionScreen({ route, navigation }: Props) {
                       accessibilityRole="button"
                       accessibilityState={{ selected: active }}
                     >
-                      <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{student.fullName}</Text>
+                      <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{capitalizeFirst(student.fullName)}</Text>
                     </Pressable>
                   );
                 })}

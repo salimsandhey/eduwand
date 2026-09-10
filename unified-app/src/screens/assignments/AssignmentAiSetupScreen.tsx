@@ -7,6 +7,7 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, AssignmentDraftOptions, QuestionDifficulty } from "../../api/client";
+import { capitalizeFirst } from "../../utils/text";
 
 type Props = NativeStackScreenProps<RootStackParamList, "AssignmentAiSetup">;
 
@@ -102,7 +103,7 @@ export function AssignmentAiSetupScreen({ route, navigation }: Props) {
           <Text style={[styles.topTitle, { color: colors.textPrimary }]}>Generate assignment</Text>
           {options ? (
             <Text style={[styles.topSubtitle, { color: colors.textMuted }]} numberOfLines={1}>
-              {options.classSection.className} {options.classSection.sectionName}
+              {capitalizeFirst(options.classSection.className)} {capitalizeFirst(options.classSection.sectionName)}
             </Text>
           ) : null}
         </View>

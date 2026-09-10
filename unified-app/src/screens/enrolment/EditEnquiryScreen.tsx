@@ -9,6 +9,7 @@ import { Screen } from "../../components/Screen";
 import { DatePicker } from "../../components/DatePicker";
 import { ProfilePhotoPicker, PickedPhoto } from "../../components/ProfilePhotoPicker";
 import { api, EnquirySource, GuardianRelation, ClassSection } from "../../api/client";
+import { capitalizeFirst } from "../../utils/text";
 
 const SOURCES: EnquirySource[] = ["phone", "walk_in", "website", "referral", "event", "social"];
 const GUARDIAN_RELATIONS: GuardianRelation[] = ["mother", "father", "guardian", "other"];
@@ -286,7 +287,7 @@ export function EditEnquiryScreen({ route, navigation }: Props) {
                     onPress={() => setGradeInterest(active ? "" : grade)}
                     accessibilityRole="button"
                   >
-                    <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{grade}</Text>
+                    <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{capitalizeFirst(grade)}</Text>
                   </Pressable>
                 );
               })}

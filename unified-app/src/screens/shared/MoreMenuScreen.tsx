@@ -7,6 +7,7 @@ import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { resolveUserImageSource } from "../../theme/avatars";
 import { api, CurrentUser } from "../../api/client";
+import { capitalizeFirst } from "../../utils/text";
 
 const ENROLMENT_ROLES = ["front_desk", "counsellor"];
 
@@ -49,6 +50,7 @@ export function MoreMenuScreen() {
         { title: "Studio", caption: "Manage topics and generated lessons", icon: "book-outline", onPress: () => parentTabs?.navigate("Studio") },
         { title: "Assignments", caption: "Create and review class work", icon: "document-text-outline", onPress: () => parentTabs?.navigate("Assignment") },
         { title: "Analytics", caption: "View attainment and class progress", icon: "bar-chart-outline", onPress: () => parentTabs?.navigate("Analytics") },
+        { title: "Credits", caption: "View balance and usage history", icon: "wallet-outline", onPress: () => root?.navigate("Credits") },
       ]
     : [];
 
@@ -75,7 +77,7 @@ export function MoreMenuScreen() {
             <View style={styles.profileDivider} />
 
             <View style={styles.profileRightCol}>
-              <Text style={[styles.profileName, { color: colors.accentOn }]} numberOfLines={1}>{user.fullName}</Text>
+              <Text style={[styles.profileName, { color: colors.accentOn }]} numberOfLines={1}>{capitalizeFirst(user.fullName)}</Text>
               <Text style={[styles.profileRole, { color: colors.accentSoft }]} numberOfLines={1}>{formatRole(user.role)}</Text>
 
               <View style={styles.profileInfoList}>
@@ -198,7 +200,7 @@ function EnrolmentMoreScreen({
 
             <View style={styles.profileRightCol}>
               <Text style={[styles.profileName, { color: colors.accentOn }]} numberOfLines={1}>
-                {user.fullName}
+                {capitalizeFirst(user.fullName)}
               </Text>
               <Text style={[styles.profileRole, { color: colors.accentSoft }]} numberOfLines={1}>
                 {formatRole(user.role)}

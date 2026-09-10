@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { storage } from "./storage";
 import { MAX_EXTRACTED_CHARS } from "./extraction";
+import { getFeatureCost, deductCredits } from "./credits";
 
 export const MODEL_SONNET = "claude-sonnet";
 export const MODEL_HAIKU = "claude-haiku";
@@ -1194,14 +1195,25 @@ export async function logAiUsage(params: {
   status?: string;
   durationMs?: number;
 }) {
-  await prisma.aiUsageLog.create({
+  const status = params.status ?? "success";
+  const log = await prisma.aiUsageLog.create({
     data: {
       schoolId: params.schoolId,
       teacherUserId: params.teacherUserId,
       feature: params.feature,
       model: params.model,
-      status: params.status ?? "success",
+      status,
       durationMs: params.durationMs,
     },
   });
+
+  // Only successful calls are charged - callers are expected to have already
+  // pre-flight-checked hasSufficientCredits() before making the AI provider
+  // call in the first place (see the per-route pre-flight checks). See
+  // Docs/superpowers/plans/2026-09-09-individual-teacher-onboarding-and-
+  // credits.md.
+  if (status === "success") {
+    const cost = getFeatureCost(params.feature);
+    await deductCredits(params.teacherUserId, cost, { feature: params.feature, aiUsageLogId: log.id });
+  }
 }

@@ -23,7 +23,17 @@ const ME_SELECT = {
   status: true,
   photoMimeType: true,
   avatarKey: true,
+  school: { select: { accountType: true } },
 } as const;
+
+// Every ME_SELECT response nests accountType under `school` - flatten it so
+// the shape matches GET /auth/me (auth.ts) and the mobile CurrentUser type.
+// See Docs/superpowers/plans/2026-09-09-individual-teacher-onboarding-and-
+// credits.md.
+function flattenAccountType<T extends { school: { accountType: string } | null }>(user: T) {
+  const { school, ...rest } = user;
+  return { ...rest, accountType: school?.accountType ?? null };
+}
 
 const VALID_AVATAR_KEYS = Array.from({ length: 10 }, (_, i) => `avatar-${String(i + 1).padStart(2, "0")}`);
 const MIN_PASSWORD_LENGTH = 8;
@@ -116,7 +126,7 @@ export async function authMeRoutes(app: FastifyInstance) {
         metadata: { fields: Object.keys(data) },
       });
 
-      return { data: user, meta: {} };
+      return { data: flattenAccountType(user), meta: {} };
     }
   );
 
@@ -208,7 +218,7 @@ export async function authMeRoutes(app: FastifyInstance) {
         select: ME_SELECT,
       });
 
-      return reply.code(201).send({ data: user, meta: {} });
+      return reply.code(201).send({ data: flattenAccountType(user), meta: {} });
     }
   );
 
@@ -240,7 +250,7 @@ export async function authMeRoutes(app: FastifyInstance) {
         select: ME_SELECT,
       });
 
-      return { data: user, meta: {} };
+      return { data: flattenAccountType(user), meta: {} };
     }
   );
 
@@ -264,7 +274,7 @@ export async function authMeRoutes(app: FastifyInstance) {
         select: ME_SELECT,
       });
 
-      return { data: user, meta: {} };
+      return { data: flattenAccountType(user), meta: {} };
     }
   );
 

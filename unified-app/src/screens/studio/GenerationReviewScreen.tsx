@@ -283,7 +283,7 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
                 ? "Edited — your version, not the original"
                 : `${OUTPUT_TYPE_LABELS[generation.outputType]}${
                     generation.topic
-                      ? ` • ${generation.topic.classSection.className} ${generation.topic.classSection.sectionName} • ${generation.topic.subject}`
+                      ? ` • ${capitalizeFirst(generation.topic.classSection.className)} ${capitalizeFirst(generation.topic.classSection.sectionName)} • ${capitalizeFirst(generation.topic.subject)}`
                       : ""
                   }`}
             </Text>

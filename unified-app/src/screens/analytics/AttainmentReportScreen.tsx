@@ -8,6 +8,7 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, AttainmentReportRecord } from "../../api/client";
+import { capitalizeFirst } from "../../utils/text";
 
 type Props = NativeStackScreenProps<RootStackParamList, "AttainmentReport">;
 const BAND_COLORS = ["#18A957", "#7C3AED", "#F97316"];
@@ -41,7 +42,7 @@ export function AttainmentReportScreen({ route }: Props) {
 
   const shareReport = useCallback(async () => {
     if (!report) return;
-    await Share.share({ message: `${report.topicName} attainment report\nClass average: ${displayScore(report.averageScore)}\n${report.outcomes ?? ""}` });
+    await Share.share({ message: `${capitalizeFirst(report.topicName)} attainment report\nClass average: ${displayScore(report.averageScore)}\n${report.outcomes ?? ""}` });
   }, [report]);
 
   if (isLoading && !report) return <Screen style={styles.centered}><ActivityIndicator color={colors.accent} /></Screen>;
@@ -62,8 +63,8 @@ export function AttainmentReportScreen({ route }: Props) {
         </View>
 
         <Text style={[styles.title, { color: colors.textPrimary }]}>Attainment Report</Text>
-        <Text style={[styles.topicTitle, { color: colors.textPrimary }]} numberOfLines={2}>{report.topicName}</Text>
-        <Text style={[styles.meta, { color: colors.textMuted }]}>{report.className} - {report.sectionName} · {report.subject}</Text>
+        <Text style={[styles.topicTitle, { color: colors.textPrimary }]} numberOfLines={2}>{capitalizeFirst(report.topicName)}</Text>
+        <Text style={[styles.meta, { color: colors.textMuted }]}>{capitalizeFirst(report.className)} - {capitalizeFirst(report.sectionName)} · {capitalizeFirst(report.subject)}</Text>
 
         <View style={[styles.reportTabs, { backgroundColor: colors.backgroundMuted }]}>
           <View style={[styles.reportTab, { backgroundColor: colors.accent }]}><Text style={styles.reportTabActiveText}>Class report</Text></View>

@@ -9,6 +9,7 @@ import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { Stepper } from "../../components/Stepper";
 import { api, AssignmentDetail, PersonalisationEligibility } from "../../api/client";
+import { capitalizeFirst } from "../../utils/text";
 
 type Props = NativeStackScreenProps<RootStackParamList, "PersonalisationReview">;
 
@@ -162,7 +163,7 @@ export function PersonalisationReviewScreen({ route, navigation }: Props) {
           return (
             <View key={s.id} style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
               <View style={styles.cardHeader}>
-                <Text style={[styles.studentName, { color: colors.textPrimary }]}>{s.studentStub?.fullName ?? "Student"}</Text>
+                <Text style={[styles.studentName, { color: colors.textPrimary }]}>{s.studentStub?.fullName ? capitalizeFirst(s.studentStub.fullName) : "Student"}</Text>
                 {s.status === "pending" ? (
                   <View style={[styles.suggestedPill, { backgroundColor: colors.accentSoft }]}>
                     <Ionicons name="color-wand" size={10} color={colors.accent} />
@@ -250,7 +251,7 @@ export function PersonalisationReviewScreen({ route, navigation }: Props) {
               <Text style={[styles.studentName, { color: colors.textPrimary, marginBottom: 6 }]}>Personalisation unavailable</Text>
               {ineligible.map((e) => (
                 <Text key={e.studentStubId} style={[styles.reasoning, { color: colors.textMuted }]}>
-                  {e.fullName}: needs 2 prior graded assignments on this topic first
+                  {capitalizeFirst(e.fullName)}: needs 2 prior graded assignments on this topic first
                 </Text>
               ))}
             </View>

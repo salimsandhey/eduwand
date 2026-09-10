@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { aiProvider, logAiUsage, GenerationOutputType } from "../lib/ai";
+import { hasSufficientCredits, getFeatureCost } from "../lib/credits";
 import { ContextSource } from "@prisma/client";
 
 const MAX_CONTEXT_CHARS_FOR_PROMPT = 12000;
@@ -83,6 +84,10 @@ export async function generationRoutes(app: FastifyInstance) {
           data: null,
           error: { code: "validation_error", message: "classCount must be <= 10 and minutesPerClass <= 90" },
         });
+      }
+
+      if (!(await hasSufficientCredits(request.user.sub, getFeatureCost("generation")))) {
+        return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to generate this content" } });
       }
 
       const start = Date.now();
@@ -211,6 +216,10 @@ export async function generationRoutes(app: FastifyInstance) {
 
     const { contextText, usedSources } = buildContextText(generation.topic.contextSources);
     const formatTemplate = await getSchoolFormatTemplate(request.schoolId);
+
+    if (!(await hasSufficientCredits(request.user.sub, getFeatureCost("generation")))) {
+      return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to retry this generation" } });
+    }
 
     const start = Date.now();
     const { content, model } = await aiProvider.generateContent({

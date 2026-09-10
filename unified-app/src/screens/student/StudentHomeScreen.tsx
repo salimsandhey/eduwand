@@ -11,6 +11,7 @@ import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, StudentAssignmentView, StudentSubmissionStatus } from "../../api/client";
 import { decorativeAssets } from "../../theme/decorativeAssets";
+import { capitalizeFirst } from "../../utils/text";
 
 type Props = CompositeScreenProps<BottomTabScreenProps<StudentTabParamList, "Home">, NativeStackScreenProps<RootStackParamList>>;
 
@@ -57,7 +58,7 @@ export function StudentHomeScreen({ navigation }: Props) {
       <View style={styles.titleSection}>
         <View style={styles.titleRow}>
           <View>
-            <Text style={[styles.title, { color: colors.textPrimary }]}>Hi, {user?.fullName ?? "Student"}</Text>
+            <Text style={[styles.title, { color: colors.textPrimary }]}>Hi, {user?.fullName ? capitalizeFirst(user.fullName) : "Student"}</Text>
             <Text style={[styles.subtitle, { color: colors.textMuted }]}>
               {assignments.length} assignment{assignments.length === 1 ? "" : "s"}
             </Text>

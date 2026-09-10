@@ -12,26 +12,13 @@ import { api, Topic, Subject } from "../../api/client";
 import { decorativeAssets } from "../../theme/decorativeAssets";
 import { useKeyboardHeight } from "../../hooks/useKeyboardHeight";
 import { capitalizeFirst } from "../../utils/text";
-
-const BOARDS = ["CBSE", "ICSE", "IB"];
+import { getRelativeDateLabel } from "../../utils/date";
+import { BOARDS } from "../../constants/boards";
 
 type Props = NativeStackScreenProps<RootStackParamList, "TopicList">;
 
 function displayClassName(className: string, sectionName: string) {
-  return `${className} - ${sectionName}`;
-}
-
-function getUpdatedLabel(updatedAt: string) {
-  const updated = new Date(updatedAt);
-  const today = new Date();
-  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-  const updatedStart = new Date(updated.getFullYear(), updated.getMonth(), updated.getDate()).getTime();
-  const dayDifference = Math.round((todayStart - updatedStart) / 86_400_000);
-
-  if (dayDifference <= 0) return "Today";
-  if (dayDifference === 1) return "Yesterday";
-  if (dayDifference < 7) return `${dayDifference} days ago`;
-  return updated.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  return `${capitalizeFirst(className)} - ${capitalizeFirst(sectionName)}`;
 }
 
 export function TopicListScreen({ navigation, route }: Props) {
@@ -146,7 +133,7 @@ export function TopicListScreen({ navigation, route }: Props) {
               accessibilityRole="button"
               accessibilityLabel="Filter topics by subject"
             >
-              <Text style={[styles.subjectText, { color: colors.accent }]}>{subjectFilter ?? "All subjects"}</Text>
+              <Text style={[styles.subjectText, { color: colors.accent }]}>{subjectFilter ? capitalizeFirst(subjectFilter) : "All subjects"}</Text>
               {availableSubjects.length > 0 ? <Ionicons name="chevron-down" size={16} color={colors.accent} /> : null}
             </Pressable>
           </View>
@@ -166,7 +153,7 @@ export function TopicListScreen({ navigation, route }: Props) {
         ) : displayedTopics.length === 0 ? (
           <View style={[styles.emptyTopics, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
             <Ionicons name="filter-outline" size={22} color={colors.accent} />
-            <Text style={[styles.emptyTopicsText, { color: colors.textMuted }]}>No topics for {subjectFilter}.</Text>
+            <Text style={[styles.emptyTopicsText, { color: colors.textMuted }]}>No topics for {capitalizeFirst(subjectFilter)}.</Text>
           </View>
         ) : (
           displayedTopics.map((topic, index) => (
@@ -181,7 +168,7 @@ export function TopicListScreen({ navigation, route }: Props) {
               </View>
               <View style={styles.topicCopy}>
                 <Text style={[styles.topicName, { color: colors.textPrimary }]} numberOfLines={2}>{capitalizeFirst(topic.name)}</Text>
-                <Text style={[styles.topicMeta, { color: colors.textMuted }]} numberOfLines={1}>{topic.subject} · {topic.board} · {getUpdatedLabel(topic.updatedAt)}</Text>
+                <Text style={[styles.topicMeta, { color: colors.textMuted }]} numberOfLines={1}>{capitalizeFirst(topic.subject)} · {topic.board} · {getRelativeDateLabel(topic.updatedAt)}</Text>
               </View>
               <Ionicons name="chevron-forward" size={24} color={colors.accent} />
             </Pressable>
@@ -337,7 +324,7 @@ export function TopicListScreen({ navigation, route }: Props) {
                   }}
                   accessibilityRole="button"
                 >
-                  <Text style={[styles.pickerRowText, { color: subjectFilter === s ? colors.accent : colors.textPrimary }]}>{s}</Text>
+                  <Text style={[styles.pickerRowText, { color: subjectFilter === s ? colors.accent : colors.textPrimary }]}>{capitalizeFirst(s)}</Text>
                   {subjectFilter === s ? <Ionicons name="checkmark" size={18} color={colors.accent} /> : null}
                 </Pressable>
               ))}

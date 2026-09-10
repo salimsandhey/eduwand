@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { ClassAnalytics, ClassSection, StudentAnalytics } from "../../api/client";
+import { capitalizeFirst } from "../../utils/text";
 
 type AnalyticsTab = "class" | "students";
 const BAND_COLORS = ["#18A957", "#7C3AED", "#F97316"];
@@ -90,7 +91,7 @@ export function TeacherAnalyticsScreen() {
 
   const shareAnalytics = useCallback(async () => {
     if (!analytics || !selectedClass) return;
-    await Share.share({ message: `${selectedClass.className} ${selectedClass.sectionName} analytics\nClass average: ${scoreText(analytics.classAverage)}\nGraded submissions: ${analytics.submissionCount}` });
+    await Share.share({ message: `${capitalizeFirst(selectedClass.className)} ${capitalizeFirst(selectedClass.sectionName)} analytics\nClass average: ${scoreText(analytics.classAverage)}\nGraded submissions: ${analytics.submissionCount}` });
   }, [analytics, selectedClass]);
 
   return (
@@ -107,7 +108,7 @@ export function TeacherAnalyticsScreen() {
 
         {classSections.length > 0 ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.classPicker}>{classSections.map((section) => {
           const active = classSectionId === section.id;
-          return <Pressable key={section.id} style={({ pressed }) => [styles.classChip, { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border }, pressed && { opacity: pressedOpacity }]} onPress={() => { setClassSectionId(section.id); setStudentDetail(null); }} accessibilityRole="button"><Text style={[styles.classChipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{section.className} {section.sectionName}</Text></Pressable>;
+          return <Pressable key={section.id} style={({ pressed }) => [styles.classChip, { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border }, pressed && { opacity: pressedOpacity }]} onPress={() => { setClassSectionId(section.id); setStudentDetail(null); }} accessibilityRole="button"><Text style={[styles.classChipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{capitalizeFirst(section.className)} {capitalizeFirst(section.sectionName)}</Text></Pressable>;
         })}</ScrollView> : null}
 
         {isLoading ? <ActivityIndicator color={colors.accent} style={styles.loader} /> : null}
@@ -119,7 +120,7 @@ export function TeacherAnalyticsScreen() {
           </View>
 
           {activeTab === "class" ? <>
-            <Text style={[styles.reportTitle, { color: colors.textPrimary }]}>{selectedClass ? `${selectedClass.className} ${selectedClass.sectionName}` : "Class report"}</Text>
+            <Text style={[styles.reportTitle, { color: colors.textPrimary }]}>{selectedClass ? `${capitalizeFirst(selectedClass.className)} ${capitalizeFirst(selectedClass.sectionName)}` : "Class report"}</Text>
             <Text style={[styles.reportMeta, { color: colors.textMuted }]}>Class-wide attainment overview</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.metricRow}>
               <Metric icon="people-outline" color="#7C3AED" value={String(analytics.students.length)} label="Students graded" colors={colors} />
@@ -152,8 +153,8 @@ export function TeacherAnalyticsScreen() {
             <View style={[styles.insightCard, { backgroundColor: colors.accentSoft }]}><View style={[styles.insightIcon, { backgroundColor: colors.surface }]}><Ionicons name="bulb-outline" size={19} color={colors.accent} /></View><View style={styles.insightCopy}><Text style={[styles.insightTitle, { color: colors.textPrimary }]}>Key insight</Text><Text style={[styles.insightText, { color: colors.textSecondary }]}>{weakestArea ? `${weakestArea.title} is the lowest-scoring assignment at ${Math.round(weakestArea.averageScore)}%. Consider a short recap before moving ahead.` : "Grade an assignment to unlock class-level teaching insights."}</Text><View style={[styles.insightChip, { backgroundColor: colors.surface, borderColor: colors.accentSoftAlt }]}><Text style={[styles.insightChipText, { color: colors.accent }]}>Focus area</Text><Ionicons name="arrow-forward" size={13} color={colors.accent} /></View></View></View>
           </> : <>
             <Text style={[styles.studentHeading, { color: colors.textPrimary }]}>Student attainment</Text>
-            {analytics.students.length === 0 ? <Text style={[styles.emptyText, { color: colors.textMuted }]}>No graded submissions yet for this class.</Text> : analytics.students.map((student) => <Pressable key={student.studentStubId} style={({ pressed }) => [styles.studentRow, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]} onPress={() => viewStudent(student.studentStubId)} accessibilityRole="button"><View style={[styles.studentAvatar, { backgroundColor: colors.accentSoft }]}><Text style={[styles.studentAvatarText, { color: colors.accent }]}>{student.fullName.slice(0, 1).toUpperCase()}</Text></View><View style={styles.studentCopy}><Text style={[styles.studentName, { color: colors.textPrimary }]}>{student.fullName}</Text><Text style={[styles.studentMeta, { color: colors.textMuted }]}>{student.submissionCount} submission{student.submissionCount === 1 ? "" : "s"}</Text></View><Text style={[styles.studentScore, { color: student.averageScore < 60 ? colors.danger : colors.accent }]}>{Math.round(student.averageScore)}%</Text><Ionicons name="chevron-forward" size={16} color={colors.textMuted} /></Pressable>)}
-            {studentDetail ? <View style={[styles.detailCard, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}><View style={styles.detailHeading}><Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{studentDetail.fullName}</Text><Pressable onPress={() => setStudentDetail(null)} hitSlop={8}><Ionicons name="close" size={18} color={colors.textMuted} /></Pressable></View>{studentDetail.history.map((history, index) => <View key={`${history.assignmentTitle}-${index}`} style={styles.historyRow}><Text style={[styles.historyTitle, { color: colors.textSecondary }]} numberOfLines={1}>{history.assignmentTitle}</Text><Text style={[styles.historyScore, { color: colors.textPrimary }]}>{scoreText(history.score)}</Text></View>)}</View> : null}
+            {analytics.students.length === 0 ? <Text style={[styles.emptyText, { color: colors.textMuted }]}>No graded submissions yet for this class.</Text> : analytics.students.map((student) => <Pressable key={student.studentStubId} style={({ pressed }) => [styles.studentRow, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]} onPress={() => viewStudent(student.studentStubId)} accessibilityRole="button"><View style={[styles.studentAvatar, { backgroundColor: colors.accentSoft }]}><Text style={[styles.studentAvatarText, { color: colors.accent }]}>{student.fullName.slice(0, 1).toUpperCase()}</Text></View><View style={styles.studentCopy}><Text style={[styles.studentName, { color: colors.textPrimary }]}>{capitalizeFirst(student.fullName)}</Text><Text style={[styles.studentMeta, { color: colors.textMuted }]}>{student.submissionCount} submission{student.submissionCount === 1 ? "" : "s"}</Text></View><Text style={[styles.studentScore, { color: student.averageScore < 60 ? colors.danger : colors.accent }]}>{Math.round(student.averageScore)}%</Text><Ionicons name="chevron-forward" size={16} color={colors.textMuted} /></Pressable>)}
+            {studentDetail ? <View style={[styles.detailCard, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}><View style={styles.detailHeading}><Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{capitalizeFirst(studentDetail.fullName)}</Text><Pressable onPress={() => setStudentDetail(null)} hitSlop={8}><Ionicons name="close" size={18} color={colors.textMuted} /></Pressable></View>{studentDetail.history.map((history, index) => <View key={`${history.assignmentTitle}-${index}`} style={styles.historyRow}><Text style={[styles.historyTitle, { color: colors.textSecondary }]} numberOfLines={1}>{history.assignmentTitle}</Text><Text style={[styles.historyScore, { color: colors.textPrimary }]}>{scoreText(history.score)}</Text></View>)}</View> : null}
           </>}
         </> : null}
       </ScrollView>

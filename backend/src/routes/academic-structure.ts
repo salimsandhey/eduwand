@@ -42,6 +42,12 @@ export async function authorizeForSchool(request: FastifyRequest, reply: Fastify
 
   if (caller.role === "leadership" && caller.trustId === school.trustId) return true;
   if (caller.role === "admin" && caller.schoolId === school.id) return true;
+  // A teacher acts as admin of their own personal ("individual") school only
+  // - never of an institutional one, and never of another individual
+  // teacher's school. schoolId equality is the load-bearing check here; do
+  // not relax it. See Docs/superpowers/plans/2026-09-09-individual-teacher-
+  // onboarding-and-credits.md.
+  if (caller.role === "teacher" && caller.schoolId === school.id && school.accountType === "individual") return true;
 
   reply.code(403).send({ data: null, error: { code: "forbidden", message: "Not authorized for this school" } });
   return false;

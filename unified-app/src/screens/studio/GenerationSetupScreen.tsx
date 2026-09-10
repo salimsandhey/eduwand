@@ -43,7 +43,7 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
   }, [accessToken, topicId]);
 
   const topicMeta = topic
-    ? `${topic.subject} · ${topic.board} · ${topic.classSection.className} ${topic.classSection.sectionName}`
+    ? `${capitalizeFirst(topic.subject)} · ${topic.board} · ${capitalizeFirst(topic.classSection.className)} ${capitalizeFirst(topic.classSection.sectionName)}`
     : null;
 
   function selectOutput(item: (typeof OUTPUT_TYPES)[number]) {

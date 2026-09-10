@@ -24,6 +24,8 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
 
+  signupTeacher: (input: { fullName: string; email: string; password: string; board: string; phone?: string; workspaceName?: string }) => Promise<void>;
+
   requestStudentOtp: (phone: string) => Promise<string | undefined>;
   verifyStudentOtp: (phone: string, code: string) => Promise<{ students: StudentOtpMatch[]; selectionToken: string }>;
   selectStudent: (studentStubId: string, selectionTokenOverride?: string) => Promise<void>;
@@ -110,6 +112,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(me);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  // Individual-teacher self-signup - not a login (no existing account to
+  // authenticate against), but lands the teacher in the app the same way
+  // login/selectStudent do: tokens from the signup response, then /auth/me,
+  // then persist + setUser. See Docs/superpowers/plans/2026-09-09-
+  // individual-teacher-onboarding-and-credits.md.
+  async function signupTeacher(input: { fullName: string; email: string; password: string; board: string; phone?: string; workspaceName?: string }) {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const tokens = await api.signupTeacher(input);
+      const me = await api.me(tokens.accessToken);
+      setAccessToken(tokens.accessToken);
+      setRefreshToken(tokens.refreshToken);
+      await persistTokens(tokens);
+      setUser(me);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Signup failed");
     } finally {
       setIsLoading(false);
     }
@@ -215,6 +239,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         error,
         login,
         logout,
+        signupTeacher,
         requestStudentOtp,
         verifyStudentOtp,
         selectStudent,

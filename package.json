@@ -9,5 +9,9 @@
   ],
   "scripts": {
     "dev:backend": "npm run dev --workspace=backend"
+  },
+  "overrides": {
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
   }
 }

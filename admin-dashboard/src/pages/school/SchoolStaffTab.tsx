@@ -38,6 +38,13 @@ export function SchoolStaffTab() {
   const [roleGrantError, setRoleGrantError] = useState<Record<string, string>>({});
   const [roleGrantWorking, setRoleGrantWorking] = useState<Record<string, boolean>>({});
 
+  // Credits/billing (Docs/superpowers/plans/2026-09-09-individual-teacher-
+  // onboarding-and-credits.md) - manual top-up only in this phase, no
+  // payment gateway. Amount input is shown per teacher row.
+  const [topUpAmount, setTopUpAmount] = useState<Record<string, string>>({});
+  const [topUpWorking, setTopUpWorking] = useState<Record<string, boolean>>({});
+  const [topUpMessage, setTopUpMessage] = useState<Record<string, string>>({});
+
   const loadStaff = useCallback(async () => {
     if (!accessToken || !id || !canManageStaff) return;
     setStaffLoading(true);
@@ -183,6 +190,24 @@ export function SchoolStaffTab() {
       setRoleGrantError((prev) => ({ ...prev, [staffId]: err instanceof Error ? err.message : "Failed to remove role" }));
     } finally {
       setRoleGrantWorking((prev) => ({ ...prev, [staffId]: false }));
+    }
+  }
+
+  async function topUpCredits(staffId: string) {
+    if (!accessToken) return;
+    const amount = Number(topUpAmount[staffId]);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    setTopUpWorking((prev) => ({ ...prev, [staffId]: true }));
+    setTopUpMessage((prev) => ({ ...prev, [staffId]: "" }));
+    setStaffRowError((prev) => ({ ...prev, [staffId]: "" }));
+    try {
+      const res = await api.topUpTeacherCredits(accessToken, staffId, { amount });
+      setTopUpMessage((prev) => ({ ...prev, [staffId]: `New balance: ${res.balance}` }));
+      setTopUpAmount((prev) => ({ ...prev, [staffId]: "" }));
+    } catch (err) {
+      setStaffRowError((prev) => ({ ...prev, [staffId]: err instanceof Error ? err.message : "Failed to top up credits" }));
+    } finally {
+      setTopUpWorking((prev) => ({ ...prev, [staffId]: false }));
     }
   }
 
@@ -439,6 +464,29 @@ export function SchoolStaffTab() {
                           </button>
                         </div>
                       )}
+                      {u.role === "teacher" ? (
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
+                          <input
+                            style={{ ...styles.roleSelect, width: 90 }}
+                            type="number"
+                            min={1}
+                            placeholder="Credits"
+                            value={topUpAmount[u.id] ?? ""}
+                            disabled={!!topUpWorking[u.id]}
+                            onChange={(e) => setTopUpAmount((prev) => ({ ...prev, [u.id]: e.target.value }))}
+                          />
+                          <button
+                            style={styles.smallButton}
+                            disabled={!!topUpWorking[u.id] || !topUpAmount[u.id]}
+                            onClick={() => topUpCredits(u.id)}
+                          >
+                            Top up
+                          </button>
+                          {topUpMessage[u.id] ? (
+                            <span style={{ fontSize: 12, color: "var(--status-good)" }}>{topUpMessage[u.id]}</span>
+                          ) : null}
+                        </div>
+                      ) : null}
                       {staffRowError[u.id] ? (
                         <p style={{ color: "var(--status-critical)", fontSize: 12, margin: "4px 0 0 0" }}>
                           {staffRowError[u.id]}

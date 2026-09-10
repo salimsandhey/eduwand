@@ -21,6 +21,7 @@ import {
   EnrolmentGradeDemand,
   EnrolmentYearlyTrend,
 } from "../../api/client";
+import { capitalizeFirst } from "../../utils/text";
 
 const PALETTE = ["#7359D9", "#F2675B", "#E5A72D", "#3B9EDB", "#2FA678", "#C24039"];
 
@@ -495,7 +496,7 @@ function ChannelEffectivenessChart({ taskOutcomes, colors }: { taskOutcomes: Enr
 
 function TeamChart({ data, colors }: { data: EnrolmentCounsellorPerformance[] | null; colors: ThemeColors }) {
   const bars = (data ?? []).slice(0, 5).map((counsellor, index) => ({
-    label: counsellor.fullName.split(" ")[0] ?? counsellor.fullName,
+    label: capitalizeFirst(counsellor.fullName.split(" ")[0] ?? counsellor.fullName),
     value: Math.round(counsellor.conversionRate * 100),
     color: PALETTE[index % PALETTE.length],
   }));

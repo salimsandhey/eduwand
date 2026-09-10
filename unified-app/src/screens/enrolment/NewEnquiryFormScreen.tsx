@@ -10,6 +10,7 @@ import { DatePicker } from "../../components/DatePicker";
 import { ProfilePhotoPicker, PickedPhoto } from "../../components/ProfilePhotoPicker";
 import { DynamicFormFields } from "../../components/DynamicFormFields";
 import { api, EnquirySource, GuardianRelation, PossibleDuplicate, ClassSection, FormField } from "../../api/client";
+import { capitalizeFirst } from "../../utils/text";
 
 const SOURCES: EnquirySource[] = ["phone", "walk_in", "website", "referral", "event", "social"];
 const GUARDIAN_RELATIONS: GuardianRelation[] = ["mother", "father", "guardian", "other"];
@@ -303,7 +304,7 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
                     onPress={() => setGradeInterest(active ? "" : grade)}
                     accessibilityRole="button"
                   >
-                    <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{grade}</Text>
+                    <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{capitalizeFirst(grade)}</Text>
                   </Pressable>
                 );
               })}

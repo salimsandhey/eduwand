@@ -28,6 +28,9 @@ export type RootStackParamList = {
   HelpSupport: undefined;
   Pipeline: undefined;
   StudentAssignmentSubmit: { assignmentId: string; questions: AssignmentQuestion[]; title: string };
+  CreateFirstClass: undefined;
+  Credits: undefined;
+  RequestSubjectChange: undefined;
 };
 
 export type EnrolmentTabParamList = {

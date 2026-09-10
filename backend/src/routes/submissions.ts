@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { storage } from "../lib/storage";
 import { aiProvider, logAiUsage, GradingQuestion, AnswerKeyContext, QuestionGradeDetail } from "../lib/ai";
+import { hasSufficientCredits, getFeatureCost } from "../lib/credits";
 import { selectQuestionsForMix, DifficultyTaggedQuestion } from "../lib/personalisation";
 
 interface CreateSubmissionBody {
@@ -205,6 +206,10 @@ export async function submissionRoutes(app: FastifyInstance) {
       verifiedAnswer: k.teacherVerifiedAnswer!,
       marks: k.marks,
     }));
+
+    if (!(await hasSufficientCredits(request.user.sub, getFeatureCost("grading")))) {
+      return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to grade this submission" } });
+    }
 
     const start = Date.now();
     const { score, feedback, flagged, nextStep, model, questionDetails } = await aiProvider.gradeSubmission({

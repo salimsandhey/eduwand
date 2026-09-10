@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { aiProvider, logAiUsage, AssignmentGenInput, GeneratedAssignmentQuestion } from "../lib/ai";
+import { hasSufficientCredits, getFeatureCost } from "../lib/credits";
 import { buildTaughtContentText, buildContextSourceText } from "../lib/generation-content";
 
 interface Question {
@@ -308,6 +309,11 @@ export async function assignmentRoutes(app: FastifyInstance) {
         const avgScore =
           pastGrades.length > 0 ? pastGrades.reduce((sum, g) => sum + (g.finalScore ?? 0), 0) / pastGrades.length : null;
 
+        if (!(await hasSufficientCredits(request.user.sub, getFeatureCost("personalisation_suggestion")))) {
+          skipped.push({ studentStubId: student.id, reason: "Insufficient credits" });
+          continue;
+        }
+
         const start = Date.now();
         const { suggestedMix, reasoning, model } = await aiProvider.generatePersonalisationSuggestion({
           studentName: student.fullName,
@@ -373,6 +379,10 @@ export async function assignmentRoutes(app: FastifyInstance) {
     });
     if (!assignment) {
       return reply.code(404).send({ data: null, error: { code: "not_found", message: "Assignment not found" } });
+    }
+
+    if (!(await hasSufficientCredits(request.user.sub, getFeatureCost("generation")))) {
+      return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to generate this answer key" } });
     }
 
     const questions = assignment.questions as unknown as { id: string; prompt: string }[];
@@ -653,6 +663,10 @@ export async function assignmentRoutes(app: FastifyInstance) {
         schoolFormatInstructions: formatTemplate?.templateBody ?? null,
       };
 
+      if (!(await hasSufficientCredits(request.user.sub, getFeatureCost("assignment_generation")))) {
+        return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to generate this assignment" } });
+      }
+
       const start = Date.now();
       const { questions: generated, model } = await aiProvider.generateAssignmentFromTopic(genInput);
       if (generated.length === 0) {
@@ -766,6 +780,10 @@ export async function assignmentRoutes(app: FastifyInstance) {
         classLabel: `${topic.classSection.className} ${topic.classSection.sectionName}`,
         schoolFormatInstructions: formatTemplate?.templateBody ?? null,
       };
+
+      if (!(await hasSufficientCredits(request.user.sub, getFeatureCost("assignment_generation")))) {
+        return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to regenerate this question" } });
+      }
 
       const start = Date.now();
       const { questions: generated, model } = await aiProvider.generateAssignmentFromTopic(genInput);

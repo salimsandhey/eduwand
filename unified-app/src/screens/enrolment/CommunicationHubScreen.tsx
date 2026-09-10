@@ -6,6 +6,7 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, ClassSection, StudentStub, CommunicationMessage } from "../../api/client";
+import { capitalizeFirst } from "../../utils/text";
 
 type Section = "student" | "class" | "weekly";
 
@@ -161,7 +162,7 @@ export function CommunicationHubScreen() {
                     accessibilityRole="button"
                   >
                     <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>
-                      {cs.className} {cs.sectionName}
+                      {capitalizeFirst(cs.className)} {capitalizeFirst(cs.sectionName)}
                     </Text>
                   </Pressable>
                 );
@@ -185,7 +186,7 @@ export function CommunicationHubScreen() {
                         onPress={() => setStudentId(s.id)}
                         accessibilityRole="button"
                       >
-                        <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{s.fullName}</Text>
+                        <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{capitalizeFirst(s.fullName)}</Text>
                       </Pressable>
                     );
                   })}

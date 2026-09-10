@@ -12,6 +12,8 @@ import { spacing, radius } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { api, ClassSection } from "../../api/client";
 import { decorativeAssets } from "../../theme/decorativeAssets";
+import { getRelativeDateLabel } from "../../utils/date";
+import { capitalizeFirst } from "../../utils/text";
 
 type Props = CompositeScreenProps<BottomTabScreenProps<TeacherTabParamList, "Studio">, NativeStackScreenProps<RootStackParamList>>;
 
@@ -27,6 +29,7 @@ const CLASS_FOLDER_GRAPHICS = [
 interface ClassCardStats {
   studentCount: number;
   topicCount: number;
+  lastActivityAt: string | null;
 }
 
 function getClassCardMeta(index: number) {
@@ -37,7 +40,7 @@ function getClassCardMeta(index: number) {
 }
 
 export function MyClassesScreen({ navigation }: Props) {
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
 
   const [classSections, setClassSections] = useState<ClassSection[]>([]);
@@ -71,7 +74,11 @@ export function MyClassesScreen({ navigation }: Props) {
             api.listTopics(accessToken, { classSectionId: cs.id }),
           ]);
           const studentCount = studentsRes.data?.length ?? 0;
-          return [cs.id, { studentCount, topicCount: topics.length }] as const;
+          const lastActivityAt = topics.reduce<string | null>((latest, topic) => {
+            if (!latest || new Date(topic.updatedAt).getTime() > new Date(latest).getTime()) return topic.updatedAt;
+            return latest;
+          }, null);
+          return [cs.id, { studentCount, topicCount: topics.length, lastActivityAt }] as const;
         })
       );
       setClassStats(Object.fromEntries(statsEntries));
@@ -106,16 +113,13 @@ export function MyClassesScreen({ navigation }: Props) {
             <Ionicons name="arrow-back" size={22} color={colors.textPrimary} />
           </Pressable>
 
-          <Text style={[styles.topBarTitle, { color: colors.textPrimary }]}>My classes</Text>
+          <Text style={[styles.topBarTitle, { color: colors.textPrimary }]}>My Classes</Text>
           <View style={[styles.topBarAccent, { backgroundColor: colors.accent }]} />
 
         </View>
 
         <View style={styles.classListHeader}>
-          <View style={[styles.classListLabel, { backgroundColor: colors.accentSoft }]}>
-            <View style={[styles.classListLabelDot, { backgroundColor: colors.accent }]} />
-            <Text style={[styles.classListLabelText, { color: colors.accent }]}>Class folders</Text>
-          </View>
+          <Text style={[styles.classListLabelText, { color: colors.textMuted }]}>Class folders</Text>
           <Text style={[styles.classCount, { color: colors.textMuted }]}>{groupedClasses.length} class{groupedClasses.length === 1 ? "" : "es"}</Text>
         </View>
 
@@ -131,7 +135,12 @@ export function MyClassesScreen({ navigation }: Props) {
               const isExpanded = expandedClassName === group.className;
               const singleSection = group.sections[0];
               const singleStats = classStats[singleSection.id];
-              const totalTopics = group.sections.reduce((total, section) => total + (classStats[section.id]?.topicCount ?? 0), 0);
+              const groupLastActivityAt = group.sections.reduce<string | null>((latest, section) => {
+                const sectionActivity = classStats[section.id]?.lastActivityAt ?? null;
+                if (!sectionActivity) return latest;
+                if (!latest || new Date(sectionActivity).getTime() > new Date(latest).getTime()) return sectionActivity;
+                return latest;
+              }, null);
 
               let metaText: string;
               if (isMultiSection) {
@@ -168,14 +177,16 @@ export function MyClassesScreen({ navigation }: Props) {
                       </View>
                     <View style={styles.folderCopy}>
                       <Text style={[styles.folderTitle, { color: colors.textPrimary }]} numberOfLines={1}>
-                        {isMultiSection ? group.className : `${singleSection.className} · ${singleSection.sectionName}`}
+                        {isMultiSection
+                          ? capitalizeFirst(group.className)
+                          : `${capitalizeFirst(singleSection.className)} · ${capitalizeFirst(singleSection.sectionName)}`}
                       </Text>
                       <Text style={[styles.folderMeta, { color: colors.textMuted }]} numberOfLines={1}>{metaText}</Text>
-                      <View style={styles.topicDots}>
-                        {Array.from({ length: Math.min(Math.max(totalTopics, 1), 8) }, (_, dotIndex) => (
-                          <View key={dotIndex} style={[styles.topicDot, { backgroundColor: meta.accent, opacity: dotIndex < totalTopics ? 1 : 0.22 }]} />
-                        ))}
-                        <Text style={[styles.topicCount, { color: colors.textMuted }]}>{totalTopics} topic{totalTopics === 1 ? "" : "s"}</Text>
+                      <View style={styles.activityRow}>
+                        <Ionicons name="time-outline" size={12} color={meta.accent} />
+                        <Text style={[styles.activityText, { color: colors.textMuted }]}>
+                          {groupLastActivityAt ? `Active ${getRelativeDateLabel(groupLastActivityAt)}` : "No activity yet"}
+                        </Text>
                       </View>
                     </View>
                     <View style={[styles.folderAction, { backgroundColor: colors.accent }]}>
@@ -200,7 +211,7 @@ export function MyClassesScreen({ navigation }: Props) {
                           >
                             <View style={[styles.sectionMarker, { backgroundColor: colors.accent }]} />
                             <View style={styles.folderSectionCopy}>
-                              <Text style={[styles.folderSectionTitle, { color: colors.textPrimary }]}>Section {section.sectionName}</Text>
+                              <Text style={[styles.folderSectionTitle, { color: colors.textPrimary }]}>Section {capitalizeFirst(section.sectionName)}</Text>
                               <Text style={[styles.folderSectionMeta, { color: colors.textMuted }]}>
                                 {stats ? `${stats.studentCount} student${stats.studentCount === 1 ? "" : "s"} · ${stats.topicCount} topic${stats.topicCount === 1 ? "" : "s"}` : "Loading…"}
                               </Text>
@@ -220,10 +231,28 @@ export function MyClassesScreen({ navigation }: Props) {
         {!isLoading && classSections.length === 0 ? (
           <View style={[styles.emptyStateCard, { borderColor: colors.border }]}>
             <Image source={decorativeAssets.paperPlane} style={styles.emptyStateGraphic} resizeMode="contain" />
-            <Text style={[styles.emptyStateTitle, { color: colors.textPrimary }]}>No classes assigned yet</Text>
-            <Text style={[styles.emptyStateText, { color: colors.textMuted }]}>
-              Ask your school admin to assign you to a class.
-            </Text>
+            {user?.accountType === "individual" ? (
+              <>
+                <Text style={[styles.emptyStateTitle, { color: colors.textPrimary }]}>Create your first class</Text>
+                <Text style={[styles.emptyStateText, { color: colors.textMuted }]}>
+                  Set up a class and pick the subjects you teach to get started.
+                </Text>
+                <Pressable
+                  onPress={() => navigation.navigate("CreateFirstClass")}
+                  style={({ pressed }) => [styles.emptyStateButton, { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]}
+                  accessibilityRole="button"
+                >
+                  <Text style={[styles.emptyStateButtonText, { color: colors.accentOn }]}>Create a class</Text>
+                </Pressable>
+              </>
+            ) : (
+              <>
+                <Text style={[styles.emptyStateTitle, { color: colors.textPrimary }]}>No classes assigned yet</Text>
+                <Text style={[styles.emptyStateText, { color: colors.textMuted }]}>
+                  Ask your school admin to assign you to a class.
+                </Text>
+              </>
+            )}
           </View>
         ) : null}
       </ScrollView>
@@ -277,30 +306,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  classListLabel: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  classListLabelDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
   classListLabelText: {
-    fontSize: 11,
-    lineHeight: 14,
-    fontWeight: "800",
-    letterSpacing: 0.2,
+    fontSize: 12,
+    fontWeight: "600",
   },
   classCount: {
     fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 0.2,
-    textTransform: "uppercase",
+    fontWeight: "500",
   },
   error: {
     textAlign: "center",
@@ -371,21 +383,15 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     fontWeight: "500",
   },
-  topicDots: {
+  activityRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
     marginTop: 11,
   },
-  topicDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 3,
-  },
-  topicCount: {
-    marginLeft: 4,
-    fontSize: 10,
-    fontWeight: "700",
+  activityText: {
+    fontSize: 11,
+    fontWeight: "600",
   },
   folderAction: {
     width: 28,
@@ -451,5 +457,15 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     fontWeight: "500",
     textAlign: "center",
+  },
+  emptyStateButton: {
+    marginTop: spacing.lg,
+    borderRadius: 14,
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+  },
+  emptyStateButtonText: {
+    fontSize: 15,
+    fontWeight: "700",
   },
 });

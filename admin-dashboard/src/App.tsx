@@ -10,6 +10,9 @@ import { BySourcePage } from "./pages/BySourcePage";
 import { CounsellorsPage } from "./pages/CounsellorsPage";
 import { AiUsagePage } from "./pages/AiUsagePage";
 import { AiPromptsPage } from "./pages/AiPromptsPage";
+import { PlatformSettingsPage } from "./pages/PlatformSettingsPage";
+import { SubjectChangeRequestsPage } from "./pages/SubjectChangeRequestsPage";
+import { BoardChangeTicketsPage } from "./pages/BoardChangeTicketsPage";
 import { PipelineStagesPage } from "./pages/PipelineStagesPage";
 import { FormBuilderPage } from "./pages/FormBuilderPage";
 import { MessageTemplatesPage } from "./pages/MessageTemplatesPage";
@@ -69,6 +72,9 @@ function Root() {
         <Route path="/counsellors" element={<RequireRole path="/counsellors"><CounsellorsPage /></RequireRole>} />
         <Route path="/ai-usage" element={<RequireRole path="/ai-usage"><AiUsagePage /></RequireRole>} />
         <Route path="/ai-prompts" element={<RequireRole path="/ai-prompts"><AiPromptsPage /></RequireRole>} />
+        <Route path="/platform-settings" element={<RequireRole path="/platform-settings"><PlatformSettingsPage /></RequireRole>} />
+        <Route path="/subject-change-requests" element={<RequireRole path="/subject-change-requests"><SubjectChangeRequestsPage /></RequireRole>} />
+        <Route path="/board-change-tickets" element={<RequireRole path="/board-change-tickets"><BoardChangeTicketsPage /></RequireRole>} />
         <Route path="/pipeline-stages" element={<RequireRole path="/pipeline-stages"><PipelineStagesPage /></RequireRole>} />
         <Route path="/form-builder" element={<RequireRole path="/form-builder"><FormBuilderPage /></RequireRole>} />
         <Route path="/message-templates" element={<RequireRole path="/message-templates"><MessageTemplatesPage /></RequireRole>} />

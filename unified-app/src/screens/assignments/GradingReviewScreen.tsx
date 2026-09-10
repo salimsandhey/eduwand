@@ -8,6 +8,7 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, AssignmentDetail, SubmissionRecord } from "../../api/client";
+import { capitalizeFirst } from "../../utils/text";
 
 type Props = NativeStackScreenProps<RootStackParamList, "GradingReview">;
 type Filter = "all" | "needs_review" | "graded";
@@ -226,7 +227,7 @@ export function GradingReviewScreen({ route }: Props) {
                       <Text style={[styles.avatarText, { color: colors.accent }]}>{initials(studentName)}</Text>
                     </View>
                     <View>
-                      <Text style={[styles.studentName, { color: colors.textPrimary }]}>{studentName}</Text>
+                      <Text style={[styles.studentName, { color: colors.textPrimary }]}>{capitalizeFirst(studentName)}</Text>
                       <Text style={[styles.submittedMeta, { color: colors.textMuted }]}>Submitted {new Date(s.submittedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</Text>
                     </View>
                   </View>

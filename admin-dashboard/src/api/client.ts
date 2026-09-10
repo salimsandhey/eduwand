@@ -347,6 +347,7 @@ export interface School {
   trustId: string;
   name: string;
   board: string;
+  accountType: string;
   status: string;
 }
 
@@ -401,6 +402,78 @@ export interface UpdateSchoolInput {
   principalPhone?: string;
   expectedStudentStrength?: number;
   status?: string;
+}
+
+export interface Plan {
+  id: string;
+  name: string;
+  creditsPerTeacherSeat: number;
+  isDefault: boolean;
+}
+
+export interface CreatePlanInput {
+  name: string;
+  creditsPerTeacherSeat: number;
+  isDefault?: boolean;
+}
+
+export interface UpdatePlanInput {
+  name?: string;
+  creditsPerTeacherSeat?: number;
+  isDefault?: boolean;
+}
+
+export interface PlatformSetting {
+  id: string;
+  key: string;
+  value: string;
+  updatedAt: string;
+}
+
+// reason is one of: plan_grant, admin_topup, ai_usage
+export interface CreditLedgerEntry {
+  id: string;
+  teacherUserId: string;
+  delta: number;
+  reason: string;
+  balanceAfter: number;
+  note: string | null;
+  createdAt: string;
+}
+
+export interface CreditAccountSummary {
+  balance: number;
+  ledgerEntries: CreditLedgerEntry[];
+}
+
+// status is one of: pending, approved, rejected
+export interface SubjectChangeRequest {
+  id: string;
+  teacherUserId: string;
+  schoolId: string;
+  currentSubjects: string[];
+  requestedSubjects: string[];
+  status: string;
+  requestedAt: string;
+  decidedAt: string | null;
+  note: string | null;
+  teacher: { fullName: string; email: string };
+  school: { name: string };
+}
+
+// status is one of: pending, approved, rejected
+export interface BoardChangeTicket {
+  id: string;
+  schoolId: string;
+  currentBoard: string;
+  requestedBoard: string;
+  status: string;
+  raisedByUserId: string;
+  decidedAt: string | null;
+  note: string | null;
+  createdAt: string;
+  school: { name: string; accountType: string };
+  raisedBy: { fullName: string; email: string };
 }
 
 export interface UpdateUserInput {
@@ -502,6 +575,33 @@ export const api = {
 
   getAiUsage: (token: string, params: { schoolId?: string } = {}) =>
     request<AiUsageResponse>(`/analytics/ai/usage${toQueryString(params)}`, {}, token),
+
+  listPlans: (token: string) => request<Plan[]>("/plans", {}, token),
+  createPlan: (token: string, input: CreatePlanInput) =>
+    request<Plan>("/plans", { method: "POST", body: JSON.stringify(input) }, token),
+  updatePlan: (token: string, id: string, input: UpdatePlanInput) =>
+    request<Plan>(`/plans/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
+
+  listPlatformSettings: (token: string) => request<PlatformSetting[]>("/platform-settings", {}, token),
+  updatePlatformSetting: (token: string, key: string, value: string) =>
+    request<PlatformSetting>(`/platform-settings/${key}`, { method: "PUT", body: JSON.stringify({ value }) }, token),
+
+  getTeacherCredits: (token: string, teacherUserId: string) =>
+    request<CreditAccountSummary>(`/teachers/${teacherUserId}/credits`, {}, token),
+  topUpTeacherCredits: (token: string, teacherUserId: string, input: { amount: number; note?: string }) =>
+    request<{ balance: number }>(`/teachers/${teacherUserId}/credit-topup`, { method: "POST", body: JSON.stringify(input) }, token),
+
+  listSubjectChangeRequests: (token: string, params: { status?: string } = {}) =>
+    request<SubjectChangeRequest[]>(`/admin/subject-change-requests${toQueryString(params)}`, {}, token),
+  decideSubjectChangeRequest: (token: string, id: string, input: { decision: "approved" | "rejected"; note?: string }) =>
+    request<SubjectChangeRequest>(`/admin/subject-change-requests/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
+
+  listBoardChangeTickets: (token: string, params: { status?: string } = {}) =>
+    request<BoardChangeTicket[]>(`/admin/board-change-tickets${toQueryString(params)}`, {}, token),
+  decideBoardChangeTicket: (token: string, id: string, input: { decision: "approved" | "rejected"; note?: string }) =>
+    request<BoardChangeTicket>(`/admin/board-change-tickets/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
+  createBoardChangeTicket: (token: string, schoolId: string, input: { requestedBoard: string; note?: string }) =>
+    request<BoardChangeTicket>(`/schools/${schoolId}/board-change-tickets`, { method: "POST", body: JSON.stringify(input) }, token),
 
   listPipelineStages: (token: string, params: { schoolId?: string } = {}) =>
     request<PipelineStage[]>(`/pipeline-stages${toQueryString(params)}`, {}, token),

@@ -18,67 +18,82 @@ datasource db {
 // billing detail on record. trustType is one of: society, trust,
 // section_8_company, private_limited, other (free text, not enum-enforced).
 model Trust {
-  id                    String   @id @default(uuid()) @db.Uuid
-  name                  String
-  legalName             String?  @map("legal_name")
-  contactEmail          String?  @map("contact_email")
-  contactPersonName     String?  @map("contact_person_name")
-  contactPersonPhone    String?  @map("contact_person_phone")
-  registeredAddress     String?  @map("registered_address")
-  gstNumber             String?  @map("gst_number")
-  trustType             String?  @map("trust_type")
-  expectedSchoolCount   Int?     @map("expected_school_count")
-  status                String   @default("active")
-  createdAt             DateTime @default(now()) @map("created_at")
-  updatedAt             DateTime @updatedAt @map("updated_at")
-  createdBy             String?  @map("created_by") @db.Uuid
-  updatedBy             String?  @map("updated_by") @db.Uuid
+  id                  String   @id @default(uuid()) @db.Uuid
+  name                String
+  legalName           String?  @map("legal_name")
+  contactEmail        String?  @map("contact_email")
+  contactPersonName   String?  @map("contact_person_name")
+  contactPersonPhone  String?  @map("contact_person_phone")
+  registeredAddress   String?  @map("registered_address")
+  gstNumber           String?  @map("gst_number")
+  trustType           String?  @map("trust_type")
+  expectedSchoolCount Int?     @map("expected_school_count")
+  status              String   @default("active")
+  // Billing plan this trust is on - drives per-teacher-seat credit grants
+  // (Docs/superpowers/plans/2026-09-09-individual-teacher-onboarding-and-credits.md).
+  // Nullable so existing trusts predating the credits system aren't broken;
+  // resolution code falls back to the platform default plan/credit setting
+  // when null.
+  planId              String?  @map("plan_id") @db.Uuid
+  plan                Plan?    @relation(fields: [planId], references: [id])
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+  createdBy           String?  @map("created_by") @db.Uuid
+  updatedBy           String?  @map("updated_by") @db.Uuid
 
   schools School[]
 
   @@map("trust")
 }
 
+// accountType is one of: institutional, individual. "individual" schools are
+// auto-provisioned personal workspaces for self-signed-up teachers (see the
+// credits/onboarding plan doc referenced on Trust.planId) - a teacher acts as
+// admin of their own individual school only (backend/src/routes/academic-
+// structure.ts authorizeForSchool), never of an institutional one.
 model School {
-  id                        String   @id @default(uuid()) @db.Uuid
-  trustId                   String   @map("trust_id") @db.Uuid
-  trust                     Trust    @relation(fields: [trustId], references: [id])
-  name                      String
-  board                     String
-  address                   String?
-  timezone                  String   @default("Asia/Kolkata")
-  incumbentErp              String?  @map("incumbent_erp")
-  principalName             String?  @map("principal_name")
-  principalPhone            String?  @map("principal_phone")
-  expectedStudentStrength   Int?     @map("expected_student_strength")
-  status                    String   @default("onboarding")
-  createdAt                 DateTime @default(now()) @map("created_at")
-  updatedAt                 DateTime @updatedAt @map("updated_at")
-  createdBy                 String?  @map("created_by") @db.Uuid
-  updatedBy                 String?  @map("updated_by") @db.Uuid
+  id                      String   @id @default(uuid()) @db.Uuid
+  trustId                 String   @map("trust_id") @db.Uuid
+  trust                   Trust    @relation(fields: [trustId], references: [id])
+  name                    String
+  board                   String
+  accountType             String   @default("institutional") @map("account_type")
+  address                 String?
+  timezone                String   @default("Asia/Kolkata")
+  incumbentErp            String?  @map("incumbent_erp")
+  principalName           String?  @map("principal_name")
+  principalPhone          String?  @map("principal_phone")
+  expectedStudentStrength Int?     @map("expected_student_strength")
+  status                  String   @default("onboarding")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+  createdBy               String?  @map("created_by") @db.Uuid
+  updatedBy               String?  @map("updated_by") @db.Uuid
 
-  academicYears     AcademicYear[]
-  families          Family[]
-  users             AppUser[]
-  userSchoolAccess  UserSchoolAccess[]
-  enquiries         Enquiry[]
-  studentStubs      StudentStub[]
-  csvExportLogs     CsvExportLog[]
-  pipelineStages    PipelineStage[]
-  csvExportSchedule CsvExportSchedule?
-  lessonPlans       LessonPlan[]
-  researchReports   ResearchReport[]
-  assignments       Assignment[]
-  aiUsageLogs       AiUsageLog[]
-  topics            Topic[]
+  academicYears         AcademicYear[]
+  families              Family[]
+  users                 AppUser[]
+  userSchoolAccess      UserSchoolAccess[]
+  enquiries             Enquiry[]
+  studentStubs          StudentStub[]
+  csvExportLogs         CsvExportLog[]
+  pipelineStages        PipelineStage[]
+  csvExportSchedule     CsvExportSchedule?
+  lessonPlans           LessonPlan[]
+  researchReports       ResearchReport[]
+  assignments           Assignment[]
+  aiUsageLogs           AiUsageLog[]
+  topics                Topic[]
   schoolFormatTemplates SchoolFormatTemplate[]
-  classBandConfig   ClassBandConfig?
+  classBandConfig       ClassBandConfig?
   communicationMessages CommunicationMessage[]
-  subjects          Subject[]
-  formDefinitions   FormDefinition[]
-  feePlans          FeePlan[]
-  approvalChainSteps ApprovalChainStep[]
-  aiConversations AiConversation[]
+  subjects              Subject[]
+  formDefinitions       FormDefinition[]
+  feePlans              FeePlan[]
+  approvalChainSteps    ApprovalChainStep[]
+  aiConversations       AiConversation[]
+  subjectChangeRequests SubjectChangeRequest[]
+  boardChangeTickets    BoardChangeTicket[]
 
   @@map("school")
 }
@@ -130,12 +145,12 @@ model ClassSection {
   createdBy      String?      @map("created_by") @db.Uuid
   updatedBy      String?      @map("updated_by") @db.Uuid
 
-  studentStubs StudentStub[]
-  lessonPlans  LessonPlan[]
-  assignments  Assignment[]
-  topics       Topic[]
+  studentStubs          StudentStub[]
+  lessonPlans           LessonPlan[]
+  assignments           Assignment[]
+  topics                Topic[]
   communicationMessages CommunicationMessage[]
-  teacherAssignments ClassSectionTeacher[]
+  teacherAssignments    ClassSectionTeacher[]
 
   @@map("class_section")
 }
@@ -182,28 +197,34 @@ model AppUser {
   createdBy      String?  @map("created_by") @db.Uuid
   updatedBy      String?  @map("updated_by") @db.Uuid
 
-  schoolAccess        UserSchoolAccess[]
-  ownedEnquiries      Enquiry[]             @relation("EnquiryOwner")
-  enquiryStageChanges EnquiryStageHistory[]
-  enquiryNotes        EnquiryNote[]
-  assignedFollowUps   FollowUpTask[]
-  csvExportLogs       CsvExportLog[]
-  uploadedDocuments   Document[]
-  lessonPlans         LessonPlan[]
-  researchReports     ResearchReport[]
-  assignments         Assignment[]
-  personalisationDecisions PersonalisationSuggestion[]
-  gradeOverrides      Grade[]
-  aiUsageLogs         AiUsageLog[]
-  topics              Topic[]
-  generations         Generation[]
-  observations        Observation[]
-  sentCommunicationMessages CommunicationMessage[]
-  classSectionAssignments ClassSectionTeacher[]
-  roleGrants UserRoleGrant[]
-  interviews InterviewRecord[] @relation("InterviewConductedBy")
-  approvals  EnquiryApproval[] @relation("ApprovalDecidedBy")
-  aiConversation AiConversation?
+  schoolAccess               UserSchoolAccess[]
+  ownedEnquiries             Enquiry[]                   @relation("EnquiryOwner")
+  enquiryStageChanges        EnquiryStageHistory[]
+  enquiryNotes               EnquiryNote[]
+  assignedFollowUps          FollowUpTask[]
+  csvExportLogs              CsvExportLog[]
+  uploadedDocuments          Document[]
+  lessonPlans                LessonPlan[]
+  researchReports            ResearchReport[]
+  assignments                Assignment[]
+  personalisationDecisions   PersonalisationSuggestion[]
+  gradeOverrides             Grade[]
+  aiUsageLogs                AiUsageLog[]
+  topics                     Topic[]
+  generations                Generation[]
+  observations               Observation[]
+  sentCommunicationMessages  CommunicationMessage[]
+  classSectionAssignments    ClassSectionTeacher[]
+  roleGrants                 UserRoleGrant[]
+  interviews                 InterviewRecord[]           @relation("InterviewConductedBy")
+  approvals                  EnquiryApproval[]           @relation("ApprovalDecidedBy")
+  aiConversation             AiConversation?
+  creditAccount              TeacherCreditAccount?
+  creditLedgerEntries        CreditLedgerEntry[]
+  subjectChangeRequests      SubjectChangeRequest[]      @relation("SubjectChangeRequester")
+  subjectChangeDecisions     SubjectChangeRequest[]      @relation("SubjectChangeDecider")
+  boardChangeTicketsRaised   BoardChangeTicket[]         @relation("BoardChangeRaiser")
+  boardChangeTicketDecisions BoardChangeTicket[]         @relation("BoardChangeDecider")
 
   @@map("app_user")
 }
@@ -240,59 +261,59 @@ model UserSchoolAccess {
 // Status is one of: new, contacted, visit, application, admitted, enrolled, lost
 // Source is one of: phone, walk_in, website, referral, event, social
 model Enquiry {
-  id                   String    @id @default(uuid()) @db.Uuid
-  schoolId             String    @map("school_id") @db.Uuid
-  school               School    @relation(fields: [schoolId], references: [id])
-  academicYearId       String    @map("academic_year_id") @db.Uuid
-  academicYear         AcademicYear @relation(fields: [academicYearId], references: [id])
-  familyId             String?   @map("family_id") @db.Uuid
-  family               Family?   @relation(fields: [familyId], references: [id])
-  feePlanId            String?   @map("fee_plan_id") @db.Uuid
-  feePlan              FeePlan?  @relation(fields: [feePlanId], references: [id])
-  contactName          String    @map("contact_name")
-  contactPhone         String    @map("contact_phone")
-  contactEmail         String?   @map("contact_email")
-  source               String
-  gradeInterest        String?   @map("grade_interest")
+  id                    String       @id @default(uuid()) @db.Uuid
+  schoolId              String       @map("school_id") @db.Uuid
+  school                School       @relation(fields: [schoolId], references: [id])
+  academicYearId        String       @map("academic_year_id") @db.Uuid
+  academicYear          AcademicYear @relation(fields: [academicYearId], references: [id])
+  familyId              String?      @map("family_id") @db.Uuid
+  family                Family?      @relation(fields: [familyId], references: [id])
+  feePlanId             String?      @map("fee_plan_id") @db.Uuid
+  feePlan               FeePlan?     @relation(fields: [feePlanId], references: [id])
+  contactName           String       @map("contact_name")
+  contactPhone          String       @map("contact_phone")
+  contactEmail          String?      @map("contact_email")
+  source                String
+  gradeInterest         String?      @map("grade_interest")
   // Captured at intake so the child's identity isn't conflated with the
   // guardian's contact details (contactName is the person the counsellor is
   // talking to, not necessarily the student) - see chat 15 Aug 2026.
-  studentName          String?   @map("student_name")
-  studentDateOfBirth   DateTime? @map("student_date_of_birth") @db.Date
+  studentName           String?      @map("student_name")
+  studentDateOfBirth    DateTime?    @map("student_date_of_birth") @db.Date
   // guardianRelation is one of: mother, father, guardian, other
-  guardianRelation     String?   @map("guardian_relation")
+  guardianRelation      String?      @map("guardian_relation")
   // Profile photo: either an uploaded file (photoLocation/photoMimeType, via
   // the Storage interface - backend/src/lib/storage.ts) or a picked preset
   // avatar (avatarKey, one of unified-app's bundled avatar-01..avatar-10).
   // Mutually exclusive - setting one clears the other (see enquiries.ts).
-  photoLocation        String?   @map("photo_location")
-  photoMimeType        String?   @map("photo_mime_type")
-  avatarKey            String?   @map("avatar_key")
-  status               String    @default("new")
-  lostReason           String?   @map("lost_reason")
-  ownerUserId          String?   @map("owner_user_id") @db.Uuid
-  owner                AppUser?  @relation("EnquiryOwner", fields: [ownerUserId], references: [id])
-  duplicateOfEnquiryId String?   @map("duplicate_of_enquiry_id") @db.Uuid
-  duplicateOf          Enquiry?  @relation("EnquiryDuplicate", fields: [duplicateOfEnquiryId], references: [id])
-  duplicates           Enquiry[] @relation("EnquiryDuplicate")
-  consentCaptured      Boolean   @default(false) @map("consent_captured")
-  erasedAt             DateTime? @map("erased_at")
+  photoLocation         String?      @map("photo_location")
+  photoMimeType         String?      @map("photo_mime_type")
+  avatarKey             String?      @map("avatar_key")
+  status                String       @default("new")
+  lostReason            String?      @map("lost_reason")
+  ownerUserId           String?      @map("owner_user_id") @db.Uuid
+  owner                 AppUser?     @relation("EnquiryOwner", fields: [ownerUserId], references: [id])
+  duplicateOfEnquiryId  String?      @map("duplicate_of_enquiry_id") @db.Uuid
+  duplicateOf           Enquiry?     @relation("EnquiryDuplicate", fields: [duplicateOfEnquiryId], references: [id])
+  duplicates            Enquiry[]    @relation("EnquiryDuplicate")
+  consentCaptured       Boolean      @default(false) @map("consent_captured")
+  erasedAt              DateTime?    @map("erased_at")
   // Admission-in-progress state, ahead of the final confirm-admission call that
   // creates the StudentStub - lets the Admission tab survive navigating away
   // mid-fill instead of losing everything (unified-app EnquiryDetailScreen).
-  admissionDraft        Json?     @map("admission_draft")
-  admissionStartedAt    DateTime? @map("admission_started_at")
-  admissionCompletedAt  DateTime? @map("admission_completed_at")
+  admissionDraft        Json?        @map("admission_draft")
+  admissionStartedAt    DateTime?    @map("admission_started_at")
+  admissionCompletedAt  DateTime?    @map("admission_completed_at")
   // Answers to the school's active enquiry_intake FormDefinition's dynamic
   // fields (Docs/Dev/GrowthEngine_Rebuild_Plan.md Phase 2), keyed by
   // FormField.key. Parallel to admissionDraft, but for intake-time fields
   // rather than the admission tab.
-  formResponses         Json?     @map("form_responses")
-  approvalChainSnapshot Json?     @map("approval_chain_snapshot")
-  createdAt            DateTime  @default(now()) @map("created_at")
-  updatedAt            DateTime  @updatedAt @map("updated_at")
-  createdBy            String?   @map("created_by") @db.Uuid
-  updatedBy            String?   @map("updated_by") @db.Uuid
+  formResponses         Json?        @map("form_responses")
+  approvalChainSnapshot Json?        @map("approval_chain_snapshot")
+  createdAt             DateTime     @default(now()) @map("created_at")
+  updatedAt             DateTime     @updatedAt @map("updated_at")
+  createdBy             String?      @map("created_by") @db.Uuid
+  updatedBy             String?      @map("updated_by") @db.Uuid
 
   stageHistory  EnquiryStageHistory[]
   notes         EnquiryNote[]
@@ -373,12 +394,12 @@ model EnquiryApproval {
 }
 
 model Family {
-  id                  String    @id @default(uuid()) @db.Uuid
-  schoolId            String    @map("school_id") @db.Uuid
-  school              School    @relation(fields: [schoolId], references: [id])
-  primaryContactName  String    @map("primary_contact_name")
-  primaryContactPhone String    @map("primary_contact_phone")
-  createdAt           DateTime  @default(now()) @map("created_at")
+  id                  String   @id @default(uuid()) @db.Uuid
+  schoolId            String   @map("school_id") @db.Uuid
+  school              School   @relation(fields: [schoolId], references: [id])
+  primaryContactName  String   @map("primary_contact_name")
+  primaryContactPhone String   @map("primary_contact_phone")
+  createdAt           DateTime @default(now()) @map("created_at")
 
   enquiries Enquiry[]
 
@@ -485,7 +506,7 @@ model Document {
   fileLocation     String   @map("file_location")
   mimeType         String   @map("mime_type")
   fileSize         Int      @map("file_size")
-  documentType      String?  @map("document_type")
+  documentType     String?  @map("document_type")
   uploadedAt       DateTime @default(now()) @map("uploaded_at")
 
   @@index([enquiryId])
@@ -495,14 +516,14 @@ model Document {
 // Recurring CSV export config (FR-EG-11) - one per school. The worker
 // (backend/src/worker.ts) checks lastRunAt against frequency each tick.
 model CsvExportSchedule {
-  id         String   @id @default(uuid()) @db.Uuid
-  schoolId   String   @unique @map("school_id") @db.Uuid
-  school     School   @relation(fields: [schoolId], references: [id])
-  frequency  String   @default("weekly")
-  isActive   Boolean  @default(false) @map("is_active")
-  lastRunAt  DateTime? @map("last_run_at")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  id        String    @id @default(uuid()) @db.Uuid
+  schoolId  String    @unique @map("school_id") @db.Uuid
+  school    School    @relation(fields: [schoolId], references: [id])
+  frequency String    @default("weekly")
+  isActive  Boolean   @default(false) @map("is_active")
+  lastRunAt DateTime? @map("last_run_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
 
   @@map("csv_export_schedule")
 }
@@ -523,14 +544,14 @@ model EnquiryStageHistory {
 // type is one of: lead_note, admission_note, system_note - lets the UI show a
 // note under the tab it belongs to instead of one undifferentiated list.
 model EnquiryNote {
-  id             String   @id @default(uuid()) @db.Uuid
-  enquiryId      String   @map("enquiry_id") @db.Uuid
-  enquiry        Enquiry  @relation(fields: [enquiryId], references: [id])
-  authorUserId   String?  @map("author_user_id") @db.Uuid
-  author         AppUser? @relation(fields: [authorUserId], references: [id])
-  body           String
-  type           String   @default("lead_note")
-  createdAt      DateTime @default(now()) @map("created_at")
+  id           String   @id @default(uuid()) @db.Uuid
+  enquiryId    String   @map("enquiry_id") @db.Uuid
+  enquiry      Enquiry  @relation(fields: [enquiryId], references: [id])
+  authorUserId String?  @map("author_user_id") @db.Uuid
+  author       AppUser? @relation(fields: [authorUserId], references: [id])
+  body         String
+  type         String   @default("lead_note")
+  createdAt    DateTime @default(now()) @map("created_at")
 
   @@index([enquiryId, createdAt])
   @@map("enquiry_note")
@@ -603,10 +624,10 @@ model StudentStub {
   createdBy       String?      @map("created_by") @db.Uuid
   updatedBy       String?      @map("updated_by") @db.Uuid
 
-  personalisationSuggestions PersonalisationSuggestion[]
-  submissions                Submission[]
-  receivedCommunicationMessages CommunicationMessage[] @relation("CommunicationRecipientStudent")
-  sentCommunicationMessages     CommunicationMessage[] @relation("CommunicationSenderStudent")
+  personalisationSuggestions    PersonalisationSuggestion[]
+  submissions                   Submission[]
+  receivedCommunicationMessages CommunicationMessage[]      @relation("CommunicationRecipientStudent")
+  sentCommunicationMessages     CommunicationMessage[]      @relation("CommunicationSenderStudent")
 
   @@index([schoolId])
   @@map("student_stub")
@@ -648,25 +669,25 @@ model CsvExportLog {
 
 // Phase 1: the container every generation, assignment, and report belongs to.
 model Topic {
-  id             String        @id @default(uuid()) @db.Uuid
-  schoolId       String        @map("school_id") @db.Uuid
-  school         School        @relation(fields: [schoolId], references: [id])
-  teacherUserId  String        @map("teacher_user_id") @db.Uuid
-  teacher        AppUser       @relation(fields: [teacherUserId], references: [id])
-  classSectionId String        @map("class_section_id") @db.Uuid
-  classSection   ClassSection  @relation(fields: [classSectionId], references: [id])
+  id             String       @id @default(uuid()) @db.Uuid
+  schoolId       String       @map("school_id") @db.Uuid
+  school         School       @relation(fields: [schoolId], references: [id])
+  teacherUserId  String       @map("teacher_user_id") @db.Uuid
+  teacher        AppUser      @relation(fields: [teacherUserId], references: [id])
+  classSectionId String       @map("class_section_id") @db.Uuid
+  classSection   ClassSection @relation(fields: [classSectionId], references: [id])
   subject        String
   name           String
   board          String
-  status         String        @default("active")
-  createdAt      DateTime      @default(now()) @map("created_at")
-  updatedAt      DateTime      @updatedAt @map("updated_at")
+  status         String       @default("active")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
 
-  contextSources   ContextSource[]
-  generations      Generation[]
-  observations     Observation[]
-  assignments      Assignment[]
-  attainmentReport AttainmentReport?
+  contextSources        ContextSource[]
+  generations           Generation[]
+  observations          Observation[]
+  assignments           Assignment[]
+  attainmentReport      AttainmentReport?
   communicationMessages CommunicationMessage[]
 
   @@index([schoolId, teacherUserId])
@@ -677,18 +698,18 @@ model Topic {
 // sourceType is one of: pdf, docx, pptx, image, url, idream_k12
 // extractionStatus is one of: pending, extracted, failed_no_text
 model ContextSource {
-  id                    String   @id @default(uuid()) @db.Uuid
-  topicId               String   @map("topic_id") @db.Uuid
-  topic                 Topic    @relation(fields: [topicId], references: [id])
-  sourceType            String   @map("source_type")
-  fileLocation          String?  @map("file_location")
-  originalFilename      String?  @map("original_filename")
-  sourceUrl             String?  @map("source_url")
-  idreamK12ReferenceId  String?  @map("idream_k12_reference_id")
-  extractionStatus      String   @default("pending") @map("extraction_status")
-  extractedText         String?  @map("extracted_text")
-  extractionError       String?  @map("extraction_error")
-  createdAt             DateTime @default(now()) @map("created_at")
+  id                   String   @id @default(uuid()) @db.Uuid
+  topicId              String   @map("topic_id") @db.Uuid
+  topic                Topic    @relation(fields: [topicId], references: [id])
+  sourceType           String   @map("source_type")
+  fileLocation         String?  @map("file_location")
+  originalFilename     String?  @map("original_filename")
+  sourceUrl            String?  @map("source_url")
+  idreamK12ReferenceId String?  @map("idream_k12_reference_id")
+  extractionStatus     String   @default("pending") @map("extraction_status")
+  extractedText        String?  @map("extracted_text")
+  extractionError      String?  @map("extraction_error")
+  createdAt            DateTime @default(now()) @map("created_at")
 
   // Which generations this source's extracted text actually fed - lets the
   // app answer "what sources was this generation based on" (client build doc
@@ -778,8 +799,8 @@ model Generation {
   // succeeded) - this gates /student/materials. draft = teacher-only,
   // published = visible to every student in the topic's class section.
   // Mirrors Assignment.status/publishedAt.
-  shareStatus            String                @default("draft") @map("share_status")
-  publishedAt            DateTime?             @map("published_at")
+  shareStatus String    @default("draft") @map("share_status")
+  publishedAt DateTime? @map("published_at")
 
   contextSources ContextSource[]
 
@@ -789,15 +810,15 @@ model Generation {
 }
 
 model AttainmentReport {
-  id                    String    @id @default(uuid()) @db.Uuid
-  topicId               String    @unique @map("topic_id") @db.Uuid
-  topic                 Topic     @relation(fields: [topicId], references: [id])
-  bloomsTaxonomyMapping Json?     @map("blooms_taxonomy_mapping")
-  whatWasDone           String?   @map("what_was_done")
-  outcomes              String?   @map("outcomes")
-  improvementNotes      String?   @map("improvement_notes")
-  pdfFileLocation       String?   @map("pdf_file_location")
-  generatedAt           DateTime  @default(now()) @map("generated_at")
+  id                    String   @id @default(uuid()) @db.Uuid
+  topicId               String   @unique @map("topic_id") @db.Uuid
+  topic                 Topic    @relation(fields: [topicId], references: [id])
+  bloomsTaxonomyMapping Json?    @map("blooms_taxonomy_mapping")
+  whatWasDone           String?  @map("what_was_done")
+  outcomes              String?  @map("outcomes")
+  improvementNotes      String?  @map("improvement_notes")
+  pdfFileLocation       String?  @map("pdf_file_location")
+  generatedAt           DateTime @default(now()) @map("generated_at")
 
   @@map("attainment_report")
 }
@@ -864,7 +885,7 @@ model Assignment {
 
   personalisationSuggestions PersonalisationSuggestion[]
   submissions                Submission[]
-  answerKeys                  AnswerKey[]
+  answerKeys                 AnswerKey[]
 
   @@index([schoolId, classSectionId])
   @@index([topicId])
@@ -1001,25 +1022,25 @@ model ClassBandConfig {
 // defines). senderStudentStubId is set for student-initiated messages -
 // StudentStub has no AppUser row, so it can't use senderUserId.
 model CommunicationMessage {
-  id                       String        @id @default(uuid()) @db.Uuid
-  schoolId                 String        @map("school_id") @db.Uuid
-  school                   School        @relation(fields: [schoolId], references: [id])
-  channel                  String
-  senderUserId             String?       @map("sender_user_id") @db.Uuid
-  sender                   AppUser?      @relation(fields: [senderUserId], references: [id])
-  senderStudentStubId      String?       @map("sender_student_stub_id") @db.Uuid
-  senderStudentStub        StudentStub?  @relation("CommunicationSenderStudent", fields: [senderStudentStubId], references: [id])
-  recipientStudentStubId   String?       @map("recipient_student_stub_id") @db.Uuid
-  recipientStudentStub     StudentStub?  @relation("CommunicationRecipientStudent", fields: [recipientStudentStubId], references: [id])
-  recipientClassSectionId  String?       @map("recipient_class_section_id") @db.Uuid
-  recipientClassSection    ClassSection? @relation(fields: [recipientClassSectionId], references: [id])
-  topicId                  String?       @map("topic_id") @db.Uuid
-  topic                    Topic?        @relation(fields: [topicId], references: [id])
-  body                     String
-  deliveryMechanism        String?       @map("delivery_mechanism")
-  deliveryStatus           String        @default("sent") @map("delivery_status")
-  sentAt                   DateTime?     @map("sent_at")
-  createdAt                DateTime      @default(now()) @map("created_at")
+  id                      String        @id @default(uuid()) @db.Uuid
+  schoolId                String        @map("school_id") @db.Uuid
+  school                  School        @relation(fields: [schoolId], references: [id])
+  channel                 String
+  senderUserId            String?       @map("sender_user_id") @db.Uuid
+  sender                  AppUser?      @relation(fields: [senderUserId], references: [id])
+  senderStudentStubId     String?       @map("sender_student_stub_id") @db.Uuid
+  senderStudentStub       StudentStub?  @relation("CommunicationSenderStudent", fields: [senderStudentStubId], references: [id])
+  recipientStudentStubId  String?       @map("recipient_student_stub_id") @db.Uuid
+  recipientStudentStub    StudentStub?  @relation("CommunicationRecipientStudent", fields: [recipientStudentStubId], references: [id])
+  recipientClassSectionId String?       @map("recipient_class_section_id") @db.Uuid
+  recipientClassSection   ClassSection? @relation(fields: [recipientClassSectionId], references: [id])
+  topicId                 String?       @map("topic_id") @db.Uuid
+  topic                   Topic?        @relation(fields: [topicId], references: [id])
+  body                    String
+  deliveryMechanism       String?       @map("delivery_mechanism")
+  deliveryStatus          String        @default("sent") @map("delivery_status")
+  sentAt                  DateTime?     @map("sent_at")
+  createdAt               DateTime      @default(now()) @map("created_at")
 
   @@index([schoolId, channel])
   @@index([recipientStudentStubId])
@@ -1041,6 +1062,8 @@ model AiUsageLog {
   status        String   @default("success")
   durationMs    Int?     @map("duration_ms")
   createdAt     DateTime @default(now()) @map("created_at")
+
+  creditLedgerEntries CreditLedgerEntry[]
 
   @@index([schoolId, createdAt])
   @@index([schoolId, teacherUserId])
@@ -1083,17 +1106,17 @@ model PasswordResetRequest {
 // what, and when. Not a full change-history system (no before/after diffing
 // beyond a small metadata blob) - just enough to answer "who did this."
 model AuditLog {
-  id           String   @id @default(uuid()) @db.Uuid
-  actorUserId  String?  @map("actor_user_id") @db.Uuid
-  actorEmail   String   @map("actor_email")
-  action       String
-  targetType   String   @map("target_type")
-  targetId     String?  @map("target_id") @db.Uuid
-  targetLabel  String?  @map("target_label")
-  schoolId     String?  @map("school_id") @db.Uuid
-  trustId      String?  @map("trust_id") @db.Uuid
-  metadata     Json?
-  createdAt    DateTime @default(now()) @map("created_at")
+  id          String   @id @default(uuid()) @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  actorEmail  String   @map("actor_email")
+  action      String
+  targetType  String   @map("target_type")
+  targetId    String?  @map("target_id") @db.Uuid
+  targetLabel String?  @map("target_label")
+  schoolId    String?  @map("school_id") @db.Uuid
+  trustId     String?  @map("trust_id") @db.Uuid
+  metadata    Json?
+  createdAt   DateTime @default(now()) @map("created_at")
 
   @@index([schoolId, createdAt])
   @@index([trustId, createdAt])
@@ -1127,4 +1150,119 @@ model AiMessage {
 
   @@index([conversationId, createdAt])
   @@map("ai_message")
+}
+
+// Individual-teacher onboarding + credits/billing
+// (Docs/superpowers/plans/2026-09-09-individual-teacher-onboarding-and-credits.md)
+
+// Billing plan a Trust is on - drives creditsPerTeacherSeat granted (once,
+// not recurring) to each teacher seat under that trust. isDefault marks the
+// platform-wide fallback plan used when a trust has none assigned (also what
+// individual/self-signed-up teachers' personal trusts resolve to).
+model Plan {
+  id                    String   @id @default(uuid()) @db.Uuid
+  name                  String
+  creditsPerTeacherSeat Int      @map("credits_per_teacher_seat")
+  isDefault             Boolean  @default(false) @map("is_default")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  trusts Trust[]
+
+  @@map("plan")
+}
+
+// Simple admin-editable key/value config. Seeded key
+// "individual_default_credits" backstops Plan resolution when a trust (most
+// commonly a fresh individual-teacher personal trust) has no Plan assigned.
+model PlatformSetting {
+  id        String   @id @default(uuid()) @db.Uuid
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at")
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  @@map("platform_setting")
+}
+
+// One row per teacher AppUser. Credits are a one-time grant (Plan resolution
+// at seat-creation time), not a recurring refill - balance only moves via
+// CreditLedgerEntry rows (ai_usage deductions, admin_topup credits).
+model TeacherCreditAccount {
+  id            String   @id @default(uuid()) @db.Uuid
+  teacherUserId String   @unique @map("teacher_user_id") @db.Uuid
+  teacher       AppUser  @relation(fields: [teacherUserId], references: [id])
+  balance       Int      @default(0)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("teacher_credit_account")
+}
+
+// Audit trail of every credit balance change. reason is one of: plan_grant,
+// admin_topup, ai_usage. relatedAiUsageLogId links an ai_usage deduction back
+// to the AiUsageLog row that caused it; createdByUserId is set for
+// admin_topup entries (who granted the top-up).
+model CreditLedgerEntry {
+  id                  String      @id @default(uuid()) @db.Uuid
+  teacherUserId       String      @map("teacher_user_id") @db.Uuid
+  teacher             AppUser     @relation(fields: [teacherUserId], references: [id])
+  delta               Int
+  reason              String
+  balanceAfter        Int         @map("balance_after")
+  relatedAiUsageLogId String?     @map("related_ai_usage_log_id") @db.Uuid
+  relatedAiUsageLog   AiUsageLog? @relation(fields: [relatedAiUsageLogId], references: [id])
+  note                String?
+  createdByUserId     String?     @map("created_by_user_id") @db.Uuid
+  createdAt           DateTime    @default(now()) @map("created_at")
+
+  @@index([teacherUserId, createdAt])
+  @@map("credit_ledger_entry")
+}
+
+// Individual-account subject limit (fixed set of exactly 2, not a running
+// count cap - swapping which 2 counts as "a change"). status is one of:
+// pending, approved, rejected. The 6-month cooldown is enforced by the route
+// checking the requester's most recent APPROVED request's decidedAt, not by
+// any field on this model. Institutional schools are never subject to this.
+model SubjectChangeRequest {
+  id                String    @id @default(uuid()) @db.Uuid
+  teacherUserId     String    @map("teacher_user_id") @db.Uuid
+  teacher           AppUser   @relation("SubjectChangeRequester", fields: [teacherUserId], references: [id])
+  schoolId          String    @map("school_id") @db.Uuid
+  school            School    @relation(fields: [schoolId], references: [id])
+  currentSubjects   String[]  @map("current_subjects")
+  requestedSubjects String[]  @map("requested_subjects")
+  status            String    @default("pending")
+  requestedAt       DateTime  @default(now()) @map("requested_at")
+  decidedAt         DateTime? @map("decided_at")
+  decidedByUserId   String?   @map("decided_by_user_id") @db.Uuid
+  decidedBy         AppUser?  @relation("SubjectChangeDecider", fields: [decidedByUserId], references: [id])
+  note              String?
+
+  @@index([teacherUserId, decidedAt])
+  @@map("subject_change_request")
+}
+
+// School.board is a request/approval-only setting for ALL schools (both
+// individual and institutional) - there is no self-service board edit path
+// anywhere. status is one of: pending, approved, rejected. Approval applies
+// requestedBoard directly to School.board.
+model BoardChangeTicket {
+  id              String    @id @default(uuid()) @db.Uuid
+  schoolId        String    @map("school_id") @db.Uuid
+  school          School    @relation(fields: [schoolId], references: [id])
+  currentBoard    String    @map("current_board")
+  requestedBoard  String    @map("requested_board")
+  status          String    @default("pending")
+  raisedByUserId  String    @map("raised_by_user_id") @db.Uuid
+  raisedBy        AppUser   @relation("BoardChangeRaiser", fields: [raisedByUserId], references: [id])
+  decidedAt       DateTime? @map("decided_at")
+  decidedByUserId String?   @map("decided_by_user_id") @db.Uuid
+  decidedBy       AppUser?  @relation("BoardChangeDecider", fields: [decidedByUserId], references: [id])
+  note            String?
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  @@index([schoolId, createdAt])
+  @@map("board_change_ticket")
 }

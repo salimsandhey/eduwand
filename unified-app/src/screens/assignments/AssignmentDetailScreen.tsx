@@ -10,6 +10,7 @@ import { Screen } from "../../components/Screen";
 import { ConfirmModal } from "../../components/ConfirmModal";
 import { SlideToPublishButton } from "../../components/SlideToPublishButton";
 import { api, ApiError, AssignmentDetail, ClassSection, StudentStub } from "../../api/client";
+import { capitalizeFirst } from "../../utils/text";
 import { decorativeAssets } from "../../theme/decorativeAssets";
 
 type Props = NativeStackScreenProps<RootStackParamList, "AssignmentDetail">;
@@ -189,7 +190,11 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
   const pendingCount = Math.max(students.length - submittedCount, 0);
   const submissionProgress = students.length > 0 ? Math.min(100, Math.round((submittedCount / students.length) * 100)) : 0;
   const visibleQuestions = showAllQuestions ? assignment.questions : assignment.questions.slice(0, 3);
-  const metaLine = [classSection?.className, topicMeta?.subject, topicMeta?.board].filter(Boolean).join(" • ");
+  const metaLine = [
+    classSection?.className ? capitalizeFirst(classSection.className) : undefined,
+    topicMeta?.subject ? capitalizeFirst(topicMeta.subject) : undefined,
+    topicMeta?.board,
+  ].filter(Boolean).join(" • ");
   const createdAt = new Date(assignment.createdAt);
   const now = new Date();
   const createdLabel =
@@ -239,7 +244,7 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
           <Text style={[styles.title, { color: colors.textPrimary }]}>{assignment.title}</Text>
           {metaLine ? <Text style={[styles.heroMeta, { color: colors.textMuted }]}>{metaLine}</Text> : null}
           {classSection?.sectionName ? (
-            <Text style={[styles.heroSubMeta, { color: colors.textMuted }]}>Section {classSection.sectionName}</Text>
+            <Text style={[styles.heroSubMeta, { color: colors.textMuted }]}>Section {capitalizeFirst(classSection.sectionName)}</Text>
           ) : null}
           {assignment.status === "published" && assignment.submissions.length === 0 ? (
             <View style={styles.badgeRow}>
@@ -394,7 +399,7 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
                 <Text style={[styles.submissionProgressValue, { color: colors.textPrimary }]}>
                   {submittedCount}<Text style={[styles.submissionProgressTotal, { color: colors.textMuted }]}> / {students.length}</Text>
                 </Text>
-                <Text style={[styles.submissionProgressLabel, { color: colors.textMuted }]}>submitted</Text>
+                <Text style={[styles.submissionProgressLabel, { color: colors.textMuted }]}>Submitted</Text>
               </View>
               <View style={styles.progressBarRow}>
                 <View style={[styles.progressTrack, { backgroundColor: colors.backgroundMuted }]}>

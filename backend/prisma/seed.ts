@@ -6,6 +6,29 @@ import { seedDefaultPipelineStages } from "../src/lib/pipeline-stages";
 async function main() {
   const passwordHash = await bcrypt.hash("password123", 10);
 
+  // Individual-teacher onboarding + credits/billing
+  // (Docs/superpowers/plans/2026-09-09-individual-teacher-onboarding-and-credits.md).
+  // Credit resolution order at seat-creation: Trust.planId's Plan, else the
+  // Plan with isDefault true, else this PlatformSetting as a last-resort
+  // numeric fallback - so the platform never has zero source of truth for
+  // the grant amount even before a Plan row exists.
+  const defaultPlan = await prisma.plan.upsert({
+    where: { id: "00000000-0000-0000-0000-000000000030" },
+    update: {},
+    create: {
+      id: "00000000-0000-0000-0000-000000000030",
+      name: "Standard",
+      creditsPerTeacherSeat: 5000,
+      isDefault: true,
+    },
+  });
+
+  await prisma.platformSetting.upsert({
+    where: { key: "individual_default_credits" },
+    update: {},
+    create: { key: "individual_default_credits", value: "5000" },
+  });
+
   const trust = await prisma.trust.upsert({
     where: { id: "00000000-0000-0000-0000-000000000001" },
     update: {},
@@ -82,6 +105,12 @@ async function main() {
       status: "active",
       passwordHash,
     },
+  });
+
+  await prisma.teacherCreditAccount.upsert({
+    where: { teacherUserId: teacher.id },
+    update: {},
+    create: { teacherUserId: teacher.id, balance: defaultPlan.creditsPerTeacherSeat },
   });
 
   await seedDefaultPipelineStages(school.id);
@@ -664,6 +693,7 @@ async function main() {
   });
 
   console.log("Seeded:", {
+    defaultPlan: `${defaultPlan.name} (${defaultPlan.creditsPerTeacherSeat} credits/seat)`,
     trust: trust.name,
     school: school.name,
     classSection: `${classSection.className} ${classSection.sectionName}`,
