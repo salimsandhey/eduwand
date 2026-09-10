@@ -8,6 +8,7 @@ import { Screen } from "../../components/Screen";
 import { resolveUserImageSource } from "../../theme/avatars";
 import { api, CurrentUser } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
+import { useTabBarScrollHandler } from "../../navigation/TabBarScrollContext";
 
 const ENROLMENT_ROLES = ["front_desk", "counsellor"];
 
@@ -122,6 +123,7 @@ function EnrolmentMoreScreen({
   const navigation = useNavigation<any>();
   const parentTabs = navigation.getParent();
   const root = parentTabs?.getParent();
+  const handleTabBarScroll = useTabBarScrollHandler();
 
   const sections: { title: string; rows: ToolItem[] }[] = [
     {
@@ -157,7 +159,12 @@ function EnrolmentMoreScreen({
 
   return (
     <Screen>
-      <ScrollView contentContainerStyle={styles.eContainer} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.eContainer}
+        showsVerticalScrollIndicator={false}
+        onScroll={handleTabBarScroll}
+        scrollEventThrottle={16}
+      >
         <View style={styles.eHeader}>
           <View style={styles.eHeaderText}>
             <Text style={[styles.ePageTitle, { color: colors.textPrimary }]}>More</Text>

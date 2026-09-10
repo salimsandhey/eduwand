@@ -5,6 +5,7 @@ import type { AppUserSummary, UserRoleGrant } from "../../api/client";
 import { Card } from "../../components/Card";
 import { Modal, ModalFooter } from "../../components/Modal";
 import type { SchoolOutletContext } from "./SchoolLayout";
+import { formatEnumLabel } from "../../utils/format";
 
 const INVITABLE_ROLES = ["front_desk", "counsellor", "teacher", "admin", "principal"];
 
@@ -360,12 +361,12 @@ export function SchoolStaffTab() {
                         >
                           {INVITABLE_ROLES.map((r) => (
                             <option key={r} value={r}>
-                              {r}
+                              {formatEnumLabel(r)}
                             </option>
                           ))}
                         </select>
                       ) : (
-                        u.role
+                        formatEnumLabel(u.role)
                       )}
                     </td>
                     <td style={styles.td}>
@@ -379,7 +380,7 @@ export function SchoolStaffTab() {
                             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                               {grants.map((g) => (
                                 <span key={g.id} style={styles.roleChip}>
-                                  {g.role}
+                                  {formatEnumLabel(g.role)}
                                   <button
                                     type="button"
                                     style={styles.roleChipRemove}
@@ -403,7 +404,7 @@ export function SchoolStaffTab() {
                                   <option value="">+ add role</option>
                                   {availableRoles.map((r) => (
                                     <option key={r} value={r}>
-                                      {r}
+                                      {formatEnumLabel(r)}
                                     </option>
                                   ))}
                                 </select>
@@ -528,7 +529,7 @@ export function SchoolStaffTab() {
               <select style={styles.input} value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}>
                 {INVITABLE_ROLES.map((r) => (
                   <option key={r} value={r}>
-                    {r}
+                    {formatEnumLabel(r)}
                   </option>
                 ))}
               </select>

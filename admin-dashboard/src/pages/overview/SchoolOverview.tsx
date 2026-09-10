@@ -7,6 +7,7 @@ import { PageHeader } from "../../components/PageHeader";
 import { Card } from "../../components/Card";
 import { StatTile } from "../../components/StatTile";
 import { BarChart } from "../../components/BarChart";
+import { formatEnumLabel } from "../../utils/format";
 
 const FUNNEL_STAGES: EnquiryStatus[] = ["new", "contacted", "visit_scheduled", "visit_done", "application", "admitted", "enrolled"];
 const SEQ_COLORS = ["var(--seq-1)", "var(--seq-2)", "var(--seq-3)", "var(--seq-4)", "var(--seq-5)", "var(--seq-6)"];
@@ -53,7 +54,7 @@ export function SchoolOverview() {
             <Card title="Funnel snapshot">
               <BarChart
                 data={FUNNEL_STAGES.map((stage, i) => ({
-                  label: stage,
+                  label: formatEnumLabel(stage),
                   value: funnel.byStatus[stage] ?? 0,
                   color: SEQ_COLORS[i],
                 }))}

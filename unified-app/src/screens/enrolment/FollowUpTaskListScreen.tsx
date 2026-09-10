@@ -17,6 +17,7 @@ import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, FollowUpTask } from "../../api/client";
 import { decorativeAssets } from "../../theme/decorativeAssets";
+import { useTabBarScrollHandler } from "../../navigation/TabBarScrollContext";
 
 type QueueFilter = "today" | "overdue" | "upcoming" | "all";
 type Tone = "overdue" | "today" | "upcoming";
@@ -122,6 +123,7 @@ export function FollowUpTaskListScreen() {
   const { accessToken } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
   const navigation = useNavigation<any>();
+  const handleTabBarScroll = useTabBarScrollHandler();
   const [tasks, setTasks] = useState<FollowUpTask[]>([]);
   const [activeFilter, setActiveFilter] = useState<QueueFilter>("today");
   const [isLoading, setIsLoading] = useState(true);
@@ -243,7 +245,12 @@ export function FollowUpTaskListScreen() {
 
   return (
     <Screen>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        onScroll={handleTabBarScroll}
+        scrollEventThrottle={16}
+      >
         <View style={styles.header}>
           <View style={styles.headerText}>
             <Text style={[styles.pageTitle, { color: colors.textPrimary }]}>Task</Text>

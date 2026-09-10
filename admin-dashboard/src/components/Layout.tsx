@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { SchoolPicker } from "./SchoolPicker";
+import { formatEnumLabel } from "../utils/format";
 
 type IconName = "home" | "filter" | "chart" | "users" | "sparkle" | "building" | "buildingPlus" | "layers";
 
@@ -163,7 +164,7 @@ export function Layout() {
             <span style={styles.avatar}>{initials}</span>
             <div style={styles.profileText}>
               <span style={styles.profileName}>{user?.fullName}</span>
-              <span style={styles.profileRole}>{user?.role}</span>
+              <span style={styles.profileRole}>{formatEnumLabel(user?.role)}</span>
             </div>
             <button style={styles.logoutButton} onClick={logout}>
               Log out

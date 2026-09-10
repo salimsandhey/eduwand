@@ -3,6 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
+import { formatEnumLabel } from "../../utils/text";
 
 export function NoAccessScreen() {
   const { user, logout } = useAuth();
@@ -21,7 +22,7 @@ export function NoAccessScreen() {
       </Text>
       {user ? (
         <View style={[styles.roleBadge, { backgroundColor: colors.surfaceRaised }]}>
-          <Text style={[styles.roleBadgeText, { color: colors.accent }]}>{user.role}</Text>
+          <Text style={[styles.roleBadgeText, { color: colors.accent }]}>{formatEnumLabel(user.role)}</Text>
         </View>
       ) : null}
 

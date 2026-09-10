@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../theme/ThemeContext";
 import { typography } from "../theme/tokens";
 import { AnimatedAiButtonMascot } from "../components/AnimatedAiButtonMascot";
+import { useTabBarScale, useTabBarScrollReset } from "./TabBarScrollContext";
 
 interface FloatingTabBarProps extends BottomTabBarProps {
   icons: Record<string, keyof typeof Ionicons.glyphMap>;
@@ -13,13 +14,17 @@ interface FloatingTabBarProps extends BottomTabBarProps {
   onAiAssistPress?: () => void;
 }
 
-export const TAB_BAR_HEIGHT = 68;
+export const TAB_BAR_HEIGHT = 60;
 
 type ItemLayout = { x: number; width: number };
 
 export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssistIcon, onAiAssistPress }: FloatingTabBarProps) {
   const { colors, cardShadow, pressedOpacity } = useTheme();
   const insets = useSafeAreaInsets();
+  // Null on a tab navigator that hasn't wrapped itself in a TabBarScrollProvider -
+  // the bar then just renders at a fixed, unanimated size, as before.
+  const scrollScale = useTabBarScale();
+  const resetTabBarScroll = useTabBarScrollReset();
 
   const [itemLayouts, setItemLayouts] = useState<Record<number, ItemLayout>>({});
   const indicatorX = useRef(new Animated.Value(0)).current;
@@ -45,6 +50,12 @@ export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssist
 
   const indicatorSquash = indicatorStretch.interpolate({ inputRange: [1, 1.28], outputRange: [1, 0.86] });
 
+  // Whichever screen was scrolled last may have left the bar shrunk - every
+  // newly focused tab should always start at full size, not inherit that.
+  useEffect(() => {
+    resetTabBarScroll?.();
+  }, [state.index, resetTabBarScroll]);
+
   function handleItemLayout(index: number, event: LayoutChangeEvent) {
     const { x, width } = event.nativeEvent.layout;
     setItemLayouts((prev) => {
@@ -55,7 +66,17 @@ export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssist
   }
 
   return (
-    <View pointerEvents="box-none" style={[styles.wrap, { bottom: Math.max(insets.bottom, 10) }]}>
+    <Animated.View
+      pointerEvents="box-none"
+      style={[
+        styles.wrap,
+        { bottom: Math.max(insets.bottom, 10) },
+        // transformOrigin "bottom" keeps the bar's bottom edge anchored while
+        // it shrinks, so it visibly "sinks" toward the edge on scroll-down
+        // instead of shrinking evenly from its center.
+        scrollScale ? { transform: [{ scale: scrollScale }], transformOrigin: "bottom" } : null,
+      ]}
+    >
       <View style={[styles.bar, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
         {activeLayout ? (
           <Animated.View
@@ -124,7 +145,7 @@ export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssist
           {aiAssistIcon ? <AnimatedAiButtonMascot style={styles.aiAssistIcon} /> : null}
         </Pressable>
       ) : null}
-    </View>
+    </Animated.View>
   );
 }
 
@@ -193,7 +214,7 @@ function AnimatedTabItem({
             ]}
           />
           <Animated.View style={{ transform: [{ scale: iconScale }, { scale: pop }] }}>
-            <Ionicons name={icon} size={19} color={focused ? colors.accentOn : colors.textMuted} />
+            <Ionicons name={icon} size={17} color={focused ? colors.accentOn : colors.textMuted} />
           </Animated.View>
         </View>
         <Text
@@ -222,9 +243,10 @@ const styles = StyleSheet.create({
   },
   bar: {
     minHeight: TAB_BAR_HEIGHT,
-    borderRadius: 28,
+    borderRadius: 100,
     borderWidth: 1,
-    padding: 7,
+    padding: 6,
+    paddingHorizontal: 4,
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
@@ -232,8 +254,8 @@ const styles = StyleSheet.create({
   },
   item: {
     flex: 1,
-    minHeight: 54,
-    borderRadius: 21,
+    minHeight: 47,
+    borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 4,
@@ -241,9 +263,9 @@ const styles = StyleSheet.create({
   slidingIndicator: {
     position: "absolute",
     left: 0,
-    top: 3,
-    bottom: 3,
-    borderRadius: 19,
+    top: 2,
+    bottom: 2,
+    borderRadius: 100,
     shadowColor: "#7C005A",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.28,
@@ -256,16 +278,16 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   iconWrap: {
-    width: 28,
-    height: 26,
+    width: 26,
+    height: 24,
     alignItems: "center",
     justifyContent: "center",
   },
   inactiveDot: {
     position: "absolute",
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
   },
   label: {
     fontFamily: typography.fontFamily,

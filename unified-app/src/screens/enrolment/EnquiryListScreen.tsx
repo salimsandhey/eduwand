@@ -23,6 +23,7 @@ import { Dropdown } from "../../components/Dropdown";
 import { getStatusColor } from "../../theme/statusColors";
 import { brandPalette } from "../../theme/tokens";
 import { usePipelineStages } from "../../hooks/usePipelineStages";
+import { useTabBarScrollHandler } from "../../navigation/TabBarScrollContext";
 import { api, AcademicYear, Enquiry, EnquiryStatus, PipelineStage } from "../../api/client";
 import { resolveEnquiryImageSource } from "../../theme/avatars";
 import { decorativeAssets } from "../../theme/decorativeAssets";
@@ -196,7 +197,7 @@ function AnimatedCard({
               is inverted (dark bg / white text, e.g. "enrolled") renders invisible text. */}
           <View style={[styles.cardStatusPill, { backgroundColor: statusColor.bg, borderColor: colors.surface }]}>
             <Text style={[styles.cardStatusPillText, { color: statusColor.text }]} numberOfLines={1}>
-              {item.status}
+              {formatSource(item.status)}
             </Text>
           </View>
           {stages.length > 0 ? (
@@ -265,6 +266,7 @@ export function EnquiryListScreen({ navigation }: Props) {
   const { accessToken } = useAuth();
   const { colors, mode, cardShadow, pressedOpacity } = useTheme();
   const { stages } = usePipelineStages();
+  const handleTabBarScroll = useTabBarScrollHandler();
   const statusFilters: (EnquiryStatus | "all")[] = ["all", ...stages.map((stage) => stage.key)];
   const labelFor = (key: EnquiryStatus | "all") =>
     key === "all" ? "All Leads" : stages.find((stage) => stage.key === key)?.label ?? key;
@@ -407,6 +409,8 @@ export function EnquiryListScreen({ navigation }: Props) {
         refreshControl={<RefreshControl refreshing={isLoading} onRefresh={load} tintColor={colors.accent} />}
         contentContainerStyle={styles.list}
         showsVerticalScrollIndicator={false}
+        onScroll={handleTabBarScroll}
+        scrollEventThrottle={16}
         ListHeaderComponent={
           <>
             <View style={styles.header}>

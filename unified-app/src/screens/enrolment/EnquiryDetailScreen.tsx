@@ -1,5 +1,5 @@
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Share, Image, Animated } from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator, Share, Image, Animated } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
@@ -47,7 +47,7 @@ type LeadSubTab = "timeline" | "tasks";
 function activityLabel(item: ActivityItem): string {
   switch (item.type) {
     case "stage_change":
-      return `Moved to ${item.payload.toStatus}`;
+      return `Moved to ${formatStageLabel(String(item.payload.toStatus))}`;
     case "note_added":
       return `Note added${item.actorName ? ` by ${item.actorName}` : ""}`;
     case "task_created":
@@ -307,6 +307,16 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
 
   const [pendingStageChange, setPendingStageChange] = useState<EnquiryStatus | null>(null);
 
+  // Lead momentum stepper: shows one stage's section at a time. "Next"/"Back"
+  // commit the real (adjacent-only) stage change, sliding the section
+  // horizontally between transitions. isStageAnimating gates the nav buttons
+  // for the ~300ms transition so a double-tap can't skip a stage.
+  const stageTranslateX = useRef(new Animated.Value(0)).current;
+  const stageOpacity = useRef(new Animated.Value(1)).current;
+  const [isStageAnimating, setIsStageAnimating] = useState(false);
+  const [visitNote, setVisitNote] = useState("");
+  const [isSavingVisitNote, setIsSavingVisitNote] = useState(false);
+
   const [noteBody, setNoteBody] = useState("");
   const [noteFocused, setNoteFocused] = useState(false);
   const [isAddingNote, setIsAddingNote] = useState(false);
@@ -412,6 +422,56 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
     }
   }
 
+  // Slides the current section out, commits the stage change, then slides the
+  // new section in from the opposite edge. `dir` only affects the slide
+  // direction - the target stage is always the one adjacent to the current.
+  function animateStageTo(targetKey: EnquiryStatus, dir: "next" | "back") {
+    if (isStageAnimating) return;
+    setIsStageAnimating(true);
+    Animated.parallel([
+      Animated.timing(stageTranslateX, { toValue: dir === "next" ? -28 : 28, duration: 150, useNativeDriver: true }),
+      Animated.timing(stageOpacity, { toValue: 0, duration: 150, useNativeDriver: true }),
+    ]).start(async () => {
+      await applyStatusChange(targetKey);
+      stageTranslateX.setValue(dir === "next" ? 28 : -28);
+      Animated.parallel([
+        Animated.spring(stageTranslateX, { toValue: 0, tension: 180, friction: 18, useNativeDriver: true }),
+        Animated.timing(stageOpacity, { toValue: 1, duration: 180, useNativeDriver: true }),
+      ]).start(() => setIsStageAnimating(false));
+    });
+  }
+
+  function goToAdjacentStage(dir: "next" | "back") {
+    if (!enquiry) return;
+    const target = stages[currentStageIndex + (dir === "next" ? 1 : -1)];
+    if (!target || target.isTerminal) return;
+    animateStageTo(target.key, dir);
+  }
+
+  function reopenLead() {
+    if (stages.length === 0) return;
+    animateStageTo(stages[0].key, "back");
+  }
+
+  async function saveVisitNote() {
+    if (!accessToken || !visitNote.trim()) return;
+    setIsSavingVisitNote(true);
+    try {
+      await api.addEnquiryNote(accessToken, enquiryId, visitNote.trim(), "lead_note");
+      setVisitNote("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to add note");
+    } finally {
+      setIsSavingVisitNote(false);
+    }
+  }
+
+  function jumpToFollowUps() {
+    setLeadSubTab("tasks");
+    setShowAddTask(true);
+  }
+
   async function addNote() {
     if (!accessToken || !noteBody.trim()) return;
     setIsAddingNote(true);
@@ -502,7 +562,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
     if (!enquiry) return;
     try {
       await Share.share({
-        message: `Lead Details:\nName: ${enquiry.contactName}\nPhone: ${enquiry.contactPhone}\nEmail: ${enquiry.contactEmail || "N/A"}\nSource: ${enquiry.source}\nStatus: ${enquiry.status}`,
+        message: `Lead Details:\nName: ${enquiry.contactName}\nPhone: ${enquiry.contactPhone}\nEmail: ${enquiry.contactEmail || "N/A"}\nSource: ${formatSource(enquiry.source)}\nStatus: ${formatStageLabel(enquiry.status)}`,
       });
     } catch {
     }
@@ -537,6 +597,202 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
           : canConfirmAdmission
             ? "Review admission"
             : "Keep lead warm";
+
+  const admissionPct = enquiry.admissionSummary.completionPercent;
+  const admissionConfirmed = enquiry.admissionSummary.confirmed;
+
+  // The section body shown inside the momentum card for the lead's current
+  // stage. Keyed off the stage's key (pipeline stages are per-school
+  // configurable, so an unrecognised key falls back to the generic hint).
+  function renderStageBody() {
+    if (!enquiry) return null;
+    if (currentStage?.isTerminal) {
+      return (
+        <Text style={[styles.stepText, { color: colors.textMuted }]}>
+          {enquiry.lostReason ? `Marked lost — ${enquiry.lostReason}` : "This lead is marked lost."}
+        </Text>
+      );
+    }
+
+    switch (currentStage?.key) {
+      case "new":
+        return (
+          <>
+            <Text style={[styles.stepText, { color: colors.textSecondary }]}>
+              Confirm the contact details and capture messaging consent, then reach out.
+            </Text>
+            {!enquiry.consentCaptured ? (
+              <View style={[styles.stepCallout, { backgroundColor: colors.accentSoft, borderColor: colors.accentSoftAlt }]}>
+                <Ionicons name="shield-outline" size={15} color={colors.accent} />
+                <Text style={[styles.stepCalloutText, { color: colors.accent }]}>
+                  Messaging consent not captured yet — add it before sending any automated follow-up.
+                </Text>
+              </View>
+            ) : null}
+            <Pressable
+              onPress={() => navigation.navigate("EditEnquiry", { enquiryId })}
+              style={({ pressed }) => [
+                styles.smallButton,
+                { backgroundColor: colors.surfaceRaised, borderWidth: 1, borderColor: colors.border, alignSelf: "flex-start" },
+                pressed && { opacity: pressedOpacity },
+              ]}
+            >
+              <Text style={[styles.smallButtonText, { color: colors.textPrimary }]}>Edit contact &amp; consent</Text>
+            </Pressable>
+          </>
+        );
+
+      case "contacted":
+        return (
+          <>
+            <Text style={[styles.stepText, { color: colors.textSecondary }]}>
+              Log every call or message and schedule the next touchpoint so the lead stays warm.
+            </Text>
+            <View style={styles.factsRow}>
+              <View style={[styles.fact, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Ionicons name="alarm-outline" size={12} color={colors.accent} />
+                <Text style={[styles.factText, { color: colors.textSecondary }]}>{openTasksCount} open</Text>
+              </View>
+              <View style={[styles.fact, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Ionicons name="alert-circle-outline" size={12} color={overdueTasksCount > 0 ? colors.warning : colors.accent} />
+                <Text style={[styles.factText, { color: colors.textSecondary }]}>{overdueTasksCount} overdue</Text>
+              </View>
+            </View>
+            <Pressable
+              onPress={jumpToFollowUps}
+              style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent, alignSelf: "flex-start" }, pressed && { opacity: pressedOpacity }]}
+            >
+              <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Schedule a follow-up</Text>
+            </Pressable>
+          </>
+        );
+
+      case "visit_scheduled":
+        return (
+          <>
+            <Text style={[styles.stepText, { color: colors.textSecondary }]}>
+              Lock in a campus visit date and send the family a reminder.
+            </Text>
+            <Pressable
+              onPress={jumpToFollowUps}
+              style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent, alignSelf: "flex-start" }, pressed && { opacity: pressedOpacity }]}
+            >
+              <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Add a visit reminder</Text>
+            </Pressable>
+          </>
+        );
+
+      case "visit_done":
+        return (
+          <>
+            <Text style={[styles.stepText, { color: colors.textSecondary }]}>
+              Capture how the visit went — the family&apos;s feedback and the agreed next step.
+            </Text>
+            <TextInput
+              style={[styles.stepNoteInput, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
+              value={visitNote}
+              onChangeText={setVisitNote}
+              placeholder="Visit outcome / next step…"
+              placeholderTextColor={colors.textMuted}
+              multiline
+            />
+            <Pressable
+              onPress={saveVisitNote}
+              disabled={isSavingVisitNote || !visitNote.trim()}
+              style={({ pressed }) => [
+                styles.smallButton,
+                { backgroundColor: colors.accent, alignSelf: "flex-start" },
+                (pressed || isSavingVisitNote || !visitNote.trim()) && { opacity: pressedOpacity },
+              ]}
+            >
+              <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>{isSavingVisitNote ? "Saving…" : "Save visit note"}</Text>
+            </Pressable>
+          </>
+        );
+
+      case "application":
+        return (
+          <>
+            <Text style={[styles.stepText, { color: colors.textSecondary }]}>Fill the admission form before confirming admission.</Text>
+            <View
+              style={[
+                styles.stepCallout,
+                admissionPct >= 100 || admissionConfirmed
+                  ? { backgroundColor: colors.surfaceRaised, borderColor: colors.border }
+                  : { backgroundColor: colors.accentSoft, borderColor: colors.accentSoftAlt },
+              ]}
+            >
+              <Ionicons
+                name={admissionPct >= 100 || admissionConfirmed ? "checkmark-circle-outline" : "document-text-outline"}
+                size={15}
+                color={colors.accent}
+              />
+              <Text
+                style={[
+                  styles.stepCalloutText,
+                  { color: admissionPct >= 100 || admissionConfirmed ? colors.textSecondary : colors.accent },
+                ]}
+              >
+                {admissionConfirmed
+                  ? "Admission already confirmed."
+                  : admissionPct >= 100
+                    ? "Admission form is complete and ready to confirm."
+                    : `Admission form is ${admissionPct}% complete — finish it first.`}
+              </Text>
+            </View>
+            <View style={[styles.admissionProgressTrack, { backgroundColor: colors.border }]}>
+              <View style={[styles.admissionProgressFill, { backgroundColor: colors.accent, width: `${Math.min(100, admissionPct)}%` }]} />
+            </View>
+            <Pressable
+              onPress={() => navigation.navigate("AdmissionConfirmation", { enquiryId })}
+              style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent, alignSelf: "flex-start" }, pressed && { opacity: pressedOpacity }]}
+            >
+              <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>
+                {admissionConfirmed ? "View admission form" : "Open admission form"}
+              </Text>
+            </Pressable>
+          </>
+        );
+
+      case "admitted":
+        return (
+          <>
+            <Text style={[styles.stepText, { color: colors.textSecondary }]}>
+              {admissionConfirmed
+                ? "Admission confirmed — the student record has been created."
+                : "Confirm the admission to create the student record."}
+            </Text>
+            <View style={styles.factsRow}>
+              <View style={[styles.fact, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Ionicons name="folder-open-outline" size={12} color={colors.accent} />
+                <Text style={[styles.factText, { color: colors.textSecondary }]}>
+                  {docCompletion.done}/{docCompletion.total} documents
+                </Text>
+              </View>
+            </View>
+            {!admissionConfirmed ? (
+              <Pressable
+                onPress={() => navigation.navigate("AdmissionConfirmation", { enquiryId })}
+                style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent, alignSelf: "flex-start" }, pressed && { opacity: pressedOpacity }]}
+              >
+                <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Confirm admission</Text>
+              </Pressable>
+            ) : null}
+          </>
+        );
+
+      case "enrolled":
+        return (
+          <View style={[styles.stepCallout, { backgroundColor: colors.accentSoft, borderColor: colors.accentSoftAlt }]}>
+            <Ionicons name="checkmark-circle" size={16} color={colors.accent} />
+            <Text style={[styles.stepCalloutText, { color: colors.accent }]}>This lead is fully converted and enrolled.</Text>
+          </View>
+        );
+
+      default:
+        return <Text style={[styles.stepText, { color: colors.textMuted }]}>Next best action: {nextActionLabel}</Text>;
+    }
+  }
 
   return (
     <Screen edges={["bottom"]}>
@@ -775,45 +1031,77 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
                 </View>
               </View>
 
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.stagePicker}>
-                {stages.map((stage, index) => {
-                  const isDone = currentStageIndex >= 0 && index < currentStageIndex;
-                  const isCurrent = index === currentStageIndex;
-                  return (
-                    <Pressable
-                      key={stage.key}
-                      onPress={() => changeStatus(stage.key)}
-                      style={({ pressed }) => [
-                        styles.stageChip,
-                        {
-                          backgroundColor: isCurrent ? colors.accent : colors.surfaceRaised,
-                          borderColor: isCurrent || isDone ? colors.accent : colors.border,
-                        },
-                        pressed && { opacity: pressedOpacity },
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: isCurrent }}
-                    >
-                      <View
-                        style={[
-                          styles.stageChipDot,
-                          {
-                            backgroundColor: isDone ? colors.accent : isCurrent ? colors.accentOn : colors.border,
-                          },
+              <Animated.View
+                key={enquiry.status}
+                style={[styles.stepBody, { opacity: stageOpacity, transform: [{ translateX: stageTranslateX }] }]}
+              >
+                {renderStageBody()}
+              </Animated.View>
+
+              <View style={styles.stepFooter}>
+                {currentStage?.isTerminal ? (
+                  <Pressable
+                    onPress={reopenLead}
+                    disabled={isStageAnimating}
+                    style={({ pressed }) => [
+                      styles.stepNavBtn,
+                      styles.stepNavGhost,
+                      { borderColor: colors.border },
+                      (pressed || isStageAnimating) && { opacity: pressedOpacity },
+                    ]}
+                  >
+                    <Ionicons name="refresh-outline" size={15} color={colors.textPrimary} />
+                    <Text style={[styles.stepNavText, { color: colors.textPrimary }]}>Reopen lead</Text>
+                  </Pressable>
+                ) : (
+                  <>
+                    {currentStageIndex > 0 ? (
+                      <Pressable
+                        onPress={() => goToAdjacentStage("back")}
+                        disabled={isStageAnimating}
+                        style={({ pressed }) => [
+                          styles.stepNavBtn,
+                          styles.stepNavGhost,
+                          { borderColor: colors.border },
+                          (pressed || isStageAnimating) && { opacity: pressedOpacity },
                         ]}
                       >
-                        {isDone ? <Ionicons name="checkmark" size={10} color={colors.accentOn} /> : null}
-                      </View>
-                      <Text
-                        style={[styles.stageChipText, { color: isCurrent ? colors.accentOn : colors.textSecondary }]}
-                        numberOfLines={1}
+                        <Ionicons name="chevron-back" size={15} color={colors.textPrimary} />
+                        <Text style={[styles.stepNavText, { color: colors.textPrimary }]}>Back</Text>
+                      </Pressable>
+                    ) : null}
+                    <View style={{ flex: 1 }} />
+                    {!currentStage?.isConverted ? (
+                      <Pressable
+                        onPress={() => changeStatus("lost")}
+                        disabled={isStageAnimating}
+                        style={({ pressed }) => [styles.stepLost, pressed && { opacity: pressedOpacity }]}
                       >
-                        {stage.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
+                        <Text style={[styles.stepLostText, { color: colors.textMuted }]}>Mark lost</Text>
+                      </Pressable>
+                    ) : null}
+                    {nextStage && !nextStage.isTerminal ? (
+                      <Pressable
+                        onPress={() => goToAdjacentStage("next")}
+                        disabled={isStageAnimating}
+                        style={({ pressed }) => [
+                          styles.stepNavBtn,
+                          { backgroundColor: colors.accent },
+                          (pressed || isStageAnimating) && { opacity: pressedOpacity },
+                        ]}
+                      >
+                        <Text style={[styles.stepNavText, { color: colors.accentOn }]}>Next</Text>
+                        <Ionicons name="chevron-forward" size={15} color={colors.accentOn} />
+                      </Pressable>
+                    ) : (
+                      <View style={[styles.stepDoneChip, { backgroundColor: colors.accentSoft }]}>
+                        <Ionicons name="checkmark" size={13} color={colors.accent} />
+                        <Text style={[styles.stepDoneChipText, { color: colors.accent }]}>Converted</Text>
+                      </View>
+                    )}
+                  </>
+                )}
+              </View>
             </View>
 
             {showLostReasonFor ? (
@@ -1383,27 +1671,29 @@ const styles = StyleSheet.create({
   stageStepLabel: { fontSize: 9.5, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.4 },
   stageStepTrack: { width: 44, height: 4, borderRadius: 2, overflow: "hidden", marginTop: 2 },
   stageStepFill: { height: "100%", borderRadius: 2 },
-  stagePicker: { gap: 8, paddingRight: 4 },
-  stageChip: {
-    minWidth: 104,
-    maxWidth: 140,
+  // Lead momentum stepper - one stage section at a time (replaces the old
+  // horizontal stage-chip strip). stepBody is the sliding section wrapper.
+  stepBody: { gap: 10 },
+  stepText: { fontSize: 12.5, lineHeight: 18, fontWeight: "600" },
+  stepCallout: { flexDirection: "row", alignItems: "flex-start", gap: 8, borderWidth: 1, borderRadius: 12, padding: 11 },
+  stepCalloutText: { flex: 1, fontSize: 12, lineHeight: 17, fontWeight: "700" },
+  stepNoteInput: { minHeight: 64, borderWidth: 1, borderRadius: 12, padding: 11, fontSize: 13.5, textAlignVertical: "top" },
+  stepFooter: { flexDirection: "row", alignItems: "center", gap: 10 },
+  stepNavBtn: {
     minHeight: 40,
-    borderRadius: 14,
-    borderWidth: 1,
-    paddingHorizontal: 10,
+    borderRadius: 12,
+    paddingHorizontal: 14,
     flexDirection: "row",
     alignItems: "center",
-    gap: 7,
-  },
-  stageChipDot: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    alignItems: "center",
     justifyContent: "center",
-    flexShrink: 0,
+    gap: 5,
   },
-  stageChipText: { flex: 1, fontSize: 11.5, fontWeight: "800" },
+  stepNavGhost: { borderWidth: 1 },
+  stepNavText: { fontSize: 12.5, fontWeight: "800" },
+  stepLost: { paddingHorizontal: 8, paddingVertical: 8 },
+  stepLostText: { fontSize: 11.5, fontWeight: "800", textDecorationLine: "underline" },
+  stepDoneChip: { flexDirection: "row", alignItems: "center", gap: 5, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
+  stepDoneChipText: { fontSize: 11.5, fontWeight: "800" },
 
   inlineForm: { borderWidth: 1, borderRadius: 16, padding: 14, gap: 10 },
   formLabel: { fontSize: 12, fontWeight: "700" },

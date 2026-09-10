@@ -10,7 +10,7 @@ import { DatePicker } from "../../components/DatePicker";
 import { ProfilePhotoPicker, PickedPhoto } from "../../components/ProfilePhotoPicker";
 import { DynamicFormFields } from "../../components/DynamicFormFields";
 import { api, EnquirySource, GuardianRelation, PossibleDuplicate, ClassSection, FormField } from "../../api/client";
-import { capitalizeFirst } from "../../utils/text";
+import { capitalizeFirst, formatEnumLabel } from "../../utils/text";
 
 const SOURCES: EnquirySource[] = ["phone", "walk_in", "website", "referral", "event", "social"];
 const GUARDIAN_RELATIONS: GuardianRelation[] = ["mother", "father", "guardian", "other"];
@@ -282,7 +282,7 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
                   onPress={() => setSource(s)}
                   accessibilityRole="button"
                 >
-                  <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{s}</Text>
+                  <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{formatEnumLabel(s)}</Text>
                 </Pressable>
               );
             })}
@@ -356,7 +356,7 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
             <Text style={[styles.duplicateTitle, { color: colors.warning }]}>Possible duplicate</Text>
             {duplicates.map((d) => (
               <Text key={d.id} style={[styles.duplicateItem, { color: colors.textPrimary }]}>
-                {d.contactName} · {d.status}
+                {d.contactName} · {formatEnumLabel(d.status)}
               </Text>
             ))}
           </View>

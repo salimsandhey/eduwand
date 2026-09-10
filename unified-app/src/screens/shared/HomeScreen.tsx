@@ -9,6 +9,8 @@ import {
   Animated,
   Image,
   ImageSourcePropType,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   useWindowDimensions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -31,8 +33,15 @@ import { usePipelineStages } from "../../hooks/usePipelineStages";
 import { decorativeAssets } from "../../theme/decorativeAssets";
 import { resolveUserImageSource } from "../../theme/avatars";
 import { capitalizeFirst } from "../../utils/text";
+import { useTabBarScrollHandler } from "../../navigation/TabBarScrollContext";
 
 const ENROLMENT_ROLES = ["front_desk", "counsellor", "admin", "leadership"];
+
+// "Help & support" quick-action cat: hidden (tucked behind the card, moved
+// down from its peek spot) until the counsellor has scrolled this far through
+// the page, then it animates up into its normal peeking position.
+const CAT_REVEAL_SCROLL_PROGRESS = 0.12;
+const CAT_HIDDEN_OFFSET = 90;
 
 function TypingName({ text, color, style }: { text: string; color: string; style: object }) {
   const [visibleChars, setVisibleChars] = useState(0);
@@ -164,6 +173,10 @@ function getWeekDates(referenceDate: Date): Date[] {
 
 export function HomeScreen() {
   const { user, accessToken } = useAuth();
+  // undefined outside the enrolment tab navigator's TabBarScrollProvider - the
+  // teacher branch below intentionally doesn't wire this into its own scroll
+  // view, so its tab bar keeps its fixed size for now.
+  const handleTabBarScroll = useTabBarScrollHandler();
   const { colors, mode, cardShadow, pressedOpacity } = useTheme();
   const { stages } = usePipelineStages();
   const navigation = useNavigation<any>();
@@ -197,6 +210,33 @@ export function HomeScreen() {
   const notificationBadgeScale = useRef(new Animated.Value(1)).current;
   const heroBulbPulse = useRef(new Animated.Value(0)).current;
   const submissionMotion = useRef(new Animated.Value(0)).current;
+  const catRevealAnim = useRef(new Animated.Value(0)).current;
+  const catRevealedRef = useRef(false);
+  const [catRevealed, setCatRevealed] = useState(false);
+
+  const handleEnrolmentScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      handleTabBarScroll?.(event);
+
+      const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+      const scrollableHeight = contentSize.height - layoutMeasurement.height;
+      if (scrollableHeight <= 0) return;
+
+      const scrollProgress = contentOffset.y / scrollableHeight;
+      const shouldReveal = scrollProgress >= CAT_REVEAL_SCROLL_PROGRESS;
+      if (shouldReveal === catRevealedRef.current) return;
+
+      catRevealedRef.current = shouldReveal;
+      setCatRevealed(shouldReveal);
+      Animated.spring(catRevealAnim, {
+        toValue: shouldReveal ? 1 : 0,
+        useNativeDriver: true,
+        friction: 8,
+        tension: 60,
+      }).start();
+    },
+    [handleTabBarScroll, catRevealAnim]
+  );
   const heroCarouselRef = useRef<ScrollView>(null);
   const heroAutoAdvanceResumeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notificationCount = teacherSummary?.ungradedSubmissionCount ?? 0;
@@ -397,7 +437,12 @@ export function HomeScreen() {
   return (
     <Screen>
       {isEnrolmentRole ? (
-        <ScrollView contentContainerStyle={[styles.container, { backgroundColor: colors.background }]} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          contentContainerStyle={[styles.container, { backgroundColor: colors.background }]}
+          showsVerticalScrollIndicator={false}
+          onScroll={handleEnrolmentScroll}
+          scrollEventThrottle={16}
+        >
           <>
             <View style={styles.enrolmentHeader}>
               <View style={styles.heroTopRow}>
@@ -546,6 +591,8 @@ export function HomeScreen() {
                   hint="Get assistance"
                   tone="#E5A72D"
                   image={decorativeAssets.followUpsCat}
+                  revealAnim={catRevealAnim}
+                  revealed={catRevealed}
                   colors={colors}
                   pressedOpacity={pressedOpacity}
                   onPress={() => navigation.navigate("HelpSupport")}
@@ -961,6 +1008,8 @@ function ActionCard({
   hint,
   tone,
   image,
+  revealAnim,
+  revealed,
   colors,
   pressedOpacity,
   onPress,
@@ -970,37 +1019,78 @@ function ActionCard({
   hint: string;
   tone: string;
   image?: ImageSourcePropType;
+  // When provided alongside `image`, the peek image starts moved down and
+  // behind the card, then animates up in front of it once `revealed` flips
+  // true (see CAT_REVEAL_SCROLL_PROGRESS in HomeScreen's scroll handler).
+  revealAnim?: Animated.Value;
+  revealed?: boolean;
   colors: ReturnType<typeof useTheme>["colors"];
   pressedOpacity: number;
   onPress: () => void;
 }) {
+  // The peek image is rendered as a sibling of the Pressable, not a child of
+  // it: zIndex only reorders siblings against each other, it can never place
+  // a child behind its own parent's paint. As a child, the cat would always
+  // render on top of the card no matter how low its zIndex went. As a
+  // sibling, styles.actionCard's static zIndex (1) genuinely sits above the
+  // hidden cat's zIndex (0) and below the revealed cat's (3).
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.actionCard,
-        { backgroundColor: tone + "1F", borderColor: tone + "40" },
-        pressed && { opacity: pressedOpacity },
-      ]}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-    >
+    <View style={styles.actionCardWrap}>
       {image ? (
-        <Image source={image} style={styles.actionPeek} resizeMode="contain" />
+        revealAnim ? (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.actionPeek,
+              {
+                // zIndex/paint-order alone can't hide this against the card's
+                // own translucent background (tone + "1F" - the cat would
+                // still show straight through it), so opacity is the actual
+                // hide mechanism here; zIndex just keeps stacking correct
+                // once revealed, and translateY supplies the "moved" motion.
+                zIndex: revealed ? 3 : 0,
+                opacity: revealAnim,
+                transform: [
+                  {
+                    translateY: revealAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [CAT_HIDDEN_OFFSET, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <Image source={image} style={styles.actionPeekImage} resizeMode="contain" />
+          </Animated.View>
+        ) : (
+          <Image source={image} style={[styles.actionPeek, { zIndex: 3 }]} resizeMode="contain" />
+        )
       ) : null}
-      <View style={styles.actionTopRow}>
-        <View style={[styles.actionIconBg, { backgroundColor: tone }]}>
-          <Ionicons name={icon} size={19} color="#FFFFFF" />
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [
+          styles.actionCard,
+          { backgroundColor: tone + "1F", borderColor: tone + "40" },
+          pressed && { opacity: pressedOpacity },
+        ]}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+      >
+        <View style={styles.actionTopRow}>
+          <View style={[styles.actionIconBg, { backgroundColor: tone }]}>
+            <Ionicons name={icon} size={19} color="#FFFFFF" />
+          </View>
+          <Ionicons name="arrow-forward" size={13} color={tone} style={styles.actionArrow} />
         </View>
-        <Ionicons name="arrow-forward" size={13} color={tone} style={styles.actionArrow} />
-      </View>
-      <Text style={[styles.actionLabel, { color: colors.textPrimary }]} numberOfLines={2}>
-        {label}
-      </Text>
-      <Text style={[styles.actionHint, { color: tone }]} numberOfLines={1}>
-        {hint}
-      </Text>
-    </Pressable>
+        <Text style={[styles.actionLabel, { color: colors.textPrimary }]} numberOfLines={2}>
+          {label}
+        </Text>
+        <Text style={[styles.actionHint, { color: tone }]} numberOfLines={1}>
+          {hint}
+        </Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -1497,8 +1587,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 10,
   },
+  actionCardWrap: {
+    flex: 1,
+    position: "relative",
+  },
   actionCard: {
     flex: 1,
+    zIndex: 1,
     minHeight: 124,
     borderWidth: 1,
     borderRadius: 20,
@@ -1513,7 +1608,10 @@ const styles = StyleSheet.create({
     right: 8,
     width: 54,
     height: 54,
-    zIndex: 3,
+  },
+  actionPeekImage: {
+    width: "100%",
+    height: "100%",
   },
   actionTopRow: {
     flexDirection: "row",

@@ -8,6 +8,7 @@ import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { ThemeColors } from "../../theme/tokens";
 import { usePipelineStages } from "../../hooks/usePipelineStages";
+import { useTabBarScrollHandler } from "../../navigation/TabBarScrollContext";
 import {
   api,
   PipelineStage,
@@ -46,6 +47,7 @@ export function EnrolmentAnalyticsScreen() {
   const { accessToken } = useAuth();
   const { colors, cardShadow } = useTheme();
   const { stages } = usePipelineStages();
+  const handleTabBarScroll = useTabBarScrollHandler();
 
   const [funnel, setFunnel] = useState<EnrolmentFunnel | null>(null);
   const [bySource, setBySource] = useState<EnrolmentBySource | null>(null);
@@ -121,6 +123,8 @@ export function EnrolmentAnalyticsScreen() {
         contentContainerStyle={styles.container}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={isLoading} onRefresh={load} tintColor={colors.accent} />}
+        onScroll={handleTabBarScroll}
+        scrollEventThrottle={16}
       >
         <View style={styles.header}>
           <Text style={[styles.title, { color: colors.textPrimary }]}>Analytics</Text>

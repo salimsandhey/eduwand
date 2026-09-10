@@ -9,7 +9,7 @@ import { Screen } from "../../components/Screen";
 import { DatePicker } from "../../components/DatePicker";
 import { ProfilePhotoPicker, PickedPhoto } from "../../components/ProfilePhotoPicker";
 import { api, EnquirySource, GuardianRelation, ClassSection } from "../../api/client";
-import { capitalizeFirst } from "../../utils/text";
+import { capitalizeFirst, formatEnumLabel } from "../../utils/text";
 
 const SOURCES: EnquirySource[] = ["phone", "walk_in", "website", "referral", "event", "social"];
 const GUARDIAN_RELATIONS: GuardianRelation[] = ["mother", "father", "guardian", "other"];
@@ -265,7 +265,7 @@ export function EditEnquiryScreen({ route, navigation }: Props) {
                   onPress={() => setSource(s)}
                   accessibilityRole="button"
                 >
-                  <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{s}</Text>
+                  <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{formatEnumLabel(s)}</Text>
                 </Pressable>
               );
             })}
