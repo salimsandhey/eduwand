@@ -35,6 +35,7 @@ interface AuthContextValue {
   uploadProfilePhoto: (file: { uri: string; name: string; mimeType: string }) => Promise<void>;
   setProfileAvatar: (avatarKey: string) => Promise<void>;
   removeProfilePhoto: () => Promise<void>;
+  markOnboardingTourSeen: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -229,6 +230,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(updated);
   }
 
+  async function markOnboardingTourSeen() {
+    if (!accessToken || !user) return;
+    setUser({ ...user, hasSeenOnboardingTour: true });
+    try {
+      await api.markOnboardingTourSeen(accessToken);
+    } catch {
+      // Non-critical - worst case the tour shows once more next login.
+    }
+  }
+
   return (
     <AuthContext.Provider
       value={{
@@ -248,6 +259,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         uploadProfilePhoto,
         setProfileAvatar,
         removeProfilePhoto,
+        markOnboardingTourSeen,
       }}
     >
       {children}

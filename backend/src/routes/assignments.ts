@@ -5,6 +5,7 @@ import { requireRoles } from "../lib/rbac";
 import { aiProvider, logAiUsage, AssignmentGenInput, GeneratedAssignmentQuestion } from "../lib/ai";
 import { hasSufficientCredits, getFeatureCost } from "../lib/credits";
 import { buildTaughtContentText, buildContextSourceText } from "../lib/generation-content";
+import { markOnboardingTaskComplete } from "../lib/onboarding";
 
 interface Question {
   id: string;
@@ -145,6 +146,8 @@ export async function assignmentRoutes(app: FastifyInstance) {
         status: "draft",
       },
     });
+
+    await markOnboardingTaskComplete(request.user.sub, "first_assignment");
 
     return reply.code(201).send({ data: assignment, meta: {} });
   });

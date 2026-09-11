@@ -4,8 +4,18 @@ import { requireRoles } from "../lib/rbac";
 import { storage } from "../lib/storage";
 import { MAX_EXTRACTED_CHARS } from "../lib/extraction";
 import { runContextExtraction } from "../lib/context-extraction";
+import { runContextResearch, ResearchCandidate } from "../lib/context-research";
+import { markOnboardingTaskComplete } from "../lib/onboarding";
+import {
+  assertContextSourceCapNotExceeded,
+  assertBucketCapNotExceeded,
+  bucketForSourceType,
+  ContextSourceBucket,
+  ContextSourceCapError,
+  detectYoutubeUrl,
+} from "../lib/context-limits";
 
-const VALID_SOURCE_TYPES = ["pdf", "docx", "pptx", "image", "url", "idream_k12"];
+const VALID_SOURCE_TYPES = ["pdf", "docx", "pptx", "image", "url", "youtube", "idream_k12"];
 
 const FILE_CONTENT_TYPES: Record<string, string> = {
   pdf: "application/pdf",
@@ -47,6 +57,7 @@ export async function topicRoutes(app: FastifyInstance) {
         ...(query.classSectionId ? { classSectionId: query.classSectionId } : {}),
         ...(query.subject ? { subject: query.subject } : {}),
       },
+      include: { classSection: { select: { className: true, sectionName: true } } },
       orderBy: { updatedAt: "desc" },
     });
     return { data: topics, meta: {} };
@@ -80,6 +91,8 @@ export async function topicRoutes(app: FastifyInstance) {
         status: "active",
       },
     });
+
+    await markOnboardingTaskComplete(request.user.sub, "first_lesson");
 
     return reply.code(201).send({ data: topic, meta: {} });
   });
@@ -155,6 +168,20 @@ export async function topicRoutes(app: FastifyInstance) {
         sourceType = body.sourceType;
         sourceUrl = body.sourceUrl ?? null;
         idreamK12ReferenceId = body.idreamK12ReferenceId ?? null;
+        // Detection happens server-side regardless of what the client sent,
+        // so it's centralized in one place rather than duplicated on every caller.
+        if (sourceType === "url" && sourceUrl && detectYoutubeUrl(sourceUrl)) {
+          sourceType = "youtube";
+        }
+      }
+
+      try {
+        await assertContextSourceCapNotExceeded(topic.id, sourceType);
+      } catch (err) {
+        if (err instanceof ContextSourceCapError) {
+          return reply.code(400).send({ data: null, error: { code: err.code, message: err.message } });
+        }
+        throw err;
       }
 
       const extraction = await runContextExtraction({ sourceType, fileLocation, sourceUrl, buffer: fileBuffer });
@@ -167,6 +194,7 @@ export async function topicRoutes(app: FastifyInstance) {
           originalFilename,
           sourceUrl,
           idreamK12ReferenceId,
+          pageCount: extraction.pageCount ?? null,
           extractionStatus: extraction.extractionStatus,
           extractedText: extraction.extractedText,
           extractionError: extraction.extractionError,
@@ -247,6 +275,169 @@ export async function topicRoutes(app: FastifyInstance) {
 
       return { data: updated, meta: {} };
     }
+  );
+
+  // Clones another of the teacher's own topics' context sources onto this
+  // topic - "import from another class" for the same lesson taught to a
+  // different section. No re-extraction: extractedText/extractionStatus are
+  // copied verbatim since the underlying file/url content is identical.
+  app.post<{ Params: { id: string }; Body: { sourceTopicId?: string; contextSourceIds?: string[] } }>(
+    "/topics/:id/context/import",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const topic = await prisma.topic.findFirst({ where: { id: request.params.id, schoolId: request.schoolId } });
+      if (!topic) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Topic not found" } });
+      }
+
+      const body = request.body ?? {};
+      if (!body.sourceTopicId) {
+        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "sourceTopicId is required" } });
+      }
+
+      const sourceTopic = await prisma.topic.findFirst({
+        where: { id: body.sourceTopicId, schoolId: request.schoolId, teacherUserId: request.user.sub },
+        include: {
+          contextSources: body.contextSourceIds?.length ? { where: { id: { in: body.contextSourceIds } } } : true,
+        },
+      });
+      if (!sourceTopic) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Source topic not found" } });
+      }
+
+      const bucketCounts = new Map<ContextSourceBucket, number>();
+      for (const source of sourceTopic.contextSources) {
+        const bucket = bucketForSourceType(source.sourceType);
+        if (bucket) bucketCounts.set(bucket, (bucketCounts.get(bucket) ?? 0) + 1);
+      }
+      try {
+        for (const [bucket, count] of bucketCounts) {
+          await assertBucketCapNotExceeded(topic.id, bucket, count);
+        }
+      } catch (err) {
+        if (err instanceof ContextSourceCapError) {
+          return reply.code(400).send({ data: null, error: { code: err.code, message: err.message } });
+        }
+        throw err;
+      }
+
+      const imported = await prisma.$transaction(
+        sourceTopic.contextSources.map((source) =>
+          prisma.contextSource.create({
+            data: {
+              topicId: topic.id,
+              sourceType: source.sourceType,
+              fileLocation: source.fileLocation,
+              originalFilename: source.originalFilename,
+              sourceUrl: source.sourceUrl,
+              idreamK12ReferenceId: source.idreamK12ReferenceId,
+              pageCount: source.pageCount,
+              extractionStatus: source.extractionStatus,
+              extractedText: source.extractedText,
+              extractionError: source.extractionError,
+            },
+          })
+        )
+      );
+
+      return reply.code(201).send({ data: imported, meta: {} });
+    }
+  );
+
+  // AI Research mode: starts a background search for candidate context
+  // sources. Returns immediately with the job id; the frontend polls
+  // GET .../research/:jobId for progress (see backend/src/lib/context-research.ts
+  // for why this is an in-process fire-and-forget job rather than a queue).
+  app.post<{ Params: { id: string } }>("/topics/:id/context/research", { onRequest: scoped(app) }, async (request, reply) => {
+    const topic = await prisma.topic.findFirst({ where: { id: request.params.id, schoolId: request.schoolId } });
+    if (!topic) {
+      return reply.code(404).send({ data: null, error: { code: "not_found", message: "Topic not found" } });
+    }
+
+    const job = await prisma.contextResearchJob.create({ data: { topicId: topic.id } });
+    void runContextResearch(job.id);
+
+    return reply.code(202).send({ data: job, meta: {} });
+  });
+
+  app.get<{ Params: { id: string; jobId: string } }>(
+    "/topics/:id/context/research/:jobId",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const job = await prisma.contextResearchJob.findFirst({
+        where: { id: request.params.jobId, topicId: request.params.id, topic: { schoolId: request.schoolId } },
+      });
+      if (!job) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Research job not found" } });
+      }
+      return { data: job, meta: {} };
+    }
+  );
+
+  async function updateResearchCandidate(
+    request: FastifyRequest<{ Params: { id: string; jobId: string; candidateId: string } }>,
+    reply: FastifyReply,
+    apply: (candidate: ResearchCandidate) => Promise<ResearchCandidate>
+  ) {
+    const job = await prisma.contextResearchJob.findFirst({
+      where: { id: request.params.jobId, topicId: request.params.id, topic: { schoolId: request.schoolId } },
+    });
+    if (!job) {
+      return reply.code(404).send({ data: null, error: { code: "not_found", message: "Research job not found" } });
+    }
+
+    const candidates = job.candidates as unknown as ResearchCandidate[];
+    const index = candidates.findIndex((c) => c.id === request.params.candidateId);
+    if (index === -1) {
+      return reply.code(404).send({ data: null, error: { code: "not_found", message: "Candidate not found" } });
+    }
+
+    const updated = await apply(candidates[index]);
+    candidates[index] = updated;
+
+    const saved = await prisma.contextResearchJob.update({
+      where: { id: job.id },
+      data: { candidates: candidates as unknown as object },
+    });
+    return { data: saved, meta: {} };
+  }
+
+  app.post<{ Params: { id: string; jobId: string; candidateId: string } }>(
+    "/topics/:id/context/research/:jobId/candidates/:candidateId/approve",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      try {
+        return await updateResearchCandidate(request, reply, async (candidate) => {
+          if (candidate.status === "approved") return candidate;
+          const sourceType = detectYoutubeUrl(candidate.url) ? "youtube" : "url";
+          await assertContextSourceCapNotExceeded(request.params.id, sourceType);
+          const extraction = await runContextExtraction({ sourceType, sourceUrl: candidate.url });
+          const contextSource = await prisma.contextSource.create({
+            data: {
+              topicId: request.params.id,
+              sourceType,
+              sourceUrl: candidate.url,
+              extractionStatus: extraction.extractionStatus,
+              extractedText: extraction.extractedText,
+              extractionError: extraction.extractionError,
+            },
+          });
+          return { ...candidate, status: "approved", contextSourceId: contextSource.id };
+        });
+      } catch (err) {
+        if (err instanceof ContextSourceCapError) {
+          return reply.code(400).send({ data: null, error: { code: err.code, message: err.message } });
+        }
+        throw err;
+      }
+    }
+  );
+
+  app.post<{ Params: { id: string; jobId: string; candidateId: string } }>(
+    "/topics/:id/context/research/:jobId/candidates/:candidateId/dismiss",
+    { onRequest: scoped(app) },
+    async (request, reply) =>
+      updateResearchCandidate(request, reply, async (candidate) => ({ ...candidate, status: "dismissed" }))
   );
 
   async function authenticateFromHeaderOrToken(request: FastifyRequest, reply: FastifyReply) {

@@ -11,7 +11,7 @@ interface DatePickerProps {
   minimumDate?: Date;
 }
 
-function parseISODate(value: string): Date {
+export function parseISODate(value: string): Date {
   const [y, m, d] = value.split("-").map(Number);
   return new Date(y, (m || 1) - 1, d || 1);
 }

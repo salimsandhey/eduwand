@@ -76,15 +76,26 @@ export function CreditsScreen({ navigation }: Props) {
             </View>
 
             {user?.accountType === "individual" ? (
-              <Pressable
-                onPress={() => navigation.navigate("RequestSubjectChange")}
-                style={({ pressed }) => [styles.linkRow, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
-                accessibilityRole="button"
-              >
-                <Ionicons name="swap-horizontal-outline" size={18} color={colors.accent} />
-                <Text style={[styles.linkText, { color: colors.textPrimary }]}>Request a subject change</Text>
-                <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-              </Pressable>
+              <>
+                <Pressable
+                  onPress={() => navigation.navigate("RequestSubjectChange")}
+                  style={({ pressed }) => [styles.linkRow, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+                  accessibilityRole="button"
+                >
+                  <Ionicons name="swap-horizontal-outline" size={18} color={colors.accent} />
+                  <Text style={[styles.linkText, { color: colors.textPrimary }]}>Request a subject change</Text>
+                  <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+                </Pressable>
+                <Pressable
+                  onPress={() => navigation.navigate("RequestClassChange")}
+                  style={({ pressed }) => [styles.linkRow, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+                  accessibilityRole="button"
+                >
+                  <Ionicons name="school-outline" size={18} color={colors.accent} />
+                  <Text style={[styles.linkText, { color: colors.textPrimary }]}>Request a class change</Text>
+                  <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+                </Pressable>
+              </>
             ) : null}
 
             <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>History</Text>

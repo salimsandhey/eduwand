@@ -143,6 +143,7 @@ export async function authRoutes(app: FastifyInstance) {
           photoMimeType: null,
           avatarKey: null,
           accountType: null,
+          hasSeenOnboardingTour: true,
         },
         meta: {},
       };
@@ -161,6 +162,7 @@ export async function authRoutes(app: FastifyInstance) {
         status: true,
         photoMimeType: true,
         avatarKey: true,
+        hasSeenOnboardingTour: true,
         school: { select: { accountType: true } },
       },
     });

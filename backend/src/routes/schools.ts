@@ -27,6 +27,12 @@ interface UpdateSchoolBody {
   principalPhone?: string;
   expectedStudentStrength?: number;
   status?: string;
+  // Per-teacher class/subject limit overrides for individual accounts - null
+  // clears the override (falls back to the platform default). See
+  // Docs/superpowers/plans/2026-09-09-individual-teacher-onboarding-and-
+  // credits.md.
+  classLimit?: number | null;
+  subjectLimit?: number | null;
 }
 
 async function computeReadiness(schoolId: string) {
@@ -136,7 +142,7 @@ export async function schoolRoutes(app: FastifyInstance) {
       if (caller.role === PLATFORM_ADMIN_ROLE) {
         const schools = await prisma.school.findMany({
           where: request.query.trustId ? { trustId: request.query.trustId } : {},
-          select: { id: true, trustId: true, name: true, board: true, accountType: true, status: true },
+          select: { id: true, trustId: true, name: true, board: true, accountType: true, classLimit: true, subjectLimit: true, status: true },
           orderBy: { name: "asc" },
         });
         return { data: schools, meta: {} };
@@ -148,7 +154,7 @@ export async function schoolRoutes(app: FastifyInstance) {
         }
         const schools = await prisma.school.findMany({
           where: { trustId: caller.trustId },
-          select: { id: true, trustId: true, name: true, board: true, accountType: true, status: true },
+          select: { id: true, trustId: true, name: true, board: true, accountType: true, classLimit: true, subjectLimit: true, status: true },
           orderBy: { name: "asc" },
         });
         return { data: schools, meta: {} };
@@ -157,7 +163,7 @@ export async function schoolRoutes(app: FastifyInstance) {
       if (caller.schoolId) {
         const schools = await prisma.school.findMany({
           where: { id: caller.schoolId },
-          select: { id: true, trustId: true, name: true, board: true, accountType: true, status: true },
+          select: { id: true, trustId: true, name: true, board: true, accountType: true, classLimit: true, subjectLimit: true, status: true },
         });
         return { data: schools, meta: {} };
       }
@@ -250,6 +256,9 @@ export async function schoolRoutes(app: FastifyInstance) {
           principalPhone: body.principalPhone ?? undefined,
           expectedStudentStrength: body.expectedStudentStrength ?? undefined,
           status: body.status ?? undefined,
+          // Explicit null clears the override; omitted key leaves it untouched.
+          classLimit: body.classLimit !== undefined ? body.classLimit : undefined,
+          subjectLimit: body.subjectLimit !== undefined ? body.subjectLimit : undefined,
         },
       });
 

@@ -10,8 +10,8 @@ type AnalyticsTab = "class" | "students";
 const BAND_COLORS = ["#18A957", "#7C3AED", "#F97316"];
 
 const DEMO_CLASS_SECTIONS: ClassSection[] = [
-  { id: "demo-grade-10-a", academicYearId: "demo-year", className: "Grade 10", sectionName: "A" },
-  { id: "demo-grade-10-b", academicYearId: "demo-year", className: "Grade 10", sectionName: "B" },
+  { id: "demo-grade-10-a", academicYearId: "demo-year", className: "Grade 10", sectionName: "A", isActive: true, joinCode: "demo-a" },
+  { id: "demo-grade-10-b", academicYearId: "demo-year", className: "Grade 10", sectionName: "B", isActive: true, joinCode: "demo-b" },
 ];
 
 const DEMO_ANALYTICS: ClassAnalytics = {

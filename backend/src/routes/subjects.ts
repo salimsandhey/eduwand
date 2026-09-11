@@ -1,17 +1,18 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 import { authorizeForSchool } from "./academic-structure";
+import { resolveSubjectLimit } from "../lib/limits";
 
 interface CreateSubjectBody {
   name: string;
 }
 
-// Individual accounts get a fixed set of exactly 2 subjects, chosen during
-// onboarding. Once at the cap, the only way to change WHICH 2 is an approved
+// Individual accounts get a fixed set of subjects (default 2, admin-
+// configurable via resolveSubjectLimit), chosen during onboarding. Once at
+// the limit, the only way to change WHICH subjects is an approved
 // SubjectChangeRequest, never a further POST here. Institutional schools are
 // never subject to this cap. See Docs/superpowers/plans/2026-09-09-
 // individual-teacher-onboarding-and-credits.md.
-const INDIVIDUAL_ACCOUNT_SUBJECT_CAP = 2;
 
 export async function subjectRoutes(app: FastifyInstance) {
   app.get<{ Params: { schoolId: string } }>(
@@ -50,13 +51,16 @@ export async function subjectRoutes(app: FastifyInstance) {
       if (!existing) {
         const school = await prisma.school.findUnique({ where: { id: request.params.schoolId }, select: { accountType: true } });
         if (school?.accountType === "individual") {
-          const count = await prisma.subject.count({ where: { schoolId: request.params.schoolId } });
-          if (count >= INDIVIDUAL_ACCOUNT_SUBJECT_CAP) {
+          const [count, limit] = await Promise.all([
+            prisma.subject.count({ where: { schoolId: request.params.schoolId } }),
+            resolveSubjectLimit(request.params.schoolId),
+          ]);
+          if (count >= limit) {
             return reply.code(400).send({
               data: null,
               error: {
                 code: "subject_cap_reached",
-                message: `Individual accounts are limited to ${INDIVIDUAL_ACCOUNT_SUBJECT_CAP} subjects. Submit a subject change request to swap one.`,
+                message: `Individual accounts are limited to ${limit} subjects. Submit a subject change request to swap one.`,
               },
             });
           }

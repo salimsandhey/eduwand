@@ -10,12 +10,14 @@ import { PLATFORM_ADMIN_ROLE } from "../lib/roles";
 interface CreatePlanBody {
   name: string;
   creditsPerTeacherSeat: number;
+  teacherSeatLimit: number;
   isDefault?: boolean;
 }
 
 interface UpdatePlanBody {
   name?: string;
   creditsPerTeacherSeat?: number;
+  teacherSeatLimit?: number;
   isDefault?: boolean;
 }
 
@@ -35,10 +37,16 @@ export async function planRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const body = request.body ?? ({} as CreatePlanBody);
       const name = body.name?.trim();
-      if (!name || !Number.isFinite(body.creditsPerTeacherSeat) || body.creditsPerTeacherSeat < 0) {
+      if (
+        !name ||
+        !Number.isFinite(body.creditsPerTeacherSeat) ||
+        body.creditsPerTeacherSeat < 0 ||
+        !Number.isFinite(body.teacherSeatLimit) ||
+        body.teacherSeatLimit < 1
+      ) {
         return reply.code(400).send({
           data: null,
-          error: { code: "validation_error", message: "name and a non-negative creditsPerTeacherSeat are required" },
+          error: { code: "validation_error", message: "name, a non-negative creditsPerTeacherSeat, and a teacherSeatLimit of at least 1 are required" },
         });
       }
 
@@ -47,7 +55,12 @@ export async function planRoutes(app: FastifyInstance) {
           await tx.plan.updateMany({ where: { isDefault: true }, data: { isDefault: false } });
         }
         return tx.plan.create({
-          data: { name, creditsPerTeacherSeat: Math.round(body.creditsPerTeacherSeat), isDefault: !!body.isDefault },
+          data: {
+            name,
+            creditsPerTeacherSeat: Math.round(body.creditsPerTeacherSeat),
+            teacherSeatLimit: Math.round(body.teacherSeatLimit),
+            isDefault: !!body.isDefault,
+          },
         });
       });
 
@@ -68,6 +81,9 @@ export async function planRoutes(app: FastifyInstance) {
       if (body.creditsPerTeacherSeat !== undefined && (!Number.isFinite(body.creditsPerTeacherSeat) || body.creditsPerTeacherSeat < 0)) {
         return reply.code(400).send({ data: null, error: { code: "validation_error", message: "creditsPerTeacherSeat must be a non-negative number" } });
       }
+      if (body.teacherSeatLimit !== undefined && (!Number.isFinite(body.teacherSeatLimit) || body.teacherSeatLimit < 1)) {
+        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "teacherSeatLimit must be at least 1" } });
+      }
 
       const plan = await prisma.$transaction(async (tx) => {
         if (body.isDefault) {
@@ -78,6 +94,7 @@ export async function planRoutes(app: FastifyInstance) {
           data: {
             name: body.name?.trim() ?? undefined,
             creditsPerTeacherSeat: body.creditsPerTeacherSeat !== undefined ? Math.round(body.creditsPerTeacherSeat) : undefined,
+            teacherSeatLimit: body.teacherSeatLimit !== undefined ? Math.round(body.teacherSeatLimit) : undefined,
             isDefault: body.isDefault ?? undefined,
           },
         });

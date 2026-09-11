@@ -46,12 +46,28 @@ export function MoreMenuScreen() {
     return <EnrolmentMoreScreen user={user} avatarSource={avatarSource} logout={logout} />;
   }
 
+  // authorizeForSchool only grants "Lesson format" and "Academic year" to
+  // admin/leadership/platform_admin or a teacher on their own individual
+  // school - a regular institutional teacher would just hit a 403, so these
+  // two are individual-account only. See Docs/superpowers/plans/2026-09-09-
+  // individual-teacher-onboarding-and-credits.md.
+  const isIndividualTeacher = isTeacher && user.accountType === "individual";
+
   const tools: ToolItem[] = isTeacher
     ? [
         { title: "Studio", caption: "Manage topics and generated lessons", icon: "book-outline", onPress: () => parentTabs?.navigate("Studio") },
         { title: "Assignments", caption: "Create and review class work", icon: "document-text-outline", onPress: () => parentTabs?.navigate("Assignment") },
         { title: "Analytics", caption: "View attainment and class progress", icon: "bar-chart-outline", onPress: () => parentTabs?.navigate("Analytics") },
         { title: "Credits", caption: "View balance and usage history", icon: "wallet-outline", onPress: () => root?.navigate("Credits") },
+        { title: "Students", caption: "Roster across all your classes, add or invite students", icon: "people-outline", onPress: () => root?.navigate("Students") },
+        { title: "Getting started", caption: "Finish your profile and unlock badges", icon: "checkmark-circle-outline", onPress: () => root?.navigate("GettingStarted") },
+        { title: "Leaderboard", caption: "See how you rank in your school this month", icon: "trophy-outline", onPress: () => root?.navigate("Leaderboard") },
+        ...(isIndividualTeacher
+          ? [
+              { title: "Academic year", caption: "Start a new session when this one ends", icon: "calendar-outline" as const, onPress: () => root?.navigate("StartNewAcademicYear") },
+              { title: "Lesson format", caption: "Custom formatting the AI follows", icon: "options-outline" as const, onPress: () => root?.navigate("FormatTemplate") },
+            ]
+          : []),
       ]
     : [];
 

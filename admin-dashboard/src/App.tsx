@@ -1,9 +1,10 @@
 import type { ReactElement } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { SchoolProvider } from "./context/SchoolContext";
 import { Layout, NAV_ITEMS } from "./components/Layout";
 import { LoginPage } from "./pages/LoginPage";
+import { ClassJoinPage } from "./pages/ClassJoinPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { FunnelPage } from "./pages/FunnelPage";
 import { BySourcePage } from "./pages/BySourcePage";
@@ -12,6 +13,7 @@ import { AiUsagePage } from "./pages/AiUsagePage";
 import { AiPromptsPage } from "./pages/AiPromptsPage";
 import { PlatformSettingsPage } from "./pages/PlatformSettingsPage";
 import { SubjectChangeRequestsPage } from "./pages/SubjectChangeRequestsPage";
+import { ClassChangeRequestsPage } from "./pages/ClassChangeRequestsPage";
 import { BoardChangeTicketsPage } from "./pages/BoardChangeTicketsPage";
 import { PipelineStagesPage } from "./pages/PipelineStagesPage";
 import { FormBuilderPage } from "./pages/FormBuilderPage";
@@ -50,6 +52,17 @@ function RequireRole({ path, children }: { path: string; children: ReactElement 
 
 function Root() {
   const { user, isLoading } = useAuth();
+  const location = useLocation();
+
+  // Public, unauthenticated - works regardless of auth state or loading, so
+  // a parent/student can open a class join link without ever logging in.
+  if (location.pathname.startsWith("/join/")) {
+    return (
+      <Routes>
+        <Route path="/join/:code" element={<ClassJoinPage />} />
+      </Routes>
+    );
+  }
 
   if (isLoading) return null;
 
@@ -74,6 +87,7 @@ function Root() {
         <Route path="/ai-prompts" element={<RequireRole path="/ai-prompts"><AiPromptsPage /></RequireRole>} />
         <Route path="/platform-settings" element={<RequireRole path="/platform-settings"><PlatformSettingsPage /></RequireRole>} />
         <Route path="/subject-change-requests" element={<RequireRole path="/subject-change-requests"><SubjectChangeRequestsPage /></RequireRole>} />
+        <Route path="/class-change-requests" element={<RequireRole path="/class-change-requests"><ClassChangeRequestsPage /></RequireRole>} />
         <Route path="/board-change-tickets" element={<RequireRole path="/board-change-tickets"><BoardChangeTicketsPage /></RequireRole>} />
         <Route path="/pipeline-stages" element={<RequireRole path="/pipeline-stages"><PipelineStagesPage /></RequireRole>} />
         <Route path="/form-builder" element={<RequireRole path="/form-builder"><FormBuilderPage /></RequireRole>} />

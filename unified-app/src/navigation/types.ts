@@ -19,6 +19,8 @@ export type RootStackParamList = {
   TopicDetail: { topicId: string };
   GenerationSetup: { topicId: string };
   GenerationReview: { generationId: string };
+  ImportContext: { topicId: string };
+  ContextResearch: { topicId: string };
   LessonWithAiTest: undefined;
   AnswerKeyReview: { assignmentId: string };
   AttainmentReport: { topicId: string };
@@ -31,6 +33,13 @@ export type RootStackParamList = {
   CreateFirstClass: undefined;
   Credits: undefined;
   RequestSubjectChange: undefined;
+  RequestClassChange: undefined;
+  Students: undefined;
+  AddStudent: undefined;
+  StartNewAcademicYear: undefined;
+  FormatTemplate: undefined;
+  GettingStarted: undefined;
+  Leaderboard: undefined;
 };
 
 export type EnrolmentTabParamList = {

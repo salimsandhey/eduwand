@@ -27,6 +27,10 @@ interface UpdateTrustBody {
   trustType?: string;
   expectedSchoolCount?: number;
   status?: string;
+  // null clears the assignment (grandfathered as unlimited teacher seats -
+  // see Plan.teacherSeatLimit). See Docs/superpowers/plans/2026-09-09-
+  // individual-teacher-onboarding-and-credits.md.
+  planId?: string | null;
 }
 
 const TRUST_STATUSES = ["active", "suspended"];
@@ -97,7 +101,10 @@ export async function trustRoutes(app: FastifyInstance) {
 
       const trust = await prisma.trust.findUnique({
         where: { id: request.params.id },
-        include: { schools: { select: { id: true, name: true, board: true, status: true }, orderBy: { name: "asc" } } },
+        include: {
+          schools: { select: { id: true, name: true, board: true, status: true }, orderBy: { name: "asc" } },
+          plan: true,
+        },
       });
       if (!trust) {
         return reply.code(404).send({ data: null, error: { code: "not_found", message: "Trust not found" } });
@@ -122,6 +129,13 @@ export async function trustRoutes(app: FastifyInstance) {
       const existing = await prisma.trust.findUnique({ where: { id: request.params.id } });
       if (!existing) {
         return reply.code(404).send({ data: null, error: { code: "not_found", message: "Trust not found" } });
+      }
+
+      if (body.planId) {
+        const plan = await prisma.plan.findUnique({ where: { id: body.planId } });
+        if (!plan) {
+          return reply.code(404).send({ data: null, error: { code: "not_found", message: "Plan not found" } });
+        }
       }
 
       if (body.name && body.name.trim().toLowerCase() !== existing.name.toLowerCase()) {
@@ -149,6 +163,7 @@ export async function trustRoutes(app: FastifyInstance) {
           trustType: body.trustType ?? undefined,
           expectedSchoolCount: body.expectedSchoolCount ?? undefined,
           status: body.status ?? undefined,
+          planId: body.planId !== undefined ? body.planId : undefined,
         },
       });
 

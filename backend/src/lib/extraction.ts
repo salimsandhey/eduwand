@@ -143,13 +143,29 @@ export async function extractUrlText(rawUrl: string): Promise<{ text: string } |
   return { text: raw.slice(0, MAX_EXTRACTED_CHARS) };
 }
 
-export async function extractText(buffer: Buffer, sourceType: string): Promise<{ text: string } | null> {
+function cleanExtractedText(raw: string): string {
+  const PRIVATE_USE_AREA_START = 0xe000;
+  const PRIVATE_USE_AREA_END = 0xf8ff;
+  const cleaned = Array.from(raw)
+    .filter((ch) => {
+      const code = ch.codePointAt(0) ?? 0;
+      return code < PRIVATE_USE_AREA_START || code > PRIVATE_USE_AREA_END;
+    })
+    .join("")
+    .replace(/[ 	]{2,}/g, " ");
+  return cleaned.trim().slice(0, MAX_EXTRACTED_CHARS);
+}
+
+export async function extractText(buffer: Buffer, sourceType: string): Promise<{ text: string; pageCount?: number } | null> {
   let raw: string;
+  let pageCount: number | undefined;
   switch (sourceType) {
     case "pdf": {
       const parser = new PDFParse({ data: buffer });
       try {
-        raw = (await parser.getText()).text;
+        const result = await parser.getText();
+        raw = result.text;
+        pageCount = result.total;
       } finally {
         await parser.destroy();
       }
@@ -165,15 +181,19 @@ export async function extractText(buffer: Buffer, sourceType: string): Promise<{
       return null;
   }
 
-  const PRIVATE_USE_AREA_START = 0xe000;
-  const PRIVATE_USE_AREA_END = 0xf8ff;
-  const cleaned = Array.from(raw)
-    .filter((ch) => {
-      const code = ch.codePointAt(0) ?? 0;
-      return code < PRIVATE_USE_AREA_START || code > PRIVATE_USE_AREA_END;
-    })
-    .join("")
-    .replace(/[ 	]{2,}/g, " ");
-  const text = cleaned.trim().slice(0, MAX_EXTRACTED_CHARS);
-  return { text };
+  return { text: cleanExtractedText(raw), pageCount };
+}
+
+// Used only at generation time, when the teacher has narrowed a long PDF to
+// a specific page range instead of the whole document (see
+// backend/src/routes/generations.ts resolveSelectedContextText).
+export async function extractPdfPageRangeText(buffer: Buffer, first: number, last: number): Promise<{ text: string } | null> {
+  const parser = new PDFParse({ data: buffer });
+  try {
+    const result = await parser.getText({ first, last });
+    if (!result.text) return null;
+    return { text: cleanExtractedText(result.text) };
+  } finally {
+    await parser.destroy();
+  }
 }

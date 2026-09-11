@@ -3,16 +3,56 @@ import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { aiProvider, logAiUsage, GenerationOutputType } from "../lib/ai";
 import { hasSufficientCredits, getFeatureCost } from "../lib/credits";
+import { storage } from "../lib/storage";
+import { extractPdfPageRangeText } from "../lib/extraction";
 import { ContextSource } from "@prisma/client";
 
 const MAX_CONTEXT_CHARS_FOR_PROMPT = 12000;
 
-function buildContextText(contextSources: ContextSource[]): { contextText: string | null; usedSources: ContextSource[] } {
-  const usedSources = contextSources.filter((s) => s.extractionStatus === "extracted" && s.extractedText);
-  if (usedSources.length === 0) {
-    return { contextText: null, usedSources: [] };
+export interface SourceSelection {
+  contextSourceId: string;
+  pageFrom?: number;
+  pageTo?: number;
+}
+
+// Replaces "use every extracted source on the topic" with "use exactly what
+// the teacher picked for this generation" - a topic accumulates sources
+// across many sessions, most of them irrelevant to any single output.
+async function resolveSelectedContextText(
+  contextSources: ContextSource[],
+  selection: SourceSelection[]
+): Promise<{ contextText: string | null; usedSources: ContextSource[] }> {
+  const byId = new Map(contextSources.map((s) => [s.id, s]));
+  const parts: string[] = [];
+  const usedSources: ContextSource[] = [];
+
+  for (const sel of selection) {
+    const source = byId.get(sel.contextSourceId);
+    if (!source) continue;
+
+    if (source.sourceType === "pdf" && sel.pageFrom && sel.pageTo && source.fileLocation) {
+      try {
+        const buffer = await storage.readBuffer(source.fileLocation);
+        const result = await extractPdfPageRangeText(buffer, sel.pageFrom, sel.pageTo);
+        if (result && result.text) {
+          parts.push(result.text);
+          usedSources.push(source);
+          continue;
+        }
+      } catch {
+        // Fall through to the stored full-document text below rather than
+        // dropping the source entirely over a page-range extraction hiccup.
+      }
+    }
+
+    if (source.extractionStatus === "extracted" && source.extractedText) {
+      parts.push(source.extractedText);
+      usedSources.push(source);
+    }
   }
-  const combined = usedSources.map((s) => s.extractedText).join("\n\n---\n\n").slice(0, MAX_CONTEXT_CHARS_FOR_PROMPT);
+
+  if (parts.length === 0) return { contextText: null, usedSources: [] };
+  const combined = parts.join("\n\n---\n\n").slice(0, MAX_CONTEXT_CHARS_FOR_PROMPT);
   return { contextText: combined, usedSources };
 }
 
@@ -37,6 +77,10 @@ interface CreateGenerationBody {
   minutesPerClass?: number;
   language?: string;
   customPrompt?: string;
+  // Which context sources (and, for a long PDF, which page range) to ground
+  // this generation in. Empty/omitted means "no context" - not "everything",
+  // that implicit-everything behavior is what this field replaces.
+  sources?: SourceSelection[];
 }
 
 interface UpdateGenerationBody {
@@ -74,7 +118,7 @@ export async function generationRoutes(app: FastifyInstance) {
         return reply.code(404).send({ data: null, error: { code: "not_found", message: "Topic not found" } });
       }
 
-      const { contextText, usedSources } = buildContextText(topic.contextSources);
+      const { contextText, usedSources } = await resolveSelectedContextText(topic.contextSources, body.sources ?? []);
       const formatTemplate = await getSchoolFormatTemplate(request.schoolId);
 
       const classCount = body.classCount ?? 1;
@@ -145,6 +189,7 @@ export async function generationRoutes(app: FastifyInstance) {
           modelUsed: model,
           generationStatus,
           contextSources: { connect: usedSources.map((s) => ({ id: s.id })) },
+          selectedSources: (body.sources ?? []) as unknown as object,
           schoolFormatTemplateId: formatTemplate?.id ?? null,
         },
         include: {
@@ -208,13 +253,21 @@ export async function generationRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string } }>("/generations/:id/retry", { onRequest: scoped(app) }, async (request, reply) => {
     const generation = await prisma.generation.findFirst({
       where: { id: request.params.id, topic: { schoolId: request.schoolId } },
-      include: { topic: { include: { classSection: true, contextSources: true } } },
+      include: { topic: { include: { classSection: true, contextSources: true } }, contextSources: true },
     });
     if (!generation) {
       return reply.code(404).send({ data: null, error: { code: "not_found", message: "Generation not found" } });
     }
 
-    const { contextText, usedSources } = buildContextText(generation.topic.contextSources);
+    // Reuse exactly what the original generation used - not the topic's
+    // current full source list, so retrying doesn't silently pull in sources
+    // added since. Generations created before source selection existed have
+    // no selectedSources; fall back to the sources relation (whole documents,
+    // no page ranges - that detail wasn't tracked pre-selection).
+    const selection: SourceSelection[] =
+      (generation.selectedSources as unknown as SourceSelection[] | null) ??
+      generation.contextSources.map((s) => ({ contextSourceId: s.id }));
+    const { contextText, usedSources } = await resolveSelectedContextText(generation.topic.contextSources, selection);
     const formatTemplate = await getSchoolFormatTemplate(request.schoolId);
 
     if (!(await hasSufficientCredits(request.user.sub, getFeatureCost("generation")))) {
@@ -244,6 +297,7 @@ export async function generationRoutes(app: FastifyInstance) {
         generationStatus: "succeeded",
         editedOutput: null,
         contextSources: { set: usedSources.map((s) => ({ id: s.id })) },
+        selectedSources: selection as unknown as object,
         schoolFormatTemplateId: formatTemplate?.id ?? null,
       },
       include: {

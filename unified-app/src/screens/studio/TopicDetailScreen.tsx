@@ -10,21 +10,89 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { spacing, radius } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
-import { api, TopicDetail, ContextSource, Generation, GenerationOutputType, Observation } from "../../api/client";
+import { api, TopicDetail, ContextSource, Generation, GenerationOutputType, Observation, Assignment } from "../../api/client";
 import { parseGenerationContent } from "./generation/content";
 import { OUTPUT_TYPE_LABELS, OUTPUT_TYPE_ICONS, OUTPUT_TYPE_ORDER } from "./generation/outputTypeMeta";
 import { capitalizeFirst } from "../../utils/text";
 import { useKeyboardHeight } from "../../hooks/useKeyboardHeight";
+import { formatDateShort } from "../../utils/date";
+import { DatePicker, parseISODate } from "../../components/DatePicker";
 
 type Props = NativeStackScreenProps<RootStackParamList, "TopicDetail">;
 
-type DetailTab = "context" | "generations" | "observations";
+type DetailTab = "context" | "generations" | "assignments" | "observations";
 type SourceFilter = "images" | "files" | "links";
+
+const DETAIL_TABS: DetailTab[] = ["context", "generations", "assignments", "observations"];
+
+const DETAIL_TAB_LABELS: Record<DetailTab, string> = {
+  context: "Context",
+  generations: "Learning Material",
+  assignments: "Assignments",
+  observations: "Notes",
+};
+
+const DETAIL_TAB_ICONS: Record<DetailTab, keyof typeof Ionicons.glyphMap> = {
+  context: "layers-outline",
+  generations: "documents-outline",
+  assignments: "document-text-outline",
+  observations: "clipboard-outline",
+};
+
+const ASSIGNMENT_STATUS_LABELS: Record<Assignment["status"], string> = {
+  draft: "Draft",
+  published: "Published",
+};
 
 const GENERATION_FILTER_OPTIONS: { key: GenerationOutputType | "all"; label: string }[] = [
   { key: "all", label: "All" },
   ...OUTPUT_TYPE_ORDER.map((outputType) => ({ key: outputType, label: OUTPUT_TYPE_LABELS[outputType] })),
 ];
+
+type DateFilterPreset = "all" | "today" | "week" | "month" | "custom";
+
+const DATE_FILTER_PRESET_LABELS: Record<DateFilterPreset, string> = {
+  all: "Any date",
+  today: "Today",
+  week: "This week",
+  month: "This month",
+  custom: "Custom",
+};
+
+const DATE_FILTER_PRESETS: DateFilterPreset[] = ["all", "today", "week", "month", "custom"];
+
+function startOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function getDateRangeForPreset(
+  preset: DateFilterPreset,
+  customFrom: string,
+  customTo: string
+): { start: Date; end: Date } | null {
+  const now = new Date();
+  const todayStart = startOfDay(now);
+  const tomorrowStart = new Date(todayStart.getFullYear(), todayStart.getMonth(), todayStart.getDate() + 1);
+
+  if (preset === "today") return { start: todayStart, end: tomorrowStart };
+  if (preset === "week") {
+    const weekStart = new Date(todayStart.getFullYear(), todayStart.getMonth(), todayStart.getDate() - 6);
+    return { start: weekStart, end: tomorrowStart };
+  }
+  if (preset === "month") {
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    return { start: monthStart, end: tomorrowStart };
+  }
+  if (preset === "custom") {
+    if (!customFrom || !customTo) return null;
+    const [fy, fm, fd] = customFrom.split("-").map(Number);
+    const [ty, tm, td] = customTo.split("-").map(Number);
+    const start = new Date(fy, (fm || 1) - 1, fd || 1);
+    const endExclusive = new Date(ty, (tm || 1) - 1, (td || 1) + 1);
+    return { start, end: endExclusive };
+  }
+  return null;
+}
 
 const SOURCE_TYPE_ICONS: Record<ContextSource["sourceType"], keyof typeof Ionicons.glyphMap> = {
   pdf: "document-text-outline",
@@ -32,6 +100,7 @@ const SOURCE_TYPE_ICONS: Record<ContextSource["sourceType"], keyof typeof Ionico
   pptx: "easel-outline",
   image: "image-outline",
   url: "link-outline",
+  youtube: "logo-youtube",
   idream_k12: "library-outline",
 };
 
@@ -41,6 +110,7 @@ const SOURCE_TYPE_LABELS: Record<ContextSource["sourceType"], string> = {
   pptx: "PPTX",
   image: "Image",
   url: "Link",
+  youtube: "YouTube",
   idream_k12: "K-12",
 };
 
@@ -50,6 +120,7 @@ const SOURCE_TYPE_COLORS: Record<ContextSource["sourceType"], string> = {
   pptx: "#E8952E",
   image: "#2FAE66",
   url: "#2AACC9",
+  youtube: "#FF0000",
   idream_k12: "#8B5CF6",
 };
 
@@ -131,6 +202,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
   const tabIndicatorX = useRef(new Animated.Value(0)).current;
 
   const [contextUrl, setContextUrl] = useState("");
+  const [showAddContextMethod, setShowAddContextMethod] = useState(false);
   const [showAddContext, setShowAddContext] = useState(false);
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [isAddingContext, setIsAddingContext] = useState(false);
@@ -143,6 +215,14 @@ export function TopicDetailScreen({ route, navigation }: Props) {
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [openObservation, setOpenObservation] = useState<Observation | null>(null);
   const [generationFilter, setGenerationFilter] = useState<GenerationOutputType | "all">("all");
+  const [dateFilterPreset, setDateFilterPreset] = useState<DateFilterPreset>("all");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const [showCustomRangeModal, setShowCustomRangeModal] = useState(false);
+  const [draftCustomFrom, setDraftCustomFrom] = useState("");
+  const [draftCustomTo, setDraftCustomTo] = useState("");
+  const [showTypeFilterModal, setShowTypeFilterModal] = useState(false);
+  const [showDateFilterModal, setShowDateFilterModal] = useState(false);
 
   const [openSource, setOpenSource] = useState<ContextSource | null>(null);
   const [sourceDraft, setSourceDraft] = useState("");
@@ -158,10 +238,10 @@ export function TopicDetailScreen({ route, navigation }: Props) {
 
   function selectTab(tab: DetailTab) {
     if (tab === activeTab) return;
-    const tabIndex = (["context", "generations", "observations"] as DetailTab[]).indexOf(tab);
+    const tabIndex = DETAIL_TABS.indexOf(tab);
     if (tabBarWidth > 0) {
       Animated.timing(tabIndicatorX, {
-        toValue: (tabBarWidth / 3) * tabIndex,
+        toValue: (tabBarWidth / DETAIL_TABS.length) * tabIndex,
         duration: 240,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
@@ -322,6 +402,30 @@ export function TopicDetailScreen({ route, navigation }: Props) {
     }
   }
 
+  function selectDateFilterPreset(preset: DateFilterPreset) {
+    setShowDateFilterModal(false);
+    if (preset === "custom") {
+      setDraftCustomFrom(customFrom);
+      setDraftCustomTo(customTo);
+      setShowCustomRangeModal(true);
+      return;
+    }
+    setDateFilterPreset(preset);
+  }
+
+  function selectGenerationTypeFilter(key: GenerationOutputType | "all") {
+    setGenerationFilter(key);
+    setShowTypeFilterModal(false);
+  }
+
+  function applyCustomRange() {
+    if (!draftCustomFrom || !draftCustomTo) return;
+    setCustomFrom(draftCustomFrom);
+    setCustomTo(draftCustomTo);
+    setDateFilterPreset("custom");
+    setShowCustomRangeModal(false);
+  }
+
   if (isLoading && !topic) {
     return (
       <Screen style={styles.centered}>
@@ -340,11 +444,18 @@ export function TopicDetailScreen({ route, navigation }: Props) {
   const displayedSources = topic.contextSources.filter((source) => {
     if (sourceFilter === "images") return source.sourceType === "image";
     if (sourceFilter === "files") return ["pdf", "docx", "pptx"].includes(source.sourceType);
-    return source.sourceType === "url" || source.sourceType === "idream_k12";
+    return source.sourceType === "url" || source.sourceType === "youtube" || source.sourceType === "idream_k12";
   });
 
+  const activeDateRange = getDateRangeForPreset(dateFilterPreset, customFrom, customTo);
+  const dateFilteredGenerations = activeDateRange
+    ? topic.generations.filter((g) => {
+        const generatedAt = new Date(g.generatedAt);
+        return generatedAt >= activeDateRange.start && generatedAt < activeDateRange.end;
+      })
+    : topic.generations;
   const displayedGenerationGroups = groupGenerationsByOutputType(
-    generationFilter === "all" ? topic.generations : topic.generations.filter((g) => g.outputType === generationFilter)
+    generationFilter === "all" ? dateFilteredGenerations : dateFilteredGenerations.filter((g) => g.outputType === generationFilter)
   );
 
   function sourceStatus(c: ContextSource) {
@@ -489,21 +600,30 @@ export function TopicDetailScreen({ route, navigation }: Props) {
         {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
         <View style={[styles.tabBar, { borderBottomColor: colors.border }]} onLayout={(event) => setTabBarWidth(event.nativeEvent.layout.width)}>
-          {(["context", "generations", "observations"] as DetailTab[]).map((tab) => {
+          {DETAIL_TABS.map((tab) => {
             const active = activeTab === tab;
-            const label = tab === "context" ? "Context" : tab === "generations" ? "Generated" : "Notes";
-            const icon: keyof typeof Ionicons.glyphMap = tab === "context" ? "layers-outline" : tab === "generations" ? "documents-outline" : "clipboard-outline";
-            const count = tab === "context" ? topic.contextSources.length : tab === "generations" ? topic.generations.length : topic.observations.length;
+            const count =
+              tab === "context"
+                ? topic.contextSources.length
+                : tab === "generations"
+                  ? topic.generations.length
+                  : tab === "assignments"
+                    ? topic.assignments.length
+                    : topic.observations.length;
             return (
               <Pressable key={tab} style={({ pressed }) => [styles.tab, active && styles.tabActive, pressed && { opacity: pressedOpacity }]} onPress={() => selectTab(tab)} accessibilityRole="tab" accessibilityState={{ selected: active }}>
-                <View style={[styles.tabIcon, active && { backgroundColor: colors.accentSoft }]}><Ionicons name={icon} size={14} color={active ? colors.accent : colors.textMuted} /></View>
-                <Text style={[styles.tabText, { color: active ? colors.accent : colors.textMuted }]}>{label}</Text>
-                <View style={[styles.tabCount, { backgroundColor: active ? colors.accentSoft : colors.backgroundMuted }]}><Text style={[styles.tabCountText, { color: active ? colors.accent : colors.textMuted }]}>{count}</Text></View>
+                <View style={styles.tabIconRow}>
+                  <View style={[styles.tabIcon, active && { backgroundColor: colors.accentSoft }]}><Ionicons name={DETAIL_TAB_ICONS[tab]} size={14} color={active ? colors.accent : colors.textMuted} /></View>
+                  {count > 0 ? <View style={[styles.tabCountDot, { backgroundColor: active ? colors.accent : colors.textMuted }]} /> : null}
+                </View>
+                <Text style={[styles.tabText, { color: active ? colors.accent : colors.textMuted }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                  {DETAIL_TAB_LABELS[tab]}
+                </Text>
               </Pressable>
             );
           })}
           {tabBarWidth > 0 ? (
-            <Animated.View pointerEvents="none" style={[styles.tabActiveIndicator, { width: tabBarWidth / 3, transform: [{ translateX: tabIndicatorX }] }]}>
+            <Animated.View pointerEvents="none" style={[styles.tabActiveIndicator, { width: tabBarWidth / DETAIL_TABS.length, transform: [{ translateX: tabIndicatorX }] }]}>
               <View style={[styles.tabActiveIndicatorLine, { backgroundColor: colors.accent }]} />
             </Animated.View>
           ) : null}
@@ -523,10 +643,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
                 <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Sources</Text>
               </View>
               <Pressable
-                onPress={() => {
-                  setShowUrlInput(false);
-                  setShowAddContext(true);
-                }}
+                onPress={() => setShowAddContextMethod(true)}
                 style={({ pressed }) => [styles.workbenchAction, { backgroundColor: colors.accentSoft }, pressed && { opacity: pressedOpacity }]}
                 accessibilityRole="button"
               >
@@ -572,7 +689,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
           <View>
             <View style={styles.workbenchLead}>
               <View style={styles.workbenchCopy}>
-                <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Generated materials</Text>
+                <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Learning Material</Text>
               </View>
               <Pressable style={({ pressed }) => [styles.workbenchAction, { backgroundColor: colors.accentSoft }, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.navigate("GenerationSetup", { topicId })} accessibilityRole="button">
                 <Ionicons name="add" size={16} color={colors.accent} />
@@ -583,26 +700,34 @@ export function TopicDetailScreen({ route, navigation }: Props) {
               <EmptyWorkbench icon="sparkles-outline" title="Nothing generated yet" detail="Create your first output." colors={colors} />
             ) : (
               <>
-                <View style={[styles.filterBar, { borderBottomColor: colors.border }]}>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sourceFilterRow}>
-                    {GENERATION_FILTER_OPTIONS.map((filter) => {
-                      const active = generationFilter === filter.key;
-                      return (
-                        <Pressable
-                          key={filter.key}
-                          style={({ pressed }) => [styles.sourceFilterChip, { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border }, pressed && { opacity: pressedOpacity }]}
-                          onPress={() => setGenerationFilter(filter.key)}
-                          accessibilityRole="button"
-                          accessibilityState={{ selected: active }}
-                        >
-                          <Text style={[styles.sourceFilterText, { color: active ? colors.accentOn : colors.textMuted }]}>{filter.label}</Text>
-                        </Pressable>
-                      );
-                    })}
-                  </ScrollView>
+                <View style={[styles.filterBar, styles.filterDropdownRow, { borderBottomColor: colors.border }]}>
+                  <Pressable
+                    style={({ pressed }) => [styles.filterDropdownBox, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+                    onPress={() => setShowTypeFilterModal(true)}
+                    accessibilityRole="button"
+                  >
+                    <Ionicons name={generationFilter === "all" ? "albums-outline" : OUTPUT_TYPE_ICONS[generationFilter]} size={14} color={colors.textMuted} />
+                    <Text style={[styles.filterDropdownText, { color: colors.textPrimary }]} numberOfLines={1}>
+                      {GENERATION_FILTER_OPTIONS.find((f) => f.key === generationFilter)?.label}
+                    </Text>
+                    <Ionicons name="chevron-down" size={14} color={colors.textMuted} />
+                  </Pressable>
+                  <Pressable
+                    style={({ pressed }) => [styles.filterDropdownBox, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+                    onPress={() => setShowDateFilterModal(true)}
+                    accessibilityRole="button"
+                  >
+                    <Ionicons name="calendar-outline" size={14} color={colors.textMuted} />
+                    <Text style={[styles.filterDropdownText, { color: colors.textPrimary }]} numberOfLines={1}>
+                      {dateFilterPreset === "custom" && customFrom && customTo
+                        ? `${formatDateShort(customFrom)} – ${formatDateShort(customTo)}`
+                        : DATE_FILTER_PRESET_LABELS[dateFilterPreset]}
+                    </Text>
+                    <Ionicons name="chevron-down" size={14} color={colors.textMuted} />
+                  </Pressable>
                 </View>
                 {displayedGenerationGroups.length === 0 ? (
-                  <EmptyWorkbench icon="filter-outline" title="No matches" detail="Choose another output type." colors={colors} />
+                  <EmptyWorkbench icon="filter-outline" title="No matches" detail="Try a different type or date range." colors={colors} />
                 ) : (
                   displayedGenerationGroups.map((group) => (
                 <View key={group.outputType} style={{ marginTop: 6 }}>
@@ -642,7 +767,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
                               {generationPreview(g)}
                             </Text>
                             <Text style={[styles.genCardMeta, { color: colors.textMuted }]} numberOfLines={1}>
-                              {new Date(g.generatedAt).toLocaleDateString()}
+                              {formatDateShort(g.generatedAt)}
                               {g.editedOutput ? " · edited" : ""}
                               {g.contextSources.length > 0 ? ` · ${g.contextSources.length} source(s)` : ""}
                             </Text>
@@ -658,6 +783,56 @@ export function TopicDetailScreen({ route, navigation }: Props) {
               ))
                 )}
               </>
+            )}
+          </View>
+        ) : null}
+
+        {activeTab === "assignments" ? (
+          <View>
+            <View style={styles.workbenchLead}>
+              <View style={styles.workbenchCopy}>
+                <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Assignments</Text>
+              </View>
+              <Pressable style={({ pressed }) => [styles.workbenchAction, { backgroundColor: colors.accentSoft }, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.navigate("AssignmentAiSetup", { topicId })} accessibilityRole="button">
+                <Ionicons name="add" size={16} color={colors.accent} />
+                <Text style={[styles.workbenchActionText, { color: colors.accent }]}>Create</Text>
+              </Pressable>
+            </View>
+            {topic.assignments.length === 0 ? (
+              <EmptyWorkbench icon="document-text-outline" title="No assignments yet" detail="Create one from this topic." colors={colors} />
+            ) : (
+              <View style={styles.sourceList}>
+                {topic.assignments.map((a) => {
+                  const statusColor = a.status === "published" ? colors.accent : colors.textMuted;
+                  return (
+                    <Pressable
+                      key={a.id}
+                      style={({ pressed }) => [
+                        styles.sourceListRow,
+                        { backgroundColor: colors.surface, borderColor: colors.border },
+                        cardShadow,
+                        pressed && { opacity: pressedOpacity },
+                      ]}
+                      onPress={() => navigation.navigate("AssignmentDetail", { assignmentId: a.id })}
+                      accessibilityRole="button"
+                    >
+                      <View style={[styles.sourceListIcon, { backgroundColor: colors.accentSoft }]}>
+                        <Ionicons name="document-text-outline" size={16} color={colors.accent} />
+                      </View>
+                      <View style={styles.sourceListCopy}>
+                        <Text style={[styles.sourceName, { color: colors.textPrimary, marginTop: 0 }]} numberOfLines={1}>{a.title}</Text>
+                        <View style={styles.sourceListMetaRow}>
+                          <Text style={[styles.sourceListTypeText, { color: colors.accent }]}>{a.questions.length} question{a.questions.length === 1 ? "" : "s"}</Text>
+                          <Text style={[styles.sourceListSnippet, { color: colors.textMuted }]}>· {formatDateShort(a.createdAt)}</Text>
+                        </View>
+                      </View>
+                      <View style={[styles.statusBadge, { backgroundColor: colors.surfaceRaised }]}>
+                        <Text style={[styles.statusBadgeText, { color: statusColor }]}>{ASSIGNMENT_STATUS_LABELS[a.status]}</Text>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </View>
             )}
           </View>
         ) : null}
@@ -712,6 +887,67 @@ export function TopicDetailScreen({ route, navigation }: Props) {
         ) : null}
       </ScrollView>
 
+      <Modal transparent animationType="slide" visible={showAddContextMethod} onRequestClose={() => setShowAddContextMethod(false)}>
+        <View style={styles.modalRoot}>
+          <Pressable style={styles.modalBackdrop} onPress={() => setShowAddContextMethod(false)} accessibilityRole="button" accessibilityLabel="Close add context" />
+          <View style={[styles.modalSheet, { backgroundColor: colors.surface }]}>
+            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
+            <View style={styles.modalHeader}>
+              <View><Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Add context</Text><Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>How do you want to build up this topic's material?</Text></View>
+              <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setShowAddContextMethod(false)} accessibilityRole="button"><Ionicons name="close" size={20} color={colors.textPrimary} /></Pressable>
+            </View>
+            <View style={styles.contextMethodList}>
+              <Pressable
+                style={({ pressed }) => [styles.contextMethodRow, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+                onPress={() => {
+                  setShowAddContextMethod(false);
+                  navigation.navigate("ContextResearch", { topicId });
+                }}
+                accessibilityRole="button"
+              >
+                <View style={[styles.contextMethodIcon, { backgroundColor: colors.accentSoft }]}><Ionicons name="sparkles-outline" size={19} color={colors.accent} /></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.contextMethodTitle, { color: colors.textPrimary }]}>AI Research</Text>
+                  <Text style={[styles.contextMethodDetail, { color: colors.textMuted }]}>Find PDFs, articles and videos from the web to review and approve.</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={17} color={colors.textMuted} />
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.contextMethodRow, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+                onPress={() => {
+                  setShowAddContextMethod(false);
+                  navigation.navigate("ImportContext", { topicId });
+                }}
+                accessibilityRole="button"
+              >
+                <View style={[styles.contextMethodIcon, { backgroundColor: colors.accentSoft }]}><Ionicons name="copy-outline" size={19} color={colors.accent} /></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.contextMethodTitle, { color: colors.textPrimary }]}>Import from another class</Text>
+                  <Text style={[styles.contextMethodDetail, { color: colors.textMuted }]}>Reuse sources you already uploaded for a different section.</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={17} color={colors.textMuted} />
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.contextMethodRow, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+                onPress={() => {
+                  setShowAddContextMethod(false);
+                  setShowUrlInput(false);
+                  setShowAddContext(true);
+                }}
+                accessibilityRole="button"
+              >
+                <View style={[styles.contextMethodIcon, { backgroundColor: colors.accentSoft }]}><Ionicons name="cloud-upload-outline" size={19} color={colors.accent} /></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.contextMethodTitle, { color: colors.textPrimary }]}>Upload your own</Text>
+                  <Text style={[styles.contextMethodDetail, { color: colors.textMuted }]}>Camera, gallery, file, or a web link.</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={17} color={colors.textMuted} />
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       <Modal transparent animationType="slide" visible={showAddContext} onRequestClose={() => setShowAddContext(false)}>
         <View style={styles.modalRoot}>
           <Pressable style={styles.modalBackdrop} onPress={() => setShowAddContext(false)} accessibilityRole="button" accessibilityLabel="Close add source" />
@@ -746,6 +982,101 @@ export function TopicDetailScreen({ route, navigation }: Props) {
               </View>
             )}
             {isAddingContext && !showUrlInput ? <ActivityIndicator color={colors.accent} style={styles.modalLoader} /> : null}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal transparent animationType="slide" visible={showTypeFilterModal} onRequestClose={() => setShowTypeFilterModal(false)}>
+        <View style={styles.modalRoot}>
+          <Pressable style={styles.modalBackdrop} onPress={() => setShowTypeFilterModal(false)} accessibilityRole="button" accessibilityLabel="Close type filter" />
+          <View style={[styles.modalSheet, { backgroundColor: colors.surface }]}>
+            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Filter by type</Text>
+              <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setShowTypeFilterModal(false)} accessibilityRole="button"><Ionicons name="close" size={20} color={colors.textPrimary} /></Pressable>
+            </View>
+            <View style={styles.filterOptionList}>
+              {GENERATION_FILTER_OPTIONS.map((filter) => {
+                const active = generationFilter === filter.key;
+                return (
+                  <Pressable
+                    key={filter.key}
+                    style={({ pressed }) => [styles.filterOptionRow, pressed && { opacity: pressedOpacity }]}
+                    onPress={() => selectGenerationTypeFilter(filter.key)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                  >
+                    <Text style={[styles.filterOptionText, { color: active ? colors.accent : colors.textPrimary, fontWeight: active ? "800" : "500" }]}>{filter.label}</Text>
+                    {active ? <Ionicons name="checkmark-circle" size={19} color={colors.accent} /> : <View style={[styles.filterOptionUncheckedCircle, { borderColor: colors.border }]} />}
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal transparent animationType="slide" visible={showDateFilterModal} onRequestClose={() => setShowDateFilterModal(false)}>
+        <View style={styles.modalRoot}>
+          <Pressable style={styles.modalBackdrop} onPress={() => setShowDateFilterModal(false)} accessibilityRole="button" accessibilityLabel="Close date filter" />
+          <View style={[styles.modalSheet, { backgroundColor: colors.surface }]}>
+            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Filter by date</Text>
+              <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setShowDateFilterModal(false)} accessibilityRole="button"><Ionicons name="close" size={20} color={colors.textPrimary} /></Pressable>
+            </View>
+            <View style={styles.filterOptionList}>
+              {DATE_FILTER_PRESETS.map((preset) => {
+                const active = dateFilterPreset === preset;
+                const label =
+                  preset === "custom" && customFrom && customTo
+                    ? `Custom: ${formatDateShort(customFrom)} – ${formatDateShort(customTo)}`
+                    : DATE_FILTER_PRESET_LABELS[preset];
+                return (
+                  <Pressable
+                    key={preset}
+                    style={({ pressed }) => [styles.filterOptionRow, pressed && { opacity: pressedOpacity }]}
+                    onPress={() => selectDateFilterPreset(preset)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                  >
+                    <Text style={[styles.filterOptionText, { color: active ? colors.accent : colors.textPrimary, fontWeight: active ? "800" : "500" }]}>{label}</Text>
+                    {preset === "custom" ? (
+                      <Ionicons name="chevron-forward" size={17} color={colors.textMuted} />
+                    ) : active ? (
+                      <Ionicons name="checkmark-circle" size={19} color={colors.accent} />
+                    ) : (
+                      <View style={[styles.filterOptionUncheckedCircle, { borderColor: colors.border }]} />
+                    )}
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal transparent animationType="slide" visible={showCustomRangeModal} onRequestClose={() => setShowCustomRangeModal(false)}>
+        <View style={styles.modalRoot}>
+          <Pressable style={styles.modalBackdrop} onPress={() => setShowCustomRangeModal(false)} accessibilityRole="button" accessibilityLabel="Close custom date range" />
+          <View style={[styles.modalSheet, { backgroundColor: colors.surface, marginBottom: keyboardHeight }]}>
+            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
+            <View style={styles.modalHeader}>
+              <View><Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Custom date range</Text><Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>Show generations created within these dates.</Text></View>
+              <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setShowCustomRangeModal(false)} accessibilityRole="button"><Ionicons name="close" size={20} color={colors.textPrimary} /></Pressable>
+            </View>
+            <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>From</Text>
+            <DatePicker value={draftCustomFrom} onChange={setDraftCustomFrom} placeholder="Start date" />
+            <Text style={[styles.fieldLabel, { color: colors.textMuted, marginTop: 12 }]}>To</Text>
+            <DatePicker value={draftCustomTo} onChange={setDraftCustomTo} placeholder="End date" minimumDate={draftCustomFrom ? parseISODate(draftCustomFrom) : undefined} />
+            <Pressable
+              style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent, marginTop: 16 }, (!draftCustomFrom || !draftCustomTo || pressed) && { opacity: pressedOpacity }]}
+              onPress={applyCustomRange}
+              disabled={!draftCustomFrom || !draftCustomTo}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Apply</Text>
+            </Pressable>
           </View>
         </View>
       </Modal>
@@ -985,12 +1316,12 @@ const styles = StyleSheet.create({
   sourceEditActionRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 12 },
   sourceSaveButton: { flex: 1, marginTop: 0 },
   tabBar: { flexDirection: "row", borderBottomWidth: 1, marginBottom: 16 },
-  tab: { position: "relative", flex: 1, minHeight: 51, paddingBottom: 7, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4 },
+  tab: { position: "relative", flex: 1, minHeight: 51, paddingBottom: 7, paddingHorizontal: 2, flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3 },
   tabActive: { marginTop: -1 },
-  tabIcon: { width: 24, height: 24, borderRadius: 9, alignItems: "center", justifyContent: "center" },
+  tabIconRow: { flexDirection: "row", alignItems: "center", gap: 3 },
+  tabIcon: { width: 22, height: 22, borderRadius: 8, alignItems: "center", justifyContent: "center" },
+  tabCountDot: { width: 5, height: 5, borderRadius: 2.5 },
   tabText: { fontSize: 10, fontWeight: "800" },
-  tabCount: { minWidth: 16, height: 16, borderRadius: 8, alignItems: "center", justifyContent: "center", paddingHorizontal: 3 },
-  tabCountText: { fontSize: 9, lineHeight: 12, fontWeight: "800" },
   tabActiveIndicator: { position: "absolute", left: 0, bottom: -1, height: 3, paddingHorizontal: 18 },
   tabActiveIndicatorLine: { flex: 1, height: 3, borderRadius: 3 },
   folderSheet: { position: "relative", minHeight: 350, borderWidth: 1, borderTopWidth: 0, borderBottomLeftRadius: 20, borderBottomRightRadius: 20, overflow: "hidden" },
@@ -1091,6 +1422,18 @@ const styles = StyleSheet.create({
   sourceFilterRow: { flexDirection: "row", gap: 7 },
   sourceFilterChip: { height: 32, borderWidth: 1, borderRadius: 16, paddingHorizontal: 13, alignItems: "center", justifyContent: "center" },
   sourceFilterText: { fontSize: 11, fontWeight: "800" },
+  filterDropdownRow: { flexDirection: "row", gap: 8 },
+  filterDropdownBox: { flex: 1, flexDirection: "row", alignItems: "center", gap: 6, height: 38, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12 },
+  filterDropdownText: { flex: 1, fontSize: 12, fontWeight: "700" },
+  filterOptionList: { marginTop: 18, marginBottom: 6 },
+  filterOptionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", height: 48 },
+  filterOptionText: { fontSize: 15, flex: 1 },
+  filterOptionUncheckedCircle: { width: 19, height: 19, borderRadius: 10, borderWidth: 1.5 },
+  contextMethodList: { marginTop: 18, marginBottom: 6, gap: 10 },
+  contextMethodRow: { flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderRadius: 15, padding: 13 },
+  contextMethodIcon: { width: 38, height: 38, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  contextMethodTitle: { fontSize: 14, fontWeight: "800" },
+  contextMethodDetail: { fontSize: 12, lineHeight: 16, marginTop: 2, fontWeight: "500" },
   sourceCard: { width: "48%", minHeight: 142, borderWidth: 1, borderRadius: 13, padding: 12, justifyContent: "flex-start" },
   sourceImageCard: { height: 230 },
   sourceCardTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 6 },

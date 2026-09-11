@@ -4,7 +4,7 @@ import { prisma } from "../src/lib/prisma";
 import { seedDefaultPipelineStages } from "../src/lib/pipeline-stages";
 
 async function main() {
-  const passwordHash = await bcrypt.hash("password123", 10);
+  const passwordHash = await bcrypt.hash("Admin@123", 10);
 
   // Individual-teacher onboarding + credits/billing
   // (Docs/superpowers/plans/2026-09-09-individual-teacher-onboarding-and-credits.md).
@@ -27,6 +27,18 @@ async function main() {
     where: { key: "individual_default_credits" },
     update: {},
     create: { key: "individual_default_credits", value: "5000" },
+  });
+
+  await prisma.platformSetting.upsert({
+    where: { key: "individual_default_class_limit" },
+    update: {},
+    create: { key: "individual_default_class_limit", value: "2" },
+  });
+
+  await prisma.platformSetting.upsert({
+    where: { key: "individual_default_subject_limit" },
+    update: {},
+    create: { key: "individual_default_subject_limit", value: "2" },
   });
 
   const trust = await prisma.trust.upsert({
@@ -707,13 +719,13 @@ async function main() {
     trustLeadership: trustLeadership.email,
     platformAdmin: platformAdmin.email,
   });
-  console.log("Login with: platform@eduwand.local / password123 (platform_admin, no trust/school)");
-  console.log("Login with: admin@dev.eduwand.local / password123 (Dev School)");
-  console.log("Login with: counsellor@dev.eduwand.local / password123 (Dev School, counsellor role)");
-  console.log("Login with: frontdesk@dev.eduwand.local / password123 (Dev School, front_desk role)");
-  console.log("Login with: teacher@dev.eduwand.local / password123 (Dev School, teacher role)");
-  console.log("Login with: admin2@dev.eduwand.local / password123 (Dev School 2)");
-  console.log("Login with: leadership@dev.eduwand.local / password123 (trust-scoped, no school_id)");
+  console.log("Login with: platform@eduwand.local / Admin@123 (platform_admin, no trust/school)");
+  console.log("Login with: admin@dev.eduwand.local / Admin@123 (Dev School)");
+  console.log("Login with: counsellor@dev.eduwand.local / Admin@123 (Dev School, counsellor role)");
+  console.log("Login with: frontdesk@dev.eduwand.local / Admin@123 (Dev School, front_desk role)");
+  console.log("Login with: teacher@dev.eduwand.local / Admin@123 (Dev School, teacher role)");
+  console.log("Login with: admin2@dev.eduwand.local / Admin@123 (Dev School 2)");
+  console.log("Login with: leadership@dev.eduwand.local / Admin@123 (trust-scoped, no school_id)");
   console.log("Student login: phone +911234567890 (Dev Student, Grade 5 A) via /auth/student/request-otp");
   console.log(`Student demo content: "${openAssignment.title}" (open, not submitted), "${gradedAssignment.title}" (graded 90/100), 1 material, 1 class broadcast`);
   console.log(

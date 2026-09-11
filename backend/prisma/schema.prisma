@@ -58,6 +58,12 @@ model School {
   name                    String
   board                   String
   accountType             String   @default("institutional") @map("account_type")
+  // Per-teacher override for individual accounts - null means "use the
+  // platform default" (PlatformSetting "individual_default_class_limit" /
+  // "individual_default_subject_limit", resolved in lib/limits.ts). Ignored
+  // for institutional schools, which are never capped.
+  classLimit              Int?     @map("class_limit")
+  subjectLimit            Int?     @map("subject_limit")
   address                 String?
   timezone                String   @default("Asia/Kolkata")
   incumbentErp            String?  @map("incumbent_erp")
@@ -94,6 +100,7 @@ model School {
   aiConversations       AiConversation[]
   subjectChangeRequests SubjectChangeRequest[]
   boardChangeTickets    BoardChangeTicket[]
+  classChangeRequests   ClassChangeRequest[]
 
   @@map("school")
 }
@@ -140,6 +147,15 @@ model ClassSection {
   academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
   className      String       @map("class_name")
   sectionName    String       @map("section_name")
+  // Set false when a ClassChangeRequest "replace" is approved - the class
+  // and all its data (students/topics/assignments) stay untouched, it just
+  // stops counting toward the teacher's active class limit and drops out of
+  // normal listings. See Docs/superpowers/plans/2026-09-09-individual-
+  // teacher-onboarding-and-credits.md.
+  isActive       Boolean      @default(true) @map("is_active")
+  // Shareable join-link token - public, unauthenticated students/parents use
+  // it to submit a ClassJoinRequest (never direct entry).
+  joinCode       String       @unique @default(cuid()) @map("join_code")
   createdAt      DateTime     @default(now()) @map("created_at")
   updatedAt      DateTime     @updatedAt @map("updated_at")
   createdBy      String?      @map("created_by") @db.Uuid
@@ -151,6 +167,7 @@ model ClassSection {
   topics                Topic[]
   communicationMessages CommunicationMessage[]
   teacherAssignments    ClassSectionTeacher[]
+  joinRequests          ClassJoinRequest[]
 
   @@map("class_section")
 }
@@ -192,6 +209,9 @@ model AppUser {
   photoMimeType  String?  @map("photo_mime_type")
   avatarKey      String?  @map("avatar_key")
   status         String   @default("invited")
+  // First-login product tour (mobile, teacher role only for now). Set true
+  // once the teacher dismisses/completes the tour so it never shows again.
+  hasSeenOnboardingTour Boolean  @default(false) @map("has_seen_onboarding_tour")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
   createdBy      String?  @map("created_by") @db.Uuid
@@ -225,6 +245,10 @@ model AppUser {
   subjectChangeDecisions     SubjectChangeRequest[]      @relation("SubjectChangeDecider")
   boardChangeTicketsRaised   BoardChangeTicket[]         @relation("BoardChangeRaiser")
   boardChangeTicketDecisions BoardChangeTicket[]         @relation("BoardChangeDecider")
+  classChangeRequests        ClassChangeRequest[]        @relation("ClassChangeRequester")
+  classChangeDecisions       ClassChangeRequest[]        @relation("ClassChangeDecider")
+  classJoinDecisions         ClassJoinRequest[]          @relation("ClassJoinDecider")
+  onboardingTasks            TeacherOnboardingTask[]
 
   @@map("app_user")
 }
@@ -619,6 +643,13 @@ model StudentStub {
   guardianContact String       @map("guardian_contact")
   admissionDate   DateTime     @map("admission_date") @db.Date
   feeStatus       String       @default("pending") @map("fee_status")
+  // status is one of: active, removed. Soft delete only - Submission/Grade/
+  // PersonalisationSuggestion/CommunicationMessage all reference a student
+  // with no cascade rule, so a real row delete would fail once a student
+  // has any activity. Removed students are hidden from normal listings but
+  // their history stays intact. See Docs/superpowers/plans/2026-09-09-
+  // individual-teacher-onboarding-and-credits.md.
+  status          String       @default("active")
   createdAt       DateTime     @default(now()) @map("created_at")
   updatedAt       DateTime     @updatedAt @map("updated_at")
   createdBy       String?      @map("created_by") @db.Uuid
@@ -689,13 +720,14 @@ model Topic {
   assignments           Assignment[]
   attainmentReport      AttainmentReport?
   communicationMessages CommunicationMessage[]
+  researchJobs          ContextResearchJob[]
 
   @@index([schoolId, teacherUserId])
   @@index([classSectionId, subject])
   @@map("topic")
 }
 
-// sourceType is one of: pdf, docx, pptx, image, url, idream_k12
+// sourceType is one of: pdf, docx, pptx, image, url, youtube, idream_k12
 // extractionStatus is one of: pending, extracted, failed_no_text
 model ContextSource {
   id                   String   @id @default(uuid()) @db.Uuid
@@ -706,6 +738,9 @@ model ContextSource {
   originalFilename     String?  @map("original_filename")
   sourceUrl            String?  @map("source_url")
   idreamK12ReferenceId String?  @map("idream_k12_reference_id")
+  // PDFs only - total page count, captured at extraction time. Lets the
+  // frontend offer a page-range picker for long documents (Generate setup).
+  pageCount            Int?     @map("page_count")
   extractionStatus     String   @default("pending") @map("extraction_status")
   extractedText        String?  @map("extracted_text")
   extractionError      String?  @map("extraction_error")
@@ -718,6 +753,27 @@ model ContextSource {
 
   @@index([topicId])
   @@map("context_source")
+}
+
+// AI Research mode: a NotebookLM-style workaround to the (unintegrated)
+// iDream K-12 API - searches the web for candidate sources the teacher then
+// approves/dismisses individually. status is one of: running, completed,
+// failed. stage is one of: searching, reviewing, done. candidates is a JSON
+// array of { id, title, url, type, snippet, status, contextSourceId? } -
+// see backend/src/lib/context-research.ts for the shape.
+model ContextResearchJob {
+  id           String   @id @default(uuid()) @db.Uuid
+  topicId      String   @map("topic_id") @db.Uuid
+  topic        Topic    @relation(fields: [topicId], references: [id])
+  status       String   @default("running")
+  stage        String   @default("searching")
+  candidates   Json     @default("[]")
+  errorMessage String?  @map("error_message")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@index([topicId])
+  @@map("context_research_job")
 }
 
 // The output template applied to generations/attainment reports so documents
@@ -794,6 +850,12 @@ model Generation {
   promptVersion          String?               @map("prompt_version")
   generationStatus       String                @default("succeeded") @map("generation_status")
   generatedAt            DateTime              @default(now()) @map("generated_at")
+  // Exactly what the teacher selected for this generation - { contextSourceId,
+  // pageFrom?, pageTo? }[]. The contextSources relation below still records
+  // *which* sources were touched (for display); this carries the page-range
+  // detail that relation can't. Null for generations created before source
+  // selection existed - retry falls back to the contextSources relation then.
+  selectedSources        Json?                 @map("selected_sources")
 
   // Separate from generationStatus (which is about whether the AI call
   // succeeded) - this gates /student/materials. draft = teacher-only,
@@ -1163,6 +1225,14 @@ model Plan {
   id                    String   @id @default(uuid()) @db.Uuid
   name                  String
   creditsPerTeacherSeat Int      @map("credits_per_teacher_seat")
+  // How many role="teacher" invites a trust on this plan may self-service
+  // create (users.ts POST /users) before being blocked. Only enforced once
+  // a Trust has planId explicitly set - a trust with no plan assigned is
+  // grandfathered as unlimited, so this never retroactively breaks an
+  // existing institutional customer on deploy. platform_admin always
+  // bypasses this. See Docs/superpowers/plans/2026-09-09-individual-
+  // teacher-onboarding-and-credits.md.
+  teacherSeatLimit      Int      @default(5) @map("teacher_seat_limit")
   isDefault             Boolean  @default(false) @map("is_default")
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
@@ -1265,4 +1335,71 @@ model BoardChangeTicket {
 
   @@index([schoolId, createdAt])
   @@map("board_change_ticket")
+}
+
+// Classes are a fixed set too, same "request only" pattern as subjects -
+// changeType is one of: add (one more class beyond the limit, nothing
+// existing touched), replace (archive an existing class - isActive=false,
+// all its data stays intact - and create a new one). status is one of:
+// pending, approved, rejected. targetClassSectionId is only set for
+// "replace". See Docs/superpowers/plans/2026-09-09-individual-teacher-
+// onboarding-and-credits.md.
+model ClassChangeRequest {
+  id                   String    @id @default(uuid()) @db.Uuid
+  teacherUserId        String    @map("teacher_user_id") @db.Uuid
+  teacher              AppUser   @relation("ClassChangeRequester", fields: [teacherUserId], references: [id])
+  schoolId             String    @map("school_id") @db.Uuid
+  school               School    @relation(fields: [schoolId], references: [id])
+  changeType           String    @map("change_type")
+  targetClassSectionId String?   @map("target_class_section_id") @db.Uuid
+  requestedClassName   String    @map("requested_class_name")
+  requestedSectionName String    @map("requested_section_name")
+  status               String    @default("pending")
+  requestedAt          DateTime  @default(now()) @map("requested_at")
+  decidedAt            DateTime? @map("decided_at")
+  decidedByUserId      String?   @map("decided_by_user_id") @db.Uuid
+  decidedBy            AppUser?  @relation("ClassChangeDecider", fields: [decidedByUserId], references: [id])
+  note                 String?
+
+  @@index([teacherUserId, decidedAt])
+  @@map("class_change_request")
+}
+
+// Submitted publicly (unauthenticated, via ClassSection.joinCode) by a
+// student/parent - never direct entry, the teacher must approve before a
+// real StudentStub is created. status is one of: pending, approved, rejected.
+model ClassJoinRequest {
+  id                   String       @id @default(uuid()) @db.Uuid
+  classSectionId       String       @map("class_section_id") @db.Uuid
+  classSection         ClassSection @relation(fields: [classSectionId], references: [id])
+  studentName          String       @map("student_name")
+  dateOfBirth          DateTime     @map("date_of_birth") @db.Date
+  guardianName         String       @map("guardian_name")
+  guardianContact      String       @map("guardian_contact")
+  status               String       @default("pending")
+  submittedAt          DateTime     @default(now()) @map("submitted_at")
+  decidedAt            DateTime?    @map("decided_at")
+  decidedByUserId      String?      @map("decided_by_user_id") @db.Uuid
+  decidedBy            AppUser?     @relation("ClassJoinDecider", fields: [decidedByUserId], references: [id])
+  createdStudentStubId String?      @map("created_student_stub_id") @db.Uuid
+  note                 String?
+
+  @@index([classSectionId, status])
+  @@map("class_join_request")
+}
+
+// Teacher "getting started" checklist (mobile, teacher role only). One row
+// per completed task per teacher - taskKey is one of a fixed set defined in
+// backend/src/lib/onboarding.ts (first_class, first_lesson, first_assignment,
+// first_student). Marked complete server-side from the relevant creation
+// route, never client-reported, so it can't be faked and survives reinstalls.
+model TeacherOnboardingTask {
+  id            String   @id @default(uuid()) @db.Uuid
+  teacherUserId String   @map("teacher_user_id") @db.Uuid
+  teacher       AppUser  @relation(fields: [teacherUserId], references: [id])
+  taskKey       String   @map("task_key")
+  completedAt   DateTime @default(now()) @map("completed_at")
+
+  @@unique([teacherUserId, taskKey])
+  @@map("teacher_onboarding_task")
 }

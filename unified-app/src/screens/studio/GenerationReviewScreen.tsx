@@ -17,6 +17,7 @@ import { FlashcardsView } from "./generation/FlashcardsView";
 import { PresentationView } from "./generation/PresentationView";
 import { OUTPUT_TYPE_LABELS, OUTPUT_TYPE_ICONS } from "./generation/outputTypeMeta";
 import { capitalizeFirst } from "../../utils/text";
+import { OrdinalDate } from "../../components/OrdinalDate";
 
 type Props = NativeStackScreenProps<RootStackParamList, "GenerationReview">;
 
@@ -342,7 +343,7 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
               <View>
                 <Text style={[styles.outputTypeLabel, { color: colors.textPrimary }]}>Content review</Text>
                 <Text style={[styles.meta, { color: colors.textMuted }]}>
-                  {new Date(generation.generatedAt).toLocaleDateString()}
+                  <OrdinalDate dateIso={generation.generatedAt} />
                   {generation.editedOutput ? " / edited" : ""}
                   {isSaving ? " / saving..." : savedNotice ? " / saved" : ""}
                 </Text>
@@ -366,7 +367,7 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
             <View style={{ flex: 1 }}>
               <Text style={[styles.outputTypeLabel, { color: colors.textPrimary }]}>Content review</Text>
               <Text style={[styles.meta, { color: colors.textMuted }]}>
-                {new Date(generation.generatedAt).toLocaleDateString()}
+                <OrdinalDate dateIso={generation.generatedAt} />
                 {generation.editedOutput ? " / edited" : ""}
                 {isSaving ? " / saving..." : savedNotice ? " / saved" : ""}
               </Text>

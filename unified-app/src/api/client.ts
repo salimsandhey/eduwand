@@ -1,4 +1,13 @@
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000/api/v1";
+// admin-dashboard (Vite web app) hosts the public /join/:code landing page
+// a class join link opens - see class-join.ts on the backend and
+// ClassJoinPage.tsx on admin-dashboard. Separate from EXPO_PUBLIC_API_URL
+// since it's a different app/host.
+const ADMIN_URL = process.env.EXPO_PUBLIC_ADMIN_URL ?? "http://localhost:5173";
+
+export function getClassJoinLink(joinCode: string): string {
+  return `${ADMIN_URL}/join/${joinCode}`;
+}
 
 interface ApiEnvelope<T> {
   data: T | null;
@@ -166,6 +175,36 @@ export interface CurrentUser {
   // screen behaviors specific to solo-teacher accounts. null for roles with
   // no school (e.g. platform_admin) or the student branch of /auth/me.
   accountType: string | null;
+  hasSeenOnboardingTour: boolean;
+}
+
+export interface TeacherOnboardingTask {
+  key: string;
+  label: string;
+  badge: string;
+  completed: boolean;
+  completedAt: string | null;
+}
+
+export interface TeacherOnboardingTasksResult {
+  tasks: TeacherOnboardingTask[];
+  completedCount: number;
+  totalCount: number;
+}
+
+export interface SchoolLeaderboardEntry {
+  teacherUserId: string;
+  fullName: string;
+  aiCount: number;
+  assignmentCount: number;
+  topicCount: number;
+  score: number;
+  isCurrentUser: boolean;
+}
+
+export interface SchoolLeaderboardResult {
+  entries: SchoolLeaderboardEntry[];
+  periodStart: string | null;
 }
 
 export interface UpdateProfileInput {
@@ -464,6 +503,53 @@ export interface ClassSection {
   academicYearId: string;
   className: string;
   sectionName: string;
+  isActive: boolean;
+  joinCode: string;
+}
+
+// appliesTo is one of: generation, attainment_report
+export interface SchoolFormatTemplate {
+  id: string;
+  schoolId: string;
+  appliesTo: string;
+  templateBody: string;
+}
+
+export interface SchoolLimits {
+  classCount: number;
+  classLimit: number;
+  subjectCount: number;
+  subjectLimit: number;
+}
+
+// status is one of: pending, approved, rejected. changeType is one of: add, replace.
+export interface ClassChangeRequest {
+  id: string;
+  teacherUserId: string;
+  schoolId: string;
+  changeType: "add" | "replace";
+  targetClassSectionId: string | null;
+  requestedClassName: string;
+  requestedSectionName: string;
+  status: string;
+  requestedAt: string;
+  decidedAt: string | null;
+  note: string | null;
+}
+
+// status is one of: pending, approved, rejected
+export interface ClassJoinRequest {
+  id: string;
+  classSectionId: string;
+  studentName: string;
+  dateOfBirth: string;
+  guardianName: string;
+  guardianContact: string;
+  status: string;
+  submittedAt: string;
+  decidedAt: string | null;
+  note: string | null;
+  classSection?: { className: string; sectionName: string };
 }
 
 export interface Subject {
@@ -501,6 +587,7 @@ export interface SubjectChangeRequest {
   note: string | null;
 }
 
+// status is one of: active, removed (soft delete only)
 export interface StudentStub {
   id: string;
   fullName: string;
@@ -510,7 +597,9 @@ export interface StudentStub {
   guardianContact: string;
   admissionDate: string;
   feeStatus: string;
-  sourceEnquiryId: string;
+  status: string;
+  sourceEnquiryId: string | null;
+  classSection?: ClassSection;
 }
 
 export interface LessonPlan {
@@ -539,19 +628,48 @@ export interface Topic {
   board: string;
   status: "active" | "archived";
   updatedAt: string;
+  classSection?: { className: string; sectionName: string };
 }
 
 export interface ContextSource {
   id: string;
   topicId: string;
-  sourceType: "pdf" | "docx" | "pptx" | "image" | "url" | "idream_k12";
+  sourceType: "pdf" | "docx" | "pptx" | "image" | "url" | "youtube" | "idream_k12";
   fileLocation: string | null;
   originalFilename: string | null;
   sourceUrl: string | null;
   idreamK12ReferenceId: string | null;
+  pageCount: number | null;
   extractionStatus: "pending" | "extracted" | "failed_no_text";
   extractedText: string | null;
   extractionError: string | null;
+}
+
+export interface GenerationSourceSelection {
+  contextSourceId: string;
+  pageFrom?: number;
+  pageTo?: number;
+}
+
+export type ResearchCandidateType = "pdf" | "video" | "presentation" | "article";
+
+export interface ResearchCandidate {
+  id: string;
+  title: string;
+  url: string;
+  type: ResearchCandidateType;
+  snippet: string;
+  status: "pending" | "approved" | "dismissed";
+  contextSourceId?: string;
+}
+
+export interface ContextResearchJob {
+  id: string;
+  topicId: string;
+  status: "running" | "completed" | "failed";
+  stage: "searching" | "reviewing" | "done";
+  candidates: ResearchCandidate[];
+  errorMessage: string | null;
 }
 
 export interface Observation {
@@ -588,6 +706,7 @@ export interface TopicDetail extends Topic {
   contextSources: ContextSource[];
   generations: Generation[];
   observations: Observation[];
+  assignments: Assignment[];
 }
 
 export type QuestionDifficulty = "easy" | "medium" | "hard";
@@ -875,6 +994,10 @@ export const api = {
     request<CurrentUser>("/auth/me", { method: "PATCH", body: JSON.stringify(input) }, token),
   changeMyPassword: (token: string, input: { currentPassword: string; newPassword: string }) =>
     request<{ message: string }>("/auth/me/change-password", { method: "POST", body: JSON.stringify(input) }, token),
+  markOnboardingTourSeen: (token: string) =>
+    request<{ hasSeenOnboardingTour: boolean }>("/auth/me/onboarding-tour-seen", { method: "POST" }, token),
+  getOnboardingTasks: (token: string) => request<TeacherOnboardingTasksResult>("/me/onboarding-tasks", {}, token),
+  getSchoolLeaderboard: (token: string) => request<SchoolLeaderboardResult>("/me/school-leaderboard", {}, token),
   myPhotoUrl: (token: string) => `${API_URL}/auth/me/photo?token=${encodeURIComponent(token)}`,
   uploadMyPhoto: (token: string, file: { uri: string; name: string; mimeType: string }) => {
     const formData = new FormData();
@@ -988,6 +1111,16 @@ export const api = {
 
   listClassSections: (token: string) => request<ClassSection[]>("/class-sections", {}, token),
   listAcademicYears: (token: string) => request<AcademicYear[]>("/academic-years", {}, token),
+  startNewAcademicYear: (
+    token: string,
+    schoolId: string,
+    input: { label: string; startDate: string; endDate: string; copyFromAcademicYearId: string }
+  ) =>
+    request<AcademicYear>(
+      `/schools/${schoolId}/academic-years`,
+      { method: "POST", body: JSON.stringify({ ...input, isCurrent: true }) },
+      token
+    ),
   listSubjects: (token: string) => request<Subject[]>("/subjects", {}, token),
 
   signupTeacher: (input: { fullName: string; email: string; password: string; board: string; phone?: string; workspaceName?: string }) =>
@@ -999,10 +1132,60 @@ export const api = {
     request<Subject>(`/schools/${schoolId}/subjects`, { method: "POST", body: JSON.stringify(input) }, token),
   assignTeacherToClassSection: (token: string, schoolId: string, classSectionId: string, teacherUserId: string) =>
     request<{ id: string }>(`/schools/${schoolId}/class-sections/${classSectionId}/teachers`, { method: "POST", body: JSON.stringify({ teacherUserId }) }, token),
+  getSchoolLimits: (token: string, schoolId: string) =>
+    request<SchoolLimits>(`/schools/${schoolId}/limits`, {}, token),
+
+  getFormatTemplates: (token: string, schoolId: string) =>
+    request<{ generation: SchoolFormatTemplate | null; attainmentReport: SchoolFormatTemplate | null }>(
+      `/schools/${schoolId}/format-templates`,
+      {},
+      token
+    ),
+  saveFormatTemplate: (token: string, schoolId: string, appliesTo: "generation" | "attainment_report", templateBody: string) =>
+    request<SchoolFormatTemplate>(
+      `/schools/${schoolId}/format-templates/${appliesTo}`,
+      { method: "PUT", body: JSON.stringify({ templateBody }) },
+      token
+    ),
 
   getMyCredits: (token: string) => request<CreditAccountSummary>("/me/credits", {}, token),
   requestSubjectChange: (token: string, schoolId: string, input: { requestedSubjects: string[]; note?: string }) =>
     request<SubjectChangeRequest>(`/schools/${schoolId}/subject-change-requests`, { method: "POST", body: JSON.stringify(input) }, token),
+  requestClassChange: (
+    token: string,
+    schoolId: string,
+    input: { changeType: "add" | "replace"; targetClassSectionId?: string; requestedClassName: string; requestedSectionName: string; note?: string }
+  ) => request<ClassChangeRequest>(`/schools/${schoolId}/class-change-requests`, { method: "POST", body: JSON.stringify(input) }, token),
+
+  listClassJoinRequests: (token: string, classSectionId: string, params: { status?: string } = {}) =>
+    request<ClassJoinRequest[]>(`/class-sections/${classSectionId}/join-requests${toQueryString(params)}`, {}, token),
+  listAllJoinRequests: (token: string, params: { status?: string } = {}) =>
+    request<ClassJoinRequest[]>(`/join-requests${toQueryString(params)}`, {}, token),
+  decideClassJoinRequest: (token: string, id: string, input: { decision: "approved" | "rejected"; note?: string }) =>
+    request<ClassJoinRequest>(`/join-requests/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
+
+  bulkAddStudents: (token: string, classSectionId: string, students: { fullName: string; dateOfBirth: string; guardianName: string; guardianContact: string }[]) =>
+    request<{ created: number; skipped: { row: number; reason: string }[] }>(
+      "/students/bulk",
+      { method: "POST", body: JSON.stringify({ classSectionId, students }) },
+      token
+    ),
+  bulkReassignStudents: (token: string, classSectionId: string, studentIds: string[]) =>
+    request<{ updated: number; skipped: { studentId: string; reason: string }[] }>(
+      "/students/bulk-reassign",
+      { method: "POST", body: JSON.stringify({ classSectionId, studentIds }) },
+      token
+    ),
+  updateStudent: (
+    token: string,
+    id: string,
+    input: { fullName?: string; dateOfBirth?: string; classSectionId?: string; guardianName?: string; guardianContact?: string; feeStatus?: string }
+  ) => request<StudentStub>(`/students/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
+  createStudent: (
+    token: string,
+    input: { fullName: string; dateOfBirth: string; classSectionId: string; guardianName: string; guardianContact: string }
+  ) => request<StudentStub>("/students", { method: "POST", body: JSON.stringify(input) }, token),
+  deleteStudent: (token: string, id: string) => request<{ deleted: true }>(`/students/${id}`, { method: "DELETE" }, token),
 
   listPipelineStages: (token: string) => request<PipelineStage[]>("/pipeline-stages", {}, token),
 
@@ -1047,10 +1230,37 @@ export const api = {
   addTopicObservation: (token: string, topicId: string, body: string) =>
     request<Observation>(`/topics/${topicId}/observations`, { method: "POST", body: JSON.stringify({ body }) }, token),
 
+  importTopicContext: (token: string, topicId: string, input: { sourceTopicId: string; contextSourceIds?: string[] }) =>
+    request<ContextSource[]>(`/topics/${topicId}/context/import`, { method: "POST", body: JSON.stringify(input) }, token),
+
+  startContextResearch: (token: string, topicId: string) =>
+    request<ContextResearchJob>(`/topics/${topicId}/context/research`, { method: "POST" }, token),
+  getContextResearchJob: (token: string, topicId: string, jobId: string) =>
+    request<ContextResearchJob>(`/topics/${topicId}/context/research/${jobId}`, {}, token),
+  approveContextResearchCandidate: (token: string, topicId: string, jobId: string, candidateId: string) =>
+    request<ContextResearchJob>(
+      `/topics/${topicId}/context/research/${jobId}/candidates/${candidateId}/approve`,
+      { method: "POST" },
+      token
+    ),
+  dismissContextResearchCandidate: (token: string, topicId: string, jobId: string, candidateId: string) =>
+    request<ContextResearchJob>(
+      `/topics/${topicId}/context/research/${jobId}/candidates/${candidateId}/dismiss`,
+      { method: "POST" },
+      token
+    ),
+
   createGeneration: (
     token: string,
     topicId: string,
-    input: { outputType: GenerationOutputType; classCount?: number; minutesPerClass?: number; language?: string; customPrompt?: string }
+    input: {
+      outputType: GenerationOutputType;
+      classCount?: number;
+      minutesPerClass?: number;
+      language?: string;
+      customPrompt?: string;
+      sources?: GenerationSourceSelection[];
+    }
   ) => request<Generation>(`/topics/${topicId}/generations`, { method: "POST", body: JSON.stringify(input) }, token),
   getGeneration: (token: string, id: string) => request<Generation>(`/generations/${id}`, {}, token),
   editGeneration: (token: string, id: string, editedOutput: string) =>

@@ -14,6 +14,13 @@ import { NewEnquiryFormScreen } from "../screens/enrolment/NewEnquiryFormScreen"
 import { CreateFirstClassScreen } from "../screens/studio/CreateFirstClassScreen";
 import { CreditsScreen } from "../screens/studio/CreditsScreen";
 import { RequestSubjectChangeScreen } from "../screens/studio/RequestSubjectChangeScreen";
+import { RequestClassChangeScreen } from "../screens/studio/RequestClassChangeScreen";
+import { StudentsScreen } from "../screens/studio/StudentsScreen";
+import { AddStudentScreen } from "../screens/studio/AddStudentScreen";
+import { StartNewAcademicYearScreen } from "../screens/studio/StartNewAcademicYearScreen";
+import { FormatTemplateScreen } from "../screens/studio/FormatTemplateScreen";
+import { GettingStartedScreen } from "../screens/studio/GettingStartedScreen";
+import { LeaderboardScreen } from "../screens/studio/LeaderboardScreen";
 import { EditEnquiryScreen } from "../screens/enrolment/EditEnquiryScreen";
 import { AdmissionConfirmationScreen } from "../screens/enrolment/AdmissionConfirmationScreen";
 import { BulkUploadScreen } from "../screens/enrolment/BulkUploadScreen";
@@ -28,6 +35,8 @@ import { TopicListScreen } from "../screens/studio/TopicListScreen";
 import { TopicDetailScreen } from "../screens/studio/TopicDetailScreen";
 import { GenerationSetupScreen } from "../screens/studio/GenerationSetupScreen";
 import { GenerationReviewScreen } from "../screens/studio/GenerationReviewScreen";
+import { ImportContextScreen } from "../screens/studio/ImportContextScreen";
+import { ContextResearchScreen } from "../screens/studio/ContextResearchScreen";
 import { LessonWithAiTestScreen } from "../screens/studio/LessonWithAiTestScreen";
 import { AnswerKeyReviewScreen } from "../screens/studio/AnswerKeyReviewScreen";
 import { AttainmentReportScreen } from "../screens/analytics/AttainmentReportScreen";
@@ -119,6 +128,8 @@ export function AppNavigator() {
         <Stack.Screen name="TopicDetail" component={TopicDetailScreen} options={{ headerShown: false }} />
         <Stack.Screen name="GenerationSetup" component={GenerationSetupScreen} options={{ headerShown: false }} />
         <Stack.Screen name="GenerationReview" component={GenerationReviewScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="ImportContext" component={ImportContextScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="ContextResearch" component={ContextResearchScreen} options={{ headerShown: false }} />
         <Stack.Screen name="LessonWithAiTest" component={LessonWithAiTestScreen} options={{ headerShown: false }} />
         <Stack.Screen name="AnswerKeyReview" component={AnswerKeyReviewScreen} options={{ title: "Answer Key" }} />
         <Stack.Screen name="AttainmentReport" component={AttainmentReportScreen} options={{ headerShown: false }} />
@@ -135,6 +146,13 @@ export function AppNavigator() {
         <Stack.Screen name="CreateFirstClass" component={CreateFirstClassScreen} options={{ headerShown: false }} />
         <Stack.Screen name="Credits" component={CreditsScreen} options={{ headerShown: false }} />
         <Stack.Screen name="RequestSubjectChange" component={RequestSubjectChangeScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="RequestClassChange" component={RequestClassChangeScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="Students" component={StudentsScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="AddStudent" component={AddStudentScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="StartNewAcademicYear" component={StartNewAcademicYearScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="FormatTemplate" component={FormatTemplateScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="GettingStarted" component={GettingStartedScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="Leaderboard" component={LeaderboardScreen} options={{ headerShown: false }} />
       </Stack.Navigator>
     </NavigationContainer>
   );

@@ -118,6 +118,21 @@ export interface ResearchReportInput {
   board: string;
 }
 
+export interface ContextResearchInput {
+  topicName: string;
+  subject: string;
+  board: string;
+}
+
+export type ResearchCandidateType = "pdf" | "video" | "presentation" | "article";
+
+export interface ResearchCandidateDraft {
+  title: string;
+  url: string;
+  type: ResearchCandidateType;
+  snippet: string;
+}
+
 export interface PersonalisationInput {
   studentName: string;
   avgScore: number | null;
@@ -361,6 +376,11 @@ export interface QuestionGradeDetail {
 export interface AiProvider {
   generateLessonPlan(input: LessonPlanInput): Promise<{ content: string; model: string }>;
   generateResearchReport(input: ResearchReportInput): Promise<{ content: string; model: string }>;
+  // AI Research mode for the Context module (distinct from generateResearchReport
+  // above, which produces a text report) - searches the web for candidate
+  // sources a teacher can approve into real ContextSource rows. See
+  // backend/src/lib/context-research.ts.
+  researchContextSources(input: ContextResearchInput): Promise<{ candidates: ResearchCandidateDraft[] }>;
   generatePersonalisationSuggestion(
     input: PersonalisationInput
   ): Promise<{ suggestedMix: Record<string, number>; reasoning: string; model: string }>;
@@ -461,6 +481,31 @@ class StubAiProvider implements AiProvider {
     ].join("\n");
 
     return { content, model: MODEL_SONNET };
+  }
+
+  async researchContextSources({ topicName, board }: ContextResearchInput) {
+    const encoded = encodeURIComponent(topicName);
+    const candidates: ResearchCandidateDraft[] = [
+      {
+        title: `${topicName} — overview article`,
+        url: `https://en.wikipedia.org/wiki/${encoded}`,
+        type: "article",
+        snippet: `A general overview of ${topicName}, useful as background reading before class.`,
+      },
+      {
+        title: `${topicName} — video explainer`,
+        url: `https://www.youtube.com/results?search_query=${encoded}`,
+        type: "video",
+        snippet: `Search results for video explainers on ${topicName} suitable for ${board} students.`,
+      },
+      {
+        title: `${topicName} — study notes (PDF)`,
+        url: `https://www.google.com/search?q=${encoded}+filetype:pdf`,
+        type: "pdf",
+        snippet: `Search results for downloadable PDF notes covering ${topicName}.`,
+      },
+    ];
+    return { candidates };
   }
 
   async generatePersonalisationSuggestion({ studentName, avgScore, submissionCount, questionCount }: PersonalisationInput) {
@@ -728,6 +773,65 @@ function stripJsonFence(raw: string): string {
 class GeminiAiProvider implements AiProvider {
   generateLessonPlan = stubProvider.generateLessonPlan.bind(stubProvider);
   generateResearchReport = stubProvider.generateResearchReport.bind(stubProvider);
+
+  async researchContextSources({ topicName, subject, board }: ContextResearchInput) {
+    const prompt = [
+      `Find real, currently-accessible web resources a school teacher could use as reference material to teach "${topicName}" (${subject}, ${board} curriculum) — PDFs, articles, presentations, and YouTube videos.`,
+      "Use web search to find actual pages, not invented ones.",
+      "",
+      'Respond with ONLY a JSON object of this exact shape (no prose, no markdown fences): ' +
+        '{"candidates": {"title": string, "url": string (the real, full URL), "type": "pdf"|"video"|"presentation"|"article", ' +
+        '"snippet": string (one sentence on what it covers and why it is useful for this lesson)}[]}. ' +
+        "Return 6-10 candidates, mixing types where possible, all directly relevant to the topic.",
+    ].join("\n");
+
+    try {
+      const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          tools: [{ google_search: {} }],
+        }),
+      });
+      if (!response.ok) throw new Error(`Gemini request failed (${response.status})`);
+      const data = (await response.json()) as {
+        candidates?: {
+          content?: { parts?: { text?: string }[] };
+          groundingMetadata?: { groundingChunks?: { web?: { uri?: string; title?: string } }[] };
+        }[];
+      };
+      const first = data.candidates?.[0];
+      const text = first?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+      if (!text) throw new Error("Gemini returned no text");
+      const parsed = JSON.parse(stripJsonFence(text)) as { candidates?: ResearchCandidateDraft[] };
+      if (!parsed.candidates || parsed.candidates.length === 0) throw new Error("Malformed research response");
+
+      // Grounding chunks carry the URLs Gemini actually searched, for a
+      // teacher-facing "verify against source" link that's guaranteed
+      // reachable - only used to fill in a candidate missing a url.
+      const groundedUrls = (first?.groundingMetadata?.groundingChunks ?? [])
+        .map((c) => c.web?.uri)
+        .filter((uri): uri is string => Boolean(uri));
+
+      const candidates: ResearchCandidateDraft[] = parsed.candidates
+        .slice(0, 10)
+        .filter((c) => c.title && c.type)
+        .map((c, i) => ({
+          title: c.title,
+          url: c.url || groundedUrls[i] || "",
+          type: (["pdf", "video", "presentation", "article"] as const).includes(c.type) ? c.type : "article",
+          snippet: c.snippet ?? "",
+        }))
+        .filter((c) => c.url);
+
+      if (candidates.length === 0) throw new Error("No usable candidates in research response");
+      return { candidates };
+    } catch (err) {
+      console.error("[ai] researchContextSources fell back to stub:", err);
+      return stubProvider.researchContextSources({ topicName, subject, board });
+    }
+  }
 
   async generatePersonalisationSuggestion(input: PersonalisationInput) {
     const { studentName, avgScore, submissionCount, questionCount } = input;

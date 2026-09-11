@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api/client";
-import type { TrustDetail, School } from "../api/client";
+import type { TrustDetail, School, Plan } from "../api/client";
 import { Card } from "../components/Card";
 import { PageHeader } from "../components/PageHeader";
 import { Modal, ModalFooter } from "../components/Modal";
@@ -28,6 +28,8 @@ export function TrustDetailPage() {
   const [registeredAddress, setRegisteredAddress] = useState("");
   const [gstNumber, setGstNumber] = useState("");
   const [expectedSchoolCount, setExpectedSchoolCount] = useState("");
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [selectedPlanId, setSelectedPlanId] = useState("");
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -50,7 +52,10 @@ export function TrustDetailPage() {
     if (!accessToken || !id) return;
     setError(null);
     try {
-      const t = await api.getTrust(accessToken, id);
+      const [t, plansRes] = await Promise.all([
+        api.getTrust(accessToken, id),
+        canEdit ? api.listPlans(accessToken) : Promise.resolve([]),
+      ]);
       setTrust(t);
       setName(t.name);
       setLegalName(t.legalName ?? "");
@@ -61,10 +66,12 @@ export function TrustDetailPage() {
       setRegisteredAddress(t.registeredAddress ?? "");
       setGstNumber(t.gstNumber ?? "");
       setExpectedSchoolCount(t.expectedSchoolCount != null ? String(t.expectedSchoolCount) : "");
+      setPlans(plansRes);
+      setSelectedPlanId(t.planId ?? "");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load trust");
     }
-  }, [accessToken, id]);
+  }, [accessToken, id, canEdit]);
 
   useEffect(() => {
     load();
@@ -123,6 +130,22 @@ export function TrustDetailPage() {
       setSchoolError(err instanceof Error ? err.message : "Failed to add school");
     } finally {
       setIsCreatingSchool(false);
+    }
+  }
+
+  async function assignPlan() {
+    if (!accessToken || !id) return;
+    setSaveError(null);
+    setSaveMessage(null);
+    setIsSaving(true);
+    try {
+      const updated = await api.updateTrust(accessToken, id, { planId: selectedPlanId || null });
+      setTrust((prev) => (prev ? { ...prev, ...updated } : prev));
+      setSaveMessage("Plan updated");
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Failed to update plan");
+    } finally {
+      setIsSaving(false);
     }
   }
 
@@ -269,6 +292,29 @@ export function TrustDetailPage() {
             />
           </div>
         </div>
+
+        {canEdit ? (
+          <div style={{ ...styles.row, marginTop: 16 }}>
+            <div style={styles.field}>
+              <label style={styles.label}>Billing plan</label>
+              <select style={styles.input} value={selectedPlanId} onChange={(e) => setSelectedPlanId(e.target.value)}>
+                <option value="">No plan (unlimited teacher seats)</option>
+                {plans.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} - {p.teacherSeatLimit} seat{p.teacherSeatLimit === 1 ? "" : "s"}, {p.creditsPerTeacherSeat} credits/seat
+                  </option>
+                ))}
+              </select>
+              <p style={{ fontSize: 11, color: "var(--text-muted)", margin: 0 }}>
+                No plan assigned = self-service teacher invites are unlimited. Assigning a plan caps invites at its seat limit.
+              </p>
+            </div>
+            <button style={{ ...styles.secondaryButton, alignSelf: "flex-end", height: 42 }} onClick={assignPlan} disabled={isSaving}>
+              Save plan
+            </button>
+          </div>
+        ) : null}
+
         {canEdit ? (
           <>
             <div style={styles.actionRow}>

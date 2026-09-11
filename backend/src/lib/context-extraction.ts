@@ -1,6 +1,7 @@
 import { aiProvider } from "./ai";
 import { storage } from "./storage";
 import { extractText, extractUrlText, MAX_EXTRACTED_CHARS } from "./extraction";
+import { fetchYoutubeTitle } from "./context-limits";
 
 export type ExtractionStatus = "pending" | "extracted" | "failed_no_text";
 
@@ -14,7 +15,7 @@ export function extractionStatusFor(params: {
   hasVisionKey: boolean;
   extractedText: string | null;
 }): ExtractionStatus {
-  if (params.sourceType === "idream_k12") return "extracted";
+  if (params.sourceType === "idream_k12" || params.sourceType === "youtube") return "extracted";
   if (params.extractedText && params.extractedText.trim().length > 0) return "extracted";
   if (params.sourceType === "image" && !params.hasVisionKey) return "pending";
   return "failed_no_text";
@@ -24,6 +25,7 @@ export interface ContextExtractionResult {
   extractedText: string | null;
   extractionError: string | null;
   extractionStatus: ExtractionStatus;
+  pageCount?: number;
 }
 
 /**
@@ -45,6 +47,7 @@ export async function runContextExtraction(params: {
   const hasVisionKey = Boolean(process.env.GEMINI_API_KEY);
   let extractedText: string | null = null;
   let extractionError: string | null = null;
+  let pageCount: number | undefined;
 
   try {
     if (params.sourceType === "image") {
@@ -57,6 +60,13 @@ export async function runContextExtraction(params: {
         const result = await extractUrlText(params.sourceUrl);
         if (result && result.text.length > 0) extractedText = result.text;
       }
+    } else if (params.sourceType === "youtube") {
+      // No transcript extraction - just a best-effort title as light context,
+      // via fetchYoutubeTitle's public oEmbed lookup (no API key needed).
+      if (params.sourceUrl) {
+        const title = await fetchYoutubeTitle(params.sourceUrl);
+        if (title) extractedText = `YouTube video: ${title}`;
+      }
     } else if (params.sourceType === "idream_k12") {
       // No local extraction path yet - treated as ready by extractionStatusFor.
     } else {
@@ -65,6 +75,7 @@ export async function runContextExtraction(params: {
       if (buffer) {
         const result = await extractText(buffer, params.sourceType);
         if (result && result.text.length > 0) extractedText = result.text;
+        pageCount = result?.pageCount;
       }
     }
   } catch (err) {
@@ -81,5 +92,6 @@ export async function runContextExtraction(params: {
       hasVisionKey,
       extractedText,
     }),
+    pageCount,
   };
 }

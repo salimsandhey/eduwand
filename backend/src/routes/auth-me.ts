@@ -23,6 +23,7 @@ const ME_SELECT = {
   status: true,
   photoMimeType: true,
   avatarKey: true,
+  hasSeenOnboardingTour: true,
   school: { select: { accountType: true } },
 } as const;
 
@@ -299,4 +300,15 @@ export async function authMeRoutes(app: FastifyInstance) {
       return reply.send(buffer);
     }
   );
+
+  // First-login product tour (mobile, teacher role only for now) - called
+  // once the teacher dismisses/completes the tour so it never shows again.
+  app.post("/auth/me/onboarding-tour-seen", { onRequest: [app.authenticate] }, async (request, reply) => {
+    if (rejectStudents(request, reply)) return;
+    await prisma.appUser.update({
+      where: { id: request.user.sub },
+      data: { hasSeenOnboardingTour: true },
+    });
+    return { data: { hasSeenOnboardingTour: true }, meta: {} };
+  });
 }

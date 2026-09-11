@@ -136,6 +136,30 @@ export async function userRoutes(app: FastifyInstance) {
       });
     }
 
+    // Teacher seats are the billed unit - self-service invite is capped at
+    // the trust's plan (Plan.teacherSeatLimit). A trust with no plan
+    // assigned is grandfathered as unlimited, so this never retroactively
+    // breaks an existing institutional customer. platform_admin always
+    // bypasses this. See Docs/superpowers/plans/2026-09-09-individual-
+    // teacher-onboarding-and-credits.md.
+    if (body.role === "teacher" && trustId && caller.role !== PLATFORM_ADMIN_ROLE) {
+      const trust = await prisma.trust.findUnique({ where: { id: trustId }, select: { plan: true } });
+      if (trust?.plan) {
+        const currentTeacherCount = await prisma.appUser.count({
+          where: { trustId, role: "teacher", status: { not: "disabled" } },
+        });
+        if (currentTeacherCount >= trust.plan.teacherSeatLimit) {
+          return reply.code(400).send({
+            data: null,
+            error: {
+              code: "teacher_seat_limit_reached",
+              message: `Your plan includes ${trust.plan.teacherSeatLimit} teacher seat${trust.plan.teacherSeatLimit === 1 ? "" : "s"}. Contact EduWand to add more.`,
+            },
+          });
+        }
+      }
+    }
+
     const tempPassword = generateTempPassword();
     const passwordHash = await bcrypt.hash(tempPassword, 10);
 

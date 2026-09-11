@@ -8,6 +8,7 @@ export async function classSectionRoutes(app: FastifyInstance) {
     const classSections = await prisma.classSection.findMany({
       where: {
         academicYear: { schoolId: request.schoolId, isCurrent: true },
+        isActive: true,
         ...(request.user.role === "teacher"
           ? { teacherAssignments: { some: { teacherUserId: request.user.sub } } }
           : {}),

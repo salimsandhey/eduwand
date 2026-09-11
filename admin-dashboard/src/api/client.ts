@@ -328,6 +328,8 @@ export interface TrustDetail extends TrustSummary {
   expectedSchoolCount: number | null;
   createdAt: string;
   schools: { id: string; name: string; board: string; status: string }[];
+  planId: string | null;
+  plan: Plan | null;
 }
 
 export interface CreateTrustInput {
@@ -348,6 +350,8 @@ export interface School {
   name: string;
   board: string;
   accountType: string;
+  classLimit: number | null;
+  subjectLimit: number | null;
   status: string;
 }
 
@@ -391,6 +395,7 @@ export interface UpdateTrustInput {
   trustType?: string;
   expectedSchoolCount?: number;
   status?: string;
+  planId?: string | null;
 }
 
 export interface UpdateSchoolInput {
@@ -402,23 +407,45 @@ export interface UpdateSchoolInput {
   principalPhone?: string;
   expectedStudentStrength?: number;
   status?: string;
+  classLimit?: number | null;
+  subjectLimit?: number | null;
+}
+
+// status is one of: pending, approved, rejected. changeType is one of: add, replace.
+export interface ClassChangeRequest {
+  id: string;
+  teacherUserId: string;
+  schoolId: string;
+  changeType: "add" | "replace";
+  targetClassSectionId: string | null;
+  requestedClassName: string;
+  requestedSectionName: string;
+  status: string;
+  requestedAt: string;
+  decidedAt: string | null;
+  note: string | null;
+  teacher: { fullName: string; email: string };
+  school: { name: string };
 }
 
 export interface Plan {
   id: string;
   name: string;
   creditsPerTeacherSeat: number;
+  teacherSeatLimit: number;
   isDefault: boolean;
 }
 
 export interface CreatePlanInput {
   name: string;
   creditsPerTeacherSeat: number;
+  teacherSeatLimit: number;
   isDefault?: boolean;
 }
 
 export interface UpdatePlanInput {
   name?: string;
+  teacherSeatLimit?: number;
   creditsPerTeacherSeat?: number;
   isDefault?: boolean;
 }
@@ -551,6 +578,29 @@ export interface UpdateFormFieldInput {
   requiredAtStage?: string | null;
 }
 
+// Public, unauthenticated - used by the /join/:code landing page. Not part
+// of the `api` object since every method there takes a token.
+export interface ClassJoinInfo {
+  className: string;
+  sectionName: string;
+  schoolName: string;
+  teacherName: string | null;
+}
+
+export function publicGetClassJoinInfo(joinCode: string) {
+  return request<ClassJoinInfo>(`/public/class-sections/${joinCode}`);
+}
+
+export function publicSubmitClassJoinRequest(
+  joinCode: string,
+  input: { studentName: string; dateOfBirth: string; guardianName: string; guardianContact: string }
+) {
+  return request<{ id: string; status: string }>(`/public/class-sections/${joinCode}/join-requests`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export const api = {
   login: (email: string, password: string) =>
     request<AuthTokens>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
@@ -595,6 +645,11 @@ export const api = {
     request<SubjectChangeRequest[]>(`/admin/subject-change-requests${toQueryString(params)}`, {}, token),
   decideSubjectChangeRequest: (token: string, id: string, input: { decision: "approved" | "rejected"; note?: string }) =>
     request<SubjectChangeRequest>(`/admin/subject-change-requests/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
+
+  listClassChangeRequests: (token: string, params: { status?: string } = {}) =>
+    request<ClassChangeRequest[]>(`/admin/class-change-requests${toQueryString(params)}`, {}, token),
+  decideClassChangeRequest: (token: string, id: string, input: { decision: "approved" | "rejected"; note?: string }) =>
+    request<ClassChangeRequest>(`/admin/class-change-requests/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
 
   listBoardChangeTickets: (token: string, params: { status?: string } = {}) =>
     request<BoardChangeTicket[]>(`/admin/board-change-tickets${toQueryString(params)}`, {}, token),

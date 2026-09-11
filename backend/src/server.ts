@@ -45,7 +45,10 @@ import { subjectChangeRequestRoutes } from "./routes/subject-change-requests";
 import { boardChangeTicketRoutes } from "./routes/board-change-tickets";
 import { platformSettingRoutes } from "./routes/platform-settings";
 import { teacherCreditRoutes } from "./routes/teacher-credits";
+import { teacherOnboardingRoutes } from "./routes/teacher-onboarding";
 import { planRoutes } from "./routes/plans";
+import { classChangeRequestRoutes } from "./routes/class-change-requests";
+import { classJoinRoutes } from "./routes/class-join";
 
 const app = Fastify({ logger: true });
 
@@ -94,7 +97,10 @@ app.register(subjectChangeRequestRoutes, { prefix: "/api/v1" });
 app.register(boardChangeTicketRoutes, { prefix: "/api/v1" });
 app.register(platformSettingRoutes, { prefix: "/api/v1" });
 app.register(teacherCreditRoutes, { prefix: "/api/v1" });
+app.register(teacherOnboardingRoutes, { prefix: "/api/v1" });
 app.register(planRoutes, { prefix: "/api/v1" });
+app.register(classChangeRequestRoutes, { prefix: "/api/v1" });
+app.register(classJoinRoutes, { prefix: "/api/v1" });
 
 const port = Number(process.env.PORT) || 4000;
 

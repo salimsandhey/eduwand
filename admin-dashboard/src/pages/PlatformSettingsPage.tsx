@@ -24,6 +24,7 @@ export function PlatformSettingsPage() {
 
   const [newPlanName, setNewPlanName] = useState("");
   const [newPlanCredits, setNewPlanCredits] = useState("");
+  const [newPlanSeats, setNewPlanSeats] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -82,18 +83,38 @@ export function PlatformSettingsPage() {
     }
   }
 
+  async function updateSeatLimit(plan: Plan, seats: string) {
+    const parsed = Number(seats);
+    if (!accessToken || !Number.isFinite(parsed) || parsed < 1 || parsed === plan.teacherSeatLimit) return;
+    setSavingPlanId(plan.id);
+    try {
+      await api.updatePlan(accessToken, plan.id, { teacherSeatLimit: parsed });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update plan");
+    } finally {
+      setSavingPlanId(null);
+    }
+  }
+
   async function addPlan() {
     if (!accessToken || !newPlanName.trim()) return;
     const credits = Number(newPlanCredits);
+    const seats = Number(newPlanSeats);
     if (!Number.isFinite(credits) || credits < 0) {
       setAddError("Credits per teacher seat must be a non-negative number");
       return;
     }
+    if (!Number.isFinite(seats) || seats < 1) {
+      setAddError("Teacher seat limit must be at least 1");
+      return;
+    }
     setAddError(null);
     try {
-      await api.createPlan(accessToken, { name: newPlanName.trim(), creditsPerTeacherSeat: credits });
+      await api.createPlan(accessToken, { name: newPlanName.trim(), creditsPerTeacherSeat: credits, teacherSeatLimit: seats });
       setNewPlanName("");
       setNewPlanCredits("");
+      setNewPlanSeats("");
       await load();
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Failed to create plan");
@@ -115,6 +136,7 @@ export function PlatformSettingsPage() {
               <tr>
                 <th style={styles.th}>Name</th>
                 <th style={styles.th}>Credits / teacher seat</th>
+                <th style={styles.th}>Teacher seat limit</th>
                 <th style={styles.th}>Default</th>
               </tr>
             </thead>
@@ -130,6 +152,16 @@ export function PlatformSettingsPage() {
                       defaultValue={plan.creditsPerTeacherSeat}
                       disabled={savingPlanId === plan.id}
                       onBlur={(e) => updateCredits(plan, e.target.value)}
+                    />
+                  </td>
+                  <td style={styles.td}>
+                    <input
+                      style={styles.labelInput}
+                      type="number"
+                      min={1}
+                      defaultValue={plan.teacherSeatLimit}
+                      disabled={savingPlanId === plan.id}
+                      onBlur={(e) => updateSeatLimit(plan, e.target.value)}
                     />
                   </td>
                   <td style={styles.td}>
@@ -163,7 +195,15 @@ export function PlatformSettingsPage() {
             value={newPlanCredits}
             onChange={(e) => setNewPlanCredits(e.target.value)}
           />
-          <button style={styles.button} onClick={addPlan} disabled={!newPlanName.trim() || !newPlanCredits.trim()}>
+          <input
+            style={styles.input}
+            placeholder="Teacher seat limit"
+            type="number"
+            min={1}
+            value={newPlanSeats}
+            onChange={(e) => setNewPlanSeats(e.target.value)}
+          />
+          <button style={styles.button} onClick={addPlan} disabled={!newPlanName.trim() || !newPlanCredits.trim() || !newPlanSeats.trim()}>
             Add plan
           </button>
         </div>

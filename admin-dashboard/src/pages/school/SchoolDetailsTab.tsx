@@ -20,6 +20,8 @@ export function SchoolDetailsTab() {
   const [expectedStudentStrength, setExpectedStudentStrength] = useState(
     school.expectedStudentStrength != null ? String(school.expectedStudentStrength) : ""
   );
+  const [classLimit, setClassLimit] = useState(school.classLimit != null ? String(school.classLimit) : "");
+  const [subjectLimit, setSubjectLimit] = useState(school.subjectLimit != null ? String(school.subjectLimit) : "");
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -39,6 +41,8 @@ export function SchoolDetailsTab() {
     setPrincipalName(school.principalName ?? "");
     setPrincipalPhone(school.principalPhone ?? "");
     setExpectedStudentStrength(school.expectedStudentStrength != null ? String(school.expectedStudentStrength) : "");
+    setClassLimit(school.classLimit != null ? String(school.classLimit) : "");
+    setSubjectLimit(school.subjectLimit != null ? String(school.subjectLimit) : "");
   }, [school]);
 
   async function saveDetails() {
@@ -53,6 +57,12 @@ export function SchoolDetailsTab() {
         principalName: principalName || undefined,
         principalPhone: principalPhone || undefined,
         expectedStudentStrength: expectedStudentStrength ? Number(expectedStudentStrength) : undefined,
+        ...(school.accountType === "individual"
+          ? {
+              classLimit: classLimit.trim() ? Number(classLimit) : null,
+              subjectLimit: subjectLimit.trim() ? Number(subjectLimit) : null,
+            }
+          : {}),
       });
       await reload();
       setSaveMessage("Saved");
@@ -189,6 +199,38 @@ export function SchoolDetailsTab() {
           />
         </div>
       </div>
+
+      {school.accountType === "individual" ? (
+        <div style={{ ...styles.row, marginTop: 12 }}>
+          <div style={{ ...styles.field, maxWidth: 200 }}>
+            <label style={styles.label}>Class limit override</label>
+            <input
+              style={styles.input}
+              type="number"
+              min={0}
+              placeholder="Platform default"
+              value={classLimit}
+              onChange={(e) => setClassLimit(e.target.value)}
+              disabled={!canEditSchoolProfile}
+            />
+          </div>
+          <div style={{ ...styles.field, maxWidth: 200 }}>
+            <label style={styles.label}>Subject limit override</label>
+            <input
+              style={styles.input}
+              type="number"
+              min={0}
+              placeholder="Platform default"
+              value={subjectLimit}
+              onChange={(e) => setSubjectLimit(e.target.value)}
+              disabled={!canEditSchoolProfile}
+            />
+          </div>
+          <p style={{ fontSize: 11, color: "var(--text-muted)", flexBasis: "100%", margin: 0 }}>
+            Leave blank to use the platform default (Platform Settings). Overrides only this teacher's account.
+          </p>
+        </div>
+      ) : null}
 
       {canEditSchoolProfile ? (
         <>

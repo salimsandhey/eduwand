@@ -100,6 +100,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: "/ai-prompts", label: "AI Prompts", icon: "sparkle", roles: ["platform_admin"] },
   { to: "/platform-settings", label: "Platform Settings", icon: "sparkle", roles: ["platform_admin"] },
   { to: "/subject-change-requests", label: "Subject Change Requests", icon: "layers", roles: ["platform_admin"] },
+  { to: "/class-change-requests", label: "Class Change Requests", icon: "layers", roles: ["platform_admin"] },
   { to: "/board-change-tickets", label: "Board Change Tickets", icon: "layers", roles: ["platform_admin"] },
 ];
 

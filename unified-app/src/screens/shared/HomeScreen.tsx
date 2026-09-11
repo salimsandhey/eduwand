@@ -34,6 +34,8 @@ import { decorativeAssets } from "../../theme/decorativeAssets";
 import { resolveUserImageSource } from "../../theme/avatars";
 import { capitalizeFirst } from "../../utils/text";
 import { useTabBarScrollHandler } from "../../navigation/TabBarScrollContext";
+import { TeacherTourModal } from "../../components/onboarding/TeacherTourModal";
+import { TeacherOnboardingTasksResult } from "../../api/client";
 
 const ENROLMENT_ROLES = ["front_desk", "counsellor", "admin", "leadership"];
 
@@ -172,7 +174,7 @@ function getWeekDates(referenceDate: Date): Date[] {
 }
 
 export function HomeScreen() {
-  const { user, accessToken } = useAuth();
+  const { user, accessToken, markOnboardingTourSeen } = useAuth();
   // undefined outside the enrolment tab navigator's TabBarScrollProvider - the
   // teacher branch below intentionally doesn't wire this into its own scroll
   // view, so its tab bar keeps its fixed size for now.
@@ -203,6 +205,14 @@ export function HomeScreen() {
 
   const [teacherSummary, setTeacherSummary] = useState<TeacherDashboardSummary | null>(null);
   const [isLoadingTeacherSummary, setIsLoadingTeacherSummary] = useState(false);
+
+  const [onboardingTasks, setOnboardingTasks] = useState<TeacherOnboardingTasksResult | null>(null);
+  const showTour = isTeacher && !!user && !user.hasSeenOnboardingTour;
+
+  useEffect(() => {
+    if (!isTeacher || !accessToken) return;
+    api.getOnboardingTasks(accessToken).then(setOnboardingTasks).catch(() => {});
+  }, [isTeacher, accessToken]);
 
   const [enrolmentTrend, setEnrolmentTrend] = useState<EnrolmentTrend | null>(null);
   const [isLoadingAnalytics, setIsLoadingAnalytics] = useState(false);
@@ -435,6 +445,7 @@ export function HomeScreen() {
   if (!user) return null;
 
   return (
+    <>
     <Screen>
       {isEnrolmentRole ? (
         <ScrollView
@@ -721,6 +732,28 @@ export function HomeScreen() {
                 })}
               </View>
             </View>
+            {onboardingTasks && onboardingTasks.completedCount < onboardingTasks.totalCount ? (
+              <Pressable
+                onPress={() => navigation.navigate("GettingStarted")}
+                style={({ pressed }) => [
+                  styles.gettingStartedBanner,
+                  { backgroundColor: colors.surfaceRaised, borderColor: colors.border },
+                  pressed && { opacity: pressedOpacity },
+                ]}
+                accessibilityRole="button"
+              >
+                <View style={[styles.gettingStartedIconWrap, { backgroundColor: colors.accentSoft }]}>
+                  <Ionicons name="checkmark-circle-outline" size={20} color={colors.accent} />
+                </View>
+                <View style={styles.gettingStartedCopy}>
+                  <Text style={[styles.gettingStartedTitle, { color: colors.textPrimary }]}>Finish getting started</Text>
+                  <Text style={[styles.gettingStartedSubtitle, { color: colors.textMuted }]}>
+                    {onboardingTasks.completedCount} of {onboardingTasks.totalCount} tasks complete
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+              </Pressable>
+            ) : null}
             <View style={styles.teacherHeroCarousel}>
               <ScrollView
                 ref={heroCarouselRef}
@@ -967,6 +1000,8 @@ export function HomeScreen() {
         <Text style={[styles.emptyText, { color: colors.textMuted }]}>No dashboard is configured for this role yet.</Text>
       )}
     </Screen>
+    <TeacherTourModal visible={showTour} onDone={markOnboardingTourSeen} />
+    </>
   );
 }
 
@@ -1816,6 +1851,33 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
   teacherAvatarPhoto: { width: "100%", height: "100%" },
+  gettingStartedBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 14,
+  },
+  gettingStartedIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  gettingStartedCopy: {
+    flex: 1,
+  },
+  gettingStartedTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  gettingStartedSubtitle: {
+    fontSize: 11,
+    marginTop: 2,
+  },
   teacherHeroCarousel: {
     gap: 10,
   },

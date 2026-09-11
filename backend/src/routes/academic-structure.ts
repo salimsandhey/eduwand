@@ -1,6 +1,8 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { prisma } from "../lib/prisma";
 import { PLATFORM_ADMIN_ROLE } from "../lib/roles";
+import { resolveClassLimit, resolveSubjectLimit } from "../lib/limits";
+import { markOnboardingTaskComplete } from "../lib/onboarding";
 
 interface CreateAcademicYearBody {
   label: string;
@@ -54,6 +56,24 @@ export async function authorizeForSchool(request: FastifyRequest, reply: Fastify
 }
 
 export async function academicStructureRoutes(app: FastifyInstance) {
+  app.get<{ Params: { schoolId: string } }>(
+    "/schools/:schoolId/limits",
+    { onRequest: [app.authenticate] },
+    async (request, reply) => {
+      if (!(await authorizeForSchool(request, reply, request.params.schoolId))) return;
+
+      const { schoolId } = request.params;
+      const [classCount, subjectCount, classLimit, subjectLimit] = await Promise.all([
+        prisma.classSection.count({ where: { academicYear: { schoolId }, isActive: true } }),
+        prisma.subject.count({ where: { schoolId } }),
+        resolveClassLimit(schoolId),
+        resolveSubjectLimit(schoolId),
+      ]);
+
+      return { data: { classCount, classLimit, subjectCount, subjectLimit }, meta: {} };
+    }
+  );
+
   app.get(
     "/academic-years",
     { onRequest: [app.authenticate, app.requireSchoolScope] },
@@ -129,17 +149,33 @@ export async function academicStructureRoutes(app: FastifyInstance) {
             where: { id: body.copyFromAcademicYearId, schoolId },
           });
           if (sourceYear) {
+            // Only carry forward active classes - one archived via an
+            // approved "replace" ClassChangeRequest stays retired, not
+            // resurrected in the new year. Teacher assignments are copied
+            // too - previously dropped silently, which meant a rolled-over
+            // class wouldn't show up for its teacher(s) at all. See
+            // Docs/superpowers/plans/2026-09-09-individual-teacher-
+            // onboarding-and-credits.md.
             const sourceSections = await tx.classSection.findMany({
-              where: { academicYearId: sourceYear.id },
+              where: { academicYearId: sourceYear.id, isActive: true },
+              include: { teacherAssignments: true },
             });
-            if (sourceSections.length > 0) {
-              await tx.classSection.createMany({
-                data: sourceSections.map((section) => ({
+            for (const section of sourceSections) {
+              const newSection = await tx.classSection.create({
+                data: {
                   academicYearId: created.id,
                   className: section.className,
                   sectionName: section.sectionName,
-                })),
+                },
               });
+              if (section.teacherAssignments.length > 0) {
+                await tx.classSectionTeacher.createMany({
+                  data: section.teacherAssignments.map((a) => ({
+                    classSectionId: newSection.id,
+                    teacherUserId: a.teacherUserId,
+                  })),
+                });
+              }
             }
           }
         }
@@ -202,9 +238,35 @@ export async function academicStructureRoutes(app: FastifyInstance) {
         return reply.code(404).send({ data: null, error: { code: "not_found", message: "Academic year not found for this school" } });
       }
 
+      // Individual accounts get a fixed set of classes (default 2, admin-
+      // configurable). Only active classes count - one archived via an
+      // approved "replace" ClassChangeRequest frees up a slot. Institutional
+      // schools are never capped. See Docs/superpowers/plans/2026-09-09-
+      // individual-teacher-onboarding-and-credits.md.
+      const school = await prisma.school.findUnique({ where: { id: request.params.schoolId }, select: { accountType: true } });
+      if (school?.accountType === "individual") {
+        const [count, limit] = await Promise.all([
+          prisma.classSection.count({ where: { academicYear: { schoolId: request.params.schoolId }, isActive: true } }),
+          resolveClassLimit(request.params.schoolId),
+        ]);
+        if (count >= limit) {
+          return reply.code(400).send({
+            data: null,
+            error: {
+              code: "class_cap_reached",
+              message: `Individual accounts are limited to ${limit} classes. Submit a class change request for more.`,
+            },
+          });
+        }
+      }
+
       const classSection = await prisma.classSection.create({
         data: { academicYearId: academicYear.id, className: body.className, sectionName: body.sectionName },
       });
+
+      if (request.user.role === "teacher") {
+        await markOnboardingTaskComplete(request.user.sub, "first_class");
+      }
 
       return reply.code(201).send({ data: classSection, meta: {} });
     }
