@@ -6,6 +6,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
+import { TypewriterText } from "../../components/TypewriterText";
 import { ThemeColors } from "../../theme/tokens";
 import { usePipelineStages } from "../../hooks/usePipelineStages";
 import { useTabBarScrollHandler } from "../../navigation/TabBarScrollContext";
@@ -127,7 +128,7 @@ export function EnrolmentAnalyticsScreen() {
         scrollEventThrottle={16}
       >
         <View style={styles.header}>
-          <Text style={[styles.title, { color: colors.textPrimary }]}>Analytics</Text>
+          <TypewriterText text="Analytics" style={[styles.title, { color: colors.textPrimary }]} cursorColor={colors.primaryBrand} />
           <Text style={[styles.subtitle, { color: colors.textMuted }]}>
             How your pipeline is performing across enquiries, sources, and stages.
           </Text>

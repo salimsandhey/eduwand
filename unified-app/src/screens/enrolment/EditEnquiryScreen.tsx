@@ -146,11 +146,6 @@ export function EditEnquiryScreen({ route, navigation }: Props) {
   return (
     <Screen edges={["bottom"]}>
       <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <View style={styles.titleSection}>
-          <Text style={[styles.title, { color: colors.textPrimary }]}>Edit Lead</Text>
-          <Text style={[styles.subtitle, { color: colors.textMuted }]}>Update contact, student, or lead details</Text>
-        </View>
-
         <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
           <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Profile photo (optional)</Text>
           <ProfilePhotoPicker value={photoPick} onChange={setPhotoPick} />
@@ -343,9 +338,6 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   content: { padding: 16, paddingBottom: 32 },
   centered: { justifyContent: "center", alignItems: "center" },
-  titleSection: { marginBottom: 16 },
-  title: { fontSize: 24, fontWeight: "800", letterSpacing: -0.5 },
-  subtitle: { fontSize: 13, marginTop: 2, fontWeight: "500" },
   card: { borderWidth: 1, borderRadius: 16, padding: 16, marginBottom: 16 },
   cardTitle: { fontSize: 15, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 8 },
   label: { marginTop: 10, marginBottom: 6, fontSize: 12, fontWeight: "700" },

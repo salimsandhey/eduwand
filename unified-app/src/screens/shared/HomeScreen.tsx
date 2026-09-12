@@ -36,6 +36,7 @@ import { capitalizeFirst } from "../../utils/text";
 import { useTabBarScrollHandler } from "../../navigation/TabBarScrollContext";
 import { TeacherTourModal } from "../../components/onboarding/TeacherTourModal";
 import { TeacherOnboardingTasksResult } from "../../api/client";
+import { TypewriterText } from "../../components/TypewriterText";
 
 const ENROLMENT_ROLES = ["front_desk", "counsellor", "admin", "leadership"];
 
@@ -43,55 +44,7 @@ const ENROLMENT_ROLES = ["front_desk", "counsellor", "admin", "leadership"];
 // down from its peek spot) until the counsellor has scrolled this far through
 // the page, then it animates up into its normal peeking position.
 const CAT_REVEAL_SCROLL_PROGRESS = 0.12;
-const CAT_HIDDEN_OFFSET = 90;
-
-function TypingName({ text, color, style }: { text: string; color: string; style: object }) {
-  const [visibleChars, setVisibleChars] = useState(0);
-  const cursorOpacity = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    setVisibleChars(0);
-    if (!text) return;
-    let interval: ReturnType<typeof setInterval> | null = null;
-    const startDelay = setTimeout(() => {
-      interval = setInterval(() => {
-        setVisibleChars((current) => {
-          if (current >= text.length) {
-            if (interval) clearInterval(interval);
-            return current;
-          }
-          return current + 1;
-        });
-      }, 90);
-    }, 250);
-    return () => {
-      clearTimeout(startDelay);
-      if (interval) clearInterval(interval);
-    };
-  }, [text]);
-
-  useEffect(() => {
-    const blink = Animated.loop(
-      Animated.sequence([
-        Animated.timing(cursorOpacity, { toValue: 0, duration: 450, useNativeDriver: true }),
-        Animated.timing(cursorOpacity, { toValue: 1, duration: 450, useNativeDriver: true }),
-      ])
-    );
-    blink.start();
-    return () => blink.stop();
-  }, [cursorOpacity]);
-
-  const done = visibleChars >= text.length;
-
-  return (
-    <Text style={style}>
-      <Text style={{ color }}>{text.slice(0, visibleChars)}</Text>
-      {!done ? (
-        <Animated.Text style={{ color, opacity: cursorOpacity }}>|</Animated.Text>
-      ) : null}
-    </Text>
-  );
-}
+const CAT_HIDDEN_OFFSET = 100;
 
 const TEACHER_SUMMARY_CARD_CONFIG = [
   { key: "lessons", title: "Lessons", accent: "#5B3FD6", icon: "book-outline" as const, graphic: decorativeAssets.teacherLessonCat },
@@ -460,7 +413,11 @@ export function HomeScreen() {
                 <View style={styles.profileBlock}>
                   <View style={styles.profileTextBlock}>
                     <Text style={[styles.eyebrow, { color: colors.textMuted }]}>{greeting()},</Text>
-                    <TypingName text={`${capitalizeFirst(user.fullName)}!`} color={colors.primaryBrand} style={styles.heroTitle} />
+                    <TypewriterText
+                      text={`${capitalizeFirst(user.fullName)}!`}
+                      style={[styles.heroTitle, { color: colors.primaryBrand }]}
+                      cursorColor={colors.primaryBrand}
+                    />
                     <Text style={[styles.heroSubtitle, { color: colors.textMuted }]}> 
                       Here&apos;s what&apos;s happening at your school today.
                     </Text>
@@ -601,9 +558,9 @@ export function HomeScreen() {
                   label="Help & support"
                   hint="Get assistance"
                   tone="#E5A72D"
-                  image={decorativeAssets.followUpsCat}
-                  revealAnim={catRevealAnim}
-                  revealed={catRevealed}
+                  // image={decorativeAssets.followUpsCat}
+                  // revealAnim={catRevealAnim}
+                  // revealed={catRevealed}
                   colors={colors}
                   pressedOpacity={pressedOpacity}
                   onPress={() => navigation.navigate("HelpSupport")}
@@ -1054,77 +1011,114 @@ function ActionCard({
   hint: string;
   tone: string;
   image?: ImageSourcePropType;
-  // When provided alongside `image`, the peek image starts moved down and
-  // behind the card, then animates up in front of it once `revealed` flips
-  // true (see CAT_REVEAL_SCROLL_PROGRESS in HomeScreen's scroll handler).
   revealAnim?: Animated.Value;
   revealed?: boolean;
   colors: ReturnType<typeof useTheme>["colors"];
   pressedOpacity: number;
   onPress: () => void;
 }) {
-  // The peek image is rendered as a sibling of the Pressable, not a child of
-  // it: zIndex only reorders siblings against each other, it can never place
-  // a child behind its own parent's paint. As a child, the cat would always
-  // render on top of the card no matter how low its zIndex went. As a
-  // sibling, styles.actionCard's static zIndex (1) genuinely sits above the
-  // hidden cat's zIndex (0) and below the revealed cat's (3).
-  return (
-    <View style={styles.actionCardWrap}>
-      {image ? (
-        revealAnim ? (
-          <Animated.View
-            pointerEvents="none"
-            style={[
-              styles.actionPeek,
-              {
-                // zIndex/paint-order alone can't hide this against the card's
-                // own translucent background (tone + "1F" - the cat would
-                // still show straight through it), so opacity is the actual
-                // hide mechanism here; zIndex just keeps stacking correct
-                // once revealed, and translateY supplies the "moved" motion.
-                zIndex: revealed ? 3 : 0,
-                opacity: revealAnim,
-                transform: [
-                  {
-                    translateY: revealAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [CAT_HIDDEN_OFFSET, 0],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          >
-            <Image source={image} style={styles.actionPeekImage} resizeMode="contain" />
-          </Animated.View>
-        ) : (
-          <Image source={image} style={[styles.actionPeek, { zIndex: 3 }]} resizeMode="contain" />
-        )
-      ) : null}
-      <Pressable
-        onPress={onPress}
-        style={({ pressed }) => [
-          styles.actionCard,
-          { backgroundColor: tone + "1F", borderColor: tone + "40" },
-          pressed && { opacity: pressedOpacity },
-        ]}
-        accessibilityRole="button"
-        accessibilityLabel={label}
-      >
-        <View style={styles.actionTopRow}>
-          <View style={[styles.actionIconBg, { backgroundColor: tone }]}>
-            <Ionicons name={icon} size={19} color="#FFFFFF" />
-          </View>
-          <Ionicons name="arrow-forward" size={13} color={tone} style={styles.actionArrow} />
+  const isShowing = Boolean(revealed);
+  // In hidden state: cat-image z-index: 1, card z-index: 2
+  // In showing state: cat-image z-index: 2, card z-index: 1
+  const imageZIndex = isShowing ? 2 : 1;
+  const cardZIndex = isShowing ? 1 : 2;
+
+  const card = (
+    <Pressable
+      onPress={onPress}
+      collapsable={false}
+      style={({ pressed }) => [
+        styles.actionCard,
+        {
+          backgroundColor: colors.background,
+          borderColor: tone + "40",
+          zIndex: image ? cardZIndex : 1,
+          elevation: image ? cardZIndex : 1,
+        },
+        pressed && { opacity: pressedOpacity },
+      ]}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <View
+        pointerEvents="none"
+        style={[StyleSheet.absoluteFill, { backgroundColor: tone + "1F", borderRadius: 20 }]}
+      />
+      <View style={styles.actionTopRow}>
+        <View style={[styles.actionIconBg, { backgroundColor: tone }]}>
+          <Ionicons name={icon} size={19} color="#FFFFFF" />
         </View>
-        <Text style={[styles.actionLabel, { color: colors.textPrimary }]} numberOfLines={2}>
-          {label}
-        </Text>
-        <Text style={[styles.actionHint, { color: tone }]} numberOfLines={1}>
-          {hint}
-        </Text>
-      </Pressable>
+        <Ionicons name="arrow-forward" size={13} color={tone} style={styles.actionArrow} />
+      </View>
+      <Text style={[styles.actionLabel, { color: colors.textPrimary }]} numberOfLines={2}>
+        {label}
+      </Text>
+      <Text style={[styles.actionHint, { color: tone }]} numberOfLines={1}>
+        {hint}
+      </Text>
+    </Pressable>
+  );
+
+  const catImageHidden = image ? (
+    <Animated.View
+      key="cat-hidden"
+      collapsable={false}
+      pointerEvents="none"
+      style={[
+        styles.actionPeek,
+        {
+          zIndex: 1,
+          elevation: 1,
+          transform: [
+            {
+              translateY: revealAnim
+                ? revealAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [CAT_HIDDEN_OFFSET, 0],
+                  })
+                : CAT_HIDDEN_OFFSET,
+            },
+          ],
+        },
+      ]}
+    >
+      <Image source={image} style={styles.actionPeekImage} resizeMode="contain" />
+    </Animated.View>
+  ) : null;
+
+  const catImageShowing = image ? (
+    <Animated.View
+      key="cat-showing"
+      collapsable={false}
+      pointerEvents="none"
+      style={[
+        styles.actionPeek,
+        {
+          zIndex: 2,
+          elevation: 2,
+          transform: [
+            {
+              translateY: revealAnim
+                ? revealAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [CAT_HIDDEN_OFFSET, 0],
+                  })
+                : 0,
+            },
+          ],
+        },
+      ]}
+    >
+      <Image source={image} style={styles.actionPeekImage} resizeMode="contain" />
+    </Animated.View>
+  ) : null;
+
+  return (
+    <View style={styles.actionCardWrap} collapsable={false}>
+      {/* Cat's peek image temporarily commented out - will be solved later */}
+      {/* {!isShowing && catImageHidden} */}
+      {card}
+      {/* {isShowing && catImageShowing} */}
     </View>
   );
 }
@@ -1628,7 +1622,7 @@ const styles = StyleSheet.create({
   },
   actionCard: {
     flex: 1,
-    zIndex: 1,
+    width: "100%",
     minHeight: 124,
     borderWidth: 1,
     borderRadius: 20,

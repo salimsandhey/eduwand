@@ -5,6 +5,7 @@ import { useNavigation } from "@react-navigation/native";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
+import { TypewriterText } from "../../components/TypewriterText";
 import { resolveUserImageSource } from "../../theme/avatars";
 import { api, CurrentUser } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
@@ -94,7 +95,12 @@ export function MoreMenuScreen() {
             <View style={styles.profileDivider} />
 
             <View style={styles.profileRightCol}>
-              <Text style={[styles.profileName, { color: colors.accentOn }]} numberOfLines={1}>{capitalizeFirst(user.fullName)}</Text>
+              <TypewriterText
+                text={capitalizeFirst(user.fullName)}
+                style={[styles.profileName, { color: colors.accentOn }]}
+                cursorColor={colors.primaryBrand}
+                numberOfLines={1}
+              />
               <Text style={[styles.profileRole, { color: colors.accentSoft }]} numberOfLines={1}>{formatRole(user.role)}</Text>
 
               <View style={styles.profileInfoList}>
@@ -183,7 +189,7 @@ function EnrolmentMoreScreen({
       >
         <View style={styles.eHeader}>
           <View style={styles.eHeaderText}>
-            <Text style={[styles.ePageTitle, { color: colors.textPrimary }]}>More</Text>
+            <TypewriterText text="More" style={[styles.ePageTitle, { color: colors.textPrimary }]} cursorColor={colors.primaryBrand} />
             <Text style={[styles.ePageSubtitle, { color: colors.textMuted }]}>Tools and account</Text>
           </View>
           <Pressable

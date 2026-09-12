@@ -20,6 +20,7 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { Dropdown } from "../../components/Dropdown";
+import { TypewriterText } from "../../components/TypewriterText";
 import { getStatusColor } from "../../theme/statusColors";
 import { brandPalette } from "../../theme/tokens";
 import { usePipelineStages } from "../../hooks/usePipelineStages";
@@ -414,7 +415,7 @@ export function EnquiryListScreen({ navigation }: Props) {
         ListHeaderComponent={
           <>
             <View style={styles.header}>
-              <Text style={[styles.pageTitle, { color: colors.textPrimary }]}>Enquiries</Text>
+              <TypewriterText text="Enquiries" style={[styles.pageTitle, { color: colors.textPrimary }]} cursorColor={colors.primaryBrand} />
               <Text style={[styles.pageSubtitle, { color: colors.textMuted }]}>
                 Manage every enquiry and keep leads moving.
               </Text>

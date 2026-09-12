@@ -1,5 +1,25 @@
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator, Share, Image, Animated } from "react-native";
+import {
+  View,
+  Text,
+  TextInput,
+  Pressable,
+  StyleSheet,
+  ActivityIndicator,
+  Share,
+  Image,
+  Animated,
+  Easing,
+  ScrollView,
+  Modal,
+  Linking,
+  LayoutAnimation,
+  KeyboardAvoidingView,
+  Platform,
+  UIManager,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
+} from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
@@ -16,8 +36,10 @@ import { usePipelineStages } from "../../hooks/usePipelineStages";
 import { resolveEnquiryImageSource } from "../../theme/avatars";
 import {
   api,
+  ApiError,
   EnquiryDetail,
   EnquiryStatus,
+  PipelineStage,
   PossibleDuplicate,
   MessageTemplate,
   MessageChannel,
@@ -26,6 +48,7 @@ import {
   ActivityType,
   EnquiryDocument,
   FormField,
+  InterviewRecord,
 } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
 
@@ -36,13 +59,12 @@ const ACTIVITY_ICON: Record<ActivityType, keyof typeof Ionicons.glyphMap> = {
   task_sent: "paper-plane-outline",
 };
 
-// Scroll distance over which the header collapses from its expanded (top of
-// screen) state into the compact, icon-only state - see the collapse-driven
-// interpolations below.
-const HEADER_SCROLL_DISTANCE = 110;
+// How far (px) before the hero card's bottom edge the compact header starts
+// fading in, so it's fully visible by the time the hero scrolls out of view
+// instead of popping in abruptly right at the boundary.
+const COMPACT_HEADER_FADE_DISTANCE = 40;
 
 type DetailTab = "lead" | "admission";
-type LeadSubTab = "timeline" | "tasks";
 
 function activityLabel(item: ActivityItem): string {
   switch (item.type) {
@@ -114,7 +136,7 @@ function TimelineCard({
           </View>
           {!isLast ? <View style={[styles.timelineLine, { backgroundColor: colors.border }]} /> : null}
         </View>
-        <View style={[styles.timelineCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        <View style={[styles.timelineCard, { backgroundColor: colors.surface, borderColor: colors.border }, isLast && { marginBottom: 0 }, cardShadow]}>
           <View style={styles.timelineCardHead}>
             <Text style={[styles.timelineTitle, { color: colors.textPrimary }]}>{activityLabel(item)}</Text>
             <View style={[styles.timelineTypePill, { backgroundColor: colors.accentSoft }]}>
@@ -202,93 +224,67 @@ type Props = NativeStackScreenProps<RootStackParamList, "EnquiryDetail">;
 
 export function EnquiryDetailScreen({ route, navigation }: Props) {
   const { enquiryId } = route.params;
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const { colors, mode, cardShadow, pressedOpacity } = useTheme();
   const { stages } = usePipelineStages();
-  const stageKeys = stages.map((stage) => stage.key);
 
-  // Header collapse: driven by the body ScrollView's scroll offset. `collapse`
-  // runs 0 (top of screen, expanded header) -> 1 (scrolled past
-  // HEADER_SCROLL_DISTANCE, compact header) - the phone/edit/share pills drop
-  // their text labels over this range so they don't wrap/overflow once the
-  // header shrinks, and the avatar gets a small parallax translateY on top of
-  // its own size change for a bit of depth as it shrinks.
+  // The hero card (avatar/name/status/quick actions/tabs) now scrolls with
+  // the rest of the body instead of living in a fixed, continuously
+  // reanimated header - the old version drove width/height/padding changes
+  // straight off scroll position on the JS thread (those layout properties
+  // can't use the native driver), which is what caused the visible jank.
+  // All that's left is a small compact bar (avatar + name) that fades in
+  // once the hero card has scrolled out of view, driven by a single native
+  // opacity interpolation.
   const scrollY = useRef(new Animated.Value(0)).current;
-  const collapse = scrollY.interpolate({ inputRange: [0, HEADER_SCROLL_DISTANCE], outputRange: [0, 1], extrapolate: "clamp" });
-  const lerp = (from: number, to: number) => collapse.interpolate({ inputRange: [0, 1], outputRange: [from, to] });
-  // Avatar's expanded size, used as the initial estimate of headRow's height
-  // before its real rendered height is measured (see headRowHeight below).
-  const HEAD_ROW_HEIGHT = 64;
-  // headRow's real measured height (avatar + name/subtitle) - starts at the
-  // estimate above and corrects itself on first layout, so the resting
-  // position below tracks the actual content instead of a fixed guess (which
-  // could sit too close to the avatar if a device renders it taller, e.g.
-  // larger system font size).
-  const [headRowHeight, setHeadRowHeight] = useState(HEAD_ROW_HEIGHT);
-  // Extra clearance below headRow before the phone/edit/share row rests -
-  // generous on purpose since the status tag also floats (absolutely
-  // positioned) a little below headRow and can wrap to two lines when an
-  // overdue/duplicate chip is present.
-  const ACTION_ROW_GAP = 16;
-  const avatarSize = lerp(HEAD_ROW_HEIGHT, 46);
-  const avatarRadius = lerp(20, 16);
-  const avatarTranslateY = lerp(0, -4);
-  const nameFontSize = lerp(19, 15.5);
-  const headerPaddingTop = lerp(12, 6);
-  const headerPaddingBottom = lerp(12, 4);
-  const pillLabelOpacity = collapse.interpolate({ inputRange: [0, 0.55, 1], outputRange: [1, 0, 0] });
-  const pillLabelMarginLeft = collapse.interpolate({ inputRange: [0, 0.55, 1], outputRange: [6, 0, 0] });
-  const phoneLabelMaxWidth = collapse.interpolate({ inputRange: [0, 0.55, 1], outputRange: [130, 0, 0] });
-  const actionLabelMaxWidth = collapse.interpolate({ inputRange: [0, 0.55, 1], outputRange: [46, 0, 0] });
-  // Hero status tag's label (Application/Contacted/...): fades and collapses
-  // to icon-only on scroll, same treatment as the phone/edit/share labels
-  // above - only the hero tag, not the (static, always-labelled) status tag
-  // reused further down in the Lead tab body.
-  const statusLabelMaxWidth = collapse.interpolate({ inputRange: [0, 0.55, 1], outputRange: [110, 0, 0] });
-  const statusLabelMarginLeft = collapse.interpolate({ inputRange: [0, 0.55, 1], outputRange: [4, 0, 0] });
-  // The "Phone"/guardian subtitle line fades and collapses to zero height as
-  // you scroll, clearing its spot for the status tag to slide into.
-  const headSubOpacity = collapse.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 0, 0] });
-  const headSubHeight = lerp(18, 0);
-  // Status tag (+ overdue/duplicate chips): default position unchanged
-  // (below the name/subtitle, in normal flow via absolute anchor top:40) -
-  // only its visual position slides up via transform as you scroll, ending
-  // up right where the subtitle text used to sit once that's faded out.
-  const tagTranslateY = lerp(0, -19);
-  // Phone/edit/share: rendered at a fixed absolute position that replicates
-  // where this row sits today (left-aligned, directly below headRow) so the
-  // expanded header is unchanged - then on scroll it slides up to the very
-  // top of the header (top-right corner, alongside the avatar/name) and
-  // right (ending flush against the header's right edge - that x distance is
-  // measured via onLayout since it depends on the row's real width).
-  const [actionRowWidth, setActionRowWidth] = useState(0);
-  const COLLAPSED_PILLS_WIDTH = 3 * 40 + 2 * 8;
-  const pillsTranslateX = collapse.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, Math.max(0, actionRowWidth - COLLAPSED_PILLS_WIDTH)],
+  // Real measured height of the hero card, corrected on first layout so the
+  // fade-in threshold tracks the actual content instead of a fixed guess.
+  const [heroHeight, setHeroHeight] = useState(260);
+  const [showCompactHeader, setShowCompactHeader] = useState(false);
+  const compactHeaderOpacity = scrollY.interpolate({
+    inputRange: [Math.max(heroHeight - COMPACT_HEADER_FADE_DISTANCE, 0), heroHeight],
+    outputRange: [0, 1],
+    extrapolate: "clamp",
   });
-  const pillsTranslateY = lerp(10, -(headRowHeight + ACTION_ROW_GAP - 10));
-  // Each pill's own height - shrinks once scrolled, on top of the text
-  // collapsing to icon-only.
-  const pillHeight = lerp(34, 26);
-  // headerActionRow is now absolutely positioned (see below) so it no longer
-  // reserves flow space - this spacer stands in for the space it used to
-  // take up, shrinking down (not all the way to 0 - keeps a small floor so
-  // the Lead/Admission tabs never crowd right up against the content above
-  // them) once collapsed so the header can get shorter overall than it could
-  // while that row still reserved a fixed minimum height.
-  const actionRowSpacerHeight = lerp(ACTION_ROW_GAP + 34, 4);
-  // Gap above the Lead/Admission tabs - shrinks further on scroll (separate
-  // from headerActionRow's own fixed gap above it). The 4px floor on
-  // actionRowSpacerHeight above already keeps a minimum gap once collapsed,
-  // so this can go all the way to 0 without the tabs ending up flush against
-  // the content above them.
-  const segmentTopMargin = lerp(6, 0);
-  // Lead/Admission tabs - shrink on scroll too.
-  const segmentButtonHeight = lerp(38, 30);
+  const handleScroll = Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
+    useNativeDriver: true,
+    listener: (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const y = event.nativeEvent.contentOffset.y;
+      setShowCompactHeader((prev) => {
+        const next = y >= heroHeight - COMPACT_HEADER_FADE_DISTANCE;
+        return prev === next ? prev : next;
+      });
+    },
+  });
+
+  // Used by the compact header's "scroll to top" tap.
+  const scrollRef = useRef<ScrollView | null>(null);
+
+  // Opts in to Android's experimental LayoutAnimation support - without
+  // this, LayoutAnimation.configureNext below silently no-ops on Android
+  // (iOS doesn't need it), so the "More details" toggle would just snap
+  // open/closed instantly instead of animating. Same opt-in already used in
+  // TopicDetailScreen.tsx.
+  useEffect(() => {
+    if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+      UIManager.setLayoutAnimationEnabledExperimental(true);
+    }
+  }, []);
 
   const [activeTab, setActiveTab] = useState<DetailTab>("lead");
-  const [leadSubTab, setLeadSubTab] = useState<LeadSubTab>("timeline");
+  // "More details" (Logged/Consent/Family/DOB facts, moved into the hero
+  // card) and the Timeline, now a popup rather than an inline tab, both
+  // toggle with a LayoutAnimation-driven smooth expand/collapse - same
+  // pattern already used in TopicDetailScreen.tsx (selectTab there).
+  const [moreDetailsOpen, setMoreDetailsOpen] = useState(false);
+  // Animated independently of each other: the Modal itself uses
+  // animationType="none" because its built-in "slide" moves everything
+  // inside it (backdrop included) as one unit, which reads as the dark mask
+  // sliding in with the sheet instead of sitting still. The backdrop just
+  // fades; only the sheet actually translates.
+  const [showTimelineModal, setShowTimelineModal] = useState(false);
+  const timelineBackdropOpacity = useRef(new Animated.Value(0)).current;
+  const timelineSheetTranslateY = useRef(new Animated.Value(480)).current;
   const [enquiry, setEnquiry] = useState<EnquiryDetail | null>(null);
   const [duplicates, setDuplicates] = useState<PossibleDuplicate[]>([]);
   const [tasks, setTasks] = useState<FollowUpTask[]>([]);
@@ -305,39 +301,71 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
   const [showLostReasonFor, setShowLostReasonFor] = useState(false);
   const [lostReasonFocused, setLostReasonFocused] = useState(false);
 
-  const [pendingStageChange, setPendingStageChange] = useState<EnquiryStatus | null>(null);
-
-  // Lead momentum stepper: shows one stage's section at a time. "Next"/"Back"
-  // commit the real (adjacent-only) stage change, sliding the section
-  // horizontally between transitions. isStageAnimating gates the nav buttons
-  // for the ~300ms transition so a double-tap can't skip a stage.
-  const stageTranslateX = useRef(new Animated.Value(0)).current;
-  const stageOpacity = useRef(new Animated.Value(1)).current;
-  const [isStageAnimating, setIsStageAnimating] = useState(false);
+  // Admission journey tracker: a vertical list of every stage, done ones
+  // collapsed with a checkmark, the current one expanded with guidance + the
+  // one action that actually applies there, upcoming ones shown but inert -
+  // the whole roadmap stays visible (see the stageWorkspace card below).
+  const [isUpdatingStage, setIsUpdatingStage] = useState(false);
+  // Set only when a stage move is rejected specifically for missing required
+  // admission-form fields (backend: missingRequiredAdmissionFields) - surfaced
+  // as its own callout with a direct link to the form, rather than as generic
+  // error text, since that's exactly the "fill the admission form first"
+  // situation this card needs to explain clearly.
+  const [admissionBlockedMessage, setAdmissionBlockedMessage] = useState<string | null>(null);
   const [visitNote, setVisitNote] = useState("");
   const [isSavingVisitNote, setIsSavingVisitNote] = useState(false);
+  // Visit date, captured when leaving Contacted and editable again from the
+  // collapsed Visit Scheduled row (reschedule) - stored as a note since there
+  // is no dedicated schema field for it, so it also shows up on the Timeline.
+  const [visitDateInput, setVisitDateInput] = useState("");
+  const [isSchedulingVisit, setIsSchedulingVisit] = useState(false);
+  // Interview/assessment record, optional, offered inside Visit Done.
+  const [interviews, setInterviews] = useState<InterviewRecord[]>([]);
+  const [showInterviewForm, setShowInterviewForm] = useState(false);
+  const [interviewDateInput, setInterviewDateInput] = useState("");
+  const [interviewScoreInput, setInterviewScoreInput] = useState("");
+  const [interviewMaxScoreInput, setInterviewMaxScoreInput] = useState("");
+  const [interviewNotesInput, setInterviewNotesInput] = useState("");
+  const [isSavingInterview, setIsSavingInterview] = useState(false);
+  // Which stage's content is on screen in the one-at-a-time tracker below -
+  // Back/Next page this independently of the lead's real stage, so browsing
+  // history to review or correct an earlier step never itself moves the
+  // lead. Synced back to the live stage whenever the real status actually
+  // changes (see the effect below), so the view always lands on the new
+  // frontier right after an advance.
+  const [viewedStageIndex, setViewedStageIndex] = useState(0);
+  // Generic "are you sure" launcher for the couple of stage moves that are
+  // allowed but worth a pause on (e.g. advancing with something un-recorded).
+  const [pendingConfirm, setPendingConfirm] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
 
   const [noteBody, setNoteBody] = useState("");
   const [noteFocused, setNoteFocused] = useState(false);
   const [isAddingNote, setIsAddingNote] = useState(false);
 
+  // Create Task is a popup rather than an inline expanding box - same
+  // decoupled backdrop-fade / sheet-slide animation as the Timeline modal
+  // (see openTaskModal/closeTaskModal), so the mask never appears to move.
   const [showAddTask, setShowAddTask] = useState(false);
+  const taskModalBackdropOpacity = useRef(new Animated.Value(0)).current;
+  const taskModalSheetTranslateY = useRef(new Animated.Value(480)).current;
   const [taskChannel, setTaskChannel] = useState<MessageChannel>("sms");
   const [taskTemplateId, setTaskTemplateId] = useState<string | null>(null);
   const [taskDueAt, setTaskDueAt] = useState("");
+  const [isCreatingTask, setIsCreatingTask] = useState(false);
 
   const load = useCallback(async () => {
     if (!accessToken) return;
     setIsLoading(true);
     setError(null);
     try {
-      const [detailRes, enquiryTasks, allTemplates, docs, checklistResult, intakeResult] = await Promise.all([
+      const [detailRes, enquiryTasks, allTemplates, docs, checklistResult, intakeResult, interviewRecords] = await Promise.all([
         api.getEnquiry(accessToken, enquiryId),
         api.listFollowUpTasks(accessToken, { enquiryId }),
         api.listMessageTemplates(accessToken),
         api.listDocuments(accessToken, enquiryId),
         api.getFormDefinition(accessToken, "document_checklist").catch(() => null),
         api.getFormDefinition(accessToken, "enquiry_intake").catch(() => null),
+        api.listInterviews(accessToken, enquiryId).catch(() => []),
       ]);
       setEnquiry(detailRes.data);
       setIntakeResponses(detailRes.data?.formResponses ?? {});
@@ -345,6 +373,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
       setTasks(enquiryTasks);
       setTemplates(allTemplates);
       setDocuments(docs);
+      setInterviews(interviewRecords);
       if (checklistResult && checklistResult.fields.length > 0) {
         setChecklist(checklistResult.fields.map((f) => ({ key: f.key, label: f.label, required: f.isRequired })));
       }
@@ -389,68 +418,161 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
 
   const docCompletion = useMemo(() => requiredDocumentCompletion(documents, checklist), [documents, checklist]);
 
-  const currentStageIndex = enquiry ? stages.findIndex((stage) => stage.key === enquiry.status) : -1;
   const channelTemplates = templates.filter((template) => template.channel === taskChannel);
   const canConfirmAdmission = !!enquiry && ["application", "admitted", "enrolled"].includes(enquiry.status);
+  const admissionPct = enquiry?.admissionSummary.completionPercent ?? 0;
+  const admissionConfirmed = !!enquiry?.admissionSummary.confirmed;
+
+  // The visible journey excludes "lost" - it's a terminal outcome overlaid on
+  // top of the journey, not a step within it (see the isLost branch in the
+  // card JSX below).
+  const journeyStages = useMemo(() => stages.filter((stage) => !stage.isTerminal), [stages]);
+  const currentJourneyIndex = enquiry ? journeyStages.findIndex((stage) => stage.key === enquiry.status) : -1;
+
+  // Snap the view back to the live stage whenever the lead's real status
+  // changes (a genuine advance/reopen) - never while the user is just
+  // paging through history with Back/Next, since those don't touch
+  // enquiry.status at all.
+  useEffect(() => {
+    if (currentJourneyIndex >= 0) setViewedStageIndex(currentJourneyIndex);
+  }, [enquiry?.status, currentJourneyIndex]);
+
+  // Mirrors the backend's canChangeEnquiryStatus (enquiries.ts): only the
+  // lead's owner or an admissions-capable role may move its stage. Checked
+  // here too so the UI can explain *why* the actions are hidden instead of a
+  // new counsellor tapping a button that silently 403s.
+  const canEditStage =
+    !!enquiry &&
+    !!user &&
+    (user.id === enquiry.ownerUserId ||
+      ["admin", "principal", "front_desk", "leadership", "platform_admin"].includes(user.role));
+
+  function dateStageReached(stageKey: string): string | null {
+    if (!enquiry) return null;
+    const entries = enquiry.stageHistory.filter((entry) => entry.toStatus === stageKey);
+    if (entries.length === 0) return null;
+    return new Date(entries[entries.length - 1].changedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+  }
+
+  // The visit date lives as a note (see markVisitScheduled/rescheduleVisit),
+  // not a dedicated field - this reads the latest one back out so both the
+  // current and the collapsed-row view of Visit Scheduled can show it.
+  function latestVisitScheduleNote(): string | null {
+    if (!enquiry) return null;
+    const matches = enquiry.notes
+      .filter((n) => n.type === "lead_note" && /visit (scheduled|rescheduled)/i.test(n.body))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return matches[0]?.body ?? null;
+  }
+
+  // The one error this card gives its own callout to: the backend refusing a
+  // stage move because a required admission-form field is still empty
+  // (missingRequiredAdmissionFields in enquiries.ts) - exactly the "tell them
+  // to fill the admission form first" case, driven by the school's real
+  // configuration rather than a guessed completion threshold.
+  function describeStageError(err: unknown): { message: string; isAdmissionBlocked: boolean } {
+    if (err instanceof ApiError && /admission fields are missing/i.test(err.message)) {
+      return { message: err.message, isAdmissionBlocked: true };
+    }
+    if (err instanceof ApiError && err.code === "forbidden") {
+      return { message: "Only this lead's owner or an admissions admin can update its stage.", isAdmissionBlocked: false };
+    }
+    return { message: err instanceof Error ? err.message : "Failed to change status", isAdmissionBlocked: false };
+  }
 
   async function applyStatusChange(status: EnquiryStatus) {
-    if (!accessToken) return;
+    if (!accessToken || isUpdatingStage) return;
+    setIsUpdatingStage(true);
+    setAdmissionBlockedMessage(null);
     try {
       await api.updateEnquiry(accessToken, enquiryId, { status });
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to change status");
+      const { message, isAdmissionBlocked } = describeStageError(err);
+      if (isAdmissionBlocked) setAdmissionBlockedMessage(message);
+      else setError(message);
+    } finally {
+      setIsUpdatingStage(false);
     }
   }
 
   function changeStatus(status: EnquiryStatus) {
     if (!enquiry || status === enquiry.status) return;
-    if (status === "lost") {
-      if (!enquiry.lostReason) {
-        setShowLostReasonFor(true);
-      } else {
-        applyStatusChange(status);
-      }
+    if (status === "lost" && !enquiry.lostReason) {
+      setShowLostReasonFor(true);
       return;
     }
-
-    const isOneStepForward = stageKeys.indexOf(status) === stageKeys.indexOf(enquiry.status) + 1;
-    if (isOneStepForward) {
-      applyStatusChange(status);
-    } else {
-      setPendingStageChange(status);
-    }
-  }
-
-  // Slides the current section out, commits the stage change, then slides the
-  // new section in from the opposite edge. `dir` only affects the slide
-  // direction - the target stage is always the one adjacent to the current.
-  function animateStageTo(targetKey: EnquiryStatus, dir: "next" | "back") {
-    if (isStageAnimating) return;
-    setIsStageAnimating(true);
-    Animated.parallel([
-      Animated.timing(stageTranslateX, { toValue: dir === "next" ? -28 : 28, duration: 150, useNativeDriver: true }),
-      Animated.timing(stageOpacity, { toValue: 0, duration: 150, useNativeDriver: true }),
-    ]).start(async () => {
-      await applyStatusChange(targetKey);
-      stageTranslateX.setValue(dir === "next" ? 28 : -28);
-      Animated.parallel([
-        Animated.spring(stageTranslateX, { toValue: 0, tension: 180, friction: 18, useNativeDriver: true }),
-        Animated.timing(stageOpacity, { toValue: 1, duration: 180, useNativeDriver: true }),
-      ]).start(() => setIsStageAnimating(false));
-    });
-  }
-
-  function goToAdjacentStage(dir: "next" | "back") {
-    if (!enquiry) return;
-    const target = stages[currentStageIndex + (dir === "next" ? 1 : -1)];
-    if (!target || target.isTerminal) return;
-    animateStageTo(target.key, dir);
+    applyStatusChange(status);
   }
 
   function reopenLead() {
-    if (stages.length === 0) return;
-    animateStageTo(stages[0].key, "back");
+    if (journeyStages.length === 0) return;
+    applyStatusChange(journeyStages[0].key);
+  }
+
+  function moveStageBack(targetKey: EnquiryStatus) {
+    // Once this succeeds, enquiry.status changes for real and the
+    // viewedStageIndex-sync effect snaps the view to the new (earlier) live
+    // stage on its own - no separate reset needed here.
+    applyStatusChange(targetKey);
+  }
+
+  function openAdmissionForm() {
+    navigation.navigate("AdmissionConfirmation", { enquiryId });
+  }
+
+  function openTimelineModal() {
+    setShowTimelineModal(true);
+    timelineBackdropOpacity.setValue(0);
+    timelineSheetTranslateY.setValue(480);
+    Animated.parallel([
+      Animated.timing(timelineBackdropOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+      Animated.timing(timelineSheetTranslateY, { toValue: 0, duration: 280, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+    ]).start();
+  }
+
+  // Animates out first, then unmounts the Modal - closing it instantly (just
+  // flipping showTimelineModal) would cut the exit animation off before it
+  // can play.
+  function closeTimelineModal() {
+    Animated.parallel([
+      Animated.timing(timelineBackdropOpacity, { toValue: 0, duration: 160, useNativeDriver: true }),
+      Animated.timing(timelineSheetTranslateY, { toValue: 480, duration: 220, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
+    ]).start(() => setShowTimelineModal(false));
+  }
+
+  function openTaskModal() {
+    setShowAddTask(true);
+    taskModalBackdropOpacity.setValue(0);
+    taskModalSheetTranslateY.setValue(480);
+    Animated.parallel([
+      Animated.timing(taskModalBackdropOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+      Animated.timing(taskModalSheetTranslateY, { toValue: 0, duration: 280, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+    ]).start();
+  }
+
+  function closeTaskModal() {
+    Animated.parallel([
+      Animated.timing(taskModalBackdropOpacity, { toValue: 0, duration: 160, useNativeDriver: true }),
+      Animated.timing(taskModalSheetTranslateY, { toValue: 480, duration: 220, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
+    ]).start(() => setShowAddTask(false));
+  }
+
+  // "Schedule a follow-up" / "Add a visit reminder" in the admission-journey
+  // tracker jump straight to this popup now - as a Modal it always appears
+  // regardless of scroll position, so there's no more "find the box further
+  // down the page" problem to solve with a scroll-to or a highlight pulse.
+  function jumpToFollowUps() {
+    openTaskModal();
+  }
+
+  // Runs `action` straight away, unless `condition` is true - then it pauses
+  // for an explicit "are you sure" first. Used for the couple of moments
+  // where proceeding is allowed but something worth a second look is missing
+  // (no consent yet, no visit outcome recorded).
+  function confirmThen(condition: boolean, title: string, message: string, action: () => void) {
+    if (condition) setPendingConfirm({ title, message, onConfirm: action });
+    else action();
   }
 
   async function saveVisitNote() {
@@ -467,9 +589,72 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
     }
   }
 
-  function jumpToFollowUps() {
-    setLeadSubTab("tasks");
-    setShowAddTask(true);
+  function formatVisitDate(dateInput: string): string {
+    return new Date(`${dateInput}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  }
+
+  // Leaving Contacted requires a visit date - it's what "Visit scheduled"
+  // actually means, so the button stays disabled until one is picked. Stored
+  // as a note (no dedicated schema field exists for it) so it also lands on
+  // the Timeline and is readable back out via the regex below.
+  async function markVisitScheduled() {
+    if (!accessToken || !visitDateInput || isUpdatingStage) return;
+    setIsUpdatingStage(true);
+    setAdmissionBlockedMessage(null);
+    try {
+      await api.addEnquiryNote(accessToken, enquiryId, `Visit scheduled for ${formatVisitDate(visitDateInput)}.`, "lead_note");
+      await api.updateEnquiry(accessToken, enquiryId, { status: "visit_scheduled" });
+      setVisitDateInput("");
+      await load();
+    } catch (err) {
+      const { message, isAdmissionBlocked } = describeStageError(err);
+      if (isAdmissionBlocked) setAdmissionBlockedMessage(message);
+      else setError(message);
+    } finally {
+      setIsUpdatingStage(false);
+    }
+  }
+
+  // Reschedule, from the collapsed Visit Scheduled row - the correction this
+  // section exists for. Adds a fresh dated note rather than editing the
+  // original in place: there's no note-update endpoint, and keeping every
+  // date change on the record is arguably better for an admissions audit
+  // trail than silently overwriting it.
+  async function rescheduleVisit() {
+    if (!accessToken || !visitDateInput) return;
+    setIsSchedulingVisit(true);
+    try {
+      await api.addEnquiryNote(accessToken, enquiryId, `Visit rescheduled to ${formatVisitDate(visitDateInput)}.`, "lead_note");
+      setVisitDateInput("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reschedule");
+    } finally {
+      setIsSchedulingVisit(false);
+    }
+  }
+
+  async function saveInterview() {
+    if (!accessToken || !interviewDateInput || !interviewNotesInput.trim()) return;
+    setIsSavingInterview(true);
+    try {
+      await api.createInterview(accessToken, enquiryId, {
+        interviewDate: interviewDateInput,
+        score: interviewScoreInput.trim() ? Number(interviewScoreInput) : undefined,
+        maxScore: interviewMaxScoreInput.trim() ? Number(interviewMaxScoreInput) : undefined,
+        notes: interviewNotesInput.trim(),
+      });
+      setInterviewDateInput("");
+      setInterviewScoreInput("");
+      setInterviewMaxScoreInput("");
+      setInterviewNotesInput("");
+      setShowInterviewForm(false);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save interview record");
+    } finally {
+      setIsSavingInterview(false);
+    }
   }
 
   async function addNote() {
@@ -532,7 +717,13 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
   }
 
   async function addFollowUpTask() {
-    if (!accessToken || !taskTemplateId || !taskDueAt) return;
+    // Was a silent no-op when either was missing - the button just did
+    // nothing with no explanation. The button is now disabled instead (see
+    // the Create Task box below) so this guard should never actually trigger,
+    // but it stays as a safety net rather than letting a race leave it silent.
+    if (!accessToken || !taskTemplateId || !taskDueAt || isCreatingTask) return;
+    setIsCreatingTask(true);
+    setError(null);
     try {
       await api.createFollowUpTask(accessToken, {
         enquiryId,
@@ -540,11 +731,13 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
         templateId: taskTemplateId,
         dueAt: new Date(`${taskDueAt}T00:00:00`).toISOString(),
       });
-      setShowAddTask(false);
+      closeTaskModal();
       setTaskDueAt("");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create task");
+    } finally {
+      setIsCreatingTask(false);
     }
   }
 
@@ -585,60 +778,52 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
   }
 
   const currentStatusColor = getStatusColor(enquiry.status, mode);
-  const currentStage = currentStageIndex >= 0 ? stages[currentStageIndex] : null;
-  const nextStage = currentStageIndex >= 0 ? stages[currentStageIndex + 1] : null;
-  const nextActionLabel =
-    overdueTasksCount > 0
-      ? "Clear overdue follow-up"
-      : openTasksCount > 0
-        ? "Complete pending follow-up"
-        : nextStage
-          ? `Move to ${nextStage.label}`
-          : canConfirmAdmission
-            ? "Review admission"
-            : "Keep lead warm";
+  const viewedStage = viewedStageIndex >= 0 ? journeyStages[viewedStageIndex] : null;
+  const isViewingLive = viewedStageIndex === currentJourneyIndex;
 
-  const admissionPct = enquiry.admissionSummary.completionPercent;
-  const admissionConfirmed = enquiry.admissionSummary.confirmed;
-
-  // The section body shown inside the momentum card for the lead's current
-  // stage. Keyed off the stage's key (pipeline stages are per-school
-  // configurable, so an unrecognised key falls back to the generic hint).
-  function renderStageBody() {
+  // Guidance text + the one action that genuinely applies to a given stage -
+  // rendered only inside the current stage's row in the tracker below. Keyed
+  // off the stage's key (pipeline stages are per-school configurable, so an
+  // unrecognised key falls back to a generic line).
+  function renderCurrentStageActions(stage: PipelineStage) {
     if (!enquiry) return null;
-    if (currentStage?.isTerminal) {
-      return (
-        <Text style={[styles.stepText, { color: colors.textMuted }]}>
-          {enquiry.lostReason ? `Marked lost — ${enquiry.lostReason}` : "This lead is marked lost."}
-        </Text>
-      );
-    }
+    const locked = !canEditStage;
+    const busyOrLocked = locked || isUpdatingStage;
 
-    switch (currentStage?.key) {
+    switch (stage.key) {
       case "new":
         return (
           <>
             <Text style={[styles.stepText, { color: colors.textSecondary }]}>
-              Confirm the contact details and capture messaging consent, then reach out.
+              Confirm the contact details and capture messaging consent, then make first contact.
             </Text>
             {!enquiry.consentCaptured ? (
               <View style={[styles.stepCallout, { backgroundColor: colors.accentSoft, borderColor: colors.accentSoftAlt }]}>
-                <Ionicons name="shield-outline" size={15} color={colors.accent} />
+                <Ionicons name="warning-outline" size={15} color={colors.accent} />
                 <Text style={[styles.stepCalloutText, { color: colors.accent }]}>
                   Messaging consent not captured yet — add it before sending any automated follow-up.
                 </Text>
               </View>
             ) : null}
-            <Pressable
-              onPress={() => navigation.navigate("EditEnquiry", { enquiryId })}
-              style={({ pressed }) => [
-                styles.smallButton,
-                { backgroundColor: colors.surfaceRaised, borderWidth: 1, borderColor: colors.border, alignSelf: "flex-start" },
-                pressed && { opacity: pressedOpacity },
-              ]}
-            >
-              <Text style={[styles.smallButtonText, { color: colors.textPrimary }]}>Edit contact &amp; consent</Text>
-            </Pressable>
+            <View style={styles.stepActionsRow}>
+              <Pressable
+                onPress={() =>
+                  confirmThen(
+                    !enquiry.consentCaptured,
+                    "Consent not captured",
+                    "Messaging consent hasn't been recorded for this lead yet. Mark as contacted anyway?",
+                    () => applyStatusChange("contacted")
+                  )
+                }
+                disabled={busyOrLocked}
+                style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent }, (pressed || busyOrLocked) && { opacity: pressedOpacity }]}
+              >
+                <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>{isUpdatingStage ? "Updating…" : "Mark as contacted"}</Text>
+              </Pressable>
+              <Pressable onPress={() => navigation.navigate("EditEnquiry", { enquiryId })} style={({ pressed }) => [pressed && { opacity: pressedOpacity }]}>
+                <Text style={[styles.inlineLinkText, { color: colors.accent }]}>Edit contact &amp; consent</Text>
+              </Pressable>
+            </View>
           </>
         );
 
@@ -646,7 +831,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
         return (
           <>
             <Text style={[styles.stepText, { color: colors.textSecondary }]}>
-              Log every call or message and schedule the next touchpoint so the lead stays warm.
+              Log every call or message, then set a visit date to move this lead forward.
             </Text>
             <View style={styles.factsRow}>
               <View style={[styles.fact, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -658,35 +843,55 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
                 <Text style={[styles.factText, { color: colors.textSecondary }]}>{overdueTasksCount} overdue</Text>
               </View>
             </View>
-            <Pressable
-              onPress={jumpToFollowUps}
-              style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent, alignSelf: "flex-start" }, pressed && { opacity: pressedOpacity }]}
-            >
-              <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Schedule a follow-up</Text>
-            </Pressable>
+            <Text style={[styles.formLabel, { color: colors.textSecondary }]}>Visit date</Text>
+            <DatePicker value={visitDateInput} onChange={setVisitDateInput} placeholder="Select a visit date" minimumDate={new Date()} />
+            <View style={styles.stepActionsRow}>
+              <Pressable
+                onPress={markVisitScheduled}
+                disabled={busyOrLocked || !visitDateInput}
+                style={({ pressed }) => [
+                  styles.smallButton,
+                  { backgroundColor: colors.accent },
+                  (pressed || busyOrLocked || !visitDateInput) && { opacity: pressedOpacity },
+                ]}
+              >
+                <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>{isUpdatingStage ? "Updating…" : "Mark visit scheduled"}</Text>
+              </Pressable>
+              <Pressable onPress={jumpToFollowUps} style={({ pressed }) => [pressed && { opacity: pressedOpacity }]}>
+                <Text style={[styles.inlineLinkText, { color: colors.accent }]}>Schedule a follow-up</Text>
+              </Pressable>
+            </View>
           </>
         );
 
-      case "visit_scheduled":
+      case "visit_scheduled": {
+        const scheduledNote = latestVisitScheduleNote();
         return (
           <>
             <Text style={[styles.stepText, { color: colors.textSecondary }]}>
-              Lock in a campus visit date and send the family a reminder.
+              {scheduledNote ?? "Confirm the visit date and remind the family before they come in."}
             </Text>
-            <Pressable
-              onPress={jumpToFollowUps}
-              style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent, alignSelf: "flex-start" }, pressed && { opacity: pressedOpacity }]}
-            >
-              <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Add a visit reminder</Text>
-            </Pressable>
+            <View style={styles.stepActionsRow}>
+              <Pressable
+                onPress={() => applyStatusChange("visit_done")}
+                disabled={busyOrLocked}
+                style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent }, (pressed || busyOrLocked) && { opacity: pressedOpacity }]}
+              >
+                <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>{isUpdatingStage ? "Updating…" : "Mark visit done"}</Text>
+              </Pressable>
+              <Pressable onPress={jumpToFollowUps} style={({ pressed }) => [pressed && { opacity: pressedOpacity }]}>
+                <Text style={[styles.inlineLinkText, { color: colors.accent }]}>Add a visit reminder</Text>
+              </Pressable>
+            </View>
           </>
         );
+      }
 
       case "visit_done":
         return (
           <>
             <Text style={[styles.stepText, { color: colors.textSecondary }]}>
-              Capture how the visit went — the family&apos;s feedback and the agreed next step.
+              Capture how the visit went, then move the lead into Application.
             </Text>
             <TextInput
               style={[styles.stepNoteInput, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
@@ -695,17 +900,50 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
               placeholder="Visit outcome / next step…"
               placeholderTextColor={colors.textMuted}
               multiline
+              editable={!locked}
             />
+            {visitNote.trim() ? (
+              <Pressable
+                onPress={saveVisitNote}
+                disabled={isSavingVisitNote}
+                style={({ pressed }) => [
+                  styles.smallButton,
+                  { backgroundColor: colors.surfaceRaised, borderWidth: 1, borderColor: colors.border, alignSelf: "flex-start" },
+                  (pressed || isSavingVisitNote) && { opacity: pressedOpacity },
+                ]}
+              >
+                <Text style={[styles.smallButtonText, { color: colors.textPrimary }]}>{isSavingVisitNote ? "Saving…" : "Save visit note"}</Text>
+              </Pressable>
+            ) : null}
+            {renderInterviewSection()}
+            {admissionBlockedMessage ? (
+              <View style={[styles.stepCallout, { backgroundColor: colors.accentSoft, borderColor: colors.accentSoftAlt }]}>
+                <Ionicons name="alert-circle-outline" size={15} color={colors.accent} />
+                <View style={{ flex: 1, gap: 6 }}>
+                  <Text style={[styles.stepCalloutText, { color: colors.accent }]}>{admissionBlockedMessage}</Text>
+                  <Pressable onPress={openAdmissionForm} style={({ pressed }) => [pressed && { opacity: pressedOpacity }]}>
+                    <Text style={[styles.inlineLinkText, { color: colors.accent }]}>Open admission form</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
             <Pressable
-              onPress={saveVisitNote}
-              disabled={isSavingVisitNote || !visitNote.trim()}
+              onPress={() =>
+                confirmThen(
+                  !visitNote.trim() && interviews.length === 0,
+                  "No visit outcome recorded",
+                  "You haven't logged how the visit went yet. Move to Application anyway?",
+                  () => applyStatusChange("application")
+                )
+              }
+              disabled={busyOrLocked}
               style={({ pressed }) => [
                 styles.smallButton,
                 { backgroundColor: colors.accent, alignSelf: "flex-start" },
-                (pressed || isSavingVisitNote || !visitNote.trim()) && { opacity: pressedOpacity },
+                (pressed || busyOrLocked) && { opacity: pressedOpacity },
               ]}
             >
-              <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>{isSavingVisitNote ? "Saving…" : "Save visit note"}</Text>
+              <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>{isUpdatingStage ? "Updating…" : "Move to application"}</Text>
             </Pressable>
           </>
         );
@@ -713,55 +951,41 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
       case "application":
         return (
           <>
-            <Text style={[styles.stepText, { color: colors.textSecondary }]}>Fill the admission form before confirming admission.</Text>
-            <View
-              style={[
-                styles.stepCallout,
-                admissionPct >= 100 || admissionConfirmed
-                  ? { backgroundColor: colors.surfaceRaised, borderColor: colors.border }
-                  : { backgroundColor: colors.accentSoft, borderColor: colors.accentSoftAlt },
-              ]}
-            >
-              <Ionicons
-                name={admissionPct >= 100 || admissionConfirmed ? "checkmark-circle-outline" : "document-text-outline"}
-                size={15}
-                color={colors.accent}
-              />
-              <Text
-                style={[
-                  styles.stepCalloutText,
-                  { color: admissionPct >= 100 || admissionConfirmed ? colors.textSecondary : colors.accent },
-                ]}
-              >
-                {admissionConfirmed
-                  ? "Admission already confirmed."
-                  : admissionPct >= 100
-                    ? "Admission form is complete and ready to confirm."
-                    : `Admission form is ${admissionPct}% complete — finish it first.`}
-              </Text>
-            </View>
+            <Text style={[styles.stepText, { color: colors.textSecondary }]}>
+              Fill in the admission form. Once your school&apos;s admission approvals are complete, this lead moves to Admitted automatically.
+            </Text>
             <View style={[styles.admissionProgressTrack, { backgroundColor: colors.border }]}>
               <View style={[styles.admissionProgressFill, { backgroundColor: colors.accent, width: `${Math.min(100, admissionPct)}%` }]} />
             </View>
+            <Text style={[styles.stepMeta, { color: colors.textMuted }]}>{admissionPct}% of the admission form is complete</Text>
             <Pressable
-              onPress={() => navigation.navigate("AdmissionConfirmation", { enquiryId })}
+              onPress={openAdmissionForm}
               style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent, alignSelf: "flex-start" }, pressed && { opacity: pressedOpacity }]}
             >
-              <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>
-                {admissionConfirmed ? "View admission form" : "Open admission form"}
-              </Text>
+              <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Open admission form</Text>
             </Pressable>
           </>
         );
 
       case "admitted":
-        return (
+        return admissionConfirmed ? (
           <>
-            <Text style={[styles.stepText, { color: colors.textSecondary }]}>
-              {admissionConfirmed
-                ? "Admission confirmed — the student record has been created."
-                : "Confirm the admission to create the student record."}
-            </Text>
+            <Text style={[styles.stepText, { color: colors.textSecondary }]}>Student record created.</Text>
+            <Pressable
+              onPress={() => applyStatusChange("enrolled")}
+              disabled={busyOrLocked}
+              style={({ pressed }) => [
+                styles.smallButton,
+                { backgroundColor: colors.accent, alignSelf: "flex-start" },
+                (pressed || busyOrLocked) && { opacity: pressedOpacity },
+              ]}
+            >
+              <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>{isUpdatingStage ? "Updating…" : "Mark enrolled"}</Text>
+            </Pressable>
+          </>
+        ) : (
+          <>
+            <Text style={[styles.stepText, { color: colors.textSecondary }]}>Confirm the admission to create the student record.</Text>
             <View style={styles.factsRow}>
               <View style={[styles.fact, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                 <Ionicons name="folder-open-outline" size={12} color={colors.accent} />
@@ -770,14 +994,12 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
                 </Text>
               </View>
             </View>
-            {!admissionConfirmed ? (
-              <Pressable
-                onPress={() => navigation.navigate("AdmissionConfirmation", { enquiryId })}
-                style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent, alignSelf: "flex-start" }, pressed && { opacity: pressedOpacity }]}
-              >
-                <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Confirm admission</Text>
-              </Pressable>
-            ) : null}
+            <Pressable
+              onPress={openAdmissionForm}
+              style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent, alignSelf: "flex-start" }, pressed && { opacity: pressedOpacity }]}
+            >
+              <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Confirm admission</Text>
+            </Pressable>
           </>
         );
 
@@ -790,168 +1012,412 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
         );
 
       default:
-        return <Text style={[styles.stepText, { color: colors.textMuted }]}>Next best action: {nextActionLabel}</Text>;
+        return <Text style={[styles.stepText, { color: colors.textMuted }]}>{stage.label} is the current stage.</Text>;
+    }
+  }
+
+  // Optional interview/assessment record (schema: InterviewRecord) - lets a
+  // school that conducts a formal admission interview log a score alongside
+  // the free-text visit note, without forcing every school to fill it in.
+  function renderInterviewSection() {
+    return (
+      <View style={styles.interviewBlock}>
+        {interviews.length > 0 ? (
+          <View style={styles.interviewList}>
+            {interviews.map((record) => (
+              <View key={record.id} style={[styles.interviewRow, { borderColor: colors.border }]}>
+                <Text style={[styles.interviewRowTitle, { color: colors.textPrimary }]}>
+                  {new Date(record.interviewDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+                  {record.score != null ? ` · ${record.score}${record.maxScore != null ? `/${record.maxScore}` : ""}` : ""}
+                </Text>
+                <Text style={[styles.interviewRowNotes, { color: colors.textMuted }]}>{record.notes}</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
+        {showInterviewForm ? (
+          <View style={[styles.inlineForm, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Text style={[styles.formLabel, { color: colors.textSecondary }]}>Interview / assessment date</Text>
+            <DatePicker value={interviewDateInput} onChange={setInterviewDateInput} placeholder="Select date" />
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <TextInput
+                style={[styles.formInput, { flex: 1, backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
+                value={interviewScoreInput}
+                onChangeText={setInterviewScoreInput}
+                placeholder="Score"
+                placeholderTextColor={colors.textMuted}
+                keyboardType="numeric"
+              />
+              <TextInput
+                style={[styles.formInput, { flex: 1, backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
+                value={interviewMaxScoreInput}
+                onChangeText={setInterviewMaxScoreInput}
+                placeholder="Out of"
+                placeholderTextColor={colors.textMuted}
+                keyboardType="numeric"
+              />
+            </View>
+            <TextInput
+              style={[styles.stepNoteInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
+              value={interviewNotesInput}
+              onChangeText={setInterviewNotesInput}
+              placeholder="Observations…"
+              placeholderTextColor={colors.textMuted}
+              multiline
+            />
+            <Pressable
+              onPress={saveInterview}
+              disabled={isSavingInterview || !interviewDateInput || !interviewNotesInput.trim()}
+              style={({ pressed }) => [
+                styles.smallButton,
+                { backgroundColor: colors.accent, alignSelf: "flex-start" },
+                (pressed || isSavingInterview || !interviewDateInput || !interviewNotesInput.trim()) && { opacity: pressedOpacity },
+              ]}
+            >
+              <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>{isSavingInterview ? "Saving…" : "Save interview"}</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <Pressable onPress={() => setShowInterviewForm(true)} style={({ pressed }) => [pressed && { opacity: pressedOpacity }]}>
+            <Text style={[styles.inlineLinkText, { color: colors.accent }]}>+ Record interview / assessment</Text>
+          </Pressable>
+        )}
+      </View>
+    );
+  }
+
+  // Shown when a counsellor taps an already-completed row in the tracker -
+  // the "go back and fix something" affordance, without a dedicated Back
+  // button. Every path here adds a fresh, dated record rather than rewriting
+  // history in place (see rescheduleVisit/saveVisitNote), and "move back" is
+  // withheld once the lead is Admitted/Enrolled so a stray tap can't unwind a
+  // completed admission.
+  function renderPastStageEdit(stage: PipelineStage) {
+    if (!enquiry) return null;
+    const locked = !canEditStage;
+    const canMoveBack = canEditStage && !["admitted", "enrolled"].includes(enquiry.status);
+    const moveBackLink = canMoveBack ? (
+      <Pressable onPress={() => moveStageBack(stage.key)} style={({ pressed }) => [pressed && { opacity: pressedOpacity }]}>
+        <Text style={[styles.inlineLinkText, { color: colors.textMuted }]}>Move lead back to {stage.label}</Text>
+      </Pressable>
+    ) : null;
+
+    switch (stage.key) {
+      case "new":
+        return (
+          <>
+            <Text style={[styles.stepText, { color: colors.textMuted }]}>
+              {enquiry.consentCaptured ? "Messaging consent is on file." : "Messaging consent still hasn't been captured."}
+            </Text>
+            <Pressable onPress={() => navigation.navigate("EditEnquiry", { enquiryId })} style={({ pressed }) => [pressed && { opacity: pressedOpacity }]}>
+              <Text style={[styles.inlineLinkText, { color: colors.accent }]}>Edit contact &amp; consent</Text>
+            </Pressable>
+            {moveBackLink}
+          </>
+        );
+
+      case "contacted":
+        return (
+          <>
+            <Text style={[styles.stepText, { color: colors.textMuted }]}>
+              {openTasksCount} follow-up{openTasksCount === 1 ? "" : "s"} still open.
+            </Text>
+            <Pressable onPress={jumpToFollowUps} style={({ pressed }) => [pressed && { opacity: pressedOpacity }]}>
+              <Text style={[styles.inlineLinkText, { color: colors.accent }]}>Schedule a follow-up</Text>
+            </Pressable>
+            {moveBackLink}
+          </>
+        );
+
+      case "visit_scheduled":
+        return (
+          <>
+            <Text style={[styles.stepText, { color: colors.textMuted }]}>
+              {latestVisitScheduleNote() ?? "No visit date recorded."} Reschedule below if it&apos;s changed.
+            </Text>
+            <DatePicker value={visitDateInput} onChange={setVisitDateInput} placeholder="New visit date" minimumDate={new Date()} />
+            <Pressable
+              onPress={rescheduleVisit}
+              disabled={locked || !visitDateInput || isSchedulingVisit}
+              style={({ pressed }) => [
+                styles.smallButton,
+                { backgroundColor: colors.accent, alignSelf: "flex-start" },
+                (pressed || locked || !visitDateInput || isSchedulingVisit) && { opacity: pressedOpacity },
+              ]}
+            >
+              <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>{isSchedulingVisit ? "Saving…" : "Save new date"}</Text>
+            </Pressable>
+            {moveBackLink}
+          </>
+        );
+
+      case "visit_done":
+        return (
+          <>
+            <Text style={[styles.stepText, { color: colors.textMuted }]}>Add an update if anything about the visit needs correcting.</Text>
+            <TextInput
+              style={[styles.stepNoteInput, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
+              value={visitNote}
+              onChangeText={setVisitNote}
+              placeholder="Add an update…"
+              placeholderTextColor={colors.textMuted}
+              multiline
+              editable={!locked}
+            />
+            {visitNote.trim() ? (
+              <Pressable
+                onPress={saveVisitNote}
+                disabled={isSavingVisitNote}
+                style={({ pressed }) => [
+                  styles.smallButton,
+                  { backgroundColor: colors.surfaceRaised, borderWidth: 1, borderColor: colors.border, alignSelf: "flex-start" },
+                  (pressed || isSavingVisitNote) && { opacity: pressedOpacity },
+                ]}
+              >
+                <Text style={[styles.smallButtonText, { color: colors.textPrimary }]}>{isSavingVisitNote ? "Saving…" : "Save update"}</Text>
+              </Pressable>
+            ) : null}
+            {renderInterviewSection()}
+            {moveBackLink}
+          </>
+        );
+
+      case "application":
+        return (
+          <>
+            <View style={[styles.admissionProgressTrack, { backgroundColor: colors.border }]}>
+              <View style={[styles.admissionProgressFill, { backgroundColor: colors.accent, width: `${Math.min(100, admissionPct)}%` }]} />
+            </View>
+            <Text style={[styles.stepMeta, { color: colors.textMuted }]}>{admissionPct}% of the admission form is complete</Text>
+            <Pressable
+              onPress={openAdmissionForm}
+              style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent, alignSelf: "flex-start" }, pressed && { opacity: pressedOpacity }]}
+            >
+              <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Open admission form</Text>
+            </Pressable>
+          </>
+        );
+
+      default:
+        return (
+          <Text style={[styles.stepText, { color: colors.textMuted }]}>
+            Reached on {dateStageReached(stage.key) ?? "an earlier date"}.
+          </Text>
+        );
     }
   }
 
   return (
     <Screen edges={["bottom"]}>
+      {/* Wraps the compact bar + the scroll body (not the floating timeline
+          button or the two popups below, which don't need it) - without
+          this, focusing a field down in "Complete intake details" left the
+          keyboard covering it with nothing shifting to compensate. Same
+          Screen -> KeyboardAvoidingView -> ScrollView shape already used
+          throughout this app (e.g. CreateFirstClassScreen.tsx). */}
+      <KeyboardAvoidingView style={styles.keyboardAvoidingView} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+      {/* Compact bar: hidden until the hero card below has scrolled out of
+          view, then fades in smoothly (single native-driven opacity fade) -
+          pointerEvents is toggled in step so it doesn't intercept touches to
+          the scroll content underneath while invisible. */}
       <Animated.View
+        pointerEvents={showCompactHeader ? "auto" : "none"}
         style={[
-          styles.head,
-          { backgroundColor: colors.surface, borderBottomColor: colors.border, paddingTop: headerPaddingTop, paddingBottom: headerPaddingBottom },
+          styles.compactHead,
+          { backgroundColor: colors.surface, borderBottomColor: colors.border, opacity: compactHeaderOpacity },
         ]}
       >
-        <View style={styles.headRow} onLayout={(e) => setHeadRowHeight(e.nativeEvent.layout.height)}>
-          <Animated.View
-            style={[
-              styles.avatarWrap,
-              {
-                backgroundColor: colors.surfaceRaised,
-                borderColor: colors.accent,
-                width: avatarSize,
-                height: avatarSize,
-                borderRadius: avatarRadius,
-                transform: [{ translateY: avatarTranslateY }],
-              },
-            ]}
-          >
+        <Pressable
+          onPress={() => scrollRef.current?.scrollTo({ y: 0, animated: true })}
+          style={({ pressed }) => [styles.compactHeadTouchable, pressed && { opacity: pressedOpacity }]}
+          accessibilityRole="button"
+          accessibilityLabel="Scroll to top"
+        >
+          <View style={[styles.compactAvatarWrap, { backgroundColor: colors.surfaceRaised, borderColor: colors.accent }]}>
             <Image
               source={avatarSource}
-              style={[styles.avatar, hasRealPhoto && styles.avatarPhoto]}
+              style={[styles.compactAvatar, hasRealPhoto && styles.compactAvatarPhoto]}
               resizeMode={hasRealPhoto ? "cover" : "contain"}
             />
-          </Animated.View>
-          <View style={styles.headIdBlock}>
-            <Animated.Text style={[styles.headName, { color: colors.textPrimary, fontSize: nameFontSize }]} numberOfLines={1}>
-              {enquiry.studentName || enquiry.contactName}
-            </Animated.Text>
-            {/* Fades and collapses to zero height on scroll, clearing this
-                spot for the status tag (below) to slide into. */}
-            <Animated.View style={{ height: headSubHeight, opacity: headSubOpacity, overflow: "hidden" }}>
-              <Text style={[styles.headSub, { color: colors.textMuted }]} numberOfLines={1}>
-                {enquiry.studentName
-                  ? `${enquiry.guardianRelation ? `${formatSource(enquiry.guardianRelation)} · ` : ""}${enquiry.contactName}`
-                  : formatSource(enquiry.source)}
-              </Text>
-            </Animated.View>
-            {/* Absolutely positioned (not in flow) so it no longer reserves
-                its own line's height inside headIdBlock once it slides away -
-                that reserved space was the reason headRow (and everything
-                below it) stayed taller than necessary. top/left below just
-                reproduce where it used to sit in flow, by default - it then
-                slides up (translateY only) to land where the subtitle above
-                used to sit, once that's faded out. */}
-            <Animated.View
-              style={[
-                styles.headMetaRow,
-                { position: "absolute", top: 40, left: 0, transform: [{ translateY: tagTranslateY }] },
-              ]}
-            >
-              <View style={[styles.statusPill, { backgroundColor: currentStatusColor.bg, gap: 0 }]}>
-                <Ionicons name="globe-outline" size={11} color={currentStatusColor.text} />
-                <Animated.View
-                  style={{ overflow: "hidden", maxWidth: statusLabelMaxWidth, opacity: pillLabelOpacity, marginLeft: statusLabelMarginLeft }}
-                >
-                  <Text style={[styles.statusPillText, { color: currentStatusColor.text }]} numberOfLines={1}>
-                    {formatStageLabel(enquiry.status)}
-                  </Text>
-                </Animated.View>
-              </View>
-              {overdueTasksCount > 0 ? (
-                <View style={[styles.headMetaChip, { backgroundColor: colors.accentSoft, borderColor: colors.accentSoftAlt }]}>
-                  <Ionicons name="alert-circle-outline" size={11} color={colors.accent} />
-                  <Text style={[styles.headMetaText, { color: colors.accent }]}>Overdue</Text>
-                </View>
-              ) : null}
-              {duplicates.length > 0 ? (
-                <View style={[styles.headMetaChip, { backgroundColor: colors.accentSoft, borderColor: colors.accentSoftAlt }]}>
-                  <Ionicons name="git-merge-outline" size={11} color={colors.accent} />
-                  <Text style={[styles.headMetaText, { color: colors.accent }]}>Duplicate</Text>
-                </View>
-              ) : null}
-            </Animated.View>
           </View>
-        </View>
-
-        {/* headerActionRow is absolutely positioned below (see style) - this
-            flow spacer stands in for the vertical space it used to reserve,
-            shrinking to 0 on scroll so the header can get shorter than a
-            fixed-height row would otherwise allow. */}
-        <Animated.View style={{ height: actionRowSpacerHeight }} />
-
-        <View
-          style={[styles.headerActionRow, { top: headRowHeight + ACTION_ROW_GAP }]}
-          onLayout={(e) => setActionRowWidth(e.nativeEvent.layout.width)}
-        >
-          <Animated.View style={[styles.headerActionGroup, { transform: [{ translateX: pillsTranslateX }, { translateY: pillsTranslateY }] }]}>
-            <Animated.View style={[styles.headerPill, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, minHeight: pillHeight }]}>
-              <Ionicons name="call-outline" size={14} color={colors.accent} />
-              <Animated.View style={{ overflow: "hidden", maxWidth: phoneLabelMaxWidth, opacity: pillLabelOpacity, marginLeft: pillLabelMarginLeft }}>
-                <Text style={[styles.headerPillText, { color: colors.textPrimary }]} numberOfLines={1}>
-                  {enquiry.contactPhone}
-                </Text>
-              </Animated.View>
-            </Animated.View>
-            <Animated.View style={[styles.headerPill, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, minHeight: pillHeight }]}>
-              <Pressable
-                onPress={() => navigation.navigate("EditEnquiry", { enquiryId })}
-                style={({ pressed }) => [styles.headerPillTouchable, pressed && { opacity: pressedOpacity }]}
-              >
-                <Ionicons name="create-outline" size={14} color={colors.accent} />
-                <Animated.View style={{ overflow: "hidden", maxWidth: actionLabelMaxWidth, opacity: pillLabelOpacity, marginLeft: pillLabelMarginLeft }}>
-                  <Text style={[styles.headerPillText, { color: colors.textSecondary }]} numberOfLines={1}>
-                    Edit
-                  </Text>
-                </Animated.View>
-              </Pressable>
-            </Animated.View>
-            <Animated.View style={[styles.headerPill, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, minHeight: pillHeight }]}>
-              <Pressable onPress={handleShare} style={({ pressed }) => [styles.headerPillTouchable, pressed && { opacity: pressedOpacity }]}>
-                <Ionicons name="share-social-outline" size={14} color={colors.accent} />
-                <Animated.View style={{ overflow: "hidden", maxWidth: actionLabelMaxWidth, opacity: pillLabelOpacity, marginLeft: pillLabelMarginLeft }}>
-                  <Text style={[styles.headerPillText, { color: colors.textSecondary }]} numberOfLines={1}>
-                    Share
-                  </Text>
-                </Animated.View>
-              </Pressable>
-            </Animated.View>
-          </Animated.View>
-        </View>
-
-        <Animated.View style={[styles.segmentedControl, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, marginTop: segmentTopMargin }]}>
-          {([
-            { key: "lead", label: "Lead" },
-            { key: "admission", label: "Admission" },
-          ] as const).map((tab) => {
-            const active = activeTab === tab.key;
-            return (
-              <Animated.View key={tab.key} style={[styles.segmentButtonShell, { minHeight: segmentButtonHeight }]}>
-                <Pressable
-                  onPress={() => setActiveTab(tab.key)}
-                  style={({ pressed }) => [
-                    styles.segmentButton,
-                    active && { backgroundColor: colors.accent },
-                    pressed && { opacity: pressedOpacity },
-                  ]}
-                >
-                  <Text style={[styles.segmentButtonText, { color: active ? colors.accentOn : colors.textSecondary }]}>
-                    {tab.label}
-                  </Text>
-                </Pressable>
-              </Animated.View>
-            );
-          })}
-        </Animated.View>
+          <Text style={[styles.compactHeadName, { color: colors.textPrimary }]} numberOfLines={1}>
+            {enquiry.studentName || enquiry.contactName}
+          </Text>
+        </Pressable>
       </Animated.View>
 
       <Animated.ScrollView
+        ref={scrollRef}
         style={styles.container}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
-        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false })}
+        onScroll={handleScroll}
         scrollEventThrottle={16}
       >
+        {/* Hero card: now plain scrolling content, no more scroll-driven
+            resizing - onLayout measures its real height so the compact bar
+            above knows exactly when to fade in. */}
+        <View
+          style={[styles.head, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}
+          onLayout={(e) => setHeroHeight(e.nativeEvent.layout.height)}
+        >
+          <View style={styles.headRow}>
+            <View style={[styles.avatarWrap, { backgroundColor: colors.surfaceRaised, borderColor: colors.accent }]}>
+              <Image
+                source={avatarSource}
+                style={[styles.avatar, hasRealPhoto && styles.avatarPhoto]}
+                resizeMode={hasRealPhoto ? "cover" : "contain"}
+              />
+            </View>
+            <View style={styles.headIdBlock}>
+              <Text style={[styles.headName, { color: colors.textPrimary }]} numberOfLines={1}>
+                {enquiry.studentName || enquiry.contactName}
+              </Text>
+              {enquiry.studentName ? (
+                <Text style={[styles.headSub, { color: colors.textMuted }]} numberOfLines={1}>
+                  {enquiry.guardianRelation ? `${formatSource(enquiry.guardianRelation)} · ` : ""}
+                  {enquiry.contactName}
+                </Text>
+              ) : null}
+              <View style={styles.headMetaRow}>
+                <View style={[styles.statusPill, { backgroundColor: currentStatusColor.bg }]}>
+                  <Ionicons name="globe-outline" size={11} color={currentStatusColor.text} />
+                  <Text style={[styles.statusPillText, { color: currentStatusColor.text }]} numberOfLines={1}>
+                    {formatStageLabel(enquiry.status)}
+                  </Text>
+                </View>
+                {overdueTasksCount > 0 ? (
+                  <View style={[styles.headMetaChip, { backgroundColor: colors.accentSoft, borderColor: colors.accentSoftAlt }]}>
+                    <Ionicons name="alert-circle-outline" size={11} color={colors.accent} />
+                    <Text style={[styles.headMetaText, { color: colors.accent }]}>Overdue</Text>
+                  </View>
+                ) : null}
+                {duplicates.length > 0 ? (
+                  <View style={[styles.headMetaChip, { backgroundColor: colors.accentSoft, borderColor: colors.accentSoftAlt }]}>
+                    <Ionicons name="git-merge-outline" size={11} color={colors.accent} />
+                    <Text style={[styles.headMetaText, { color: colors.accent }]}>Duplicate</Text>
+                  </View>
+                ) : null}
+              </View>
+            </View>
+          </View>
+
+          <View style={[styles.headerActionRow, { marginTop: 10 }]}>
+            <View style={styles.headerActionGroup}>
+              <View style={[styles.headerPill, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+                <Pressable
+                  onPress={() => Linking.openURL(`tel:${enquiry.contactPhone.replace(/\s/g, "")}`)}
+                  style={({ pressed }) => [styles.headerPillTouchable, pressed && { opacity: pressedOpacity }]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Call ${enquiry.contactPhone}`}
+                >
+                  <Ionicons name="call-outline" size={14} color={colors.accent} />
+                </Pressable>
+              </View>
+              <View style={[styles.headerPill, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+                <Pressable
+                  onPress={() => navigation.navigate("EditEnquiry", { enquiryId })}
+                  style={({ pressed }) => [styles.headerPillTouchable, pressed && { opacity: pressedOpacity }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Edit enquiry"
+                >
+                  <Ionicons name="create-outline" size={14} color={colors.accent} />
+                </Pressable>
+              </View>
+              <View style={[styles.headerPill, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+                <Pressable
+                  onPress={handleShare}
+                  style={({ pressed }) => [styles.headerPillTouchable, pressed && { opacity: pressedOpacity }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Share enquiry"
+                >
+                  <Ionicons name="share-social-outline" size={14} color={colors.accent} />
+                </Pressable>
+              </View>
+            </View>
+
+            {/* Moved off the Lead tab body (Logged/Consent/Family/DOB) into
+                the hero card itself, behind a collapsible "More details"
+                toggle - this is contact/meta info about the lead, same
+                category as the phone/edit/share pills it now shares a line
+                with, not something that needs its own permanent section
+                further down the page. */}
+            <Pressable
+              onPress={() => {
+                LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                setMoreDetailsOpen((value) => !value);
+              }}
+              style={({ pressed }) => [styles.moreDetailsToggle, pressed && { opacity: pressedOpacity }]}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.moreDetailsToggleText, { color: colors.accent }]}>More details</Text>
+              <Ionicons name={moreDetailsOpen ? "chevron-up" : "chevron-down"} size={13} color={colors.accent} />
+            </Pressable>
+          </View>
+
+          {moreDetailsOpen ? (
+            <View style={[styles.factsRow, { marginTop: 8 }]}>
+              <View style={[styles.fact, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Ionicons name="calendar-outline" size={12} color={colors.accent} />
+                <Text style={[styles.factText, { color: colors.textSecondary }]}>
+                  Logged {new Date(enquiry.createdAt).toLocaleDateString("en-IN")}
+                </Text>
+              </View>
+              <View style={[styles.fact, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Ionicons name={enquiry.consentCaptured ? "shield-checkmark-outline" : "shield-outline"} size={12} color={colors.accent} />
+                <Text style={[styles.factText, { color: colors.textSecondary }]}>
+                  {enquiry.consentCaptured ? "Consent given" : "Consent pending"}
+                </Text>
+              </View>
+              <View style={[styles.fact, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Ionicons name="people-outline" size={12} color={colors.accent} />
+                <Text style={[styles.factText, { color: colors.textSecondary }]}>
+                  {enquiry.familyId ? "Linked to a family" : "Standalone lead"}
+                </Text>
+              </View>
+              <View style={[styles.fact, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Ionicons name="gift-outline" size={12} color={colors.accent} />
+                <Text style={[styles.factText, { color: colors.textSecondary }]}>
+                  {enquiry.studentDateOfBirth
+                    ? `DOB ${new Date(enquiry.studentDateOfBirth).toLocaleDateString("en-IN")}`
+                    : "DOB not on file"}
+                </Text>
+              </View>
+            </View>
+          ) : null}
+
+          <View style={[styles.segmentedControl, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, marginTop: 6 }]}>
+            {([
+              { key: "lead", label: "Lead" },
+              { key: "admission", label: "Admission" },
+            ] as const).map((tab) => {
+              const active = activeTab === tab.key;
+              return (
+                <View key={tab.key} style={styles.segmentButtonShell}>
+                  <Pressable
+                    onPress={() => setActiveTab(tab.key)}
+                    style={({ pressed }) => [
+                      styles.segmentButton,
+                      active && { backgroundColor: colors.accent },
+                      pressed && { opacity: pressedOpacity },
+                    ]}
+                  >
+                    <Text style={[styles.segmentButtonText, { color: active ? colors.accentOn : colors.textSecondary }]}>
+                      {tab.label}
+                    </Text>
+                  </Pressable>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Hero card renders edge-to-edge above (own internal padding only,
+            matching its old fixed-header look) - everything else keeps the
+            padded/gapped body layout the ScrollView used to provide via
+            contentContainerStyle before the hero card moved inside it. */}
+        <View style={styles.bodyContent}>
+
         {enquiry.erasedAt ? (
           <View style={[styles.bannerCard, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
             <View style={styles.bannerTitleRow}>
@@ -996,112 +1462,125 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
         {activeTab === "lead" ? (
           <>
             <View style={[styles.stageWorkspace, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
-              <View style={styles.stageWorkspaceTop}>
-                <View style={styles.stageWorkspaceCopy}>
-                  <View style={styles.stageKickerRow}>
-                    <Text style={[styles.stageKicker, { color: colors.accent }]}>Lead momentum</Text>
-                    <View style={[styles.statusPill, styles.stageStatusTag, { backgroundColor: currentStatusColor.bg }]}>
-                      <Ionicons name="globe-outline" size={10} color={currentStatusColor.text} />
-                      <Text style={[styles.statusPillText, { color: currentStatusColor.text }]} numberOfLines={1}>
-                        {currentStage?.label ?? formatStageLabel(enquiry.status)}
-                      </Text>
-                    </View>
-                  </View>
-                  <Text style={[styles.stageSubtitle, { color: colors.textMuted }]} numberOfLines={2}>
-                    Next best action: {nextActionLabel}
-                  </Text>
-                </View>
-                <View style={[styles.stageStepBadge, { backgroundColor: colors.accentSoft, borderColor: colors.accentSoftAlt }]}>
-                  <Text style={[styles.stageStepFraction, { color: colors.accent }]} numberOfLines={1}>
-                    {Math.max(currentStageIndex + 1, 1)}
-                    <Text style={[styles.stageStepFractionMuted, { color: colors.accent }]}>/{stages.length}</Text>
-                  </Text>
-                  <Text style={[styles.stageStepLabel, { color: colors.accent }]}>Stage</Text>
-                  <View style={[styles.stageStepTrack, { backgroundColor: colors.accentSoftAlt }]}>
+              <View style={styles.stageWorkspaceCopy}>
+                <Text style={[styles.stageKicker, { color: colors.accent }]}>Progress</Text>
+                <Text style={[styles.stageSubtitle, { color: colors.textMuted }]} numberOfLines={2}>
+                  {enquiry.status === "lost"
+                    ? "This lead was marked lost."
+                    : viewedStage
+                      ? `Step ${viewedStageIndex + 1} of ${journeyStages.length} — ${viewedStage.label}`
+                      : formatStageLabel(enquiry.status)}
+                </Text>
+              </View>
+
+              {/* Compact orientation, not the full roadmap - one dot per
+                  stage (filled = reached), the ring marks which one is on
+                  screen right now. The single card below only ever shows
+                  that one stage's content; Back/Next page between them. */}
+              {enquiry.status !== "lost" && journeyStages.length > 0 ? (
+                <View style={styles.progressDotsRow}>
+                  {journeyStages.map((stage, index) => (
                     <View
+                      key={stage.key}
                       style={[
-                        styles.stageStepFill,
+                        styles.progressDot,
+                        index === viewedStageIndex && styles.progressDotViewed,
                         {
-                          backgroundColor: colors.accent,
-                          width: `${stages.length > 0 ? (Math.max(currentStageIndex + 1, 1) / stages.length) * 100 : 0}%`,
+                          backgroundColor: index <= currentJourneyIndex ? colors.accent : colors.surfaceRaised,
+                          borderColor: index === viewedStageIndex ? colors.accent : index <= currentJourneyIndex ? colors.accent : colors.border,
                         },
                       ]}
                     />
+                  ))}
+                </View>
+              ) : null}
+
+              {enquiry.status !== "lost" && !isViewingLive ? (
+                <Text style={[styles.viewingHistoryNote, { color: colors.textMuted }]}>
+                  Reviewing a completed step - {journeyStages[currentJourneyIndex]?.label} is current.
+                </Text>
+              ) : null}
+
+              {!canEditStage ? (
+                <View style={[styles.stepCallout, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+                  <Ionicons name="lock-closed-outline" size={14} color={colors.textMuted} />
+                  <Text style={[styles.stepCalloutText, { color: colors.textMuted }]}>
+                    Only this lead&apos;s owner or an admissions admin can update its stage.
+                  </Text>
+                </View>
+              ) : null}
+
+              {enquiry.status === "lost" ? (
+                <View style={[styles.stepCallout, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, alignItems: "flex-start" }]}>
+                  <Ionicons name="close-circle-outline" size={18} color={colors.textMuted} />
+                  <View style={{ flex: 1, gap: 8 }}>
+                    <Text style={[styles.stepCalloutText, { color: colors.textPrimary }]}>{enquiry.lostReason || "No reason recorded."}</Text>
+                    {canEditStage ? (
+                      <Pressable
+                        onPress={reopenLead}
+                        style={({ pressed }) => [
+                          styles.smallButton,
+                          { backgroundColor: colors.accent, alignSelf: "flex-start" },
+                          pressed && { opacity: pressedOpacity },
+                        ]}
+                      >
+                        <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Reopen lead</Text>
+                      </Pressable>
+                    ) : null}
                   </View>
                 </View>
-              </View>
+              ) : viewedStage ? (
+                <>
+                  <View style={[styles.singleStageCard, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+                    <View style={styles.trackHeadRow}>
+                      <Text style={[styles.trackLabelCurrent, { color: colors.textPrimary }]}>{viewedStage.label}</Text>
+                      {isViewingLive ? (
+                        <View style={[styles.trackCurrentTag, { backgroundColor: colors.accentSoft }]}>
+                          <Text style={[styles.trackCurrentTagText, { color: colors.accent }]}>Current</Text>
+                        </View>
+                      ) : (
+                        <View style={[styles.trackCurrentTag, { backgroundColor: colors.surface }]}>
+                          <Ionicons name="checkmark" size={11} color={colors.accent} />
+                          <Text style={[styles.trackCurrentTagText, { color: colors.accent }]}>Completed</Text>
+                        </View>
+                      )}
+                    </View>
+                    <View style={styles.trackCurrentBody}>
+                      {isViewingLive ? renderCurrentStageActions(viewedStage) : renderPastStageEdit(viewedStage)}
+                    </View>
+                  </View>
 
-              <Animated.View
-                key={enquiry.status}
-                style={[styles.stepBody, { opacity: stageOpacity, transform: [{ translateX: stageTranslateX }] }]}
-              >
-                {renderStageBody()}
-              </Animated.View>
-
-              <View style={styles.stepFooter}>
-                {currentStage?.isTerminal ? (
-                  <Pressable
-                    onPress={reopenLead}
-                    disabled={isStageAnimating}
-                    style={({ pressed }) => [
-                      styles.stepNavBtn,
-                      styles.stepNavGhost,
-                      { borderColor: colors.border },
-                      (pressed || isStageAnimating) && { opacity: pressedOpacity },
-                    ]}
-                  >
-                    <Ionicons name="refresh-outline" size={15} color={colors.textPrimary} />
-                    <Text style={[styles.stepNavText, { color: colors.textPrimary }]}>Reopen lead</Text>
-                  </Pressable>
-                ) : (
-                  <>
-                    {currentStageIndex > 0 ? (
+                  <View style={styles.stepFooterNav}>
+                    {viewedStageIndex > 0 ? (
                       <Pressable
-                        onPress={() => goToAdjacentStage("back")}
-                        disabled={isStageAnimating}
-                        style={({ pressed }) => [
-                          styles.stepNavBtn,
-                          styles.stepNavGhost,
-                          { borderColor: colors.border },
-                          (pressed || isStageAnimating) && { opacity: pressedOpacity },
-                        ]}
+                        onPress={() => setViewedStageIndex((i) => Math.max(0, i - 1))}
+                        style={({ pressed }) => [styles.stepNavGhost, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
                       >
                         <Ionicons name="chevron-back" size={15} color={colors.textPrimary} />
-                        <Text style={[styles.stepNavText, { color: colors.textPrimary }]}>Back</Text>
-                      </Pressable>
-                    ) : null}
-                    <View style={{ flex: 1 }} />
-                    {!currentStage?.isConverted ? (
-                      <Pressable
-                        onPress={() => changeStatus("lost")}
-                        disabled={isStageAnimating}
-                        style={({ pressed }) => [styles.stepLost, pressed && { opacity: pressedOpacity }]}
-                      >
-                        <Text style={[styles.stepLostText, { color: colors.textMuted }]}>Mark lost</Text>
-                      </Pressable>
-                    ) : null}
-                    {nextStage && !nextStage.isTerminal ? (
-                      <Pressable
-                        onPress={() => goToAdjacentStage("next")}
-                        disabled={isStageAnimating}
-                        style={({ pressed }) => [
-                          styles.stepNavBtn,
-                          { backgroundColor: colors.accent },
-                          (pressed || isStageAnimating) && { opacity: pressedOpacity },
-                        ]}
-                      >
-                        <Text style={[styles.stepNavText, { color: colors.accentOn }]}>Next</Text>
-                        <Ionicons name="chevron-forward" size={15} color={colors.accentOn} />
+                        <Text style={[styles.stepNavGhostText, { color: colors.textPrimary }]}>Back</Text>
                       </Pressable>
                     ) : (
-                      <View style={[styles.stepDoneChip, { backgroundColor: colors.accentSoft }]}>
-                        <Ionicons name="checkmark" size={13} color={colors.accent} />
-                        <Text style={[styles.stepDoneChipText, { color: colors.accent }]}>Converted</Text>
-                      </View>
+                      <View />
                     )}
-                  </>
-                )}
-              </View>
+                    <View style={{ flex: 1 }} />
+                    {!isViewingLive ? (
+                      <Pressable
+                        onPress={() => setViewedStageIndex((i) => Math.min(currentJourneyIndex, i + 1))}
+                        style={({ pressed }) => [styles.stepNavPrimary, { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]}
+                      >
+                        <Text style={[styles.stepNavPrimaryText, { color: colors.accentOn }]}>Next</Text>
+                        <Ionicons name="chevron-forward" size={15} color={colors.accentOn} />
+                      </Pressable>
+                    ) : null}
+                  </View>
+
+                  {canEditStage && !journeyStages[currentJourneyIndex]?.isConverted ? (
+                    <Pressable onPress={() => changeStatus("lost")} style={({ pressed }) => [styles.markLostLink, pressed && { opacity: pressedOpacity }]}>
+                      <Text style={[styles.markLostLinkText, { color: colors.textMuted }]}>Mark this lead as lost</Text>
+                    </Pressable>
+                  ) : null}
+                </>
+              ) : null}
             </View>
 
             {showLostReasonFor ? (
@@ -1140,47 +1619,6 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
               </View>
             </View>
 
-            {/* Phone/email/grade/source already surface on the Enquiries list card and
-                (phone) in this screen's own header pill row - showing them again here was
-                pure repetition. This now surfaces things that appear nowhere else on
-                this screen: when the lead was logged, DPDP messaging consent, whether a
-                family link exists, and the child's date of birth if one's on file. */}
-            <View style={styles.section}>
-              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Details</Text>
-              <View style={styles.factsRow}>
-                <View style={[styles.fact, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <Ionicons name="calendar-outline" size={12} color={colors.accent} />
-                  <Text style={[styles.factText, { color: colors.textSecondary }]}>
-                    Logged {new Date(enquiry.createdAt).toLocaleDateString("en-IN")}
-                  </Text>
-                </View>
-                <View style={[styles.fact, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <Ionicons
-                    name={enquiry.consentCaptured ? "shield-checkmark-outline" : "shield-outline"}
-                    size={12}
-                    color={colors.accent}
-                  />
-                  <Text style={[styles.factText, { color: colors.textSecondary }]}>
-                    {enquiry.consentCaptured ? "Consent given" : "Consent pending"}
-                  </Text>
-                </View>
-                <View style={[styles.fact, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <Ionicons name="people-outline" size={12} color={colors.accent} />
-                  <Text style={[styles.factText, { color: colors.textSecondary }]}>
-                    {enquiry.familyId ? "Linked to a family" : "Standalone lead"}
-                  </Text>
-                </View>
-                <View style={[styles.fact, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <Ionicons name="gift-outline" size={12} color={colors.accent} />
-                  <Text style={[styles.factText, { color: colors.textSecondary }]}>
-                    {enquiry.studentDateOfBirth
-                      ? `DOB ${new Date(enquiry.studentDateOfBirth).toLocaleDateString("en-IN")}`
-                      : "DOB not on file"}
-                  </Text>
-                </View>
-              </View>
-            </View>
-
             {intakeFields.length > 0 ? (
               <View style={[styles.inlineForm, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
                 <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Complete intake details</Text>
@@ -1202,144 +1640,37 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
 
             <View style={styles.section}>
               <View style={styles.sectionHeaderRow}>
-                <View style={[styles.subtoggle, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
-                  <Pressable
-                    onPress={() => setLeadSubTab("timeline")}
-                    style={({ pressed }) => [
-                      styles.subtoggleButton,
-                      leadSubTab === "timeline" && { backgroundColor: colors.surface },
-                      pressed && { opacity: pressedOpacity },
-                    ]}
-                  >
-                    <Text style={[styles.subtoggleText, { color: leadSubTab === "timeline" ? colors.textPrimary : colors.textMuted }]}>Timeline</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => setLeadSubTab("tasks")}
-                    style={({ pressed }) => [
-                      styles.subtoggleButton,
-                      leadSubTab === "tasks" && { backgroundColor: colors.surface },
-                      pressed && { opacity: pressedOpacity },
-                    ]}
-                  >
-                    <Text style={[styles.subtoggleText, { color: leadSubTab === "tasks" ? colors.textPrimary : colors.textMuted }]}>
-                      Tasks{tasks.length > 0 ? ` · ${tasks.length}` : ""}
-                    </Text>
-                  </Pressable>
-                </View>
-                {leadSubTab === "tasks" ? (
-                  <Pressable
-                    onPress={() => setShowAddTask((value) => !value)}
-                    style={({ pressed }) => [
-                      styles.sectionLinkOutline,
-                      { borderColor: colors.accent },
-                      pressed && { opacity: pressedOpacity },
-                    ]}
-                  >
-                    <Text style={[styles.sectionLink, { color: colors.accent }]}>{showAddTask ? "Close" : "+ Add"}</Text>
-                  </Pressable>
-                ) : null}
+                <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+                  Follow-up tasks{tasks.length > 0 ? ` · ${tasks.length}` : ""}
+                </Text>
+                <Pressable
+                  onPress={openTaskModal}
+                  style={({ pressed }) => [
+                    styles.sectionLinkOutline,
+                    { borderColor: colors.accent },
+                    pressed && { opacity: pressedOpacity },
+                  ]}
+                >
+                  <Text style={[styles.sectionLink, { color: colors.accent }]}>+ Add</Text>
+                </Pressable>
               </View>
 
-              {leadSubTab === "timeline" ? (
-                enquiry.activity.length === 0 ? (
-                  <Text style={[styles.emptyHint, { color: colors.textMuted }]}>No activity yet.</Text>
-                ) : (
-                  <View style={styles.timelineList}>
-                    {enquiry.activity.map((item, index) => (
-                      <TimelineCard
-                        key={item.id}
-                        item={item}
-                        index={index}
-                        isLast={index === enquiry.activity.length - 1}
-                        colors={colors}
-                        cardShadow={cardShadow}
-                      />
-                    ))}
-                  </View>
-                )
+              {tasks.length === 0 ? (
+                <Text style={[styles.emptyHint, { color: colors.textMuted }]}>No follow-up tasks scheduled yet.</Text>
               ) : (
-                <>
-                  {showAddTask ? (
-                    <View style={[styles.inlineForm, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
-                      <View style={styles.filterPillRow}>
-                        {(["sms", "email"] as MessageChannel[]).map((channel) => {
-                          const active = taskChannel === channel;
-                          return (
-                            <Pressable
-                              key={channel}
-                              onPress={() => {
-                                setTaskChannel(channel);
-                                const first = templates.find((template) => template.channel === channel);
-                                setTaskTemplateId(first ? first.id : null);
-                              }}
-                              style={({ pressed }) => [
-                                styles.filterPill,
-                                { backgroundColor: active ? colors.accent : colors.surface, borderColor: active ? colors.accent : colors.border },
-                                pressed && { opacity: pressedOpacity },
-                              ]}
-                            >
-                              <Text style={[styles.filterPillText, { color: active ? colors.accentOn : colors.textSecondary }]}>{channel}</Text>
-                            </Pressable>
-                          );
-                        })}
-                      </View>
-
-                      {channelTemplates.length === 0 ? (
-                        <Text style={[styles.emptyHint, { color: colors.textMuted }]}>No {taskChannel} templates available.</Text>
-                      ) : (
-                        <View style={styles.filterPillRow}>
-                          {channelTemplates.map((template) => {
-                            const active = taskTemplateId === template.id;
-                            return (
-                              <Pressable
-                                key={template.id}
-                                onPress={() => setTaskTemplateId(template.id)}
-                                style={({ pressed }) => [
-                                  styles.filterPill,
-                                  { backgroundColor: active ? colors.accent : colors.surface, borderColor: active ? colors.accent : colors.border },
-                                  pressed && { opacity: pressedOpacity },
-                                ]}
-                              >
-                                <Text style={[styles.filterPillText, { color: active ? colors.accentOn : colors.textSecondary }]}>{template.name}</Text>
-                              </Pressable>
-                            );
-                          })}
-                        </View>
-                      )}
-
-                      <Text style={[styles.formLabel, { color: colors.textSecondary }]}>Due date</Text>
-                      <DatePicker value={taskDueAt} onChange={setTaskDueAt} placeholder="Select due date" minimumDate={new Date()} />
-
-                      <Pressable
-                        onPress={addFollowUpTask}
-                        style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent, alignSelf: "flex-start" }, pressed && { opacity: pressedOpacity }]}
-                      >
-                        <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Create task</Text>
-                      </Pressable>
-                    </View>
-                  ) : null}
-
-                  {tasks.length === 0 ? (
-                    <Text style={[styles.emptyHint, { color: colors.textMuted }]}>No follow-up tasks scheduled yet.</Text>
-                  ) : (
-                    <>
-                    <View style={styles.taskList}>
-                      {tasks.map((task, index) => (
-                        <TaskQueueCard
-                          key={task.id}
-                          task={task}
-                          index={index}
-                          onSend={() => sendTask(task.id)}
-                          colors={colors}
-                          cardShadow={cardShadow}
-                          pressedOpacity={pressedOpacity}
-                        />
-                      ))}
-                    </View>
-                    {}
-                    </>
-                  )}
-                </>
+                <View style={styles.taskList}>
+                  {tasks.map((task, index) => (
+                    <TaskQueueCard
+                      key={task.id}
+                      task={task}
+                      index={index}
+                      onSend={() => sendTask(task.id)}
+                      colors={colors}
+                      cardShadow={cardShadow}
+                      pressedOpacity={pressedOpacity}
+                    />
+                  ))}
+                </View>
               )}
             </View>
           </>
@@ -1516,50 +1847,260 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
         )}
 
         {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
+        </View>
       </Animated.ScrollView>
+      </KeyboardAvoidingView>
 
       <ConfirmModal
-        visible={pendingStageChange !== null}
-        title="Change lead stage"
-        message={
-          pendingStageChange
-            ? `This changes the lead from "${formatStageLabel(enquiry.status)}" to "${formatStageLabel(
-                pendingStageChange
-              )}". Continue?`
-            : ""
-        }
-        confirmLabel="Change stage"
+        visible={pendingConfirm !== null}
+        title={pendingConfirm?.title ?? ""}
+        message={pendingConfirm?.message ?? ""}
+        confirmLabel="Continue"
         onConfirm={() => {
-          if (pendingStageChange) applyStatusChange(pendingStageChange);
-          setPendingStageChange(null);
+          pendingConfirm?.onConfirm();
+          setPendingConfirm(null);
         }}
-        onCancel={() => setPendingStageChange(null)}
+        onCancel={() => setPendingConfirm(null)}
       />
+
+      {/* Flush against the left edge on purpose (sharp left corners, fully
+          rounded right) - reads as a tab sticking out of the screen edge
+          rather than a floating pill, so it doesn't compete with the AI
+          assist button convention (bottom-right) used elsewhere in the app. */}
+      <Pressable
+        onPress={openTimelineModal}
+        style={({ pressed }) => [styles.timelineFab, { backgroundColor: colors.accent }, cardShadow, pressed && { opacity: pressedOpacity }]}
+        accessibilityRole="button"
+        accessibilityLabel="View timeline"
+      >
+        <Ionicons name="time-outline" size={22} color="#FFFFFF" />
+      </Pressable>
+
+      {/* animationType="none": the Modal's own slide/fade transitions move
+          everything inside it (mask included) as one block, which is what
+          made the backdrop look like it was sliding in with the sheet.
+          Animating the backdrop's opacity and the sheet's translateY
+          separately keeps the mask stationary while only the sheet moves. */}
+      <Modal transparent animationType="none" visible={showTimelineModal} onRequestClose={closeTimelineModal}>
+        <View style={styles.modalRoot}>
+          <Animated.View style={[styles.modalBackdrop, { opacity: timelineBackdropOpacity }]}>
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={closeTimelineModal}
+              accessibilityRole="button"
+              accessibilityLabel="Close timeline"
+            />
+          </Animated.View>
+          <Animated.View
+            style={[styles.modalSheet, { backgroundColor: colors.surface, transform: [{ translateY: timelineSheetTranslateY }] }]}
+          >
+            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Timeline</Text>
+                <Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>Everything that&apos;s happened on this lead.</Text>
+              </View>
+              <Pressable
+                style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]}
+                onPress={closeTimelineModal}
+                accessibilityRole="button"
+              >
+                <Ionicons name="close" size={20} color={colors.textPrimary} />
+              </Pressable>
+            </View>
+            <ScrollView style={styles.timelineModalScroll} showsVerticalScrollIndicator={false}>
+              {enquiry.activity.length === 0 ? (
+                <Text style={[styles.emptyHint, { color: colors.textMuted }]}>No activity yet.</Text>
+              ) : (
+                <View style={styles.timelineList}>
+                  {enquiry.activity.map((item, index) => (
+                    <TimelineCard
+                      key={item.id}
+                      item={item}
+                      index={index}
+                      isLast={index === enquiry.activity.length - 1}
+                      colors={colors}
+                      cardShadow={cardShadow}
+                    />
+                  ))}
+                </View>
+              )}
+            </ScrollView>
+          </Animated.View>
+        </View>
+      </Modal>
+
+      <Modal transparent animationType="none" visible={showAddTask} onRequestClose={closeTaskModal}>
+        <View style={styles.modalRoot}>
+          <Animated.View style={[styles.modalBackdrop, { opacity: taskModalBackdropOpacity }]}>
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={closeTaskModal}
+              accessibilityRole="button"
+              accessibilityLabel="Close schedule follow-up"
+            />
+          </Animated.View>
+          <Animated.View
+            style={[styles.modalSheet, { backgroundColor: colors.surface, transform: [{ translateY: taskModalSheetTranslateY }] }]}
+          >
+            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Schedule a follow-up</Text>
+                <Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>
+                  Logs a reminder to contact the family - pick how, using which message, and by when. It sends automatically
+                  on that date, or you can send it early from the task list.
+                </Text>
+              </View>
+              <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={closeTaskModal} accessibilityRole="button">
+                <Ionicons name="close" size={20} color={colors.textPrimary} />
+              </Pressable>
+            </View>
+
+            <ScrollView style={styles.taskModalScroll} showsVerticalScrollIndicator={false}>
+              <Text style={[styles.formLabel, { color: colors.textSecondary, marginBottom: 6 }]}>Send as</Text>
+              <View style={styles.filterPillRow}>
+                {(["sms", "email"] as MessageChannel[]).map((channel) => {
+                  const active = taskChannel === channel;
+                  return (
+                    <Pressable
+                      key={channel}
+                      onPress={() => {
+                        setTaskChannel(channel);
+                        const first = templates.find((template) => template.channel === channel);
+                        setTaskTemplateId(first ? first.id : null);
+                      }}
+                      style={({ pressed }) => [
+                        styles.filterPill,
+                        { backgroundColor: active ? colors.accent : colors.surface, borderColor: active ? colors.accent : colors.border },
+                        pressed && { opacity: pressedOpacity },
+                      ]}
+                    >
+                      <Text style={[styles.filterPillText, { color: active ? colors.accentOn : colors.textSecondary }]}>
+                        {channel === "sms" ? "Text message (SMS)" : "Email"}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              <Text style={[styles.formLabel, { color: colors.textSecondary, marginTop: 14, marginBottom: 6 }]}>Message template</Text>
+              {channelTemplates.length === 0 ? (
+                <View style={[styles.stepCallout, { backgroundColor: colors.accentSoft, borderColor: colors.accentSoftAlt }]}>
+                  <Ionicons name="alert-circle-outline" size={15} color={colors.accent} />
+                  <Text style={[styles.stepCalloutText, { color: colors.accent }]}>
+                    No {taskChannel === "sms" ? "text message" : "email"} templates exist yet for this school. Ask your admin
+                    to add one under Message Templates before you can schedule this way.
+                  </Text>
+                </View>
+              ) : (
+                <>
+                  <View style={styles.filterPillRow}>
+                    {channelTemplates.map((template) => {
+                      const active = taskTemplateId === template.id;
+                      return (
+                        <Pressable
+                          key={template.id}
+                          onPress={() => setTaskTemplateId(template.id)}
+                          style={({ pressed }) => [
+                            styles.filterPill,
+                            { backgroundColor: active ? colors.accent : colors.surface, borderColor: active ? colors.accent : colors.border },
+                            pressed && { opacity: pressedOpacity },
+                          ]}
+                        >
+                          <Text style={[styles.filterPillText, { color: active ? colors.accentOn : colors.textSecondary }]}>{template.name}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                  {taskTemplateId ? (
+                    <View style={[styles.templatePreview, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+                      <Text style={[styles.templatePreviewLabel, { color: colors.textMuted }]}>
+                        What the family will {taskChannel === "sms" ? "read in the text" : "read in the email"}:
+                      </Text>
+                      <Text style={[styles.templatePreviewText, { color: colors.textSecondary }]} numberOfLines={3}>
+                        {templates.find((t) => t.id === taskTemplateId)?.body}
+                      </Text>
+                    </View>
+                  ) : null}
+                </>
+              )}
+
+              <Text style={[styles.formLabel, { color: colors.textSecondary, marginTop: 14, marginBottom: 6 }]}>Send on</Text>
+              <DatePicker value={taskDueAt} onChange={setTaskDueAt} placeholder="Select a date" minimumDate={new Date()} />
+
+              <Pressable
+                onPress={addFollowUpTask}
+                disabled={!taskTemplateId || !taskDueAt || isCreatingTask}
+                style={({ pressed }) => [
+                  styles.smallButton,
+                  styles.taskModalSubmit,
+                  { backgroundColor: colors.accent },
+                  (pressed || !taskTemplateId || !taskDueAt || isCreatingTask) && { opacity: pressedOpacity },
+                ]}
+              >
+                <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>{isCreatingTask ? "Scheduling…" : "Create task"}</Text>
+              </Pressable>
+              {!taskTemplateId || !taskDueAt ? (
+                <Text style={[styles.taskFormRequirement, { color: colors.textMuted }]}>
+                  {!taskTemplateId ? "Pick a message template" : "Pick a date"} to schedule this.
+                </Text>
+              ) : null}
+            </ScrollView>
+          </Animated.View>
+        </View>
+      </Modal>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
+  keyboardAvoidingView: { flex: 1 },
   container: { flex: 1 },
-  content: { padding: 16, paddingTop: 16, paddingBottom: 110, gap: 20 },
+  content: { paddingBottom: 110 },
+  bodyContent: { paddingHorizontal: 16, paddingTop: 16, gap: 20 },
   centered: { justifyContent: "center", alignItems: "center" },
 
-  // No `gap` here (would space every child pair equally, headRow ->
-  // headerActionRow -> segmentedControl) - the two gaps need to shrink
-  // differently on scroll, so each is its own explicit marginTop instead:
-  // headerActionRow's is static, segmentedControl's is animated
-  // (segmentTopMargin).
+  // Compact header bar: fixed at the top, fades in once the hero card below
+  // has scrolled past (see compactHeaderOpacity/showCompactHeader). Tapping
+  // it scrolls back to top - compactHeadTouchable carries the row layout so
+  // the whole bar is one tap target, not just the avatar/name themselves.
+  compactHead: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+  },
+  compactHeadTouchable: { flexDirection: "row", alignItems: "center", gap: 10 },
+  compactAvatarWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    flexShrink: 0,
+  },
+  compactAvatar: { width: 22, height: 22 },
+  compactAvatarPhoto: { width: "100%", height: "100%", borderRadius: 12 },
+  compactHeadName: { fontSize: 15.5, fontWeight: "900", letterSpacing: -0.2, flexShrink: 1 },
+
   head: {
     borderBottomWidth: 1,
-    paddingTop: 10,
-    paddingBottom: 10,
+    paddingTop: 12,
+    paddingBottom: 12,
     paddingHorizontal: 16,
   },
   headRow: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
   avatarWrap: {
-    width: 54,
-    height: 54,
-    borderRadius: 18,
+    width: 64,
+    height: 64,
+    borderRadius: 20,
     borderWidth: 1.5,
     alignItems: "center",
     justifyContent: "center",
@@ -1569,9 +2110,9 @@ const styles = StyleSheet.create({
   avatar: { width: 40, height: 40 },
   avatarPhoto: { width: "100%", height: "100%", borderRadius: 18 },
   headIdBlock: { flex: 1, minWidth: 0 },
-  headName: { fontSize: 18, fontWeight: "900", letterSpacing: -0.35 },
+  headName: { fontSize: 19, fontWeight: "900", letterSpacing: -0.35 },
   headSub: { fontSize: 12, fontWeight: "600", marginTop: 2 },
-  headMetaRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  headMetaRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
   headMetaChip: {
     maxWidth: 140,
     minHeight: 25,
@@ -1583,16 +2124,8 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   headMetaText: { fontSize: 10.5, fontWeight: "800" },
-  // Absolutely positioned (see the flow spacer that replaces its old reserved
-  // height, and the pillsTranslateY animation that slides it up to the
-  // header's top-right corner on scroll) - `top` here is its resting
-  // (expanded, collapse:0) position, overridden inline to match HEAD_ROW_HEIGHT.
-  // left/right explicitly repeat `head`'s own paddingHorizontal (16) - an
-  // absolutely positioned child here is relative to head's border box, not
-  // its padding box, so left/right:0 would otherwise sit flush against the
-  // screen edges instead of lining up with the rest of the header's content.
-  headerActionRow: { position: "absolute", left: 16, right: 16, flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
-  headerActionGroup: { flexDirection: "row", alignItems: "center", gap: 8 },
+  headerActionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "nowrap" },
+  headerActionGroup: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1 },
   statusPill: {
     flexShrink: 0,
     flexDirection: "row",
@@ -1604,19 +2137,22 @@ const styles = StyleSheet.create({
   },
   statusPillText: { fontSize: 10, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.3 },
   headerPill: {
-    minHeight: 34,
+    minHeight: 28,
     borderRadius: 999,
     borderWidth: 1,
-    paddingHorizontal: 12,
+    paddingHorizontal: 9,
     flexDirection: "row",
     alignItems: "center",
     flexShrink: 1,
   },
-  headerPillText: { fontSize: 11.5, fontWeight: "800" },
+  headerPillText: { fontSize: 10.5, fontWeight: "800", flexShrink: 1 },
   // Fills the headerPill shell (Edit/Share only) - the shell itself carries
   // the box styling (border/radius/bg/padding/minHeight), this is just the
   // row layout for the icon + collapsing text inside it.
-  headerPillTouchable: { flexDirection: "row", alignItems: "center" },
+  headerPillTouchable: { flexDirection: "row", alignItems: "center", flexShrink: 1 },
+
+  moreDetailsToggle: { flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 0, paddingVertical: 2 },
+  moreDetailsToggleText: { fontSize: 12, fontWeight: "800" },
 
   segmentedControl: {
     borderWidth: 1,
@@ -1625,11 +2161,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 4,
   },
-  // Shell carries the animated minHeight (segmentButtonHeight); segmentButton
-  // (the actual Pressable) fills it via flex:1 - same shell/inner split as
-  // headerPill, so the tab's background/radius still resize correctly rather
-  // than the Pressable silently ignoring an animated style.
-  segmentButtonShell: { flex: 1 },
+  segmentButtonShell: { flex: 1, minHeight: 38 },
   segmentButton: {
     flex: 1,
     borderRadius: 9,
@@ -1648,58 +2180,80 @@ const styles = StyleSheet.create({
   duplicateMeta: { marginTop: 3, fontSize: 12, fontWeight: "500" },
 
   stageWorkspace: { borderWidth: 1, borderRadius: 22, padding: 15, gap: 14 },
-  stageWorkspaceTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
-  stageWorkspaceCopy: { flex: 1, minWidth: 0 },
-  stageKickerRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 },
+  stageWorkspaceCopy: { minWidth: 0 },
   stageKicker: { fontSize: 10.5, fontWeight: "900", letterSpacing: 0.8, textTransform: "uppercase" },
-  stageStatusTag: { maxWidth: 150 },
   stageSubtitle: { marginTop: 6, fontSize: 12.5, lineHeight: 18, fontWeight: "600" },
-  stageStepBadge: {
-    width: 72,
-    height: 72,
-    borderRadius: 20,
-    borderWidth: 1,
+
+  // Admission journey tracker: one stage's content on screen at a time
+  // (singleStageCard), with a compact dot row above for orientation instead
+  // of the full roadmap - each dot is a stage, filled once reached, ringed
+  // if it's the one currently on screen.
+  progressDotsRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 10 },
+  progressDot: { width: 8, height: 8, borderRadius: 4, borderWidth: 1.5 },
+  progressDotViewed: { width: 11, height: 11, borderRadius: 5.5 },
+  viewingHistoryNote: { marginTop: 6, fontSize: 11.5, lineHeight: 16, fontWeight: "600", fontStyle: "italic" },
+
+  singleStageCard: { borderWidth: 1, borderRadius: 16, padding: 14 },
+  trackHeadRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, minHeight: 26 },
+  trackLabelCurrent: { fontSize: 14, fontWeight: "900" },
+  trackCurrentTag: { flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
+  trackCurrentTagText: { fontSize: 9.5, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.4 },
+  trackCurrentBody: { marginTop: 8, gap: 10 },
+
+  stepFooterNav: { flexDirection: "row", alignItems: "center" },
+  stepNavGhost: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    paddingTop: 10,
-    paddingBottom: 9,
-    gap: 3,
-    flexShrink: 0,
+    gap: 4,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
   },
-  stageStepFraction: { fontSize: 19, fontWeight: "900", lineHeight: 21 },
-  stageStepFractionMuted: { fontSize: 12, fontWeight: "700" },
-  stageStepLabel: { fontSize: 9.5, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.4 },
-  stageStepTrack: { width: 44, height: 4, borderRadius: 2, overflow: "hidden", marginTop: 2 },
-  stageStepFill: { height: "100%", borderRadius: 2 },
-  // Lead momentum stepper - one stage section at a time (replaces the old
-  // horizontal stage-chip strip). stepBody is the sliding section wrapper.
-  stepBody: { gap: 10 },
+  stepNavGhostText: { fontSize: 12.5, fontWeight: "800" },
+  stepNavPrimary: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  stepNavPrimaryText: { fontSize: 12.5, fontWeight: "800" },
+
+  markLostLink: { alignSelf: "center", paddingVertical: 6, paddingHorizontal: 10 },
+  markLostLinkText: { fontSize: 12, fontWeight: "700", textDecorationLine: "underline" },
+
   stepText: { fontSize: 12.5, lineHeight: 18, fontWeight: "600" },
+  stepMeta: { fontSize: 11.5, fontWeight: "700" },
   stepCallout: { flexDirection: "row", alignItems: "flex-start", gap: 8, borderWidth: 1, borderRadius: 12, padding: 11 },
   stepCalloutText: { flex: 1, fontSize: 12, lineHeight: 17, fontWeight: "700" },
   stepNoteInput: { minHeight: 64, borderWidth: 1, borderRadius: 12, padding: 11, fontSize: 13.5, textAlignVertical: "top" },
-  stepFooter: { flexDirection: "row", alignItems: "center", gap: 10 },
-  stepNavBtn: {
-    minHeight: 40,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 5,
-  },
-  stepNavGhost: { borderWidth: 1 },
-  stepNavText: { fontSize: 12.5, fontWeight: "800" },
-  stepLost: { paddingHorizontal: 8, paddingVertical: 8 },
-  stepLostText: { fontSize: 11.5, fontWeight: "800", textDecorationLine: "underline" },
-  stepDoneChip: { flexDirection: "row", alignItems: "center", gap: 5, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
-  stepDoneChipText: { fontSize: 11.5, fontWeight: "800" },
+  stepActionsRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 14 },
+  inlineLinkText: { fontSize: 12, fontWeight: "800", textDecorationLine: "underline" },
+
+  // Optional interview/assessment record, offered inside Visit Done.
+  interviewBlock: { gap: 8 },
+  interviewList: { gap: 6 },
+  interviewRow: { borderWidth: 1, borderRadius: 10, padding: 8, gap: 2 },
+  interviewRowTitle: { fontSize: 11.5, fontWeight: "800" },
+  interviewRowNotes: { fontSize: 11.5, lineHeight: 16, fontWeight: "600" },
 
   inlineForm: { borderWidth: 1, borderRadius: 16, padding: 14, gap: 10 },
   formLabel: { fontSize: 12, fontWeight: "700" },
   formInput: { borderWidth: 1, borderRadius: 10, minHeight: 42, paddingHorizontal: 12, fontSize: 14 },
   smallButton: { minHeight: 34, borderRadius: 9, paddingHorizontal: 12, alignItems: "center", justifyContent: "center" },
   smallButtonText: { fontSize: 11.5, fontWeight: "800" },
+
+  // Create Task popup: explains what it does and previews the actual
+  // message, since "SMS/Email pills + a date, no other context" left a new
+  // counsellor with no idea what pressing Create would actually do.
+  taskModalScroll: { maxHeight: 420, marginTop: 6 },
+  taskModalSubmit: { alignSelf: "flex-start", marginTop: 14 },
+  templatePreview: { borderWidth: 1, borderRadius: 10, padding: 10, gap: 4, marginTop: 8 },
+  templatePreviewLabel: { fontSize: 10.5, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.3 },
+  templatePreviewText: { fontSize: 12.5, lineHeight: 18, fontWeight: "500", fontStyle: "italic" },
+  taskFormRequirement: { fontSize: 11.5, fontWeight: "600", marginTop: 6 },
 
   bento: { flexDirection: "row", gap: 10 },
   tile: { flex: 1, borderWidth: 1, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 10, gap: 2 },
@@ -1735,10 +2289,6 @@ const styles = StyleSheet.create({
   factsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   fact: { flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7 },
   factText: { fontSize: 12, fontWeight: "700" },
-
-  subtoggle: { flexDirection: "row", gap: 2, borderWidth: 1, borderRadius: 10, padding: 3 },
-  subtoggleButton: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 7 },
-  subtoggleText: { fontSize: 11.5, fontWeight: "800" },
 
   filterPillRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   filterPill: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
@@ -1828,4 +2378,38 @@ const styles = StyleSheet.create({
   noteBody: { fontSize: 12.5, lineHeight: 19 },
 
   error: { marginTop: 4, textAlign: "center", fontSize: 13, fontWeight: "600" },
+
+  // Flush against the screen's left edge - sharp on that side, a full pill
+  // on the other three corners - so it reads as a tab rather than a FAB.
+  timelineFab: {
+    position: "absolute",
+    left: 0,
+    bottom: 90,
+    height: 42,
+    minWidth: 42,
+    paddingLeft: 12,
+    paddingRight: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    borderTopLeftRadius: 0,
+    borderBottomLeftRadius: 0,
+    borderTopRightRadius: 21,
+    borderBottomRightRadius: 21,
+  },
+
+  // Timeline popup - same bottom-sheet shape as the modals in TopicDetailScreen.tsx.
+  modalRoot: { flex: 1, justifyContent: "flex-end" },
+  modalBackdrop: { ...StyleSheet.absoluteFill, backgroundColor: "rgba(22, 15, 20, 0.5)" },
+  modalSheet: { borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 24, paddingBottom: 12 },
+  modalHandle: { width: 42, height: 4, borderRadius: 2, alignSelf: "center", marginTop: 10, marginBottom: 16 },
+  modalHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between" },
+  modalTitle: { fontSize: 24, lineHeight: 30, fontWeight: "800", letterSpacing: -0.5 },
+  modalSubtitle: { marginTop: 3, maxWidth: 270, fontSize: 13, lineHeight: 19, fontWeight: "500" },
+  closeButton: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
+  // Fixed px, not a percentage: modalSheet has no explicit height of its own
+  // (it hugs its content, anchored to the bottom by modalRoot), so a
+  // percentage maxHeight here had nothing definite to resolve against and
+  // fell back to the full screen height - reserving that much scroll space
+  // even for a two-item timeline, which read as dead space below the list.
+  timelineModalScroll: { maxHeight: 420, marginTop: 10 },
 });

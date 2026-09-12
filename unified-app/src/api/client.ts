@@ -351,6 +351,28 @@ export interface EnquiryStageHistoryEntry {
   changedAt: string;
 }
 
+// Interview/assessment conducted during a school visit - schema/backend
+// already model this (InterviewRecord, admissions-workflow.ts) but nothing
+// in the app surfaced it until the admission-journey tracker's Visit Done
+// step started using it.
+export interface InterviewRecord {
+  id: string;
+  enquiryId: string;
+  interviewDate: string;
+  score: number | null;
+  maxScore: number | null;
+  notes: string;
+  createdAt: string;
+  conductedBy?: { fullName: string };
+}
+
+export interface CreateInterviewInput {
+  interviewDate: string;
+  score?: number;
+  maxScore?: number;
+  notes: string;
+}
+
 export type EnquiryNoteType = "lead_note" | "admission_note" | "system_note";
 
 export interface EnquiryNote {
@@ -1069,6 +1091,10 @@ export const api = {
   deleteEnquiry: (token: string, id: string) => request<{ id: string }>(`/enquiries/${id}`, { method: "DELETE" }, token),
   addEnquiryNote: (token: string, id: string, body: string, type: EnquiryNoteType = "lead_note") =>
     request<EnquiryNote>(`/enquiries/${id}/notes`, { method: "POST", body: JSON.stringify({ body, type }) }, token),
+  listInterviews: (token: string, enquiryId: string) =>
+    request<InterviewRecord[]>(`/enquiries/${enquiryId}/interviews`, {}, token),
+  createInterview: (token: string, enquiryId: string, input: CreateInterviewInput) =>
+    request<InterviewRecord>(`/enquiries/${enquiryId}/interviews`, { method: "POST", body: JSON.stringify(input) }, token),
   confirmAdmission: (
     token: string,
     id: string,

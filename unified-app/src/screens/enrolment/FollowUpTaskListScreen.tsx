@@ -15,6 +15,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
+import { TypewriterText } from "../../components/TypewriterText";
 import { api, FollowUpTask } from "../../api/client";
 import { decorativeAssets } from "../../theme/decorativeAssets";
 import { useTabBarScrollHandler } from "../../navigation/TabBarScrollContext";
@@ -253,7 +254,7 @@ export function FollowUpTaskListScreen() {
       >
         <View style={styles.header}>
           <View style={styles.headerText}>
-            <Text style={[styles.pageTitle, { color: colors.textPrimary }]}>Task</Text>
+            <TypewriterText text="Task" style={[styles.pageTitle, { color: colors.textPrimary }]} cursorColor={colors.primaryBrand} />
             <Text style={[styles.pageSubtitle, { color: colors.textMuted }]}>Stay on top of every follow-up</Text>
           </View>
           <Pressable

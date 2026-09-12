@@ -1,7 +1,7 @@
 import { createElement, useState } from "react";
 import { Platform, Pressable, Text, View, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import { useTheme } from "../theme/ThemeContext";
 
 interface DatePickerProps {
@@ -70,12 +70,16 @@ export function DatePicker({ value, onChange, placeholder = "Select a date", min
           mode="date"
           display="default"
           minimumDate={minimumDate}
-          onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
+          // onChange is deprecated (fires a console warning as of
+          // @react-native-community/datetimepicker 9.x) in favour of these
+          // two - onValueChange only fires once the user actually confirms a
+          // date, onDismiss on cancel, so this is a straight split of the old
+          // `event.type === "set"` check rather than a behaviour change.
+          onValueChange={(_event, selectedDate) => {
             setShowPicker(false);
-            if (event.type === "set" && selectedDate) {
-              onChange(formatISODate(selectedDate));
-            }
+            onChange(formatISODate(selectedDate));
           }}
+          onDismiss={() => setShowPicker(false)}
         />
       )}
     </View>
