@@ -12,3 +12,5 @@ coverage/
 backend/var/
 /Docs/
 /UI/
+
+.worktrees/
