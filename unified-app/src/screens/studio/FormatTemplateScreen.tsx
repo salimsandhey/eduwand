@@ -48,13 +48,13 @@ export function FormatTemplateScreen({ navigation }: Props) {
     setIsLoading(true);
     try {
       const [templates, branding] = await Promise.all([
-        api.getFormatTemplates(accessToken, user.schoolId),
-        api.getSchoolBranding(accessToken, user.schoolId),
+        api.getFormatTemplates(accessToken, user.schoolId).catch(() => null),
+        api.getSchoolBranding(accessToken, user.schoolId).catch(() => null),
       ]);
-      setTemplateBody(templates.generation?.templateBody ?? "");
-      setLogoUrl(branding.logoUrl);
-      setPrimaryColor(branding.primaryColor);
-      setSecondaryColor(branding.secondaryColor);
+      setTemplateBody(templates?.generation?.templateBody ?? "");
+      setLogoUrl(branding?.logoUrl ?? null);
+      setPrimaryColor(branding?.primaryColor ?? null);
+      setSecondaryColor(branding?.secondaryColor ?? null);
     } finally {
       setIsLoading(false);
     }

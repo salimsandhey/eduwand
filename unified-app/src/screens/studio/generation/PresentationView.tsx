@@ -114,8 +114,8 @@ export function PresentationView({ content, editable, onChange }: Props) {
           );
           return slide.imageUrl ? (
             <Pressable key={i} style={({ pressed }) => [styles.tile, pressed && { opacity: 0.85 }]} onPress={() => setPresentingIndex(i)} accessibilityRole="button" accessibilityLabel={`Open slide ${i + 1}`}>
-              <ImageBackground source={{ uri: slide.imageUrl }} style={StyleSheet.absoluteFillObject} imageStyle={styles.tileImageRadius}>
-                <View style={[StyleSheet.absoluteFillObject, styles.tileImageOverlay, styles.tileImageRadius]} />
+              <ImageBackground source={{ uri: slide.imageUrl }} style={StyleSheet.absoluteFill} imageStyle={styles.tileImageRadius}>
+                <View style={[StyleSheet.absoluteFill, styles.tileImageOverlay, styles.tileImageRadius]} />
               </ImageBackground>
               {tileInner}
             </Pressable>
@@ -186,8 +186,8 @@ function Slideshow({
         {slides.map((slide, i) => (
           <View key={i} style={[styles.slidePage, { minHeight: screenHeight }, !slide.imageUrl && { backgroundColor: scheme.background }]}>
             {slide.imageUrl ? (
-              <ImageBackground source={{ uri: slide.imageUrl }} style={StyleSheet.absoluteFillObject}>
-                <View style={[StyleSheet.absoluteFillObject, styles.slideImageOverlay]} />
+              <ImageBackground source={{ uri: slide.imageUrl }} style={StyleSheet.absoluteFill}>
+                <View style={[StyleSheet.absoluteFill, styles.slideImageOverlay]} />
               </ImageBackground>
             ) : null}
             {logoUrl ? <Image source={{ uri: logoUrl }} style={styles.slideshowLogo} resizeMode="contain" /> : null}
@@ -287,7 +287,10 @@ const styles = StyleSheet.create({
   addButtonText: { fontSize: 14, fontFamily: typography.semiBold },
 
   grid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  tile: { width: "47%", minHeight: 140, borderRadius: 16, padding: 14, justifyContent: "flex-end" },
+  tile: { width: "47%", minHeight: 140, borderRadius: 16, padding: 14, justifyContent: "flex-end", overflow: "hidden" },
+  tileImageRadius: { borderRadius: 16 },
+  tileImageOverlay: { backgroundColor: "rgba(0,0,0,0.38)" },
+  tileLogo: { position: "absolute", top: 12, right: 12, width: 28, height: 28 },
   tileNumber: { position: "absolute", top: 12, left: 14, fontSize: 12, fontFamily: typography.bold },
   tileTitle: { fontSize: 14, fontFamily: typography.bold, marginTop: 20 },
   tileBullet: { fontSize: 11, marginTop: 6, lineHeight: 15 },
@@ -296,6 +299,8 @@ const styles = StyleSheet.create({
 
   slideshowRoot: { flex: 1 },
   slidePage: { flex: 1, alignItems: "flex-start", justifyContent: "center", paddingHorizontal: 32, paddingVertical: 60 },
+  slideImageOverlay: { backgroundColor: "rgba(0,0,0,0.42)" },
+  slideshowLogo: { position: "absolute", top: 50, left: 32, width: 40, height: 40 },
   stepBadgeLarge: { borderRadius: 999, paddingHorizontal: 14, paddingVertical: 6, marginBottom: 18 },
   stepBadgeLargeText: { fontSize: 12, fontFamily: typography.bold, color: "#111111", letterSpacing: 0.5 },
   slideshowTitle: { fontSize: 28, lineHeight: 34, fontFamily: typography.bold, marginBottom: 24 },

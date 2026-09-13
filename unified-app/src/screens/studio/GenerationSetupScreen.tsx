@@ -74,6 +74,10 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
   const [hasBranding, setHasBranding] = useState(false);
   const selectedOutput = OUTPUT_TYPES.find((item) => item.key === outputType)!;
   const goalsDisabled = outputType === "lesson_plan";
+  // Mirrors the backend's authorizeForSchool gate on the branding write route
+  // (school-format-templates.ts) - only these roles can actually set up
+  // branding, so only they get routed to the setup screen when it's missing.
+  const canConfigureBranding = user?.role !== "teacher" || user?.accountType === "individual";
 
   useEffect(() => {
     if (!accessToken) return;
@@ -205,7 +209,7 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
                     style={({ pressed }) => [styles.presentationTemplateChip, { backgroundColor: active ? colors.accent : colors.surface, borderColor: active ? colors.accent : colors.border }, pressed && { opacity: pressedOpacity }]}
                     onPress={() => {
                       if (t.key === "school_format" && !hasBranding) {
-                        navigation.navigate("FormatTemplate");
+                        if (canConfigureBranding) navigation.navigate("FormatTemplate");
                         return;
                       }
                       setPresentationTemplate(t.key);
@@ -217,7 +221,9 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
                     <Text style={[styles.presentationTemplateCaption, { color: active ? colors.accentOn : colors.textMuted }]}>{t.caption}</Text>
                     {t.key === "school_format" && !hasBranding ? (
                       <View style={[styles.comingSoonTag, { backgroundColor: colors.backgroundMuted }]}>
-                        <Text style={[styles.comingSoonTagText, { color: colors.textMuted }]}>Set up branding</Text>
+                        <Text style={[styles.comingSoonTagText, { color: colors.textMuted }]}>
+                          {canConfigureBranding ? "Set up branding" : "Ask your admin"}
+                        </Text>
                       </View>
                     ) : null}
                   </Pressable>

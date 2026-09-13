@@ -76,11 +76,18 @@ export async function schoolFormatTemplateRoutes(app: FastifyInstance) {
   // Presentation "School format" template branding - logo + brand colors.
   // Non-sensitive public branding (unlike a profile photo), so logoUrl is
   // stored/served as a plain public URL - no auth-gated file proxy needed.
+  // Read access is intentionally broader than authorizeForSchool's
+  // admin/leadership/individual-teacher gate: ANY teacher at this school
+  // (including a non-admin institutional teacher, who authorizeForSchool
+  // would otherwise 403) needs to read this to know whether "School format"
+  // is available when generating a presentation. Editing (POST below) stays
+  // restricted to authorizeForSchool's normal roles.
   app.get<{ Params: { schoolId: string } }>(
     "/schools/:schoolId/branding",
     { onRequest: [app.authenticate] },
     async (request, reply) => {
-      if (!(await authorizeForSchool(request, reply, request.params.schoolId))) return;
+      const isSameSchool = request.user.schoolId === request.params.schoolId;
+      if (!isSameSchool && !(await authorizeForSchool(request, reply, request.params.schoolId))) return;
 
       const school = await prisma.school.findUnique({
         where: { id: request.params.schoolId },
