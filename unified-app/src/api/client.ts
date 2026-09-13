@@ -702,6 +702,8 @@ export interface Observation {
 }
 
 export type GenerationOutputType = "lesson_plan" | "custom_activity_report" | "flashcards" | "presentation";
+export type PresentationTemplate = "detailed" | "instructional" | "school_format" | "more_visual";
+export type PresentationColorScheme = "indigo" | "coral" | "forest" | "slate";
 
 export interface Generation {
   id: string;
@@ -852,6 +854,53 @@ export interface ClassInsight {
   bands: Record<"level_1" | "level_2" | "level_3", { studentStubId: string; fullName: string }[]>;
   itemAnalysis: ItemAnalysisEntry[] | null;
   suggestedActions: string[];
+}
+
+export interface AssessmentQuestion {
+  id: string;
+  prompt: string;
+  options: string[];
+  correctOptionIndex: number;
+}
+
+export interface AssessmentResponseRecord {
+  id: string;
+  questionId: string;
+  studentStubId: string;
+  selectedOptionIndex: number;
+  isCorrect: boolean;
+}
+
+export interface Assessment {
+  id: string;
+  topicId: string;
+  generationId: string;
+  classSectionId: string;
+  title: string;
+  questions: AssessmentQuestion[];
+  status: "capturing" | "completed";
+  completedAt: string | null;
+  resultsReleasedToStudents: boolean;
+  resultsReleasedAt: string | null;
+  createdAt: string;
+  responses: AssessmentResponseRecord[];
+}
+
+export interface AssessmentInsight {
+  respondentCount: number;
+  totalQuestions: number;
+  bands: Record<"level_1" | "level_2" | "level_3", { studentStubId: string; fullName: string }[]>;
+  itemAnalysis: { questionId: string; prompt: string; correctCount: number; totalCount: number; correctRate: number | null }[];
+  recommendation: string;
+}
+
+export interface StudentAssessmentRecord {
+  id: string;
+  title: string;
+  topicName: string;
+  score: { correctCount: number; totalQuestions: number };
+  questions: { prompt: string; wasCorrect: boolean | null }[];
+  resultsReleasedAt: string;
 }
 
 export interface AssignmentDetail extends Assignment {
@@ -1173,6 +1222,27 @@ export const api = {
       { method: "PUT", body: JSON.stringify({ templateBody }) },
       token
     ),
+  getSchoolBranding: (token: string, schoolId: string) =>
+    request<{ logoUrl: string | null; primaryColor: string | null; secondaryColor: string | null }>(
+      `/schools/${schoolId}/branding`,
+      {},
+      token
+    ),
+  saveSchoolBranding: (
+    token: string,
+    schoolId: string,
+    input: { logo?: { uri: string; name: string; mimeType: string }; primaryColor?: string; secondaryColor?: string }
+  ) => {
+    const formData = new FormData();
+    if (input.logo) formData.append("logo", { uri: input.logo.uri, name: input.logo.name, type: input.logo.mimeType } as unknown as Blob);
+    if (input.primaryColor) formData.append("primaryColor", input.primaryColor);
+    if (input.secondaryColor) formData.append("secondaryColor", input.secondaryColor);
+    return requestMultipart<{ logoUrl: string | null; primaryColor: string | null; secondaryColor: string | null }>(
+      `/schools/${schoolId}/branding`,
+      formData,
+      token
+    );
+  },
 
   getMyCredits: (token: string) => request<CreditAccountSummary>("/me/credits", {}, token),
   requestSubjectChange: (token: string, schoolId: string, input: { requestedSubjects: string[]; note?: string }) =>
@@ -1253,6 +1323,8 @@ export const api = {
       { method: "POST" },
       token
     ),
+  deleteTopicContext: (token: string, topicId: string, contextSourceId: string) =>
+    request<null>(`/topics/${topicId}/context/${contextSourceId}`, { method: "DELETE" }, token),
   addTopicObservation: (token: string, topicId: string, body: string) =>
     request<Observation>(`/topics/${topicId}/observations`, { method: "POST", body: JSON.stringify({ body }) }, token),
 
@@ -1286,6 +1358,8 @@ export const api = {
       language?: string;
       customPrompt?: string;
       sources?: GenerationSourceSelection[];
+      presentationTemplate?: PresentationTemplate;
+      presentationColorScheme?: PresentationColorScheme;
     }
   ) => request<Generation>(`/topics/${topicId}/generations`, { method: "POST", body: JSON.stringify(input) }, token),
   getGeneration: (token: string, id: string) => request<Generation>(`/generations/${id}`, {}, token),
@@ -1344,6 +1418,15 @@ export const api = {
     request<{ releasedCount: number }>(`/assignments/${assignmentId}/release-grades`, { method: "POST" }, token),
   getClassInsight: (token: string, assignmentId: string) =>
     request<ClassInsight>(`/assignments/${assignmentId}/class-insight`, {}, token),
+  generateAssessment: (token: string, generationId: string, input: { questionCount?: number } = {}) =>
+    request<Assessment>(`/generations/${generationId}/assessments`, { method: "POST", body: JSON.stringify(input) }, token),
+  getAssessment: (token: string, id: string) => request<Assessment>(`/assessments/${id}`, {}, token),
+  saveAssessmentResponses: (token: string, id: string, questionId: string, responses: { studentStubId: string; selectedOptionIndex: number }[]) =>
+    request<Assessment>(`/assessments/${id}/responses`, { method: "POST", body: JSON.stringify({ questionId, responses }) }, token),
+  completeAssessment: (token: string, id: string) => request<Assessment>(`/assessments/${id}/complete`, { method: "POST" }, token),
+  getAssessmentInsight: (token: string, id: string) => request<AssessmentInsight>(`/assessments/${id}/insight`, {}, token),
+  releaseAssessmentResults: (token: string, id: string) => request<Assessment>(`/assessments/${id}/release-results`, { method: "POST" }, token),
+  listStudentAssessments: (token: string) => request<StudentAssessmentRecord[]>("/student/assessments", {}, token),
   getPersonalisationEligibility: (token: string, assignmentId: string) =>
     request<PersonalisationEligibility[]>(`/assignments/${assignmentId}/personalisation-eligibility`, {}, token),
   generateAnswerKey: (token: string, assignmentId: string) =>

@@ -58,7 +58,14 @@ export async function runContextExtraction(params: {
     } else if (params.sourceType === "url") {
       if (params.sourceUrl) {
         const result = await extractUrlText(params.sourceUrl);
-        if (result && result.text.length > 0) extractedText = result.text;
+        if (result && result.text.length > 0) {
+          // Raw scraped text mixes real content with nav/footer/ad boilerplate
+          // that naive tag-stripping can't remove (modern sites build menus
+          // out of plain divs, not <nav>/<footer>) - let the AI pull out just
+          // the substantive content instead of adding a DOM-heuristics library.
+          const cleaned = await aiProvider.cleanScrapedArticleText({ rawText: result.text, sourceUrl: params.sourceUrl });
+          extractedText = cleaned.text || result.text;
+        }
       }
     } else if (params.sourceType === "youtube") {
       // No transcript extraction - just a best-effort title as light context,

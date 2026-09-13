@@ -277,6 +277,34 @@ export async function topicRoutes(app: FastifyInstance) {
     }
   );
 
+  // Deletes a context source outright - lets a teacher clear out sources
+  // that turned out irrelevant/wrong instead of leaving them cluttering
+  // every future generation's source picker. Also frees its cap slot.
+  app.delete<{ Params: { topicId: string; contextSourceId: string } }>(
+    "/topics/:topicId/context/:contextSourceId",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const source = await prisma.contextSource.findFirst({
+        where: {
+          id: request.params.contextSourceId,
+          topicId: request.params.topicId,
+          topic: { schoolId: request.schoolId },
+        },
+      });
+      if (!source) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Context source not found" } });
+      }
+
+      await prisma.contextSource.delete({ where: { id: source.id } });
+      if (source.fileLocation) await storage.remove(source.fileLocation);
+
+      // A JSON envelope, not a bare 204 - every other endpoint in this API
+      // returns { data, meta } and the frontend's request() helper always
+      // calls response.json(), which throws on an empty body.
+      return { data: null, meta: {} };
+    }
+  );
+
   // Clones another of the teacher's own topics' context sources onto this
   // topic - "import from another class" for the same lesson taught to a
   // different section. No re-extraction: extractedText/extractionStatus are
@@ -374,32 +402,55 @@ export async function topicRoutes(app: FastifyInstance) {
     }
   );
 
+  // Two candidates on the same job can be approved/dismissed at the same
+  // time (the whole point is letting a teacher work through the list in
+  // parallel instead of one at a time) - but they all read-modify-write the
+  // same `candidates` JSON column, and `apply()` below does real work
+  // (fetching the URL, running AI cleanup) that can take several seconds, so
+  // the window for two requests to both read the pre-update array and then
+  // clobber each other's write is wide open.
+  //
+  // `apply()` runs exactly once, up front - it has side effects (creating a
+  // ContextSource), so it must never be retried. Only the cheap "merge this
+  // candidate's result into the latest array and write" step retries, guarded
+  // by optimistic concurrency (`updatedAt` must match what was just read) so
+  // a losing write re-reads the now-current array instead of clobbering
+  // whatever the other concurrent request just wrote.
   async function updateResearchCandidate(
     request: FastifyRequest<{ Params: { id: string; jobId: string; candidateId: string } }>,
     reply: FastifyReply,
     apply: (candidate: ResearchCandidate) => Promise<ResearchCandidate>
   ) {
-    const job = await prisma.contextResearchJob.findFirst({
+    const initialJob = await prisma.contextResearchJob.findFirst({
       where: { id: request.params.jobId, topicId: request.params.id, topic: { schoolId: request.schoolId } },
     });
-    if (!job) {
+    if (!initialJob) {
       return reply.code(404).send({ data: null, error: { code: "not_found", message: "Research job not found" } });
     }
-
-    const candidates = job.candidates as unknown as ResearchCandidate[];
-    const index = candidates.findIndex((c) => c.id === request.params.candidateId);
-    if (index === -1) {
+    const initialCandidates = initialJob.candidates as unknown as ResearchCandidate[];
+    const initialCandidate = initialCandidates.find((c) => c.id === request.params.candidateId);
+    if (!initialCandidate) {
       return reply.code(404).send({ data: null, error: { code: "not_found", message: "Candidate not found" } });
     }
 
-    const updated = await apply(candidates[index]);
-    candidates[index] = updated;
+    const updatedCandidate = await apply(initialCandidate);
 
-    const saved = await prisma.contextResearchJob.update({
-      where: { id: job.id },
-      data: { candidates: candidates as unknown as object },
-    });
-    return { data: saved, meta: {} };
+    let job = initialJob;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const candidates = job.candidates as unknown as ResearchCandidate[];
+      const index = candidates.findIndex((c) => c.id === request.params.candidateId);
+      if (index !== -1) candidates[index] = updatedCandidate;
+
+      const { count } = await prisma.contextResearchJob.updateMany({
+        where: { id: job.id, updatedAt: job.updatedAt },
+        data: { candidates: candidates as unknown as object },
+      });
+      if (count > 0) {
+        return { data: await prisma.contextResearchJob.findUniqueOrThrow({ where: { id: job.id } }), meta: {} };
+      }
+      job = await prisma.contextResearchJob.findUniqueOrThrow({ where: { id: job.id } });
+    }
+    return reply.code(409).send({ data: null, error: { code: "conflict", message: "Too many concurrent updates to this research job - try again" } });
   }
 
   app.post<{ Params: { id: string; jobId: string; candidateId: string } }>(

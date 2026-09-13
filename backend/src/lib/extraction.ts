@@ -143,6 +143,53 @@ export async function extractUrlText(rawUrl: string): Promise<{ text: string } |
   return { text: raw.slice(0, MAX_EXTRACTED_CHARS) };
 }
 
+const NOT_FOUND_PHRASES = [
+  "page doesn't exist",
+  "page does not exist",
+  "page not found",
+  "404 not found",
+  "404 error",
+  "couldn't find that page",
+  "could not be found",
+  "content not found",
+  "this page is unavailable",
+];
+
+/**
+ * Used by AI Research mode to filter out dead/removed links before showing
+ * them to a teacher, AND to resolve the real destination URL. Gemini's
+ * grounding chunks hand back a Google redirect URL
+ * (vertexaisearch.cloud.google.com/grounding-api-redirect/...), not the
+ * actual page - `fetchValidated` already follows redirects hop by hop
+ * (re-validating each host), so its final response's `.url` is the real
+ * destination. Returns that resolved URL when the page is genuinely live, or
+ * null if it errors, 404s, or is a soft-404 (HTTP 200 with a "not found"
+ * page - common enough that status code alone isn't reliable for HTML).
+ * Non-HTML responses (a PDF, say) are trusted on status code alone since
+ * there's no page text to sniff for "not found" phrasing.
+ */
+export async function resolveReachableUrl(rawUrl: string): Promise<string | null> {
+  try {
+    const response = await fetchValidated(rawUrl);
+    if (!response.ok) return null;
+    const finalUrl = response.url || rawUrl;
+
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.includes("text/html") && !contentType.includes("application/xhtml")) {
+      return finalUrl;
+    }
+
+    const contentLength = response.headers.get("content-length");
+    if (contentLength && Number(contentLength) > URL_MAX_RESPONSE_BYTES) return finalUrl;
+
+    const html = await response.text();
+    const sample = html.slice(0, 5000).toLowerCase();
+    return NOT_FOUND_PHRASES.some((phrase) => sample.includes(phrase)) ? null : finalUrl;
+  } catch {
+    return null;
+  }
+}
+
 function cleanExtractedText(raw: string): string {
   const PRIVATE_USE_AREA_START = 0xe000;
   const PRIVATE_USE_AREA_END = 0xf8ff;

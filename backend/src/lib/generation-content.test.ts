@@ -29,6 +29,30 @@ test("buildTaughtContentText pulls overview + objectives + activities from a les
   assert.deepEqual(objectives, ["Explain photosynthesis"]);
 });
 
+test("buildTaughtContentText pulls stage summaries + nested activities from a new-shape (5E) lesson plan", () => {
+  const lessonPlan = {
+    overview: "Students explore photosynthesis.",
+    structureType: "5e",
+    objectives: ["[Understand] Explain photosynthesis"],
+    stages: [
+      {
+        stage: "Engage",
+        durationMinutes: 5,
+        summary: "Hook students with a question about plant growth.",
+        activities: [{ title: "Warm-up", description: "Discuss what plants need to grow", materials: [] }],
+      },
+    ],
+    assessment: "Exit ticket",
+  };
+  const { text, objectives } = buildTaughtContentText([
+    gen({ outputType: "lesson_plan", aiOutput: JSON.stringify(lessonPlan) }),
+  ]);
+  assert.match(text, /Students explore photosynthesis/);
+  assert.match(text, /Engage: Hook students with a question about plant growth/);
+  assert.match(text, /Warm-up: Discuss what plants need to grow/);
+  assert.deepEqual(objectives, ["Explain photosynthesis"]);
+});
+
 test("buildTaughtContentText prefers editedOutput over aiOutput", () => {
   const original = { overview: "original", objectives: [], lessonFlow: [], activities: [], assessment: "" };
   const edited = { overview: "edited by teacher", objectives: [], lessonFlow: [], activities: [], assessment: "" };

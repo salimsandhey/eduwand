@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform } from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, Image } from "react-native";
+import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -9,6 +10,11 @@ import { useTheme } from "../../theme/ThemeContext";
 import { spacing } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { api } from "../../api/client";
+
+// Fixed palette for the presentation "School format" brand colors - matches
+// the swatch picker already built for Presentation color schemes in
+// GenerationSetupScreen.tsx, kept simple rather than a free-form picker.
+const BRAND_COLOR_PALETTE = ["#4C4CE0", "#E4574F", "#2FAE66", "#4A5568", "#D9822B", "#0EA5B7", "#9333EA", "#1F2937"];
 
 // Custom formatting instructions the AI follows when generating lesson
 // content - same feature admin-dashboard's Templates tab already exposes
@@ -29,12 +35,26 @@ export function FormatTemplateScreen({ navigation }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [pickedLogo, setPickedLogo] = useState<{ uri: string; name: string; mimeType: string } | null>(null);
+  const [primaryColor, setPrimaryColor] = useState<string | null>(null);
+  const [secondaryColor, setSecondaryColor] = useState<string | null>(null);
+  const [isSavingBranding, setIsSavingBranding] = useState(false);
+  const [brandingError, setBrandingError] = useState<string | null>(null);
+  const [brandingSaved, setBrandingSaved] = useState(false);
+
   const load = useCallback(async () => {
     if (!accessToken || !user?.schoolId) return;
     setIsLoading(true);
     try {
-      const templates = await api.getFormatTemplates(accessToken, user.schoolId);
+      const [templates, branding] = await Promise.all([
+        api.getFormatTemplates(accessToken, user.schoolId),
+        api.getSchoolBranding(accessToken, user.schoolId),
+      ]);
       setTemplateBody(templates.generation?.templateBody ?? "");
+      setLogoUrl(branding.logoUrl);
+      setPrimaryColor(branding.primaryColor);
+      setSecondaryColor(branding.secondaryColor);
     } finally {
       setIsLoading(false);
     }
@@ -58,6 +78,43 @@ export function FormatTemplateScreen({ navigation }: Props) {
       setError(err instanceof Error ? err.message : "Failed to save format template");
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function pickLogo() {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      setBrandingError("Photo library permission is required to choose a logo");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: "images", quality: 0.9 });
+    if (!result.canceled && result.assets?.[0]) {
+      const asset = result.assets[0];
+      setPickedLogo({ uri: asset.uri, name: asset.fileName ?? "logo.jpg", mimeType: asset.mimeType ?? "image/jpeg" });
+      setBrandingSaved(false);
+    }
+  }
+
+  async function saveBranding() {
+    if (!accessToken || !user?.schoolId) return;
+    setIsSavingBranding(true);
+    setBrandingError(null);
+    setBrandingSaved(false);
+    try {
+      const updated = await api.saveSchoolBranding(accessToken, user.schoolId, {
+        logo: pickedLogo ?? undefined,
+        primaryColor: primaryColor ?? undefined,
+        secondaryColor: secondaryColor ?? undefined,
+      });
+      setLogoUrl(updated.logoUrl);
+      setPrimaryColor(updated.primaryColor);
+      setSecondaryColor(updated.secondaryColor);
+      setPickedLogo(null);
+      setBrandingSaved(true);
+    } catch (err) {
+      setBrandingError(err instanceof Error ? err.message : "Failed to save branding");
+    } finally {
+      setIsSavingBranding(false);
     }
   }
 
@@ -106,6 +163,64 @@ export function FormatTemplateScreen({ navigation }: Props) {
                 accessibilityRole="button"
               >
                 {isSaving ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.saveButtonText, { color: colors.accentOn }]}>Save format</Text>}
+              </Pressable>
+            </View>
+          )}
+
+          {isLoading ? null : (
+            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Text style={[styles.brandingTitle, { color: colors.textPrimary }]}>School branding</Text>
+              <Text style={[styles.subtitle, { color: colors.textMuted, marginTop: 6 }]}>
+                Used by the Presentation "School format" style - your logo and brand colors appear on every slide.
+              </Text>
+
+              <Pressable onPress={pickLogo} style={({ pressed }) => [styles.logoPicker, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}>
+                {pickedLogo || logoUrl ? (
+                  <Image source={{ uri: pickedLogo?.uri ?? logoUrl! }} style={styles.logoPreview} resizeMode="contain" />
+                ) : (
+                  <View style={styles.logoPlaceholder}>
+                    <Ionicons name="image-outline" size={22} color={colors.textMuted} />
+                    <Text style={[styles.logoPlaceholderText, { color: colors.textMuted }]}>Tap to add a logo</Text>
+                  </View>
+                )}
+              </Pressable>
+
+              <Text style={[styles.swatchLabel, { color: colors.textPrimary }]}>Primary color</Text>
+              <View style={styles.colorSwatchRow}>
+                {BRAND_COLOR_PALETTE.map((c) => (
+                  <Pressable
+                    key={c}
+                    onPress={() => { setPrimaryColor(c); setBrandingSaved(false); }}
+                    style={({ pressed }) => [styles.colorSwatch, { backgroundColor: c, borderColor: primaryColor === c ? colors.textPrimary : "transparent" }, pressed && { opacity: pressedOpacity }]}
+                  >
+                    {primaryColor === c ? <Ionicons name="checkmark" size={16} color="#fff" /> : null}
+                  </Pressable>
+                ))}
+              </View>
+
+              <Text style={[styles.swatchLabel, { color: colors.textPrimary }]}>Secondary color</Text>
+              <View style={styles.colorSwatchRow}>
+                {BRAND_COLOR_PALETTE.map((c) => (
+                  <Pressable
+                    key={c}
+                    onPress={() => { setSecondaryColor(c); setBrandingSaved(false); }}
+                    style={({ pressed }) => [styles.colorSwatch, { backgroundColor: c, borderColor: secondaryColor === c ? colors.textPrimary : "transparent" }, pressed && { opacity: pressedOpacity }]}
+                  >
+                    {secondaryColor === c ? <Ionicons name="checkmark" size={16} color="#fff" /> : null}
+                  </Pressable>
+                ))}
+              </View>
+
+              {brandingError ? <Text style={[styles.error, { color: colors.danger }]}>{brandingError}</Text> : null}
+              {brandingSaved ? <Text style={[styles.success, { color: colors.accent }]}>Saved</Text> : null}
+
+              <Pressable
+                onPress={saveBranding}
+                disabled={isSavingBranding}
+                style={[styles.saveButton, { backgroundColor: colors.accent }, isSavingBranding && { opacity: 0.5 }]}
+                accessibilityRole="button"
+              >
+                {isSavingBranding ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.saveButtonText, { color: colors.accentOn }]}>Save branding</Text>}
               </Pressable>
             </View>
           )}
@@ -179,5 +294,49 @@ const styles = StyleSheet.create({
   saveButtonText: {
     fontSize: 15,
     fontWeight: "700",
+  },
+  brandingTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  logoPicker: {
+    marginTop: 16,
+    height: 90,
+    borderWidth: 1,
+    borderRadius: 12,
+    borderStyle: "dashed",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  logoPreview: {
+    width: "100%",
+    height: "100%",
+  },
+  logoPlaceholder: {
+    alignItems: "center",
+    gap: 6,
+  },
+  logoPlaceholderText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  swatchLabel: {
+    marginTop: 18,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  colorSwatchRow: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 10,
+  },
+  colorSwatch: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

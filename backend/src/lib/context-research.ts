@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
 import { aiProvider, ResearchCandidateType } from "./ai";
+import { resolveReachableUrl } from "./extraction";
 
 export interface ResearchCandidate {
   id: string;
@@ -36,14 +37,24 @@ export async function runContextResearch(jobId: string): Promise<void> {
 
     await prisma.contextResearchJob.update({ where: { id: jobId }, data: { stage: "reviewing" } });
 
-    const candidates: ResearchCandidate[] = drafts.map((draft) => ({
-      id: crypto.randomUUID(),
-      title: draft.title,
-      url: draft.url,
-      type: draft.type,
-      snippet: draft.snippet,
-      status: "pending",
-    }));
+    // A candidate URL can be real (search actually found it) and still be
+    // dead - removed since it was indexed, or a soft-404 - so verify every
+    // one is actually reachable before a teacher ever sees it. This also
+    // resolves Gemini's grounding redirect URLs
+    // (vertexaisearch.cloud.google.com/grounding-api-redirect/...) to the
+    // real destination, so the teacher sees and stores the actual site.
+    const resolvedUrls = await Promise.all(drafts.map((draft) => resolveReachableUrl(draft.url)));
+    const candidates: ResearchCandidate[] = drafts
+      .map((draft, i) => (resolvedUrls[i] ? { ...draft, url: resolvedUrls[i]! } : null))
+      .filter((draft): draft is typeof drafts[number] => draft !== null)
+      .map((draft) => ({
+        id: crypto.randomUUID(),
+        title: draft.title,
+        url: draft.url,
+        type: draft.type,
+        snippet: draft.snippet,
+        status: "pending" as const,
+      }));
 
     await prisma.contextResearchJob.update({
       where: { id: jobId },

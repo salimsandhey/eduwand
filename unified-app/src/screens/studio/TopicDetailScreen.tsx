@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Animated, Easing, View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Linking, Image, RefreshControl, Modal, LayoutAnimation, Platform, UIManager } from "react-native";
+import { Animated, Easing, View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Linking, Image, RefreshControl, Modal, LayoutAnimation, Platform, UIManager, Alert } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
+import * as WebBrowser from "expo-web-browser";
+import { Swipeable, GestureHandlerRootView } from "react-native-gesture-handler";
 import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
@@ -229,6 +231,8 @@ export function TopicDetailScreen({ route, navigation }: Props) {
   const [isEditingSourceText, setIsEditingSourceText] = useState(false);
   const [isSavingSource, setIsSavingSource] = useState(false);
   const [isRetryingSource, setIsRetryingSource] = useState(false);
+  const [deletingSourceIds, setDeletingSourceIds] = useState<Set<string>>(new Set());
+  const sourceSwipeRefs = useRef<Map<string, Swipeable>>(new Map());
 
   useEffect(() => {
     if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -341,7 +345,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
     if (source.fileLocation) {
       Linking.openURL(api.contextSourceFileUrl(topicId, source.id, accessToken));
     } else if (source.sourceUrl) {
-      Linking.openURL(source.sourceUrl);
+      WebBrowser.openBrowserAsync(source.sourceUrl);
     }
   }
 
@@ -384,6 +388,40 @@ export function TopicDetailScreen({ route, navigation }: Props) {
     } finally {
       setIsRetryingSource(false);
     }
+  }
+
+  function confirmDeleteSource(source: ContextSource) {
+    if (!accessToken) return;
+    Alert.alert("Delete this source?", "It will be removed from this topic and won't be usable in any future generation.", [
+      {
+        text: "Cancel",
+        style: "cancel",
+        onPress: () => sourceSwipeRefs.current.get(source.id)?.close(),
+      },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          setDeletingSourceIds((prev) => new Set(prev).add(source.id));
+          setError(null);
+          try {
+            await api.deleteTopicContext(accessToken, topicId, source.id);
+            if (openSource?.id === source.id) setOpenSource(null);
+            sourceSwipeRefs.current.delete(source.id);
+            load();
+          } catch (err) {
+            setError(err instanceof Error ? err.message : "Failed to delete source");
+            sourceSwipeRefs.current.get(source.id)?.close();
+          } finally {
+            setDeletingSourceIds((prev) => {
+              const next = new Set(prev);
+              next.delete(source.id);
+              return next;
+            });
+          }
+        },
+      },
+    ]);
   }
 
   async function addObservation() {
@@ -522,31 +560,52 @@ export function TopicDetailScreen({ route, navigation }: Props) {
     const typeColor = SOURCE_TYPE_COLORS[c.sourceType];
     const { statusLabel, statusColor } = sourceStatus(c);
     return (
-      <Pressable
+      <Swipeable
         key={c.id}
-        style={({ pressed }) => [
-          styles.sourceListRow,
-          { backgroundColor: colors.surface, borderColor: colors.border },
-          cardShadow,
-          pressed && { opacity: pressedOpacity },
-        ]}
-        onPress={() => openSourceDetail(c)}
-        accessibilityRole="button"
+        ref={(r) => {
+          if (r) sourceSwipeRefs.current.set(c.id, r);
+          else sourceSwipeRefs.current.delete(c.id);
+        }}
+        overshootRight={false}
+        rightThreshold={40}
+        renderRightActions={(_progress, dragX) => (
+          <Pressable
+            style={[styles.swipeDeleteAction, { backgroundColor: colors.danger }]}
+            onPress={() => confirmDeleteSource(c)}
+            accessibilityRole="button"
+            accessibilityLabel="Delete source"
+          >
+            <Animated.View style={{ transform: [{ translateX: dragX.interpolate({ inputRange: [-80, 0], outputRange: [0, 56], extrapolate: "clamp" }) }] }}>
+              <Ionicons name="trash-outline" size={20} color="#FFFFFF" />
+            </Animated.View>
+          </Pressable>
+        )}
       >
-        <View style={[styles.sourceListIcon, { backgroundColor: `${typeColor}1F` }]}>
-          <Ionicons name={SOURCE_TYPE_ICONS[c.sourceType]} size={16} color={typeColor} />
-        </View>
-        <View style={styles.sourceListCopy}>
-          <Text style={[styles.sourceName, { color: colors.textPrimary, marginTop: 0 }]} numberOfLines={1}>{label}</Text>
-          <View style={styles.sourceListMetaRow}>
-            <Text style={[styles.sourceListTypeText, { color: typeColor }]}>{SOURCE_TYPE_LABELS[c.sourceType]}</Text>
-            {snippet ? <Text style={[styles.sourceListSnippet, { color: colors.textMuted }]} numberOfLines={1}>· {snippet}</Text> : null}
+        <Pressable
+          style={({ pressed }) => [
+            styles.sourceListRow,
+            { backgroundColor: colors.surface, borderColor: colors.border },
+            cardShadow,
+            pressed && { opacity: pressedOpacity },
+          ]}
+          onPress={() => openSourceDetail(c)}
+          accessibilityRole="button"
+        >
+          <View style={[styles.sourceListIcon, { backgroundColor: `${typeColor}1F` }]}>
+            <Ionicons name={SOURCE_TYPE_ICONS[c.sourceType]} size={16} color={typeColor} />
           </View>
-        </View>
-        <View style={[styles.statusBadge, { backgroundColor: colors.surfaceRaised }]}>
-          <Text style={[styles.statusBadgeText, { color: statusColor }]}>{statusLabel}</Text>
-        </View>
-      </Pressable>
+          <View style={styles.sourceListCopy}>
+            <Text style={[styles.sourceName, { color: colors.textPrimary, marginTop: 0 }]} numberOfLines={1}>{label}</Text>
+            <View style={styles.sourceListMetaRow}>
+              <Text style={[styles.sourceListTypeText, { color: typeColor }]}>{SOURCE_TYPE_LABELS[c.sourceType]}</Text>
+              {snippet ? <Text style={[styles.sourceListSnippet, { color: colors.textMuted }]} numberOfLines={1}>· {snippet}</Text> : null}
+            </View>
+          </View>
+          <View style={[styles.statusBadge, { backgroundColor: colors.surfaceRaised }]}>
+            <Text style={[styles.statusBadgeText, { color: statusColor }]}>{statusLabel}</Text>
+          </View>
+        </Pressable>
+      </Swipeable>
     );
   }
 
@@ -888,6 +947,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
       </ScrollView>
 
       <Modal transparent animationType="slide" visible={showAddContextMethod} onRequestClose={() => setShowAddContextMethod(false)}>
+        <GestureHandlerRootView style={{ flex: 1 }}>
         <View style={styles.modalRoot}>
           <Pressable style={styles.modalBackdrop} onPress={() => setShowAddContextMethod(false)} accessibilityRole="button" accessibilityLabel="Close add context" />
           <View style={[styles.modalSheet, { backgroundColor: colors.surface }]}>
@@ -946,9 +1006,11 @@ export function TopicDetailScreen({ route, navigation }: Props) {
             </View>
           </View>
         </View>
+        </GestureHandlerRootView>
       </Modal>
 
       <Modal transparent animationType="slide" visible={showAddContext} onRequestClose={() => setShowAddContext(false)}>
+        <GestureHandlerRootView style={{ flex: 1 }}>
         <View style={styles.modalRoot}>
           <Pressable style={styles.modalBackdrop} onPress={() => setShowAddContext(false)} accessibilityRole="button" accessibilityLabel="Close add source" />
           <View style={[styles.modalSheet, { backgroundColor: colors.surface, marginBottom: keyboardHeight }]}>
@@ -984,9 +1046,11 @@ export function TopicDetailScreen({ route, navigation }: Props) {
             {isAddingContext && !showUrlInput ? <ActivityIndicator color={colors.accent} style={styles.modalLoader} /> : null}
           </View>
         </View>
+        </GestureHandlerRootView>
       </Modal>
 
       <Modal transparent animationType="slide" visible={showTypeFilterModal} onRequestClose={() => setShowTypeFilterModal(false)}>
+        <GestureHandlerRootView style={{ flex: 1 }}>
         <View style={styles.modalRoot}>
           <Pressable style={styles.modalBackdrop} onPress={() => setShowTypeFilterModal(false)} accessibilityRole="button" accessibilityLabel="Close type filter" />
           <View style={[styles.modalSheet, { backgroundColor: colors.surface }]}>
@@ -1014,9 +1078,11 @@ export function TopicDetailScreen({ route, navigation }: Props) {
             </View>
           </View>
         </View>
+        </GestureHandlerRootView>
       </Modal>
 
       <Modal transparent animationType="slide" visible={showDateFilterModal} onRequestClose={() => setShowDateFilterModal(false)}>
+        <GestureHandlerRootView style={{ flex: 1 }}>
         <View style={styles.modalRoot}>
           <Pressable style={styles.modalBackdrop} onPress={() => setShowDateFilterModal(false)} accessibilityRole="button" accessibilityLabel="Close date filter" />
           <View style={[styles.modalSheet, { backgroundColor: colors.surface }]}>
@@ -1054,9 +1120,11 @@ export function TopicDetailScreen({ route, navigation }: Props) {
             </View>
           </View>
         </View>
+        </GestureHandlerRootView>
       </Modal>
 
       <Modal transparent animationType="slide" visible={showCustomRangeModal} onRequestClose={() => setShowCustomRangeModal(false)}>
+        <GestureHandlerRootView style={{ flex: 1 }}>
         <View style={styles.modalRoot}>
           <Pressable style={styles.modalBackdrop} onPress={() => setShowCustomRangeModal(false)} accessibilityRole="button" accessibilityLabel="Close custom date range" />
           <View style={[styles.modalSheet, { backgroundColor: colors.surface, marginBottom: keyboardHeight }]}>
@@ -1079,9 +1147,11 @@ export function TopicDetailScreen({ route, navigation }: Props) {
             </Pressable>
           </View>
         </View>
+        </GestureHandlerRootView>
       </Modal>
 
       <Modal transparent animationType="slide" visible={showAddObservation} onRequestClose={() => setShowAddObservation(false)}>
+        <GestureHandlerRootView style={{ flex: 1 }}>
         <View style={styles.modalRoot}>
           <Pressable style={styles.modalBackdrop} onPress={() => setShowAddObservation(false)} accessibilityRole="button" accessibilityLabel="Close new note" />
           <View style={[styles.modalSheet, { backgroundColor: colors.surface, marginBottom: keyboardHeight }]}>
@@ -1096,18 +1166,22 @@ export function TopicDetailScreen({ route, navigation }: Props) {
             </Pressable>
           </View>
         </View>
+        </GestureHandlerRootView>
       </Modal>
 
       <Modal visible={lightboxUrl !== null} transparent animationType="fade" onRequestClose={() => setLightboxUrl(null)}>
+        <GestureHandlerRootView style={{ flex: 1 }}>
         <Pressable style={styles.lightboxBackdrop} onPress={() => setLightboxUrl(null)}>
           {lightboxUrl ? <Image source={{ uri: lightboxUrl }} style={styles.lightboxImage} resizeMode="contain" /> : null}
           <Pressable style={styles.lightboxClose} onPress={() => setLightboxUrl(null)} hitSlop={12} accessibilityRole="button">
             <Ionicons name="close" size={22} color="#FFFFFF" />
           </Pressable>
         </Pressable>
+        </GestureHandlerRootView>
       </Modal>
 
       <Modal transparent animationType="slide" visible={openObservation !== null} onRequestClose={() => setOpenObservation(null)}>
+        <GestureHandlerRootView style={{ flex: 1 }}>
         <View style={styles.modalRoot}>
           <Pressable style={styles.modalBackdrop} onPress={() => setOpenObservation(null)} accessibilityRole="button" accessibilityLabel="Close note" />
           <View style={[styles.modalSheet, { backgroundColor: colors.surface }]}>
@@ -1128,9 +1202,11 @@ export function TopicDetailScreen({ route, navigation }: Props) {
             </ScrollView>
           </View>
         </View>
+        </GestureHandlerRootView>
       </Modal>
 
       <Modal transparent animationType="slide" visible={openSource !== null} onRequestClose={() => setOpenSource(null)}>
+        <GestureHandlerRootView style={{ flex: 1 }}>
         <View style={styles.modalRoot}>
           <Pressable style={styles.modalBackdrop} onPress={() => setOpenSource(null)} accessibilityRole="button" accessibilityLabel="Close source" />
           <View style={[styles.modalSheet, { backgroundColor: colors.surface, marginBottom: keyboardHeight }]}>
@@ -1160,7 +1236,12 @@ export function TopicDetailScreen({ route, navigation }: Props) {
                   style={({ pressed }) => [styles.sourceGhostButton, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
                   onPress={() => {
                     if (openSource.sourceType === "image" && openSource.fileLocation && accessToken) {
-                      setLightboxUrl(api.contextSourceFileUrl(topicId, openSource.id, accessToken));
+                      // Two native <Modal>s visible at once is unreliable
+                      // (especially on Android) - close this one before
+                      // opening the lightbox instead of stacking them.
+                      const imageUrl = api.contextSourceFileUrl(topicId, openSource.id, accessToken);
+                      setOpenSource(null);
+                      setLightboxUrl(imageUrl);
                     } else {
                       openContextSource(openSource);
                     }
@@ -1188,6 +1269,23 @@ export function TopicDetailScreen({ route, navigation }: Props) {
                       <Text style={[styles.sourceGhostButtonText, { color: colors.accent }]}>
                         {openSource.sourceType === "image" ? "Re-transcribe" : "Re-extract"}
                       </Text>
+                    </>
+                  )}
+                </Pressable>
+              ) : null}
+              {openSource ? (
+                <Pressable
+                  style={({ pressed }) => [styles.sourceGhostButton, { borderColor: colors.danger }, (deletingSourceIds.has(openSource.id) || pressed) && { opacity: pressedOpacity }]}
+                  onPress={() => confirmDeleteSource(openSource)}
+                  disabled={deletingSourceIds.has(openSource.id)}
+                  accessibilityRole="button"
+                >
+                  {deletingSourceIds.has(openSource.id) ? (
+                    <ActivityIndicator color={colors.danger} size="small" />
+                  ) : (
+                    <>
+                      <Ionicons name="trash-outline" size={15} color={colors.danger} />
+                      <Text style={[styles.sourceGhostButtonText, { color: colors.danger }]}>Delete</Text>
                     </>
                   )}
                 </Pressable>
@@ -1252,6 +1350,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
             )}
           </View>
         </View>
+        </GestureHandlerRootView>
       </Modal>
     </Screen>
   );
@@ -1441,6 +1540,7 @@ const styles = StyleSheet.create({
   typeTagText: { fontSize: 9, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.2 },
   sourceList: { gap: 8 },
   sourceListRow: { flexDirection: "row", alignItems: "center", gap: 10, borderWidth: 1, borderRadius: 13, paddingVertical: 10, paddingHorizontal: 12, minHeight: 56 },
+  swipeDeleteAction: { width: 72, alignItems: "center", justifyContent: "center", borderRadius: 13, marginLeft: 8 },
   sourceListIcon: { width: 34, height: 34, borderRadius: 11, alignItems: "center", justifyContent: "center" },
   sourceListCopy: { flex: 1 },
   sourceListMetaRow: { flexDirection: "row", alignItems: "center", marginTop: 2 },

@@ -218,6 +218,45 @@ export async function studentPortalRoutes(app: FastifyInstance) {
     return { data, meta: {} };
   });
 
+  // Quick-check quiz results - only shows up once the teacher explicitly
+  // releases them (resultsReleasedToStudents), same gate pattern as
+  // Grade.releasedToStudent above. Capture is teacher-proxy, so a student
+  // never interacts with the assessment itself - this is read-only.
+  app.get("/student/assessments", { onRequest: scoped(app) }, async (request, reply) => {
+    const student = await prisma.studentStub.findFirst({
+      where: { id: request.user.sub, schoolId: request.schoolId },
+    });
+    if (!student) {
+      return reply.code(404).send({ data: null, error: { code: "not_found", message: "Student not found" } });
+    }
+
+    const assessments = await prisma.assessment.findMany({
+      where: { classSectionId: student.classSectionId, resultsReleasedToStudents: true },
+      include: { topic: { select: { name: true } }, responses: { where: { studentStubId: student.id } } },
+      orderBy: { resultsReleasedAt: "desc" },
+    });
+
+    const data = assessments
+      .filter((a) => a.responses.length > 0)
+      .map((a) => {
+        const questions = a.questions as unknown as { id: string; prompt: string }[];
+        const correctCount = a.responses.filter((r) => r.isCorrect).length;
+        return {
+          id: a.id,
+          title: a.title,
+          topicName: a.topic.name,
+          score: { correctCount, totalQuestions: questions.length },
+          questions: questions.map((q) => ({
+            prompt: q.prompt,
+            wasCorrect: a.responses.find((r) => r.questionId === q.id)?.isCorrect ?? null,
+          })),
+          resultsReleasedAt: a.resultsReleasedAt,
+        };
+      });
+
+    return { data, meta: {} };
+  });
+
   app.get("/student/materials", { onRequest: scoped(app) }, async (request, reply) => {
     const student = await prisma.studentStub.findFirst({
       where: { id: request.user.sub, schoolId: request.schoolId },

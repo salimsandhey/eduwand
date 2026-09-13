@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Animated, FlatList, Modal, Pressable, StyleSheet, StyleProp, Text, View, ViewStyle } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme/ThemeContext";
 
@@ -138,6 +139,7 @@ export function Dropdown({
       </Animated.View>
 
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <GestureHandlerRootView style={{ flex: 1 }}>
         <Pressable style={styles.backdrop} onPress={() => setOpen(false)} accessibilityLabel="Close">
           <Pressable
             style={[styles.sheet, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}
@@ -196,6 +198,7 @@ export function Dropdown({
             />
           </Pressable>
         </Pressable>
+        </GestureHandlerRootView>
       </Modal>
     </>
   );

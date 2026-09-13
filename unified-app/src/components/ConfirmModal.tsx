@@ -1,4 +1,5 @@
 import { Modal, View, Text, Pressable, StyleSheet } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { useTheme } from "../theme/ThemeContext";
 
 interface ConfirmModalProps {
@@ -15,6 +16,7 @@ export function ConfirmModal({ visible, title, message, confirmLabel = "Confirm"
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+      <GestureHandlerRootView style={{ flex: 1 }}>
       <View style={styles.backdrop}>
         <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
           <Text style={[styles.title, { color: colors.textPrimary }]}>{title}</Text>
@@ -37,6 +39,7 @@ export function ConfirmModal({ visible, title, message, confirmLabel = "Confirm"
           </View>
         </View>
       </View>
+      </GestureHandlerRootView>
     </Modal>
   );
 }

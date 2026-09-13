@@ -21,6 +21,8 @@ export type RootStackParamList = {
   GenerationReview: { generationId: string };
   ImportContext: { topicId: string };
   ContextResearch: { topicId: string };
+  AssessmentCapture: { assessmentId: string };
+  AssessmentInsight: { assessmentId: string };
   LessonWithAiTest: undefined;
   AnswerKeyReview: { assignmentId: string };
   AttainmentReport: { topicId: string };

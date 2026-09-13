@@ -37,6 +37,8 @@ import { GenerationSetupScreen } from "../screens/studio/GenerationSetupScreen";
 import { GenerationReviewScreen } from "../screens/studio/GenerationReviewScreen";
 import { ImportContextScreen } from "../screens/studio/ImportContextScreen";
 import { ContextResearchScreen } from "../screens/studio/ContextResearchScreen";
+import { AssessmentCaptureScreen } from "../screens/studio/AssessmentCaptureScreen";
+import { AssessmentInsightScreen } from "../screens/studio/AssessmentInsightScreen";
 import { LessonWithAiTestScreen } from "../screens/studio/LessonWithAiTestScreen";
 import { AnswerKeyReviewScreen } from "../screens/studio/AnswerKeyReviewScreen";
 import { AttainmentReportScreen } from "../screens/analytics/AttainmentReportScreen";
@@ -130,6 +132,8 @@ export function AppNavigator() {
         <Stack.Screen name="GenerationReview" component={GenerationReviewScreen} options={{ headerShown: false }} />
         <Stack.Screen name="ImportContext" component={ImportContextScreen} options={{ headerShown: false }} />
         <Stack.Screen name="ContextResearch" component={ContextResearchScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="AssessmentCapture" component={AssessmentCaptureScreen} options={{ headerShown: false, gestureEnabled: false }} />
+        <Stack.Screen name="AssessmentInsight" component={AssessmentInsightScreen} options={{ headerShown: false }} />
         <Stack.Screen name="LessonWithAiTest" component={LessonWithAiTestScreen} options={{ headerShown: false }} />
         <Stack.Screen name="AnswerKeyReview" component={AnswerKeyReviewScreen} options={{ title: "Answer Key" }} />
         <Stack.Screen name="AttainmentReport" component={AttainmentReportScreen} options={{ headerShown: false }} />

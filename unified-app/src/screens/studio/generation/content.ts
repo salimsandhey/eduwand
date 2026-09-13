@@ -1,11 +1,26 @@
 
+export type LessonPlanStructureType = "5e";
+
+export interface LessonPlanStage {
+  stage: string;
+  durationMinutes: number;
+  summary: string;
+  activities: { title: string; description: string; materials: string[] }[];
+}
+
 export interface LessonPlanContent {
   type: "lesson_plan";
   overview: string;
   durationMinutes: number;
   objectives: string[];
-  lessonFlow: { label: string; durationMinutes: number }[];
-  activities: { title: string; description: string; durationMinutes: number; materials: string[] }[];
+  // New shape (all generations going forward): activities nested under the
+  // stage they happen in. Legacy fields below stay optional so old
+  // Generation rows (permanent, never rewritten) still render.
+  structureType?: LessonPlanStructureType;
+  stages?: LessonPlanStage[];
+  // Legacy shape (pre-5E-restructure generations only).
+  lessonFlow?: { label: string; durationMinutes: number }[];
+  activities?: { title: string; description: string; durationMinutes: number; materials: string[] }[];
   assessment: string;
 }
 
@@ -21,9 +36,17 @@ export interface FlashcardsContent {
   cards: { front: string; back: string }[];
 }
 
+export type PresentationTemplate = "detailed" | "instructional" | "school_format" | "more_visual";
+export type PresentationColorScheme = "indigo" | "coral" | "forest" | "slate";
+
 export interface PresentationContent {
   type: "presentation";
-  slides: { title: string; bullets: string[] }[];
+  template?: PresentationTemplate;
+  colorScheme?: PresentationColorScheme;
+  logoUrl?: string | null;
+  primaryColor?: string | null;
+  secondaryColor?: string | null;
+  slides: { title: string; bullets: string[]; imageUrl?: string }[];
 }
 
 export type StructuredGenerationContent =
@@ -33,7 +56,9 @@ export type StructuredGenerationContent =
   | PresentationContent;
 
 function isLessonPlan(v: any): boolean {
-  return Array.isArray(v?.objectives) && Array.isArray(v?.activities) && Array.isArray(v?.lessonFlow);
+  if (!Array.isArray(v?.objectives)) return false;
+  if (Array.isArray(v?.stages)) return true; // new shape
+  return Array.isArray(v?.activities) && Array.isArray(v?.lessonFlow); // legacy shape
 }
 function isCustomActivity(v: any): boolean {
   return typeof v?.objective === "string" && Array.isArray(v?.activities) && typeof v?.reportFormat === "string";

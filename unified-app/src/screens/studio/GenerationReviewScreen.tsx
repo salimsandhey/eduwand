@@ -75,11 +75,15 @@ function contentStats(content: StructuredGenerationContent | null): string[] {
   const stats: string[] = [];
   if (content) {
     switch (content.type) {
-      case "lesson_plan":
+      case "lesson_plan": {
         stats.push(`${content.durationMinutes} min`);
         stats.push(plural(content.objectives.length, "objective", "objectives"));
-        stats.push(plural(content.activities.length, "activity", "activities"));
+        const activityCount = content.stages
+          ? content.stages.reduce((sum, s) => sum + s.activities.length, 0)
+          : (content.activities ?? []).length;
+        stats.push(plural(activityCount, "activity", "activities"));
         break;
+      }
       case "custom_activity_report":
         stats.push(plural(content.activities.length, "activity", "activities"));
         break;
@@ -108,6 +112,7 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
   const [isSaving, setIsSaving] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [isGeneratingAssessment, setIsGeneratingAssessment] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -220,6 +225,20 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
       setError(err instanceof Error ? err.message : "Failed to update sharing");
     } finally {
       setIsPublishing(false);
+    }
+  }
+
+  async function createQuickCheck() {
+    if (!accessToken || !generation) return;
+    setIsGeneratingAssessment(true);
+    setError(null);
+    try {
+      const assessment = await api.generateAssessment(accessToken, generation.id);
+      navigation.navigate("AssessmentCapture", { assessmentId: assessment.id });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to generate quick check");
+    } finally {
+      setIsGeneratingAssessment(false);
     }
   }
 
@@ -447,6 +466,23 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
         ) : null}
 
         <View style={styles.footer}>
+          {generation.outputType === "lesson_plan" ? (
+            <Pressable
+              style={({ pressed }) => [styles.shareButton, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, marginBottom: spacing.sm }, (isGeneratingAssessment || pressed) && { opacity: pressedOpacity }]}
+              onPress={createQuickCheck}
+              disabled={isGeneratingAssessment}
+              accessibilityRole="button"
+            >
+              {isGeneratingAssessment ? (
+                <ActivityIndicator color={colors.textPrimary} />
+              ) : (
+                <>
+                  <Ionicons name="flash-outline" size={18} color={colors.textPrimary} />
+                  <Text style={[styles.shareButtonText, { color: colors.textPrimary }]}>Quick check</Text>
+                </>
+              )}
+            </Pressable>
+          ) : null}
           <Pressable
             style={({ pressed }) => [styles.shareButton, { backgroundColor: generation.shareStatus === "published" ? colors.surfaceRaised : colors.accent, borderColor: generation.shareStatus === "published" ? colors.border : colors.accent }, (isPublishing || pressed) && { opacity: pressedOpacity }]}
             onPress={togglePublish}

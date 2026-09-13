@@ -5,13 +5,17 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
-import { api, StudentSubmissionRecord } from "../../api/client";
+import { api, StudentSubmissionRecord, StudentAssessmentRecord } from "../../api/client";
 import { decorativeAssets } from "../../theme/decorativeAssets";
+
+type ResultItem =
+  | { kind: "assignment"; id: string; date: string; data: StudentSubmissionRecord }
+  | { kind: "assessment"; id: string; date: string; data: StudentAssessmentRecord };
 
 export function StudentResultsScreen() {
   const { accessToken } = useAuth();
   const { colors, cardShadow } = useTheme();
-  const [submissions, setSubmissions] = useState<StudentSubmissionRecord[]>([]);
+  const [items, setItems] = useState<ResultItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -20,9 +24,17 @@ export function StudentResultsScreen() {
     setIsLoading(true);
     setError(null);
     try {
-      setSubmissions(await api.listStudentSubmissions(accessToken));
+      const [submissions, assessments] = await Promise.all([
+        api.listStudentSubmissions(accessToken),
+        api.listStudentAssessments(accessToken),
+      ]);
+      const merged: ResultItem[] = [
+        ...submissions.map((s): ResultItem => ({ kind: "assignment", id: s.id, date: s.submittedAt, data: s })),
+        ...assessments.map((a): ResultItem => ({ kind: "assessment", id: a.id, date: a.resultsReleasedAt, data: a })),
+      ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      setItems(merged);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load submissions");
+      setError(err instanceof Error ? err.message : "Failed to load results");
     } finally {
       setIsLoading(false);
     }
@@ -46,38 +58,55 @@ export function StudentResultsScreen() {
         <ActivityIndicator color={colors.accent} style={{ marginTop: 40 }} />
       ) : (
         <FlatList
-          data={submissions}
-          keyExtractor={(s) => s.id}
+          data={items}
+          keyExtractor={(item) => `${item.kind}-${item.id}`}
           contentContainerStyle={styles.list}
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <Image source={decorativeAssets.badgeRibbon} style={styles.emptyGraphic} resizeMode="contain" />
-              <Text style={[styles.empty, { color: colors.textMuted }]}>No submissions yet</Text>
+              <Text style={[styles.empty, { color: colors.textMuted }]}>No results yet</Text>
             </View>
           }
-          renderItem={({ item }) => (
-            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, borderLeftColor: colors.accent }, cardShadow]}>
-              <View style={styles.cardHeader}>
-                <Text style={[styles.cardTitle, { color: colors.textPrimary }]} numberOfLines={1}>
-                  {item.assignment.title}
-                </Text>
-                <Text style={[styles.typeTag, { color: colors.textMuted, backgroundColor: colors.surfaceRaised }]}>{item.submissionType}</Text>
-              </View>
-              <Text style={[styles.cardMeta, { color: colors.textMuted }]}>Submitted {new Date(item.submittedAt).toLocaleDateString()}</Text>
-              {item.grade ? (
-                <View style={styles.gradeRow}>
-                  <Text style={[styles.gradeScore, { color: colors.accent }]}>{item.grade.finalScore ?? "—"}</Text>
-                  {item.grade.finalFeedback ? (
-                    <Text style={[styles.gradeFeedback, { color: colors.textMuted }]} numberOfLines={2}>
-                      {item.grade.finalFeedback}
-                    </Text>
-                  ) : null}
+          renderItem={({ item }) =>
+            item.kind === "assignment" ? (
+              <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, borderLeftColor: colors.accent }, cardShadow]}>
+                <View style={styles.cardHeader}>
+                  <Text style={[styles.cardTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+                    {item.data.assignment.title}
+                  </Text>
+                  <Text style={[styles.typeTag, { color: colors.textMuted, backgroundColor: colors.surfaceRaised }]}>{item.data.submissionType}</Text>
                 </View>
-              ) : (
-                <Text style={[styles.pending, { color: colors.textMuted }]}>Awaiting grade</Text>
-              )}
-            </View>
-          )}
+                <Text style={[styles.cardMeta, { color: colors.textMuted }]}>Submitted {new Date(item.data.submittedAt).toLocaleDateString()}</Text>
+                {item.data.grade ? (
+                  <View style={styles.gradeRow}>
+                    <Text style={[styles.gradeScore, { color: colors.accent }]}>{item.data.grade.finalScore ?? "—"}</Text>
+                    {item.data.grade.finalFeedback ? (
+                      <Text style={[styles.gradeFeedback, { color: colors.textMuted }]} numberOfLines={2}>
+                        {item.data.grade.finalFeedback}
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : (
+                  <Text style={[styles.pending, { color: colors.textMuted }]}>Awaiting grade</Text>
+                )}
+              </View>
+            ) : (
+              <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, borderLeftColor: colors.accent }, cardShadow]}>
+                <View style={styles.cardHeader}>
+                  <Text style={[styles.cardTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+                    {item.data.topicName}
+                  </Text>
+                  <Text style={[styles.typeTag, { color: colors.textMuted, backgroundColor: colors.surfaceRaised }]}>Quiz</Text>
+                </View>
+                <Text style={[styles.cardMeta, { color: colors.textMuted }]}>{new Date(item.data.resultsReleasedAt).toLocaleDateString()}</Text>
+                <View style={styles.gradeRow}>
+                  <Text style={[styles.gradeScore, { color: colors.accent }]}>
+                    {item.data.score.correctCount}/{item.data.score.totalQuestions}
+                  </Text>
+                </View>
+              </View>
+            )
+          }
         />
       )}
     </Screen>

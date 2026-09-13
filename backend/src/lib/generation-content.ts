@@ -6,12 +6,27 @@
 
 import { ContextSource } from "@prisma/client";
 
+export type LessonPlanStructureType = "5e";
+
+export interface LessonPlanStage {
+  stage: string;
+  durationMinutes: number;
+  summary: string;
+  activities: { title: string; description: string; materials: string[] }[];
+}
+
 export interface LessonPlanContent {
   type: "lesson_plan";
   overview: string;
   objectives: string[];
-  lessonFlow: { label: string; durationMinutes: number }[];
-  activities: { title: string; description: string; durationMinutes: number; materials: string[] }[];
+  // New shape (all generations going forward): activities nested under the
+  // stage they happen in. Legacy fields below stay optional so old
+  // Generation rows (permanent, never rewritten) still parse.
+  structureType?: LessonPlanStructureType;
+  stages?: LessonPlanStage[];
+  // Legacy shape (pre-5E-restructure generations only).
+  lessonFlow?: { label: string; durationMinutes: number }[];
+  activities?: { title: string; description: string; durationMinutes: number; materials: string[] }[];
   assessment: string;
 }
 
@@ -29,6 +44,8 @@ export interface FlashcardsContent {
 
 export interface PresentationContent {
   type: "presentation";
+  template?: "detailed" | "instructional";
+  colorScheme?: "indigo" | "coral" | "forest" | "slate";
   slides: { title: string; bullets: string[] }[];
 }
 
@@ -40,7 +57,9 @@ export type StructuredGenerationContent =
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function isLessonPlan(v: any): boolean {
-  return Array.isArray(v?.objectives) && Array.isArray(v?.activities) && Array.isArray(v?.lessonFlow);
+  if (!Array.isArray(v?.objectives)) return false;
+  if (Array.isArray(v?.stages)) return true; // new shape
+  return Array.isArray(v?.activities) && Array.isArray(v?.lessonFlow); // legacy shape
 }
 function isCustomActivity(v: any): boolean {
   return typeof v?.objective === "string" && Array.isArray(v?.activities) && typeof v?.reportFormat === "string";
@@ -115,7 +134,14 @@ export function buildTaughtContentText(generations: GenerationForTaughtContent[]
         lines.push(content.overview);
         content.objectives.forEach(addObjective);
         lines.push(...content.objectives.map((o) => `Objective: ${o}`));
-        lines.push(...content.activities.map((a) => `${a.title}: ${a.description}`));
+        if (content.stages) {
+          for (const stage of content.stages) {
+            lines.push(`${stage.stage}: ${stage.summary}`);
+            lines.push(...stage.activities.map((a) => `${a.title}: ${a.description}`));
+          }
+        } else if (content.activities) {
+          lines.push(...content.activities.map((a) => `${a.title}: ${a.description}`));
+        }
         if (content.assessment) lines.push(`Assessment: ${content.assessment}`);
         break;
       case "custom_activity_report":

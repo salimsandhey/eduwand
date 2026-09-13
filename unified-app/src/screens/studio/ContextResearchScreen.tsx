@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Linking } from "react-native";
+import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
+import * as WebBrowser from "expo-web-browser";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
@@ -39,7 +40,9 @@ export function ContextResearchScreen({ route, navigation }: Props) {
 
   const [job, setJob] = useState<ContextResearchJob | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busyCandidateId, setBusyCandidateId] = useState<string | null>(null);
+  // A Set, not a single id - approving/dismissing one candidate must not
+  // block acting on another at the same time.
+  const [busyCandidateIds, setBusyCandidateIds] = useState<Set<string>>(new Set());
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function stopPolling() {
@@ -78,9 +81,18 @@ export function ContextResearchScreen({ route, navigation }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken, topicId]);
 
+  function setCandidateBusy(candidateId: string, busy: boolean) {
+    setBusyCandidateIds((prev) => {
+      const next = new Set(prev);
+      if (busy) next.add(candidateId);
+      else next.delete(candidateId);
+      return next;
+    });
+  }
+
   async function approve(candidate: ResearchCandidate) {
     if (!accessToken || !job) return;
-    setBusyCandidateId(candidate.id);
+    setCandidateBusy(candidate.id, true);
     setError(null);
     try {
       const updated = await api.approveContextResearchCandidate(accessToken, topicId, job.id, candidate.id);
@@ -88,13 +100,13 @@ export function ContextResearchScreen({ route, navigation }: Props) {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add source");
     } finally {
-      setBusyCandidateId(null);
+      setCandidateBusy(candidate.id, false);
     }
   }
 
   async function dismiss(candidate: ResearchCandidate) {
     if (!accessToken || !job) return;
-    setBusyCandidateId(candidate.id);
+    setCandidateBusy(candidate.id, true);
     setError(null);
     try {
       const updated = await api.dismissContextResearchCandidate(accessToken, topicId, job.id, candidate.id);
@@ -102,7 +114,7 @@ export function ContextResearchScreen({ route, navigation }: Props) {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to remove candidate");
     } finally {
-      setBusyCandidateId(null);
+      setCandidateBusy(candidate.id, false);
     }
   }
 
@@ -160,7 +172,7 @@ export function ContextResearchScreen({ route, navigation }: Props) {
           {job.candidates
             .filter((c) => c.status !== "dismissed")
             .map((candidate) => {
-              const busy = busyCandidateId === candidate.id;
+              const busy = busyCandidateIds.has(candidate.id);
               const approved = candidate.status === "approved";
               return (
                 <View key={candidate.id} style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
@@ -180,7 +192,7 @@ export function ContextResearchScreen({ route, navigation }: Props) {
                   {candidate.snippet ? (
                     <Text style={[styles.cardSnippet, { color: colors.textMuted }]} numberOfLines={3}>{candidate.snippet}</Text>
                   ) : null}
-                  <Pressable onPress={() => Linking.openURL(candidate.url)} accessibilityRole="button" style={styles.sourceLink}>
+                  <Pressable onPress={() => WebBrowser.openBrowserAsync(candidate.url)} accessibilityRole="button" style={styles.sourceLink}>
                     <Ionicons name="open-outline" size={13} color={colors.accent} />
                     <Text style={[styles.sourceLinkText, { color: colors.accent }]} numberOfLines={1}>{candidate.url}</Text>
                   </Pressable>

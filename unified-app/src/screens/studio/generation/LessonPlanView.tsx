@@ -5,7 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../../../theme/ThemeContext";
 import { ThemeColors, radius, spacing, typography } from "../../../theme/tokens";
 import { ContextSource } from "../../../api/client";
-import { LessonPlanContent } from "./content";
+import { LessonPlanContent, LessonPlanStage } from "./content";
 import { NumberedEditCard, EditActionRow } from "./NumberedEditCard";
 
 function assessmentMarkdownStyles(colors: ThemeColors) {
@@ -50,7 +50,7 @@ function scrollFieldIntoView(inputRef: React.RefObject<TextInput | null>, scroll
 const STEPS = [
   { key: "overview", label: "Overview" },
   { key: "objectives", label: "Objectives" },
-  { key: "activities", label: "Activities" },
+  { key: "activities", label: "Lesson Stages" },
   { key: "assessment", label: "Assessment" },
 ];
 
@@ -124,19 +124,46 @@ export function LessonPlanView({ content, editable, onChange, sources, scrollRef
     onChange({ ...content, objectives: [...content.objectives, "New objective"] });
   }
 
-  function updateActivity(i: number, patch: Partial<LessonPlanContent["activities"][number]>) {
-    const activities = [...content.activities];
+  // Legacy (pre-5E-restructure) content only - kept so old, already-generated
+  // plans still work with the editor.
+  function updateLegacyActivity(i: number, patch: Partial<NonNullable<LessonPlanContent["activities"]>[number]>) {
+    const activities = [...(content.activities ?? [])];
     activities[i] = { ...activities[i], ...patch };
     onChange({ ...content, activities });
   }
-  function removeActivity(i: number) {
-    onChange({ ...content, activities: content.activities.filter((_, idx) => idx !== i) });
+  function removeLegacyActivity(i: number) {
+    onChange({ ...content, activities: (content.activities ?? []).filter((_, idx) => idx !== i) });
   }
-  function addActivity() {
+  function addLegacyActivity() {
     onChange({
       ...content,
-      activities: [...content.activities, { title: "New activity", description: "", durationMinutes: 10, materials: [] }],
+      activities: [...(content.activities ?? []), { title: "New activity", description: "", durationMinutes: 10, materials: [] }],
     });
+  }
+
+  // New (5E) shape - activities live nested inside their stage.
+  type StageActivity = LessonPlanStage["activities"][number];
+  function updateStageActivity(stageIndex: number, activityIndex: number, patch: Partial<StageActivity>) {
+    const stages = [...(content.stages ?? [])];
+    const activities = [...stages[stageIndex].activities];
+    activities[activityIndex] = { ...activities[activityIndex], ...patch };
+    stages[stageIndex] = { ...stages[stageIndex], activities };
+    onChange({ ...content, stages });
+  }
+  function removeStageActivity(stageIndex: number, activityIndex: number) {
+    const stages = [...(content.stages ?? [])];
+    stages[stageIndex] = { ...stages[stageIndex], activities: stages[stageIndex].activities.filter((_, idx) => idx !== activityIndex) };
+    onChange({ ...content, stages });
+  }
+  function addStageActivity(stageIndex: number) {
+    const stages = [...(content.stages ?? [])];
+    stages[stageIndex] = { ...stages[stageIndex], activities: [...stages[stageIndex].activities, { title: "New activity", description: "", materials: [] }] };
+    onChange({ ...content, stages });
+  }
+  function updateStageSummary(stageIndex: number, summary: string) {
+    const stages = [...(content.stages ?? [])];
+    stages[stageIndex] = { ...stages[stageIndex], summary };
+    onChange({ ...content, stages });
   }
 
   return (
@@ -199,22 +226,6 @@ export function LessonPlanView({ content, editable, onChange, sources, scrollRef
             ) : null}
           </Card>
 
-          <Card colors={colors} cardShadow={cardShadow}>
-            <CardLabel colors={colors}>Lesson flow</CardLabel>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.flowTimelineRow}>
-              {content.lessonFlow.map((stage, i) => (
-                <View key={i} style={styles.flowTimelineItem}>
-                  <View style={styles.flowTimelineTrack}>
-                    <View style={[styles.flowDot, { backgroundColor: FLOW_COLORS[i % FLOW_COLORS.length] }]} />
-                    {i < content.lessonFlow.length - 1 ? <View style={[styles.flowConnector, { backgroundColor: colors.border }]} /> : null}
-                  </View>
-                  <Text style={[styles.flowLabel, { color: colors.textPrimary }]} numberOfLines={2}>{stage.label}</Text>
-                  <Text style={[styles.flowDuration, { color: colors.textMuted }]}>{stage.durationMinutes} min</Text>
-                </View>
-              ))}
-            </ScrollView>
-          </Card>
-
           {sources.length > 0 ? (
             <Card colors={colors} cardShadow={cardShadow}>
               <CardLabel colors={colors}>Sources used</CardLabel>
@@ -265,15 +276,74 @@ export function LessonPlanView({ content, editable, onChange, sources, scrollRef
         </View>
       ) : null}
 
-      {step === "activities" ? (
+      {step === "activities" && content.stages ? (
+        <View style={{ marginTop: spacing.md }}>
+          <Text style={[styles.sectionHint, { color: colors.textMuted }]}>What happens in each stage of the lesson?</Text>
+          {content.stages.map((stg, si) => (
+            <View key={si} style={[styles.stageCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <View style={styles.stageHeadingRow}>
+                <View style={[styles.stageDot, { backgroundColor: FLOW_COLORS[si % FLOW_COLORS.length] }]} />
+                <Text style={[styles.stageName, { color: colors.textPrimary }]}>{stg.stage}</Text>
+                <Tag colors={colors} icon="time-outline" label={`${stg.durationMinutes} min`} />
+              </View>
+              {editable ? (
+                <TextInput
+                  style={[styles.multilineInput, { color: colors.textSecondary, borderColor: colors.border, marginTop: spacing.sm }]}
+                  value={stg.summary}
+                  onChangeText={(summary) => updateStageSummary(si, summary)}
+                  multiline
+                />
+              ) : (
+                <Text style={[styles.bodyText, { color: colors.textSecondary, marginTop: spacing.sm }]}>{stg.summary}</Text>
+              )}
+
+              {stg.activities.map((act, ai) => (
+                <NumberedEditCard
+                  key={ai}
+                  index={ai}
+                  editable={editable}
+                  onRemove={editable ? () => removeStageActivity(si, ai) : undefined}
+                  renderView={() => (
+                    <View>
+                      <Text style={[styles.itemTitle, { color: colors.textPrimary }]}>{act.title}</Text>
+                      {act.materials.length > 0 ? (
+                        <View style={styles.tagRow}>
+                          {act.materials.map((m, mi) => (
+                            <Tag key={mi} colors={colors} icon="cube-outline" label={m} />
+                          ))}
+                        </View>
+                      ) : null}
+                      {act.description ? (
+                        <Text style={[styles.bodyText, { color: colors.textSecondary, marginTop: spacing.sm }]}>{act.description}</Text>
+                      ) : null}
+                    </View>
+                  )}
+                  renderEditor={(done, cancel) => (
+                    <EditableStageActivity
+                      initial={act}
+                      onCancel={cancel}
+                      onDone={(v) => { updateStageActivity(si, ai, v); done(); }}
+                      colors={colors}
+                      scrollRef={scrollRef}
+                    />
+                  )}
+                />
+              ))}
+              {editable ? <AddButton colors={colors} label="Add activity" onPress={() => addStageActivity(si)} /> : null}
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {step === "activities" && !content.stages ? (
         <View style={{ marginTop: spacing.md }}>
           <Text style={[styles.sectionHint, { color: colors.textMuted }]}>How will students explore and practise this topic?</Text>
-          {content.activities.map((act, i) => (
+          {(content.activities ?? []).map((act, i) => (
             <NumberedEditCard
               key={i}
               index={i}
               editable={editable}
-              onRemove={editable && content.activities.length > 1 ? () => removeActivity(i) : undefined}
+              onRemove={editable && (content.activities ?? []).length > 1 ? () => removeLegacyActivity(i) : undefined}
               renderView={() => (
                 <View>
                   <Text style={[styles.itemTitle, { color: colors.textPrimary }]}>{act.title}</Text>
@@ -292,14 +362,14 @@ export function LessonPlanView({ content, editable, onChange, sources, scrollRef
                 <EditableActivity
                   initial={act}
                   onCancel={cancel}
-                  onDone={(v) => { updateActivity(i, v); done(); }}
+                  onDone={(v) => { updateLegacyActivity(i, v); done(); }}
                   colors={colors}
                   scrollRef={scrollRef}
                 />
               )}
             />
           ))}
-          {editable ? <AddButton colors={colors} label="Add activity" onPress={addActivity} /> : null}
+          {editable ? <AddButton colors={colors} label="Add activity" onPress={addLegacyActivity} /> : null}
         </View>
       ) : null}
 
@@ -380,9 +450,9 @@ function EditableActivity({
   colors,
   scrollRef,
 }: {
-  initial: LessonPlanContent["activities"][number];
+  initial: NonNullable<LessonPlanContent["activities"]>[number];
   onCancel: () => void;
-  onDone: (v: LessonPlanContent["activities"][number]) => void;
+  onDone: (v: NonNullable<LessonPlanContent["activities"]>[number]) => void;
   colors: any;
   scrollRef?: React.RefObject<ScrollView | null>;
 }) {
@@ -443,6 +513,64 @@ function EditableActivity({
   );
 }
 
+function EditableStageActivity({
+  initial,
+  onCancel,
+  onDone,
+  colors,
+  scrollRef,
+}: {
+  initial: LessonPlanStage["activities"][number];
+  onCancel: () => void;
+  onDone: (v: LessonPlanStage["activities"][number]) => void;
+  colors: any;
+  scrollRef?: React.RefObject<ScrollView | null>;
+}) {
+  const [title, setTitle] = useState(initial.title);
+  const [description, setDescription] = useState(initial.description);
+  const [materials, setMaterials] = useState(initial.materials.join(", "));
+  const titleInputRef = useRef<TextInput>(null);
+  return (
+    <View>
+      <TextInput
+        ref={titleInputRef}
+        style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+        value={title}
+        onChangeText={setTitle}
+        placeholder="Title"
+        placeholderTextColor={colors.textMuted}
+        onFocus={() => scrollFieldIntoView(titleInputRef, scrollRef)}
+        autoFocus
+      />
+      <TextInput
+        style={[styles.multilineInput, { color: colors.textPrimary, borderColor: colors.border, marginTop: spacing.xs }]}
+        value={description}
+        onChangeText={setDescription}
+        placeholder="Description"
+        placeholderTextColor={colors.textMuted}
+        multiline
+      />
+      <TextInput
+        style={[styles.input, { color: colors.textPrimary, borderColor: colors.border, marginTop: spacing.xs }]}
+        value={materials}
+        onChangeText={setMaterials}
+        placeholder="Materials, comma-separated"
+        placeholderTextColor={colors.textMuted}
+      />
+      <EditActionRow
+        onCancel={onCancel}
+        onDone={() =>
+          onDone({
+            title: title.trim() || initial.title,
+            description: description.trim(),
+            materials: materials.split(",").map((m) => m.trim()).filter(Boolean),
+          })
+        }
+      />
+    </View>
+  );
+}
+
 function Card({ colors, children }: { colors: any; cardShadow: any; children: React.ReactNode }) {
   return <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>{children}</View>;
 }
@@ -484,13 +612,10 @@ const styles = StyleSheet.create({
   tagRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs, marginTop: spacing.sm },
   tag: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill },
   tagText: { fontSize: 11, fontFamily: typography.medium },
-  flowTimelineRow: { flexDirection: "row", paddingVertical: 8, paddingRight: 8 },
-  flowTimelineItem: { width: 108, marginRight: 6 },
-  flowTimelineTrack: { flexDirection: "row", alignItems: "center", height: 12 },
-  flowDot: { width: 10, height: 10, borderRadius: 5 },
-  flowConnector: { flex: 1, height: 2, marginLeft: 4 },
-  flowLabel: { marginTop: 8, fontSize: 12, lineHeight: 16, fontFamily: typography.semiBold },
-  flowDuration: { marginTop: 2, fontSize: 11 },
+  stageCard: { borderWidth: 1, borderRadius: 20, padding: spacing.lg, marginBottom: spacing.lg },
+  stageHeadingRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  stageDot: { width: 10, height: 10, borderRadius: 5 },
+  stageName: { flex: 1, fontSize: 15, fontFamily: typography.bold },
   sourceRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.sm },
   bloomTile: { flexDirection: "row", alignItems: "center", gap: 5, alignSelf: "flex-start", marginBottom: spacing.sm, borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 5 },
   bloomTileText: { fontSize: 11, fontFamily: typography.bold, letterSpacing: 0.4 },

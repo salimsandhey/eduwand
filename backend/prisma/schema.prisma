@@ -65,6 +65,11 @@ model School {
   classLimit              Int?     @map("class_limit")
   subjectLimit            Int?     @map("subject_limit")
   address                 String?
+  // Presentation "School format" template branding - null until a
+  // school/teacher sets it up via the format-template screen.
+  logoUrl                 String?  @map("logo_url")
+  primaryColor            String?  @map("primary_color")
+  secondaryColor          String?  @map("secondary_color")
   timezone                String   @default("Asia/Kolkata")
   incumbentErp            String?  @map("incumbent_erp")
   principalName           String?  @map("principal_name")
@@ -88,6 +93,7 @@ model School {
   lessonPlans           LessonPlan[]
   researchReports       ResearchReport[]
   assignments           Assignment[]
+  assessments           Assessment[]
   aiUsageLogs           AiUsageLog[]
   topics                Topic[]
   schoolFormatTemplates SchoolFormatTemplate[]
@@ -164,6 +170,7 @@ model ClassSection {
   studentStubs          StudentStub[]
   lessonPlans           LessonPlan[]
   assignments           Assignment[]
+  assessments           Assessment[]
   topics                Topic[]
   communicationMessages CommunicationMessage[]
   teacherAssignments    ClassSectionTeacher[]
@@ -227,6 +234,7 @@ model AppUser {
   lessonPlans                LessonPlan[]
   researchReports            ResearchReport[]
   assignments                Assignment[]
+  assessments                Assessment[]
   personalisationDecisions   PersonalisationSuggestion[]
   gradeOverrides             Grade[]
   aiUsageLogs                AiUsageLog[]
@@ -657,6 +665,7 @@ model StudentStub {
 
   personalisationSuggestions    PersonalisationSuggestion[]
   submissions                   Submission[]
+  assessmentResponses           AssessmentResponse[]
   receivedCommunicationMessages CommunicationMessage[]      @relation("CommunicationRecipientStudent")
   sentCommunicationMessages     CommunicationMessage[]      @relation("CommunicationSenderStudent")
 
@@ -718,6 +727,7 @@ model Topic {
   generations           Generation[]
   observations          Observation[]
   assignments           Assignment[]
+  assessments           Assessment[]
   attainmentReport      AttainmentReport?
   communicationMessages CommunicationMessage[]
   researchJobs          ContextResearchJob[]
@@ -865,6 +875,7 @@ model Generation {
   publishedAt DateTime? @map("published_at")
 
   contextSources ContextSource[]
+  assessments    Assessment[]
 
   @@index([topicId])
   @@index([teacherUserId])
@@ -1058,6 +1069,63 @@ model Grade {
   updatedAt           DateTime   @updatedAt @map("updated_at")
 
   @@map("grade")
+}
+
+// In-class quick quiz grounded in ONE specific lesson plan (generationId),
+// not "everything taught on the topic" like Assignment - distinct from
+// Assignment by design (homework-style/asynchronous) vs this (a synchronous
+// pulse-check right after teaching). MCQ-only: a physical remote (under
+// separate development) can only send "pressed B", and it's what makes
+// grading free/instant (see AssessmentResponse.isCorrect). status is one of:
+// capturing, completed.
+model Assessment {
+  id                        String    @id @default(uuid()) @db.Uuid
+  schoolId                  String    @map("school_id") @db.Uuid
+  school                    School    @relation(fields: [schoolId], references: [id])
+  topicId                   String    @map("topic_id") @db.Uuid
+  topic                     Topic     @relation(fields: [topicId], references: [id])
+  generationId              String    @map("generation_id") @db.Uuid
+  generation                Generation @relation(fields: [generationId], references: [id])
+  teacherUserId             String    @map("teacher_user_id") @db.Uuid
+  teacher                   AppUser   @relation(fields: [teacherUserId], references: [id])
+  classSectionId            String    @map("class_section_id") @db.Uuid
+  classSection              ClassSection @relation(fields: [classSectionId], references: [id])
+  title                     String
+  // MCQ-only: { id, prompt, options, correctOptionIndex }[]
+  questions                 Json
+  status                    String    @default("capturing")
+  completedAt               DateTime? @map("completed_at")
+  resultsReleasedToStudents Boolean   @default(false) @map("results_released_to_students")
+  resultsReleasedAt         DateTime? @map("results_released_at")
+  createdAt                 DateTime  @default(now()) @map("created_at")
+
+  responses AssessmentResponse[]
+
+  @@index([schoolId, classSectionId])
+  @@index([topicId])
+  @@map("assessment")
+}
+
+// One row per student per question - deliberately the same shape a future
+// remote-button-press event would produce ({questionId, studentId,
+// selectedOptionIndex} arriving live), so hardware integration later just
+// writes into this same table from a different source, not a schema change.
+model AssessmentResponse {
+  id                  String     @id @default(uuid()) @db.Uuid
+  assessmentId        String     @map("assessment_id") @db.Uuid
+  assessment          Assessment @relation(fields: [assessmentId], references: [id])
+  questionId          String     @map("question_id")
+  studentStubId       String     @map("student_stub_id") @db.Uuid
+  studentStub         StudentStub @relation(fields: [studentStubId], references: [id])
+  selectedOptionIndex Int        @map("selected_option_index")
+  // Computed at write time via exact match against the question's
+  // correctOptionIndex - no separate grading pass or Grade row needed.
+  isCorrect           Boolean    @map("is_correct")
+  recordedAt          DateTime   @default(now()) @map("recorded_at")
+
+  @@unique([assessmentId, questionId, studentStubId])
+  @@index([assessmentId])
+  @@map("assessment_response")
 }
 
 // Editable per-school override of the default performance band thresholds.

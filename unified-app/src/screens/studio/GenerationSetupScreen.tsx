@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Image, Modal } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "../../navigation/types";
@@ -7,7 +8,7 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { radius } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
-import { api, GenerationOutputType, TopicDetail, ContextSource, GenerationSourceSelection } from "../../api/client";
+import { api, GenerationOutputType, TopicDetail, ContextSource, GenerationSourceSelection, PresentationTemplate, PresentationColorScheme } from "../../api/client";
 import { OUTPUT_TYPE_LABELS, OUTPUT_TYPE_CAPTIONS, OUTPUT_TYPE_ICONS } from "./generation/outputTypeMeta";
 import { capitalizeFirst } from "../../utils/text";
 
@@ -24,6 +25,19 @@ const LANGUAGES = ["English", "Hindi"];
 const CLASS_COUNTS = [1, 2, 3, 5];
 const DURATIONS = [30, 45, 60, 90];
 const PAGE_RANGE_THRESHOLD = 10;
+
+const PRESENTATION_TEMPLATES: { key: PresentationTemplate; label: string; caption: string }[] = [
+  { key: "detailed", label: "Detailed", caption: "Text-heavy, full explanations" },
+  { key: "instructional", label: "Instructional", caption: "Step-by-step process" },
+  { key: "school_format", label: "School format", caption: "Your school's branding" },
+  { key: "more_visual", label: "More visual", caption: "Real images from the web" },
+];
+const PRESENTATION_COLOR_SCHEMES: { key: PresentationColorScheme; color: string }[] = [
+  { key: "indigo", color: "#4C4CE0" },
+  { key: "coral", color: "#E4574F" },
+  { key: "forest", color: "#2FAE66" },
+  { key: "slate", color: "#4A5568" },
+];
 
 const SOURCE_TYPE_ICONS: Record<ContextSource["sourceType"], keyof typeof Ionicons.glyphMap> = {
   pdf: "document-text-outline",
@@ -42,7 +56,7 @@ interface PageRange {
 
 export function GenerationSetupScreen({ route, navigation }: Props) {
   const { topicId } = route.params;
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
   const [outputType, setOutputType] = useState<GenerationOutputType>("lesson_plan");
   const [language, setLanguage] = useState(LANGUAGES[0]);
@@ -50,11 +64,14 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
   const [minutesPerClass, setMinutesPerClass] = useState(45);
   const [customPrompt, setCustomPrompt] = useState("");
   const [learningGoals, setLearningGoals] = useState<string[]>([]);
+  const [presentationTemplate, setPresentationTemplate] = useState<PresentationTemplate>("detailed");
+  const [presentationColorScheme, setPresentationColorScheme] = useState<PresentationColorScheme>("indigo");
   const [selectedSourceIds, setSelectedSourceIds] = useState<Set<string>>(new Set());
   const [pageRanges, setPageRanges] = useState<Record<string, PageRange>>({});
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [topic, setTopic] = useState<TopicDetail | null>(null);
+  const [hasBranding, setHasBranding] = useState(false);
   const selectedOutput = OUTPUT_TYPES.find((item) => item.key === outputType)!;
   const goalsDisabled = outputType === "lesson_plan";
 
@@ -62,6 +79,14 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
     if (!accessToken) return;
     api.getTopic(accessToken, topicId).then(setTopic).catch(() => {});
   }, [accessToken, topicId]);
+
+  useEffect(() => {
+    if (!accessToken || !user?.schoolId) return;
+    api
+      .getSchoolBranding(accessToken, user.schoolId)
+      .then((b) => setHasBranding(!!(b.logoUrl || b.primaryColor)))
+      .catch(() => {});
+  }, [accessToken, user?.schoolId]);
 
   const topicMeta = topic
     ? `${capitalizeFirst(topic.subject)} · ${topic.board} · ${capitalizeFirst(topic.classSection.className)} ${capitalizeFirst(topic.classSection.sectionName)}`
@@ -117,6 +142,7 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
     try {
       const generation = await api.createGeneration(accessToken, topicId, {
         outputType, classCount, minutesPerClass, language, customPrompt: combinedPrompt || undefined, sources,
+        ...(outputType === "presentation" ? { presentationTemplate, presentationColorScheme } : {}),
       });
       navigation.replace("GenerationReview", { generationId: generation.id });
     } catch (err) {
@@ -166,6 +192,66 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
             </Pressable>;
           })}
         </ScrollView>
+
+        {outputType === "presentation" ? (
+          <View style={styles.presentationStyleSection}>
+            <Text style={[styles.sectionHeading, { color: colors.textPrimary, marginTop: 0 }]}>Style</Text>
+            <View style={styles.presentationTemplateRow}>
+              {PRESENTATION_TEMPLATES.map((t) => {
+                const active = presentationTemplate === t.key;
+                return (
+                  <Pressable
+                    key={t.key}
+                    style={({ pressed }) => [styles.presentationTemplateChip, { backgroundColor: active ? colors.accent : colors.surface, borderColor: active ? colors.accent : colors.border }, pressed && { opacity: pressedOpacity }]}
+                    onPress={() => {
+                      if (t.key === "school_format" && !hasBranding) {
+                        navigation.navigate("FormatTemplate");
+                        return;
+                      }
+                      setPresentationTemplate(t.key);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                  >
+                    <Text style={[styles.presentationTemplateLabel, { color: active ? colors.accentOn : colors.textPrimary }]}>{t.label}</Text>
+                    <Text style={[styles.presentationTemplateCaption, { color: active ? colors.accentOn : colors.textMuted }]}>{t.caption}</Text>
+                    {t.key === "school_format" && !hasBranding ? (
+                      <View style={[styles.comingSoonTag, { backgroundColor: colors.backgroundMuted }]}>
+                        <Text style={[styles.comingSoonTagText, { color: colors.textMuted }]}>Set up branding</Text>
+                      </View>
+                    ) : null}
+                  </Pressable>
+                );
+              })}
+            </View>
+            {presentationTemplate !== "school_format" ? (
+              <>
+                <Text style={[styles.inputLabel, { color: colors.textPrimary, marginTop: 14 }]}>Color</Text>
+                <View style={styles.colorSwatchRow}>
+                  {PRESENTATION_COLOR_SCHEMES.map((c) => {
+                    const active = presentationColorScheme === c.key;
+                    return (
+                      <Pressable
+                        key={c.key}
+                        style={({ pressed }) => [styles.colorSwatch, { backgroundColor: c.color, borderColor: active ? colors.textPrimary : "transparent" }, pressed && { opacity: pressedOpacity }]}
+                        onPress={() => setPresentationColorScheme(c.key)}
+                        accessibilityRole="button"
+                        accessibilityLabel={c.key}
+                        accessibilityState={{ selected: active }}
+                      >
+                        {active ? <Ionicons name="checkmark" size={16} color="#FFFFFF" /> : null}
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </>
+            ) : (
+              <Text style={[styles.presentationTemplateCaption, { color: colors.textMuted, marginTop: 14 }]}>
+                Uses your school's logo and brand colors instead.
+              </Text>
+            )}
+          </View>
+        ) : null}
 
         <Text style={[styles.sectionHeading, { color: colors.textPrimary }]}>Select sources</Text>
         {!topic ? null : !hasSources ? (
@@ -310,6 +396,7 @@ function SelectChip<T extends string | number>({
       </Pressable>
 
       <Modal transparent animationType="fade" visible={open} onRequestClose={() => setOpen(false)}>
+        <GestureHandlerRootView style={{ flex: 1 }}>
         <Pressable style={styles.pickerBackdrop} onPress={() => setOpen(false)} accessibilityRole="button" accessibilityLabel={`Close ${title} picker`}>
           <Pressable style={[styles.pickerSheet, { backgroundColor: colors.surface }]} onPress={(e) => e.stopPropagation()}>
             <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>{title}</Text>
@@ -333,6 +420,7 @@ function SelectChip<T extends string | number>({
             })}
           </Pressable>
         </Pressable>
+        </GestureHandlerRootView>
       </Modal>
     </>
   );
@@ -344,6 +432,16 @@ const styles = StyleSheet.create({
   introRow: { flexDirection: "row", alignItems: "center", marginTop: 16, minHeight: 132 }, introCopy: { flex: 1, paddingRight: 8 }, introTitle: { fontSize: 24, lineHeight: 30, letterSpacing: -0.7, fontWeight: "800" }, introText: { marginTop: 8, fontSize: 13, lineHeight: 19, fontWeight: "500" }, introArtwork: { width: 132, height: 132 },
   buildHeader: { flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", marginTop: 10 }, buildTitle: { fontSize: 16, fontWeight: "800" }, buildCaption: { fontSize: 11, fontWeight: "600" }, outputRail: { gap: 12, paddingTop: 11, paddingRight: 20 }, outputCard: { width: 148, minHeight: 139, borderWidth: 1, borderRadius: 18, padding: 14 }, outputCardActive: { borderWidth: 2, padding: 13 }, outputIcon: { width: 38, height: 38, borderRadius: 13, alignItems: "center", justifyContent: "center" }, selectedMark: { position: "absolute", top: 11, right: 11, width: 20, height: 20, borderRadius: 10, alignItems: "center", justifyContent: "center" }, outputTitle: { marginTop: 14, fontSize: 13, lineHeight: 17, fontWeight: "800" }, outputCaption: { marginTop: 3, fontSize: 10, lineHeight: 14, fontWeight: "600" },
   sectionHeading: { marginTop: 25, fontSize: 15, fontWeight: "800" },
+  presentationStyleSection: { marginTop: 25 },
+  presentationTemplateRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
+  presentationTemplateChip: { flexBasis: "47%", flexGrow: 1, borderWidth: 1, borderRadius: 13, padding: 12 },
+  presentationTemplateChipDisabled: { opacity: 0.55, position: "relative" },
+  presentationTemplateLabel: { fontSize: 13, fontWeight: "800" },
+  presentationTemplateCaption: { fontSize: 11, marginTop: 2, fontWeight: "600" },
+  comingSoonTag: { position: "absolute", top: 8, right: 8, borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 },
+  comingSoonTagText: { fontSize: 9, fontWeight: "800" },
+  colorSwatchRow: { flexDirection: "row", gap: 12, marginTop: 10 },
+  colorSwatch: { width: 34, height: 34, borderRadius: 17, borderWidth: 2, alignItems: "center", justifyContent: "center" },
   emptySources: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10, padding: 13, borderWidth: 1, borderRadius: 13 },
   emptySourcesText: { flex: 1, fontSize: 12, lineHeight: 17, fontWeight: "500" },
   sourceList: { marginTop: 10, gap: 8 },

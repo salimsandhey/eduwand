@@ -33,8 +33,16 @@ test("stub generateContent(lesson_plan) is JSON the frontend parser accepts", as
   const { content } = await aiProvider.generateContent({ ...baseInput, outputType: "lesson_plan" });
   const parsed = JSON.parse(content);
   assert.ok(Array.isArray(parsed.objectives));
-  assert.ok(Array.isArray(parsed.activities));
-  assert.ok(Array.isArray(parsed.lessonFlow));
+  assert.equal(parsed.structureType, "5e");
+  assert.ok(Array.isArray(parsed.stages));
+  assert.equal(parsed.stages.length, 5);
+  assert.deepEqual(
+    parsed.stages.map((s: { stage: string }) => s.stage),
+    ["Engage", "Explore", "Explain", "Elaborate", "Evaluate"]
+  );
+  for (const stage of parsed.stages) {
+    assert.ok(Array.isArray(stage.activities));
+  }
   assert.equal(parsed.durationMinutes, 90);
 });
 
