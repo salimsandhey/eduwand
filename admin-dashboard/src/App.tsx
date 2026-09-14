@@ -30,6 +30,7 @@ import { SchoolAcademicsTab } from "./pages/school/SchoolAcademicsTab";
 import { SchoolTemplatesTab } from "./pages/school/SchoolTemplatesTab";
 import { SchoolSubjectsTab } from "./pages/school/SchoolSubjectsTab";
 import { MySchoolRedirect } from "./pages/MySchoolRedirect";
+import { PrivacyPolicyPage } from "./pages/PrivacyPolicyPage";
 
 const EXTRA_ROUTE_ROLES: Record<string, string[]> = {
   "/trusts/:id": ["platform_admin", "leadership"],
@@ -64,6 +65,16 @@ function Root() {
     );
   }
 
+  // Public, unauthenticated - Google Play Console & general privacy policy access
+  if (location.pathname === "/privacy" || location.pathname === "/privacy-policy") {
+    return (
+      <Routes>
+        <Route path="/privacy" element={<PrivacyPolicyPage />} />
+        <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
+      </Routes>
+    );
+  }
+
   if (isLoading) return null;
 
   if (!user) {
@@ -76,6 +87,8 @@ function Root() {
 
   return (
     <Routes>
+      <Route path="/privacy" element={<PrivacyPolicyPage />} />
+      <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
       <Route element={<Layout />}>
         <Route index element={<Navigate to="/overview" replace />} />
         <Route path="/overview" element={<OverviewPage />} />
