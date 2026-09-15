@@ -67,6 +67,12 @@ export function LoginPage() {
         <button type="submit" style={styles.button} disabled={isLoading}>
           {isLoading ? "Logging in…" : "Log in"}
         </button>
+
+        <div style={{ textAlign: "center", marginTop: 20 }}>
+          <a href="/privacy" style={{ color: "var(--text-muted)", fontSize: 12, textDecoration: "none" }}>
+            Privacy Policy
+          </a>
+        </div>
       </form>
     </div>
   );
