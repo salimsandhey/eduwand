@@ -9,12 +9,16 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { spacing } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
+import { ColorPickerModal } from "../../components/ColorPickerModal";
+import { Toast } from "../../components/Toast";
 import { api } from "../../api/client";
 
-// Fixed palette for the presentation "School format" brand colors - matches
-// the swatch picker already built for Presentation color schemes in
-// GenerationSetupScreen.tsx, kept simple rather than a free-form picker.
-const BRAND_COLOR_PALETTE = ["#4C4CE0", "#E4574F", "#2FAE66", "#4A5568", "#D9822B", "#0EA5B7", "#9333EA", "#1F2937"];
+// Quick presets - the "palette" swatch next to them opens the full
+// ColorPickerModal for any color, not just these six. Kept to 6 (not more)
+// so the row - 6 presets + the custom-picker swatch - reliably fits one line
+// at phone width; each swatch is flex-sized (not a fixed px width) so the
+// row always fills exactly the available width, at any screen size.
+const BRAND_COLOR_PALETTE = ["#4C4CE0", "#E4574F", "#2FAE66", "#D9822B", "#0EA5B7", "#1F2937"];
 
 // Custom formatting instructions the AI follows when generating lesson
 // content - same feature admin-dashboard's Templates tab already exposes
@@ -42,6 +46,7 @@ export function FormatTemplateScreen({ navigation }: Props) {
   const [isSavingBranding, setIsSavingBranding] = useState(false);
   const [brandingError, setBrandingError] = useState<string | null>(null);
   const [brandingSaved, setBrandingSaved] = useState(false);
+  const [colorPickerTarget, setColorPickerTarget] = useState<"primary" | "secondary" | null>(null);
 
   const load = useCallback(async () => {
     if (!accessToken || !user?.schoolId) return;
@@ -154,7 +159,6 @@ export function FormatTemplateScreen({ navigation }: Props) {
               />
 
               {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
-              {saved ? <Text style={[styles.success, { color: colors.accent }]}>Saved</Text> : null}
 
               <Pressable
                 onPress={save}
@@ -196,6 +200,14 @@ export function FormatTemplateScreen({ navigation }: Props) {
                     {primaryColor === c ? <Ionicons name="checkmark" size={16} color="#fff" /> : null}
                   </Pressable>
                 ))}
+                <Pressable
+                  onPress={() => setColorPickerTarget("primary")}
+                  style={({ pressed }) => [styles.customSwatch, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Choose a custom primary color"
+                >
+                  <Ionicons name="color-palette-outline" size={16} color={colors.textMuted} />
+                </Pressable>
               </View>
 
               <Text style={[styles.swatchLabel, { color: colors.textPrimary }]}>Secondary color</Text>
@@ -209,10 +221,17 @@ export function FormatTemplateScreen({ navigation }: Props) {
                     {secondaryColor === c ? <Ionicons name="checkmark" size={16} color="#fff" /> : null}
                   </Pressable>
                 ))}
+                <Pressable
+                  onPress={() => setColorPickerTarget("secondary")}
+                  style={({ pressed }) => [styles.customSwatch, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Choose a custom secondary color"
+                >
+                  <Ionicons name="color-palette-outline" size={16} color={colors.textMuted} />
+                </Pressable>
               </View>
 
               {brandingError ? <Text style={[styles.error, { color: colors.danger }]}>{brandingError}</Text> : null}
-              {brandingSaved ? <Text style={[styles.success, { color: colors.accent }]}>Saved</Text> : null}
 
               <Pressable
                 onPress={saveBranding}
@@ -226,6 +245,21 @@ export function FormatTemplateScreen({ navigation }: Props) {
           )}
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <ColorPickerModal
+        visible={colorPickerTarget !== null}
+        initialColor={(colorPickerTarget === "primary" ? primaryColor : secondaryColor) ?? "#4C4CE0"}
+        onClose={() => setColorPickerTarget(null)}
+        onSelect={(hex) => {
+          if (colorPickerTarget === "primary") setPrimaryColor(hex);
+          else if (colorPickerTarget === "secondary") setSecondaryColor(hex);
+          setBrandingSaved(false);
+          setColorPickerTarget(null);
+        }}
+      />
+
+      <Toast visible={saved} message="Format saved" />
+      <Toast visible={brandingSaved} message="Branding saved" />
     </Screen>
   );
 }
@@ -279,11 +313,6 @@ const styles = StyleSheet.create({
     marginTop: 14,
     fontSize: 13,
   },
-  success: {
-    marginTop: 14,
-    fontSize: 13,
-    fontWeight: "700",
-  },
   saveButton: {
     marginTop: 20,
     borderRadius: 14,
@@ -328,14 +357,26 @@ const styles = StyleSheet.create({
   },
   colorSwatchRow: {
     flexDirection: "row",
-    gap: 12,
+    gap: 10,
     marginTop: 10,
   },
+  // flex:1 + aspectRatio:1 (not a fixed px size) - every swatch shares the
+  // row's available width equally, so the row always fits on one line
+  // regardless of screen width instead of needing to wrap or get clipped.
   colorSwatch: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    flex: 1,
+    aspectRatio: 1,
+    borderRadius: 999,
     borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  customSwatch: {
+    flex: 1,
+    aspectRatio: 1,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderStyle: "dashed",
     alignItems: "center",
     justifyContent: "center",
   },

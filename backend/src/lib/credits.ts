@@ -57,9 +57,6 @@ const AI_FEATURE_COSTS: Record<string, number> = {
   lesson_plan: 40,
   research_report: 40,
   generation: 40,
-  // "More visual" presentations - N Unsplash searches + N image re-uploads
-  // per deck on top of the base generation, priced accordingly.
-  presentation_visual: 90,
   assignment_generation: 60,
   assessment_generation: 30,
   personalisation_suggestion: 20,

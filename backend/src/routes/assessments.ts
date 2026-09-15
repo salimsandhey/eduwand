@@ -101,7 +101,7 @@ export async function assessmentRoutes(app: FastifyInstance) {
           generationId: generation.id,
           teacherUserId: request.user.sub,
           classSectionId: generation.topic.classSectionId,
-          title: `${generation.topic.name} — Quick Check`,
+          title: `${generation.topic.name} - Quick Check`,
           questions: storedQuestions as unknown as Prisma.InputJsonValue,
           status: "capturing",
         },

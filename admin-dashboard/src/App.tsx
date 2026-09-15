@@ -28,6 +28,7 @@ import { SchoolStaffTab } from "./pages/school/SchoolStaffTab";
 import { SchoolStudentsTab } from "./pages/school/SchoolStudentsTab";
 import { SchoolAcademicsTab } from "./pages/school/SchoolAcademicsTab";
 import { SchoolTemplatesTab } from "./pages/school/SchoolTemplatesTab";
+import { SchoolBrandingTab } from "./pages/school/SchoolBrandingTab";
 import { SchoolSubjectsTab } from "./pages/school/SchoolSubjectsTab";
 import { MySchoolRedirect } from "./pages/MySchoolRedirect";
 
@@ -102,6 +103,7 @@ function Root() {
           <Route path="students" element={<SchoolStudentsTab />} />
           <Route path="academics" element={<SchoolAcademicsTab />} />
           <Route path="templates" element={<SchoolTemplatesTab />} />
+          <Route path="branding" element={<SchoolBrandingTab />} />
           <Route path="subjects" element={<SchoolSubjectsTab />} />
         </Route>
         <Route path="*" element={<Navigate to="/overview" replace />} />

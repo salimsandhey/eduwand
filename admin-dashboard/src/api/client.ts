@@ -47,6 +47,22 @@ async function request<T>(path: string, options: RequestInit = {}, token?: strin
   return body.data as T;
 }
 
+// FormData uploads (logo, etc.) - never set Content-Type ourselves, the
+// browser sets it (with the multipart boundary) when it sees a FormData body.
+async function requestMultipart<T>(path: string, formData: FormData, token: string): Promise<T> {
+  const response = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+
+  const body: ApiEnvelope<T> = await response.json();
+  if (!response.ok || body.error) {
+    throw new ApiError(body.error?.code ?? "unknown_error", body.error?.message ?? "Request failed");
+  }
+  return body.data as T;
+}
+
 function toQueryString(params: Record<string, string | undefined>): string {
   const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== "");
   if (entries.length === 0) return "";
@@ -245,6 +261,12 @@ export interface SchoolFormatTemplate {
 export interface SchoolFormatTemplates {
   generation: SchoolFormatTemplate | null;
   attainmentReport: SchoolFormatTemplate | null;
+}
+
+export interface SchoolBranding {
+  logoUrl: string | null;
+  primaryColor: string | null;
+  secondaryColor: string | null;
 }
 
 export interface Subject {
@@ -741,6 +763,19 @@ export const api = {
     ),
   deleteSchoolFormatTemplate: (token: string, schoolId: string, appliesTo: SchoolFormatTemplateAppliesTo) =>
     request<{ deleted: boolean }>(`/schools/${schoolId}/format-templates/${appliesTo}`, { method: "DELETE" }, token),
+
+  getSchoolBranding: (token: string, schoolId: string) => request<SchoolBranding>(`/schools/${schoolId}/branding`, {}, token),
+  saveSchoolBranding: (
+    token: string,
+    schoolId: string,
+    input: { logoFile?: File; primaryColor?: string; secondaryColor?: string }
+  ) => {
+    const formData = new FormData();
+    if (input.logoFile) formData.append("logo", input.logoFile);
+    if (input.primaryColor) formData.append("primaryColor", input.primaryColor);
+    if (input.secondaryColor) formData.append("secondaryColor", input.secondaryColor);
+    return requestMultipart<SchoolBranding>(`/schools/${schoolId}/branding`, formData, token);
+  },
 
   listSubjectsForSchool: (token: string, schoolId: string) =>
     request<Subject[]>(`/schools/${schoolId}/subjects`, {}, token),

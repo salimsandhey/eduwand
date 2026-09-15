@@ -275,6 +275,16 @@ export interface CommunicationMessage {
   createdAt: string;
 }
 
+export interface StudentAttainmentRow {
+  studentStubId: string;
+  fullName: string;
+  averageScore: number;
+  submissionCount: number;
+  // Per-assignment (topic report) or per-topic (subject report) score
+  // breakdown for this student, scoped to this exact report.
+  breakdown: { label: string; averageScore: number }[];
+}
+
 export interface AttainmentReportRecord {
   id: string;
   topicId: string;
@@ -302,6 +312,40 @@ export interface AttainmentReportRecord {
     title: string;
     averageScore: number | null;
   }[];
+  studentAttainment: StudentAttainmentRow[];
+  generationSummaries: {
+    outputType: string;
+    label: string;
+    summary: string;
+  }[];
+  observations: {
+    id: string;
+    body: string;
+    photoUrl: string | null;
+    recordedAt: string;
+  }[];
+}
+
+export interface SubjectAttainmentReport {
+  subject: string;
+  className: string;
+  sectionName: string;
+  topicCount: number;
+  studentCount: number;
+  gradedSubmissionCount: number;
+  averageScore: number | null;
+  scoreBands: {
+    above80: number;
+    between60And80: number;
+    below60: number;
+  };
+  perTopicAttainment: {
+    topicId: string;
+    topicName: string;
+    averageScore: number | null;
+    gradedSubmissionCount: number;
+  }[];
+  studentAttainment: StudentAttainmentRow[];
 }
 
 export interface PipelineStage {
@@ -698,11 +742,13 @@ export interface Observation {
   id: string;
   topicId: string;
   body: string;
+  photoUrl: string | null;
   recordedAt: string;
 }
 
 export type GenerationOutputType = "lesson_plan" | "custom_activity_report" | "flashcards" | "presentation";
 export type PresentationTemplate = "detailed" | "instructional" | "school_format" | "more_visual";
+export type ActivityGroupSize = "individual" | "small_group" | "large_group";
 export type PresentationColorScheme = "indigo" | "coral" | "forest" | "slate";
 
 export interface Generation {
@@ -914,6 +960,7 @@ export interface ClassAnalytics {
   submissionCount: number;
   students: { studentStubId: string; fullName: string; averageScore: number; submissionCount: number }[];
   struggleAreas: { assignmentId: string; title: string; averageScore: number }[];
+  weeklyTrend: { label: string; score: number | null }[];
 }
 
 export interface StudentAnalytics {
@@ -1325,8 +1372,15 @@ export const api = {
     ),
   deleteTopicContext: (token: string, topicId: string, contextSourceId: string) =>
     request<null>(`/topics/${topicId}/context/${contextSourceId}`, { method: "DELETE" }, token),
-  addTopicObservation: (token: string, topicId: string, body: string) =>
-    request<Observation>(`/topics/${topicId}/observations`, { method: "POST", body: JSON.stringify({ body }) }, token),
+  addTopicObservation: (token: string, topicId: string, body: string, photo?: { uri: string; name: string; mimeType: string }) => {
+    if (!photo) {
+      return request<Observation>(`/topics/${topicId}/observations`, { method: "POST", body: JSON.stringify({ body }) }, token);
+    }
+    const formData = new FormData();
+    formData.append("body", body);
+    formData.append("file", { uri: photo.uri, name: photo.name, type: photo.mimeType } as unknown as Blob);
+    return requestMultipart<Observation>(`/topics/${topicId}/observations`, formData, token);
+  },
 
   importTopicContext: (token: string, topicId: string, input: { sourceTopicId: string; contextSourceIds?: string[] }) =>
     request<ContextSource[]>(`/topics/${topicId}/context/import`, { method: "POST", body: JSON.stringify(input) }, token),
@@ -1359,10 +1413,20 @@ export const api = {
       customPrompt?: string;
       sources?: GenerationSourceSelection[];
       presentationTemplate?: PresentationTemplate;
-      presentationColorScheme?: PresentationColorScheme;
+      // Per-generation color tweak - overrides the school's saved branding
+      // colors for this deck only. Omit to just use the saved branding as-is.
+      overridePrimaryColor?: string;
+      overrideSecondaryColor?: string;
+      // Only meaningful when outputType is "custom_activity_report".
+      activityGroupSize?: ActivityGroupSize;
+      activityResources?: string[];
     }
   ) => request<Generation>(`/topics/${topicId}/generations`, { method: "POST", body: JSON.stringify(input) }, token),
   getGeneration: (token: string, id: string) => request<Generation>(`/generations/${id}`, {}, token),
+  presentationExportUrl: (id: string) => `${API_URL}/generations/${id}/export.pptx`,
+  attainmentReportPdfUrl: (topicId: string) => `${API_URL}/topics/${topicId}/attainment-report/pdf`,
+  subjectAttainmentReportPdfUrl: (classSectionId: string, subject: string) =>
+    `${API_URL}/attainment-reports/roll-up/pdf?classSectionId=${encodeURIComponent(classSectionId)}&subject=${encodeURIComponent(subject)}`,
   editGeneration: (token: string, id: string, editedOutput: string) =>
     request<Generation>(`/generations/${id}`, { method: "PATCH", body: JSON.stringify({ editedOutput }) }, token),
   retryGeneration: (token: string, id: string) => request<Generation>(`/generations/${id}/retry`, { method: "POST" }, token),
@@ -1475,6 +1539,12 @@ export const api = {
 
   getAttainmentReport: (token: string, topicId: string) =>
     request<AttainmentReportRecord>(`/topics/${topicId}/attainment-report`, {}, token),
+  getSubjectAttainmentReport: (token: string, classSectionId: string, subject: string) =>
+    request<SubjectAttainmentReport>(
+      `/attainment-reports/roll-up?classSectionId=${encodeURIComponent(classSectionId)}&subject=${encodeURIComponent(subject)}`,
+      {},
+      token
+    ),
 
   listDocuments: (token: string, enquiryId: string) =>
     request<EnquiryDocument[]>(`/enquiries/${enquiryId}/documents`, {}, token),

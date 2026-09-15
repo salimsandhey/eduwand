@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "worker": "tsx watch src/worker.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node -e \"require('fs').cpSync('src/assets','dist/assets',{recursive:true})\"",
     "start": "node dist/server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
@@ -25,20 +25,26 @@
     "@fastify/multipart": "^10.1.0",
     "@fastify/rate-limit": "^11.2.0",
     "@prisma/client": "^6.19.3",
+    "@types/pdfkit": "^0.17.6",
     "bcryptjs": "^2.4.3",
     "cheerio": "^1.2.0",
     "cloudinary": "^2.11.0",
     "dotenv": "^17.4.2",
     "fastify": "^5.11.2",
     "fastify-plugin": "^5.0.1",
+    "image-size": "^2.0.4",
     "jszip": "^3.10.1",
     "mammoth": "^1.12.1",
-    "pdf-parse": "^2.4.5"
+    "pdf-parse": "^2.4.5",
+    "pdfkit": "^0.20.2",
+    "pptxgenjs": "^4.0.1"
   },
   "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20.14.15",
     "exceljs": "^4.4.0",
+    "ionicons": "^8.1.0",
     "prisma": "^6.19.3",
     "tsx": "^4.19.1",
     "typescript": "^5.5.4"

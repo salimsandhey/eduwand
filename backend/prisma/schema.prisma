@@ -828,6 +828,9 @@ model Observation {
   authorUserId String   @map("author_user_id") @db.Uuid
   author       AppUser  @relation(fields: [authorUserId], references: [id])
   body         String
+  // Optional photo captured with the note (e.g. a whiteboard shot or student
+  // work) - surfaced as its own section on the topic's attainment report.
+  photoUrl     String?  @map("photo_url")
   recordedAt   DateTime @default(now()) @map("recorded_at")
 
   @@index([topicId])
@@ -851,6 +854,13 @@ model Generation {
   minutesPerClass        Int?                  @map("minutes_per_class")
   language               String                @default("English")
   customPrompt           String?               @map("custom_prompt")
+  // Only meaningful when outputType is "custom_activity_report" - see
+  // ai.ts's ActivityGroupSize/ACTIVITY_RESOURCE_OPTIONS. Stored as real
+  // columns (not folded into the output JSON like presentationTemplate is)
+  // so a retry reuses them for free via this same row, the same way
+  // classCount/minutesPerClass already do.
+  activityGroupSize      String?               @map("activity_group_size")
+  activityResources      String[]              @map("activity_resources")
   aiOutput               String                @map("ai_output")
   editedOutput           String?               @map("edited_output")
   schoolFormatTemplateId String?               @map("school_format_template_id") @db.Uuid

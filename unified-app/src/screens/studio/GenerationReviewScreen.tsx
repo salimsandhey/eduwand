@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Platform, KeyboardAvoidingView } from "react-native";
+import * as FileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
 import Markdown, { MarkdownIt } from "react-native-markdown-display";
 import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -113,6 +115,7 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
   const [isRetrying, setIsRetrying] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const [isGeneratingAssessment, setIsGeneratingAssessment] = useState(false);
+  const [isExportingPptx, setIsExportingPptx] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -225,6 +228,32 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
       setError(err instanceof Error ? err.message : "Failed to update sharing");
     } finally {
       setIsPublishing(false);
+    }
+  }
+
+  async function exportPptx() {
+    if (!accessToken || !generation) return;
+    setIsExportingPptx(true);
+    setError(null);
+    try {
+      const fileUri = `${FileSystem.cacheDirectory}${generation.id}.pptx`;
+      await FileSystem.downloadAsync(api.presentationExportUrl(generation.id), fileUri, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(fileUri, {
+          mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+          dialogTitle: "Share presentation",
+          UTI: "org.openxmlformats.presentationml.presentation",
+        });
+      } else {
+        setError(`Presentation saved to ${fileUri}`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to export presentation");
+    } finally {
+      setIsExportingPptx(false);
     }
   }
 
@@ -466,6 +495,23 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
         ) : null}
 
         <View style={styles.footer}>
+          {generation.outputType === "presentation" ? (
+            <Pressable
+              style={({ pressed }) => [styles.shareButton, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, marginBottom: spacing.sm }, (isExportingPptx || pressed) && { opacity: pressedOpacity }]}
+              onPress={exportPptx}
+              disabled={isExportingPptx}
+              accessibilityRole="button"
+            >
+              {isExportingPptx ? (
+                <ActivityIndicator color={colors.textPrimary} />
+              ) : (
+                <>
+                  <Ionicons name="download-outline" size={18} color={colors.textPrimary} />
+                  <Text style={[styles.shareButtonText, { color: colors.textPrimary }]}>Export as PPTX</Text>
+                </>
+              )}
+            </Pressable>
+          ) : null}
           {generation.outputType === "lesson_plan" ? (
             <Pressable
               style={({ pressed }) => [styles.shareButton, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, marginBottom: spacing.sm }, (isGeneratingAssessment || pressed) && { opacity: pressedOpacity }]}
@@ -483,15 +529,25 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
               )}
             </Pressable>
           ) : null}
-          <Pressable
-            style={({ pressed }) => [styles.shareButton, { backgroundColor: generation.shareStatus === "published" ? colors.surfaceRaised : colors.accent, borderColor: generation.shareStatus === "published" ? colors.border : colors.accent }, (isPublishing || pressed) && { opacity: pressedOpacity }]}
-            onPress={togglePublish}
-            disabled={isPublishing}
-            accessibilityRole="button"
-          >
-            {isPublishing ? <ActivityIndicator color={generation.shareStatus === "published" ? colors.textPrimary : colors.accentOn} /> : <><Text style={[styles.shareButtonText, { color: generation.shareStatus === "published" ? colors.textPrimary : colors.accentOn }]}>{generation.shareStatus === "published" ? "Unshare from students" : "Share with students"}</Text><Ionicons name="arrow-forward" size={19} color={generation.shareStatus === "published" ? colors.textPrimary : colors.accentOn} /></>}
-          </Pressable>
-          <Text style={[styles.footerNote, { color: colors.textMuted }]}>{generation.shareStatus === "published" ? "Students can see this in their Materials tab." : "Review before students receive it."}</Text>
+          {/* Presentations are export/present-only - decks are meant to be
+              shown in class or shared as a .pptx file, not handed to each
+              student individually through the Materials tab. Every other
+              output type keeps the generic publish/unpublish flow below,
+              which is the same mechanism behind /student/materials for all
+              of them - this is the one deliberate exception. */}
+          {generation.outputType !== "presentation" ? (
+            <>
+              <Pressable
+                style={({ pressed }) => [styles.shareButton, { backgroundColor: generation.shareStatus === "published" ? colors.surfaceRaised : colors.accent, borderColor: generation.shareStatus === "published" ? colors.border : colors.accent }, (isPublishing || pressed) && { opacity: pressedOpacity }]}
+                onPress={togglePublish}
+                disabled={isPublishing}
+                accessibilityRole="button"
+              >
+                {isPublishing ? <ActivityIndicator color={generation.shareStatus === "published" ? colors.textPrimary : colors.accentOn} /> : <><Text style={[styles.shareButtonText, { color: generation.shareStatus === "published" ? colors.textPrimary : colors.accentOn }]}>{generation.shareStatus === "published" ? "Unshare from students" : "Share with students"}</Text><Ionicons name="arrow-forward" size={19} color={generation.shareStatus === "published" ? colors.textPrimary : colors.accentOn} /></>}
+              </Pressable>
+              <Text style={[styles.footerNote, { color: colors.textMuted }]}>{generation.shareStatus === "published" ? "Students can see this in their Materials tab." : "Review before students receive it."}</Text>
+            </>
+          ) : null}
         </View>
       </ScrollView>
       </KeyboardAvoidingView>

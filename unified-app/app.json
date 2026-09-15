@@ -3,13 +3,14 @@
     "name": "EduWand",
     "slug": "eduwand",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/brand/eduwand-icon.png",
     "assetBundlePatterns": [
       "assets/fonts/*",
       "assets/brand/*",
       "assets/decorative/*",
-      "assets/avatars/*"
+      "assets/avatars/*",
+      "assets/icons/*"
     ],
     "userInterfaceStyle": "light",
     "ios": {
