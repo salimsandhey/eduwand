@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, Pressable, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
+import { useNavigation } from "@react-navigation/native";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
@@ -23,6 +24,7 @@ export function ProfileScreen() {
     removeProfilePhoto,
   } = useAuth();
   const { colors, pressedOpacity } = useTheme();
+  const navigation = useNavigation<any>();
 
   const [fullName, setFullName] = useState(user?.fullName ?? "");
   const [phone, setPhone] = useState(user?.phone ?? "");
@@ -212,6 +214,17 @@ export function ProfileScreen() {
           <ReadOnlyRow label="Status" value={formatRole(user.status)} colors={colors} last />
         </View>
 
+        {user.role === "teacher" && user.accountType === "individual" ? (
+          <Pressable
+            style={({ pressed }) => [styles.card, styles.linkCard, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+            onPress={() => navigation.navigate("FormatTemplate")}
+            accessibilityRole="button"
+          >
+            <View style={[styles.sectionHeading, { marginBottom: 0, flex: 1 }]}><View style={[styles.sectionIcon, { backgroundColor: colors.accentSoft }]}><Ionicons name="options-outline" size={17} color={colors.accent} /></View><View style={{ flex: 1 }}><Text style={[styles.cardTitle, { color: colors.textPrimary }]}>School branding</Text><Text style={[styles.cardCaption, { color: colors.textMuted }]}>Logo, colors, and formatting used across your reports.</Text></View></View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+          </Pressable>
+        ) : null}
+
         <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <View style={styles.sectionHeading}><View style={[styles.sectionIcon, { backgroundColor: colors.accentSoft }]}><Ionicons name="lock-closed-outline" size={17} color={colors.accent} /></View><View><Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Security</Text><Text style={[styles.cardCaption, { color: colors.textMuted }]}>Choose a strong password you do not reuse.</Text></View></View>
 
@@ -306,6 +319,7 @@ const styles = StyleSheet.create({
   heroRoleChipText: { fontSize: 10, fontWeight: "800" },
   photoPickerWrap: { marginTop: 18, borderRadius: 18, padding: 14, borderWidth: 1 },
   card: { borderWidth: 1, borderRadius: 20, padding: 16 },
+  linkCard: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   sectionHeading: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 16 }, sectionIcon: { width: 34, height: 34, borderRadius: 11, alignItems: "center", justifyContent: "center" },
   cardTitle: {
     fontSize: 15,

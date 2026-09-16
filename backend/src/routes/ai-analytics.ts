@@ -11,6 +11,27 @@ function scoreOf(grade: { finalScore: number | null; aiScore: number | null } | 
   return grade.finalScore ?? grade.aiScore;
 }
 
+const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+// Real day-by-day average score for the last 7 days (including today), built
+// from actual submission timestamps + grades - no synthetic/demo data. A day
+// with no graded submissions gets a null score (rendered as an empty bar on
+// the mobile side) rather than a fabricated number.
+function weeklyTrendFor(gradedSubmissions: { submittedAt: Date; score: number }[]) {
+  const days: { label: string; score: number | null }[] = [];
+  const today = new Date();
+  for (let i = 6; i >= 0; i--) {
+    const dayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
+    const dayEnd = new Date(dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate() + 1);
+    const scoresThatDay = gradedSubmissions.filter((s) => s.submittedAt >= dayStart && s.submittedAt < dayEnd).map((s) => s.score);
+    days.push({
+      label: DAY_LABELS[dayStart.getDay()],
+      score: scoresThatDay.length > 0 ? Math.round(scoresThatDay.reduce((a, b) => a + b, 0) / scoresThatDay.length) : null,
+    });
+  }
+  return days;
+}
+
 export async function aiAnalyticsRoutes(app: FastifyInstance) {
   app.get<{ Params: { id: string } }>(
     "/analytics/ai/student/:id",
@@ -99,8 +120,10 @@ export async function aiAnalyticsRoutes(app: FastifyInstance) {
         .sort((a, b) => a.averageScore - b.averageScore)
         .slice(0, 3);
 
+      const weeklyTrend = weeklyTrendFor(graded.map((s) => ({ submittedAt: s.submittedAt, score: scoreOf(s.grade) as number })));
+
       return {
-        data: { classAverage, submissionCount: graded.length, students, struggleAreas },
+        data: { classAverage, submissionCount: graded.length, students, struggleAreas, weeklyTrend },
         meta: {},
       };
     }

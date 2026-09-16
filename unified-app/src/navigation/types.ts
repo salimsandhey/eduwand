@@ -25,7 +25,9 @@ export type RootStackParamList = {
   AssessmentInsight: { assessmentId: string };
   LessonWithAiTest: undefined;
   AnswerKeyReview: { assignmentId: string };
-  AttainmentReport: { topicId: string };
+  AttainmentReport:
+    | { topicId: string }
+    | { classSectionId: string; subject: string; className: string; sectionName: string };
   CommunicationHub: undefined;
   Notifications: undefined;
   Profile: undefined;

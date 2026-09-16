@@ -64,10 +64,7 @@ export function MoreMenuScreen() {
         { title: "Getting started", caption: "Finish your profile and unlock badges", icon: "checkmark-circle-outline", onPress: () => root?.navigate("GettingStarted") },
         { title: "Leaderboard", caption: "See how you rank in your school this month", icon: "trophy-outline", onPress: () => root?.navigate("Leaderboard") },
         ...(isIndividualTeacher
-          ? [
-              { title: "Academic year", caption: "Start a new session when this one ends", icon: "calendar-outline" as const, onPress: () => root?.navigate("StartNewAcademicYear") },
-              { title: "Lesson format", caption: "Custom formatting the AI follows", icon: "options-outline" as const, onPress: () => root?.navigate("FormatTemplate") },
-            ]
+          ? [{ title: "Academic year", caption: "Start a new session when this one ends", icon: "calendar-outline" as const, onPress: () => root?.navigate("StartNewAcademicYear") }]
           : []),
       ]
     : [];

@@ -688,7 +688,7 @@ export async function assignmentRoutes(app: FastifyInstance) {
           topicId: topic.id,
           teacherUserId: request.user.sub,
           classSectionId: topic.classSectionId,
-          title: `${topic.name} – Assignment`,
+          title: `${topic.name} - Assignment`,
           questions: storedQuestions as unknown as Prisma.InputJsonValue,
           aiGenParams: aiGenParams as unknown as Prisma.InputJsonValue,
           personalisationEnabled: false,

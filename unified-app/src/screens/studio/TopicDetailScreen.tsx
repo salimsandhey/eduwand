@@ -213,6 +213,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
   const [observationText, setObservationText] = useState("");
   const [showAddObservation, setShowAddObservation] = useState(false);
   const [isAddingObservation, setIsAddingObservation] = useState(false);
+  const [notePhoto, setNotePhoto] = useState<{ uri: string; name: string; mimeType: string } | null>(null);
 
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [openObservation, setOpenObservation] = useState<Observation | null>(null);
@@ -429,14 +430,41 @@ export function TopicDetailScreen({ route, navigation }: Props) {
     setIsAddingObservation(true);
     setError(null);
     try {
-      await api.addTopicObservation(accessToken, topicId, observationText.trim());
+      await api.addTopicObservation(accessToken, topicId, observationText.trim(), notePhoto ?? undefined);
       setObservationText("");
+      setNotePhoto(null);
       setShowAddObservation(false);
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add observation");
     } finally {
       setIsAddingObservation(false);
+    }
+  }
+
+  async function pickNotePhoto() {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      setError("Camera permission is required to take a photo");
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({ quality: 0.7 });
+    if (!result.canceled && result.assets?.[0]) {
+      const asset = result.assets[0];
+      setNotePhoto({ uri: asset.uri, name: asset.fileName ?? "photo.jpg", mimeType: asset.mimeType ?? "image/jpeg" });
+    }
+  }
+
+  async function pickNoteGalleryPhoto() {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      setError("Photo library permission is required to choose a photo");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: "images", quality: 0.7 });
+    if (!result.canceled && result.assets?.[0]) {
+      const asset = result.assets[0];
+      setNotePhoto({ uri: asset.uri, name: asset.fileName ?? "photo.jpg", mimeType: asset.mimeType ?? "image/jpeg" });
     }
   }
 
@@ -933,6 +961,11 @@ export function TopicDetailScreen({ route, navigation }: Props) {
                     <View style={styles.stickyNoteTape} />
                     <View style={styles.stickyNotePin} />
                     <View style={styles.stickyNoteFold} />
+                    {o.photoUrl ? (
+                      <View style={styles.stickyNotePhotoBadge}>
+                        <Ionicons name="camera" size={11} color="#FFFFFF" />
+                      </View>
+                    ) : null}
                     <Text style={styles.stickyNoteBody} numberOfLines={5}>{o.body}</Text>
                     <View style={styles.stickyNoteFooter}>
                       <View style={styles.stickyNoteFooterDot} />
@@ -1150,17 +1183,36 @@ export function TopicDetailScreen({ route, navigation }: Props) {
         </GestureHandlerRootView>
       </Modal>
 
-      <Modal transparent animationType="slide" visible={showAddObservation} onRequestClose={() => setShowAddObservation(false)}>
+      <Modal transparent animationType="slide" visible={showAddObservation} onRequestClose={() => { setShowAddObservation(false); setNotePhoto(null); }}>
         <GestureHandlerRootView style={{ flex: 1 }}>
         <View style={styles.modalRoot}>
-          <Pressable style={styles.modalBackdrop} onPress={() => setShowAddObservation(false)} accessibilityRole="button" accessibilityLabel="Close new note" />
+          <Pressable style={styles.modalBackdrop} onPress={() => { setShowAddObservation(false); setNotePhoto(null); }} accessibilityRole="button" accessibilityLabel="Close new note" />
           <View style={[styles.modalSheet, { backgroundColor: colors.surface, marginBottom: keyboardHeight }]}>
             <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
             <View style={styles.modalHeader}>
               <View><Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Add teaching note</Text><Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>Capture what happened while it is fresh.</Text></View>
-              <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setShowAddObservation(false)} accessibilityRole="button"><Ionicons name="close" size={20} color={colors.textPrimary} /></Pressable>
+              <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => { setShowAddObservation(false); setNotePhoto(null); }} accessibilityRole="button"><Ionicons name="close" size={20} color={colors.textPrimary} /></Pressable>
             </View>
             <TextInput style={[styles.input, styles.multilineInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]} value={observationText} onChangeText={setObservationText} placeholder="What happened in class?" placeholderTextColor={colors.textMuted} multiline autoFocus />
+            {notePhoto ? (
+              <View style={styles.notePhotoPreviewWrap}>
+                <Image source={{ uri: notePhoto.uri }} style={styles.notePhotoPreview} resizeMode="cover" />
+                <Pressable style={styles.notePhotoRemove} onPress={() => setNotePhoto(null)} accessibilityRole="button" accessibilityLabel="Remove photo" hitSlop={8}>
+                  <Ionicons name="close-circle" size={22} color="#FFFFFF" />
+                </Pressable>
+              </View>
+            ) : (
+              <View style={styles.notePhotoActions}>
+                <Pressable style={({ pressed }) => [styles.notePhotoAction, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]} onPress={pickNotePhoto} accessibilityRole="button">
+                  <Ionicons name="camera-outline" size={16} color={colors.accent} />
+                  <Text style={[styles.notePhotoActionText, { color: colors.accent }]}>Take photo</Text>
+                </Pressable>
+                <Pressable style={({ pressed }) => [styles.notePhotoAction, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]} onPress={pickNoteGalleryPhoto} accessibilityRole="button">
+                  <Ionicons name="image-outline" size={16} color={colors.accent} />
+                  <Text style={[styles.notePhotoActionText, { color: colors.accent }]}>Choose photo</Text>
+                </Pressable>
+              </View>
+            )}
             <Pressable style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent }, (isAddingObservation || !observationText.trim() || pressed) && { opacity: pressedOpacity }]} onPress={addObservation} disabled={isAddingObservation || !observationText.trim()} accessibilityRole="button">
               {isAddingObservation ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Save note</Text>}
             </Pressable>
@@ -1199,6 +1251,11 @@ export function TopicDetailScreen({ route, navigation }: Props) {
             </View>
             <ScrollView style={styles.noteDetailScroll} showsVerticalScrollIndicator={false}>
               <Text style={[styles.noteDetailBody, { color: colors.textSecondary }]}>{openObservation?.body}</Text>
+              {openObservation?.photoUrl ? (
+                <Pressable onPress={() => setLightboxUrl(openObservation.photoUrl!)} accessibilityRole="button" accessibilityLabel="View note photo">
+                  <Image source={{ uri: openObservation.photoUrl }} style={styles.noteDetailPhoto} resizeMode="cover" />
+                </Pressable>
+              ) : null}
             </ScrollView>
           </View>
         </View>
@@ -1440,6 +1497,13 @@ const styles = StyleSheet.create({
   emptyWorkbenchDetail: { maxWidth: 260, marginTop: 4, fontSize: 12, lineHeight: 18, fontWeight: "600", textAlign: "center" },
   input: { borderWidth: 1, borderRadius: 12, padding: 12, height: 48, fontSize: 14 },
   multilineInput: { height: 120, textAlignVertical: "top", marginTop: 18 },
+  notePhotoActions: { flexDirection: "row", gap: 10, marginTop: 12 },
+  notePhotoAction: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: 1, borderRadius: 12, height: 42 },
+  notePhotoActionText: { fontSize: 12, fontWeight: "700" },
+  notePhotoPreviewWrap: { marginTop: 12, position: "relative" },
+  notePhotoPreview: { width: "100%", height: 150, borderRadius: 12 },
+  notePhotoRemove: { position: "absolute", top: 8, right: 8 },
+  noteDetailPhoto: { marginTop: 14, width: "100%", height: 180, borderRadius: 14 },
   smallButton: { borderRadius: 12, height: 50, alignItems: "center", justifyContent: "center", marginTop: 12 },
   smallButtonText: { fontSize: 13, fontWeight: "700" },
   genGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 8 },
@@ -1506,6 +1570,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   stickyNoteFold: { position: "absolute", right: -11, bottom: -11, width: 30, height: 30, backgroundColor: "rgba(255,255,255,0.43)", transform: [{ rotate: "45deg" }] },
+  stickyNotePhotoBadge: { position: "absolute", top: 10, right: 10, width: 20, height: 20, borderRadius: 10, backgroundColor: "rgba(0,0,0,0.28)", alignItems: "center", justifyContent: "center" },
   stickyNoteFooter: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: "auto", paddingTop: 10 },
   stickyNoteFooterDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: "rgba(51,46,31,0.5)" },
   stickyNoteBody: { fontSize: 12, lineHeight: 18, fontWeight: "600", color: STICKY_NOTE_INK },

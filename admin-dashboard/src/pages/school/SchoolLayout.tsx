@@ -165,6 +165,14 @@ export function SchoolLayout() {
         ) : null}
         {canManageAcademics ? (
           <NavLink
+            to={`/schools/${id}/branding`}
+            style={({ isActive }) => ({ ...styles.tabLink, ...(isActive ? styles.tabLinkActive : {}) })}
+          >
+            Branding
+          </NavLink>
+        ) : null}
+        {canManageAcademics ? (
+          <NavLink
             to={`/schools/${id}/subjects`}
             style={({ isActive }) => ({ ...styles.tabLink, ...(isActive ? styles.tabLinkActive : {}) })}
           >

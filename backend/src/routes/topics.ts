@@ -544,8 +544,27 @@ export async function topicRoutes(app: FastifyInstance) {
     "/topics/:id/observations",
     { onRequest: scoped(app) },
     async (request, reply) => {
-      const body = request.body ?? ({} as CreateObservationBody);
-      if (!body.body || !body.body.trim()) {
+      let bodyText: string;
+      let photoUrl: string | null = null;
+
+      if (request.isMultipart?.()) {
+        const fields: Record<string, string> = {};
+        for await (const part of request.parts()) {
+          if (part.type === "file") {
+            const buffer = await part.toBuffer();
+            const { location } = await storage.save(`observations/${Date.now()}-${part.filename}`, buffer);
+            photoUrl = location;
+          } else {
+            fields[part.fieldname] = part.value as string;
+          }
+        }
+        bodyText = fields.body ?? "";
+      } else {
+        const body = request.body ?? ({} as CreateObservationBody);
+        bodyText = body.body ?? "";
+      }
+
+      if (!bodyText.trim()) {
         return reply.code(400).send({ data: null, error: { code: "validation_error", message: "body is required" } });
       }
 
@@ -555,7 +574,7 @@ export async function topicRoutes(app: FastifyInstance) {
       }
 
       const observation = await prisma.observation.create({
-        data: { topicId: topic.id, authorUserId: request.user.sub, body: body.body.trim() },
+        data: { topicId: topic.id, authorUserId: request.user.sub, body: bodyText.trim(), photoUrl },
       });
 
       return reply.code(201).send({ data: observation, meta: {} });

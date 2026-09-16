@@ -139,7 +139,20 @@ export function TopicListScreen({ navigation, route }: Props) {
           </View>
         </View>
 
-        <Text style={[styles.topicCount, { color: colors.textMuted }]}>{displayedTopics.length} topic{displayedTopics.length === 1 ? "" : "s"}</Text>
+        <View style={styles.topicCountRow}>
+          <Text style={[styles.topicCount, { color: colors.textMuted }]}>{displayedTopics.length} topic{displayedTopics.length === 1 ? "" : "s"}</Text>
+          {subjectFilter ? (
+            <Pressable
+              style={({ pressed }) => [styles.attainmentReportButton, { borderColor: colors.accentSoftAlt }, pressed && { opacity: pressedOpacity }]}
+              onPress={() => navigation.navigate("AttainmentReport", { classSectionId, subject: subjectFilter, className, sectionName })}
+              accessibilityRole="button"
+              accessibilityLabel="View attainment report for this subject"
+            >
+              <Ionicons name="bar-chart-outline" size={14} color={colors.accent} />
+              <Text style={[styles.attainmentReportButtonText, { color: colors.accent }]}>Attainment report</Text>
+            </Pressable>
+          ) : null}
+        </View>
 
         {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
@@ -351,7 +364,10 @@ const styles = StyleSheet.create({
   classContextSubtitle: { marginTop: 2, color: "rgba(255,255,255,0.82)", fontSize: 11, lineHeight: 16, fontWeight: "600" },
   subjectFilter: { alignSelf: "flex-start", height: 30, flexDirection: "row", alignItems: "center", gap: 4, marginTop: 9, borderRadius: 15, paddingHorizontal: 10, backgroundColor: "rgba(255,255,255,0.94)" },
   subjectText: { fontSize: 12, fontWeight: "700" },
-  topicCount: { marginTop: 18, marginBottom: 10, fontSize: 12, fontWeight: "700", letterSpacing: 0.2, textTransform: "uppercase" },
+  topicCountRow: { marginTop: 18, marginBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  topicCount: { fontSize: 12, fontWeight: "700", letterSpacing: 0.2, textTransform: "uppercase" },
+  attainmentReportButton: { flexDirection: "row", alignItems: "center", gap: 5, minHeight: 30, paddingHorizontal: 11, borderWidth: 1, borderRadius: 15 },
+  attainmentReportButtonText: { fontSize: 11, fontWeight: "800" },
   error: { textAlign: "center", marginBottom: 12, fontSize: 13 },
   loader: { marginVertical: 28 },
   emptyTopics: { minHeight: 80, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, borderRadius: radius.lg, borderWidth: 1, paddingHorizontal: 20, marginBottom: 18 },

@@ -1,6 +1,5 @@
 import { createContext, useContext, ReactNode } from "react";
-import { useColorScheme } from "react-native";
-import { darkColors, lightColors, ThemeColors, getCardShadow, PRESSED_OPACITY } from "./tokens";
+import { lightColors, ThemeColors, getCardShadow, PRESSED_OPACITY } from "./tokens";
 
 interface ThemeContextValue {
   colors: ThemeColors;
@@ -11,10 +10,13 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
+// This app only ships a light theme - deliberately not reading the device's
+// system color scheme (useColorScheme), which used to flip the whole app to
+// darkColors whenever the phone was in system dark mode (or even briefly
+// reported an unsettled null scheme on startup).
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const scheme = useColorScheme();
-  const mode: "light" | "dark" = scheme === "light" ? "light" : "dark";
-  const colors = mode === "dark" ? darkColors : lightColors;
+  const mode: "light" | "dark" = "light";
+  const colors = lightColors;
 
   return (
     <ThemeContext.Provider value={{ colors, mode, cardShadow: getCardShadow(mode), pressedOpacity: PRESSED_OPACITY }}>

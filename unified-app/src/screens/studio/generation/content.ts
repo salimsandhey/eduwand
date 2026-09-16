@@ -33,11 +33,24 @@ export interface CustomActivityContent {
 
 export interface FlashcardsContent {
   type: "flashcards";
-  cards: { front: string; back: string }[];
+  cards: {
+    front: string;
+    back: string;
+    // Optional - old generations predate this field. 2-3 short key terms
+    // from the answer, shown as a small connected icon row on the back
+    // (icon picked locally by keyword-matching each term - see topicIcons.ts).
+    keyTerms?: string[];
+  }[];
 }
 
+// "school_format" and "more_visual" are legacy - no longer selectable
+// (branding applies by default now, and presentations no longer use stock
+// photos - see GenerationSetupScreen.tsx), kept only so old generations
+// still parse/render.
 export type PresentationTemplate = "detailed" | "instructional" | "school_format" | "more_visual";
+// Legacy-only fallback (pre branding-sourced colors).
 export type PresentationColorScheme = "indigo" | "coral" | "forest" | "slate";
+export type PresentationSlideLayout = "title" | "bullets" | "stat" | "quote" | "divider" | "stat-grid" | "timeline" | "icon-grid";
 
 export interface PresentationContent {
   type: "presentation";
@@ -46,7 +59,21 @@ export interface PresentationContent {
   logoUrl?: string | null;
   primaryColor?: string | null;
   secondaryColor?: string | null;
-  slides: { title: string; bullets: string[]; imageUrl?: string }[];
+  footerLabel?: string | null;
+  slides: {
+    // Optional - old generations predate this field; readers default to
+    // "bullets" (or "image-right" when imageUrl is present) when absent.
+    layout?: PresentationSlideLayout;
+    title: string;
+    bullets: string[];
+    notes?: string;
+    // Legacy only - no longer set on new generations (no more stock photos),
+    // kept so old "more_visual" rows with a saved photo still render.
+    imageUrl?: string;
+    // Used by "stat-grid", "timeline", and "icon-grid" - see the matching
+    // comment in backend/src/lib/ai.ts's PresentationContent.
+    items?: { title: string; description?: string; tag?: string }[];
+  }[];
 }
 
 export type StructuredGenerationContent =

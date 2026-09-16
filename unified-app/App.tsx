@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { useFonts } from "expo-font";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -9,6 +9,7 @@ import { AuthScreen } from "./src/screens/auth/AuthScreen";
 import { AppNavigator } from "./src/navigation/AppNavigator";
 import { applyGlobalTypography } from "./src/theme/globalTypography";
 import { AnimatedSplashScreen } from "./src/components/AnimatedSplashScreen";
+import { lockPortrait } from "./src/utils/safeOrientation";
 
 applyGlobalTypography();
 
@@ -16,6 +17,16 @@ function Root() {
   const { user, isRestoring } = useAuth();
   const { mode } = useTheme();
   const [splashDone, setSplashDone] = useState(false);
+
+  // The app is portrait throughout except the Presentation full-screen
+  // viewer (PresentationView.tsx), which locks to landscape on its own and
+  // reverts on close - this app-wide default is what it reverts back to.
+  // Runtime locking only works because app.json's "orientation" is "default"
+  // (not hard-locked to "portrait" at the native manifest level, which would
+  // override any lockAsync call).
+  useEffect(() => {
+    lockPortrait();
+  }, []);
 
   return (
     <>
