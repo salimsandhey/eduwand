@@ -1,17 +1,11 @@
 import { useRef, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, Animated, Image, LayoutAnimation, Platform, UIManager } from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet, Animated, Image, LayoutAnimation } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../../../theme/ThemeContext";
 import { radius, spacing, typography } from "../../../theme/tokens";
 import { FlashcardsContent } from "./content";
 import { NumberedEditCard, EditActionRow } from "./NumberedEditCard";
 import { pickIconForText, pickIconForCard } from "./topicIcons";
-
-// Old architecture enables this by default; harmless no-op there, and
-// LayoutAnimation is a silent no-op on Android's old architecture without it.
-if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
 
 interface Props {
   content: FlashcardsContent;

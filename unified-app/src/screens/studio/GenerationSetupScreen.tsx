@@ -6,6 +6,7 @@ import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
+import { useAiGenerating } from "../../context/AiAssistantGlowContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { radius } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
@@ -101,6 +102,7 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
   const [selectedSourceIds, setSelectedSourceIds] = useState<Set<string>>(new Set());
   const [pageRanges, setPageRanges] = useState<Record<string, PageRange>>({});
   const [isGenerating, setIsGenerating] = useState(false);
+  useAiGenerating(isGenerating);
   const [error, setError] = useState<string | null>(null);
   const [topic, setTopic] = useState<TopicDetail | null>(null);
   const [savedBranding, setSavedBranding] = useState<{ logoUrl: string | null; primaryColor: string | null; secondaryColor: string | null } | null>(null);

@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme/ThemeContext";
 import { decorativeAssets } from "../theme/decorativeAssets";
 import { useKeyboardHeight } from "../hooks/useKeyboardHeight";
+import { useWelcomeMascot } from "../context/WelcomeMascotContext";
 
 interface ChatMessage {
   id: string;
@@ -69,34 +70,25 @@ export function AiAssistChatModal({ visible, onClose }: { visible: boolean; onCl
   // never collapses to nothing on very tall keyboards.
   const baseSheetHeight = windowHeight * 0.82;
   const sheetHeight = Math.max(280, baseSheetHeight - keyboardHeight);
+  const { startWelcome } = useWelcomeMascot();
   const [messages, setMessages] = useState<ChatMessage[]>([GREETING]);
   const [draft, setDraft] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
-  const replyIndex = useRef(0);
-
-  useEffect(() => {
-    if (visible) {
-      setMessages([GREETING]);
-      setDraft("");
-      setIsTyping(false);
-      replyIndex.current = 0;
-    }
-  }, [visible]);
 
   function send() {
     const text = draft.trim();
     if (!text) return;
-    const userMessage: ChatMessage = { id: `${Date.now()}-user`, from: "user", text };
-    setMessages((current) => [...current, userMessage]);
+    const userMsg: ChatMessage = { id: String(Date.now()), from: "user", text };
+    setMessages((prev) => [...prev, userMsg]);
     setDraft("");
     setIsTyping(true);
     setTimeout(() => {
-      const reply = CANNED_REPLIES[replyIndex.current % CANNED_REPLIES.length];
-      replyIndex.current += 1;
-      setMessages((current) => [...current, { id: `${Date.now()}-bot`, from: "bot", text: reply }]);
+      const replyText = CANNED_REPLIES[Math.floor(Math.random() * CANNED_REPLIES.length)];
+      const botMsg: ChatMessage = { id: String(Date.now() + 1), from: "bot", text: replyText };
+      setMessages((prev) => [...prev, botMsg]);
       setIsTyping(false);
-    }, 900);
+    }, 1200);
   }
 
   return (
@@ -116,14 +108,29 @@ export function AiAssistChatModal({ visible, onClose }: { visible: boolean; onCl
                 <Text style={[styles.headerSubtitle, { color: colors.textMuted }]}>Preview - full answers coming soon</Text>
               </View>
             </View>
-            <Pressable
-              style={({ pressed }) => [styles.closeButton, { backgroundColor: colors.surfaceRaised }, pressed && { opacity: pressedOpacity }]}
-              onPress={onClose}
-              accessibilityRole="button"
-              accessibilityLabel="Close AI assistant"
-            >
-              <Ionicons name="close" size={20} color={colors.textPrimary} />
-            </Pressable>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Pressable
+                style={({ pressed }) => [styles.closeButton, { backgroundColor: colors.surfaceRaised }, pressed && { opacity: pressedOpacity }]}
+                onPress={() => {
+                  onClose();
+                  setTimeout(() => {
+                    startWelcome();
+                  }, 300);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Replay welcome animation"
+              >
+                <Ionicons name="sparkles-outline" size={18} color={colors.accent} />
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.closeButton, { backgroundColor: colors.surfaceRaised }, pressed && { opacity: pressedOpacity }]}
+                onPress={onClose}
+                accessibilityRole="button"
+                accessibilityLabel="Close AI assistant"
+              >
+                <Ionicons name="close" size={20} color={colors.textPrimary} />
+              </Pressable>
+            </View>
           </View>
 
           <ScrollView

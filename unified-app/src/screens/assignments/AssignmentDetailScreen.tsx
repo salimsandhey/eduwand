@@ -5,6 +5,7 @@ import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
+import { useAiGenerating } from "../../context/AiAssistantGlowContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { ConfirmModal } from "../../components/ConfirmModal";
@@ -30,6 +31,8 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
   const [isPublishing, setIsPublishing] = useState(false);
   const [isUnpublishing, setIsUnpublishing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
+  useAiGenerating(isGeneratingSuggestions);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [publishWarning, setPublishWarning] = useState<string | null>(null);
   const [completionKind, setCompletionKind] = useState<"publish" | "unpublish" | null>(null);
@@ -102,7 +105,12 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
     try {
       if (!accessToken || !assignment) return;
       if (assignment.personalisationEnabled) {
-        await api.generatePersonalisationSuggestions(accessToken, assignment.id);
+        setIsGeneratingSuggestions(true);
+        try {
+          await api.generatePersonalisationSuggestions(accessToken, assignment.id);
+        } finally {
+          setIsGeneratingSuggestions(false);
+        }
         navigation.navigate("PersonalisationReview", { assignmentId: assignment.id });
         return;
       }

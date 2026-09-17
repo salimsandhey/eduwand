@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Animated, Easing, View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Linking, Image, RefreshControl, Modal, LayoutAnimation, Platform, UIManager, Alert } from "react-native";
+import { useCallback, useRef, useState } from "react";
+import { Animated, Easing, View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Linking, Image, RefreshControl, Modal, LayoutAnimation, Alert } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import * as WebBrowser from "expo-web-browser";
@@ -9,6 +9,7 @@ import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
+import { useAiGenerating } from "../../context/AiAssistantGlowContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { spacing, radius } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
@@ -232,14 +233,9 @@ export function TopicDetailScreen({ route, navigation }: Props) {
   const [isEditingSourceText, setIsEditingSourceText] = useState(false);
   const [isSavingSource, setIsSavingSource] = useState(false);
   const [isRetryingSource, setIsRetryingSource] = useState(false);
+  useAiGenerating(isRetryingSource);
   const [deletingSourceIds, setDeletingSourceIds] = useState<Set<string>>(new Set());
   const sourceSwipeRefs = useRef<Map<string, Swipeable>>(new Map());
-
-  useEffect(() => {
-    if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
-      UIManager.setLayoutAnimationEnabledExperimental(true);
-    }
-  }, []);
 
   function selectTab(tab: DetailTab) {
     if (tab === activeTab) return;

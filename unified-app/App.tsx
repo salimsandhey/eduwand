@@ -1,14 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { useFonts } from "expo-font";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { AuthProvider, useAuth } from "./src/context/AuthContext";
+import { SplashDoneProvider } from "./src/context/SplashContext";
 import { ThemeProvider, useTheme } from "./src/theme/ThemeContext";
+import { AiAssistantGlowProvider } from "./src/context/AiAssistantGlowContext";
 import { AuthScreen } from "./src/screens/auth/AuthScreen";
 import { AppNavigator } from "./src/navigation/AppNavigator";
 import { applyGlobalTypography } from "./src/theme/globalTypography";
 import { AnimatedSplashScreen } from "./src/components/AnimatedSplashScreen";
+import { AiAssistantGlowOverlay } from "./src/components/ai/AiAssistantGlowOverlay";
+import { WelcomeMascotProvider, useWelcomeMascot } from "./src/context/WelcomeMascotContext";
+import { MascotWelcomeOverlay } from "./src/components/MascotWelcomeOverlay";
 import { lockPortrait } from "./src/utils/safeOrientation";
 
 applyGlobalTypography();
@@ -17,25 +22,30 @@ function Root() {
   const { user, isRestoring } = useAuth();
   const { mode } = useTheme();
   const [splashDone, setSplashDone] = useState(false);
+  const { startWelcome, welcomeCount } = useWelcomeMascot();
 
-  // The app is portrait throughout except the Presentation full-screen
-  // viewer (PresentationView.tsx), which locks to landscape on its own and
-  // reverts on close - this app-wide default is what it reverts back to.
-  // Runtime locking only works because app.json's "orientation" is "default"
-  // (not hard-locked to "portrait" at the native manifest level, which would
-  // override any lockAsync call).
   useEffect(() => {
     lockPortrait();
   }, []);
 
+  const hasTriggeredRef = useRef(false);
+  useEffect(() => {
+    if (splashDone && user && !hasTriggeredRef.current) {
+      hasTriggeredRef.current = true;
+      startWelcome();
+    }
+  }, [splashDone, user, startWelcome]);
+
   return (
-    <>
+    <SplashDoneProvider done={splashDone}>
       {!isRestoring && (user ? <AppNavigator /> : <AuthScreen />)}
       {!splashDone && (
         <AnimatedSplashScreen ready={!isRestoring} onFinish={() => setSplashDone(true)} />
       )}
+      {splashDone && !!user && <MascotWelcomeOverlay key={welcomeCount} />}
+      <AiAssistantGlowOverlay />
       <StatusBar style={mode === "dark" ? "light" : "dark"} />
-    </>
+    </SplashDoneProvider>
   );
 }
 
@@ -59,10 +69,15 @@ export default function App() {
       <SafeAreaProvider>
         <ThemeProvider>
           <AuthProvider>
-            <Root />
+            <WelcomeMascotProvider>
+              <AiAssistantGlowProvider>
+                <Root />
+              </AiAssistantGlowProvider>
+            </WelcomeMascotProvider>
           </AuthProvider>
         </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }
+

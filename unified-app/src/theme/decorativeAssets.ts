@@ -38,4 +38,5 @@ export const decorativeAssets = {
   heroFocusCard: require("../../assets/decorative/decor-hero-focus-card.png"),
   heroFollowupCard: require("../../assets/decorative/decor-hero-followup-card.png"),
   heroConversionCard: require("../../assets/decorative/decor-hero-conversion-card.png"),
+  mascotFullBody: require("../../assets/decorative/mascot-full-body.png"),
 } as const;

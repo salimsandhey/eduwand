@@ -5,6 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as WebBrowser from "expo-web-browser";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
+import { useAiGenerating } from "../../context/AiAssistantGlowContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, ContextResearchJob, ResearchCandidate, ResearchCandidateType } from "../../api/client";
@@ -39,6 +40,7 @@ export function ContextResearchScreen({ route, navigation }: Props) {
   const { colors, cardShadow, pressedOpacity } = useTheme();
 
   const [job, setJob] = useState<ContextResearchJob | null>(null);
+  useAiGenerating(job?.status === "running");
   const [error, setError] = useState<string | null>(null);
   // A Set, not a single id - approving/dismissing one candidate must not
   // block acting on another at the same time.

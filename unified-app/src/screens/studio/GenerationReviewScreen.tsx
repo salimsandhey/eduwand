@@ -8,6 +8,7 @@ import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
+import { useAiGenerating } from "../../context/AiAssistantGlowContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { ThemeColors, typography, spacing, radius } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
@@ -115,6 +116,7 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
   const [isRetrying, setIsRetrying] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const [isGeneratingAssessment, setIsGeneratingAssessment] = useState(false);
+  useAiGenerating(isRetrying || isGeneratingAssessment);
   const [isExportingPptx, setIsExportingPptx] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState(false);

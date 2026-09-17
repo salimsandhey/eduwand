@@ -16,7 +16,6 @@ import {
   LayoutAnimation,
   KeyboardAvoidingView,
   Platform,
-  UIManager,
   NativeSyntheticEvent,
   NativeScrollEvent,
 } from "react-native";
@@ -259,17 +258,6 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
 
   // Used by the compact header's "scroll to top" tap.
   const scrollRef = useRef<ScrollView | null>(null);
-
-  // Opts in to Android's experimental LayoutAnimation support - without
-  // this, LayoutAnimation.configureNext below silently no-ops on Android
-  // (iOS doesn't need it), so the "More details" toggle would just snap
-  // open/closed instantly instead of animating. Same opt-in already used in
-  // TopicDetailScreen.tsx.
-  useEffect(() => {
-    if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
-      UIManager.setLayoutAnimationEnabledExperimental(true);
-    }
-  }, []);
 
   const [activeTab, setActiveTab] = useState<DetailTab>("lead");
   // "More details" (Logged/Consent/Family/DOB facts, moved into the hero

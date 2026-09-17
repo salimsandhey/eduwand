@@ -63,6 +63,23 @@ async function main() {
     },
   });
 
+  const standardSubjects = [
+    "Mathematics",
+    "Science",
+    "English",
+    "Social Studies",
+    "Environmental Studies (EVS)",
+    "Hindi",
+    "Computer Science",
+  ];
+  for (const name of standardSubjects) {
+    await prisma.subject.upsert({
+      where: { schoolId_name: { schoolId: school.id, name } },
+      update: {},
+      create: { schoolId: school.id, name },
+    });
+  }
+
   const admin = await prisma.appUser.upsert({
     where: { email: "admin@dev.eduwand.local" },
     update: {},

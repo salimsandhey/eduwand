@@ -5,6 +5,7 @@ import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
+import { useAiGenerating } from "../../context/AiAssistantGlowContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, AssignmentQuestion, AnswerKeyEntry, QuestionDifficulty, AssignmentDetail } from "../../api/client";
@@ -33,6 +34,8 @@ export function AssignmentDraftReviewScreen({ route, navigation }: Props) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
+  const [isGeneratingKey, setIsGeneratingKey] = useState(false);
+  useAiGenerating(regeneratingId !== null || isGeneratingKey);
   const [error, setError] = useState<string | null>(null);
 
   const [regenerateTargetId, setRegenerateTargetId] = useState<string | null>(null);
@@ -166,7 +169,12 @@ export function AssignmentDraftReviewScreen({ route, navigation }: Props) {
       const hasNewQuestions = filledQuestions.some((q) => !existingIds.has(q.id));
       let currentKeys = answerKeys;
       if (hasNewQuestions) {
-        currentKeys = await api.generateAnswerKey(accessToken, assignmentId);
+        setIsGeneratingKey(true);
+        try {
+          currentKeys = await api.generateAnswerKey(accessToken, assignmentId);
+        } finally {
+          setIsGeneratingKey(false);
+        }
       }
 
       // Everything shown on this screen has now been looked at by the

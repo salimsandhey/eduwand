@@ -4,6 +4,7 @@ import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
+import { useAiGenerating } from "../../context/AiAssistantGlowContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, AssignmentDraftOptions, QuestionDifficulty } from "../../api/client";
@@ -39,6 +40,7 @@ export function AssignmentAiSetupScreen({ route, navigation }: Props) {
   const [focusPrompt, setFocusPrompt] = useState("");
 
   const [isGenerating, setIsGenerating] = useState(false);
+  useAiGenerating(isGenerating);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {

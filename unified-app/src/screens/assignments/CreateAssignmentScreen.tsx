@@ -4,6 +4,7 @@ import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
+import { useAiGenerating } from "../../context/AiAssistantGlowContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, ApiError, ClassSection, AssignmentQuestion, QuestionDifficulty } from "../../api/client";
@@ -28,6 +29,8 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
   const [questions, setQuestions] = useState<AssignmentQuestion[]>([{ id: `q${nextQuestionId++}`, prompt: "", difficulty: "medium" }]);
   const [personalisationEnabled, setPersonalisationEnabled] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
+  useAiGenerating(isGeneratingSuggestions);
   const [error, setError] = useState<string | null>(null);
 
   const [isLoadingExisting, setIsLoadingExisting] = useState(isEditMode);
@@ -121,7 +124,12 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
         const publishedOk = await tryPublish(id);
         if (!publishedOk) return; // teacher is being asked to confirm; leave them on this screen
         if (personalisationEnabled) {
-          await api.generatePersonalisationSuggestions(accessToken, id);
+          setIsGeneratingSuggestions(true);
+          try {
+            await api.generatePersonalisationSuggestions(accessToken, id);
+          } finally {
+            setIsGeneratingSuggestions(false);
+          }
           navigation.replace("PersonalisationReview", { assignmentId: id });
           return;
         }
@@ -156,7 +164,12 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
               const ok = await tryPublish(id, true);
               if (ok) {
                 if (personalisationEnabled) {
-                  await api.generatePersonalisationSuggestions(accessToken, id);
+                  setIsGeneratingSuggestions(true);
+                  try {
+                    await api.generatePersonalisationSuggestions(accessToken, id);
+                  } finally {
+                    setIsGeneratingSuggestions(false);
+                  }
                   navigation.replace("PersonalisationReview", { assignmentId: id });
                 } else {
                   navigation.replace("AssignmentDetail", { assignmentId: id });

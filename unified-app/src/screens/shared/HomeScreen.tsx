@@ -17,6 +17,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "../../context/AuthContext";
+import { useSplashDone } from "../../context/SplashContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { ThemeColors } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
@@ -128,6 +129,7 @@ function getWeekDates(referenceDate: Date): Date[] {
 
 export function HomeScreen() {
   const { user, accessToken, markOnboardingTourSeen } = useAuth();
+  const splashDone = useSplashDone();
   // undefined outside the enrolment tab navigator's TabBarScrollProvider - the
   // teacher branch below intentionally doesn't wire this into its own scroll
   // view, so its tab bar keeps its fixed size for now.
@@ -160,7 +162,11 @@ export function HomeScreen() {
   const [isLoadingTeacherSummary, setIsLoadingTeacherSummary] = useState(false);
 
   const [onboardingTasks, setOnboardingTasks] = useState<TeacherOnboardingTasksResult | null>(null);
-  const showTour = isTeacher && !!user && !user.hasSeenOnboardingTour;
+  // Shows once per teacher, on first login only - hasSeenOnboardingTour is
+  // persisted server-side (set by markOnboardingTourSeen below) and never
+  // resets itself. splashDone keeps it from popping up over the splash
+  // animation, which runs in its own native layer always on top.
+  const showTour = isTeacher && !!user && splashDone && !user.hasSeenOnboardingTour;
 
   useEffect(() => {
     if (!isTeacher || !accessToken) return;
