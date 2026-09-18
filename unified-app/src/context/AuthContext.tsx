@@ -36,6 +36,7 @@ interface AuthContextValue {
   setProfileAvatar: (avatarKey: string) => Promise<void>;
   removeProfilePhoto: () => Promise<void>;
   markOnboardingTourSeen: () => Promise<void>;
+  deleteAccount: (password: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -230,6 +231,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(updated);
   }
 
+  async function deleteAccount(password: string) {
+    if (!accessToken) throw new Error("Not signed in");
+    await api.deleteMyAccount(accessToken, password);
+    setUser(null);
+    setAccessToken(null);
+    setRefreshToken(null);
+    setError(null);
+    setSelectionToken(null);
+    await clearPersistedTokens();
+  }
+
   async function markOnboardingTourSeen() {
     if (!accessToken || !user) return;
     setUser({ ...user, hasSeenOnboardingTour: true });
@@ -260,6 +272,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setProfileAvatar,
         removeProfilePhoto,
         markOnboardingTourSeen,
+        deleteAccount,
       }}
     >
       {children}

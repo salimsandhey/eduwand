@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, Pressable, View } from "react-native";
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, Pressable, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useNavigation } from "@react-navigation/native";
@@ -22,6 +22,7 @@ export function ProfileScreen() {
     uploadProfilePhoto,
     setProfileAvatar,
     removeProfilePhoto,
+    deleteAccount,
   } = useAuth();
   const { colors, pressedOpacity } = useTheme();
   const navigation = useNavigation<any>();
@@ -43,6 +44,12 @@ export function ProfileScreen() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
   const [passwordMsg, setPasswordMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
+
+  const [showDeleteForm, setShowDeleteForm] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [showDeletePassword, setShowDeletePassword] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  const [deleteErr, setDeleteErr] = useState<string | null>(null);
 
   const photoValue: PickedPhoto = useMemo(() => {
     if (!user) return { type: "none" };
@@ -127,6 +134,34 @@ export function ProfileScreen() {
     } finally {
       setSavingPassword(false);
     }
+  }
+
+  function confirmDeleteAccount() {
+    if (!deletePassword) {
+      setDeleteErr("Enter your password to confirm");
+      return;
+    }
+    setDeleteErr(null);
+    Alert.alert(
+      "Delete your account?",
+      "This permanently removes your login and personal details from EduWand. This can't be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete account",
+          style: "destructive",
+          onPress: async () => {
+            setDeletingAccount(true);
+            try {
+              await deleteAccount(deletePassword);
+            } catch (err) {
+              setDeleteErr(err instanceof Error ? err.message : "Could not delete account");
+              setDeletingAccount(false);
+            }
+          },
+        },
+      ]
+    );
   }
 
   const inputStyle = [
@@ -261,6 +296,75 @@ export function ProfileScreen() {
             )}
           </Pressable>
         </View>
+
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.danger + "33" }]}>
+          <View style={styles.sectionHeading}>
+            <View style={[styles.sectionIcon, { backgroundColor: colors.danger + "1A" }]}>
+              <Ionicons name="trash-outline" size={17} color={colors.danger} />
+            </View>
+            <View>
+              <Text style={[styles.cardTitle, { color: colors.danger }]}>Delete account</Text>
+              <Text style={[styles.cardCaption, { color: colors.textMuted }]}>
+                Permanently remove your login and personal details.
+              </Text>
+            </View>
+          </View>
+
+          {!showDeleteForm ? (
+            <Pressable
+              onPress={() => setShowDeleteForm(true)}
+              style={({ pressed }) => [styles.deleteToggleButton, { borderColor: colors.danger }, pressed && { opacity: pressedOpacity }]}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.deleteToggleText, { color: colors.danger }]}>Delete my account</Text>
+            </Pressable>
+          ) : (
+            <>
+              <Text style={[styles.label, { color: colors.textSecondary }]}>Confirm your password</Text>
+              <PasswordField
+                value={deletePassword}
+                onChangeText={setDeletePassword}
+                visible={showDeletePassword}
+                onToggleVisibility={() => setShowDeletePassword((visible) => !visible)}
+                placeholder="••••••••"
+                inputStyle={inputStyle}
+              />
+
+              {deleteErr ? <Text style={[styles.msg, { color: colors.danger }]}>{deleteErr}</Text> : null}
+
+              <Pressable
+                onPress={confirmDeleteAccount}
+                disabled={deletingAccount || !deletePassword}
+                style={({ pressed }) => [
+                  styles.button,
+                  { backgroundColor: colors.danger },
+                  (deletingAccount || !deletePassword) && styles.buttonDisabled,
+                  pressed && { opacity: pressedOpacity },
+                ]}
+                accessibilityRole="button"
+              >
+                {deletingAccount ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={[styles.buttonText, { color: "#FFFFFF" }]}>Permanently delete account</Text>
+                )}
+              </Pressable>
+
+              <Pressable
+                onPress={() => {
+                  setShowDeleteForm(false);
+                  setDeletePassword("");
+                  setDeleteErr(null);
+                }}
+                disabled={deletingAccount}
+                style={styles.deleteCancelButton}
+                accessibilityRole="button"
+              >
+                <Text style={[styles.deleteCancelText, { color: colors.textMuted }]}>Cancel</Text>
+              </Pressable>
+            </>
+          )}
+        </View>
       </ScrollView>
       </KeyboardAvoidingView>
     </Screen>
@@ -347,6 +451,16 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: { opacity: 0.45 },
   buttonText: { fontSize: 14, fontWeight: "800" },
+  deleteToggleButton: {
+    height: 46,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  deleteToggleText: { fontSize: 14, fontWeight: "800" },
+  deleteCancelButton: { alignItems: "center", marginTop: 12 },
+  deleteCancelText: { fontSize: 13, fontWeight: "600" },
   roRow: {
     flexDirection: "row",
     justifyContent: "space-between",

@@ -49,6 +49,10 @@ interface ChangePasswordBody {
   newPassword?: string;
 }
 
+interface DeleteMeBody {
+  password?: string;
+}
+
 interface SetAvatarBody {
   avatarKey?: string;
 }
@@ -184,6 +188,78 @@ export async function authMeRoutes(app: FastifyInstance) {
       });
 
       return { data: { message: "Password updated" }, meta: {} };
+    }
+  );
+
+  // Self-service account deletion (Apple Guideline 5.1.1(v) / Play Data
+  // Safety require an in-app path for a user to delete an account they can
+  // create in-app - individual teachers sign up from AuthScreen, so this
+  // has to exist). AppUser rows are referenced by institutional records
+  // (enquiries, generations, assessments, audit log, ...) that belong to
+  // the school, not the person, so this anonymizes and disables the
+  // account rather than hard-deleting the row - the login identity and all
+  // personal fields are erased, which is what "delete my account" means to
+  // the person even though the id stays for referential integrity.
+  app.delete<{ Body: DeleteMeBody }>(
+    "/auth/me",
+    { onRequest: [app.authenticate], config: { rateLimit: { max: 5, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      if (rejectStudents(request, reply)) return;
+
+      const { password } = request.body ?? {};
+      if (!password) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "password is required to confirm account deletion" },
+        });
+      }
+
+      const user = await prisma.appUser.findUnique({ where: { id: request.user.sub } });
+      if (!user) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Account not found" } });
+      }
+      if (user.status === "deleted") {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Account not found" } });
+      }
+
+      if (!user.passwordHash || !(await bcrypt.compare(password, user.passwordHash))) {
+        return reply.code(401).send({
+          data: null,
+          error: { code: "invalid_credentials", message: "Incorrect password" },
+        });
+      }
+
+      if (user.photoLocation) {
+        await storage.remove(user.photoLocation);
+      }
+
+      await prisma.appUser.update({
+        where: { id: user.id },
+        data: {
+          status: "deleted",
+          fullName: "Deleted user",
+          email: `deleted-${user.id}@deleted.eduwand.invalid`,
+          phone: null,
+          passwordHash: null,
+          authProviderId: null,
+          photoLocation: null,
+          photoMimeType: null,
+          avatarKey: null,
+        },
+      });
+
+      await recordAuditEvent({
+        actorUserId: user.id,
+        actorEmail: user.email,
+        action: "user.self_delete",
+        targetType: "AppUser",
+        targetId: user.id,
+        targetLabel: user.email,
+        schoolId: user.schoolId,
+        trustId: user.trustId,
+      });
+
+      return { data: { message: "Account deleted" }, meta: {} };
     }
   );
 

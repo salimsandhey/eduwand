@@ -1126,6 +1126,8 @@ export const api = {
     request<CurrentUser>("/auth/me/avatar", { method: "PATCH", body: JSON.stringify({ avatarKey }) }, token),
   removeMyPhoto: (token: string) =>
     request<CurrentUser>("/auth/me/photo", { method: "DELETE" }, token),
+  deleteMyAccount: (token: string, password: string) =>
+    request<{ message: string }>("/auth/me", { method: "DELETE", body: JSON.stringify({ password }) }, token),
 
   requestPasswordReset: (email: string) =>
     request<{ message: string; devOtp?: string }>("/auth/request-password-reset", {
