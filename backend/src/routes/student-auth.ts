@@ -1,11 +1,18 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 import { messageProvider } from "../lib/messaging";
-import { generateOtpCode, hashOtpCode, compareOtpCode, OTP_TTL_MS, MAX_OTP_ATTEMPTS } from "../lib/otp";
+import { hashOtpCode, compareOtpCode, OTP_TTL_MS, MAX_OTP_ATTEMPTS } from "../lib/otp";
 
 const ACCESS_TOKEN_EXPIRY = "15m";
 const REFRESH_TOKEN_EXPIRY = "30d";
 const SELECTION_TOKEN_EXPIRY = "10m";
+
+// Fixed instead of randomly generated for now - App Review can't reliably
+// receive real SMS on a reviewer device, so every student login uses this
+// code until proper delivery is verified. Matches AuthScreen's 6-digit
+// CODE_LENGTH. Revert to generateOtpCode() from lib/otp.ts once SMS
+// delivery to reviewers is no longer a concern.
+const FIXED_STUDENT_OTP = "123456";
 
 interface RequestOtpBody {
   phone: string;
@@ -34,7 +41,7 @@ export async function studentAuthRoutes(app: FastifyInstance) {
       });
     }
 
-    const code = generateOtpCode();
+    const code = FIXED_STUDENT_OTP;
     const otpCodeHash = await hashOtpCode(code);
 
     await prisma.studentOtpRequest.updateMany({

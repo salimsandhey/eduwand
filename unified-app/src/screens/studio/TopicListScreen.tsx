@@ -267,43 +267,43 @@ export function TopicListScreen({ navigation, route }: Props) {
             </ScrollView>
           </View>
         </View>
-      </Modal>
 
-      <Modal transparent animationType="fade" visible={showNewTopicSubjectPicker} onRequestClose={() => setShowNewTopicSubjectPicker(false)}>
-        <Pressable
-          style={styles.pickerBackdrop}
-          onPress={() => setShowNewTopicSubjectPicker(false)}
-          accessibilityRole="button"
-          accessibilityLabel="Close subject picker"
-        >
-          <Pressable style={[styles.pickerSheet, { backgroundColor: colors.surface }]} onPress={(e) => e.stopPropagation()}>
-            <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>Select subject</Text>
-            {schoolSubjects.length === 0 ? (
-              <Text style={[styles.pickerRowText, { color: colors.textMuted, paddingVertical: 10 }]}>
-                No subjects yet - ask your school admin to add one.
-              </Text>
-            ) : (
-              <ScrollView style={styles.pickerSheetScroll} nestedScrollEnabled showsVerticalScrollIndicator={false}>
-                {schoolSubjects.map((s) => (
-                  <Pressable
-                    key={s.id}
-                    style={({ pressed }) => [styles.pickerRow, pressed && { opacity: pressedOpacity }]}
-                    onPress={() => {
-                      setSubject(s.name);
-                      setShowNewTopicSubjectPicker(false);
-                    }}
-                    accessibilityRole="button"
-                  >
-                    <Text style={[styles.pickerRowText, { color: subject === s.name ? colors.accent : colors.textPrimary }]} numberOfLines={1}>
-                      {s.name}
-                    </Text>
-                    {subject === s.name ? <Ionicons name="checkmark" size={16} color={colors.accent} /> : null}
-                  </Pressable>
-                ))}
-              </ScrollView>
-            )}
+        {showNewTopicSubjectPicker ? (
+          <Pressable
+            style={[styles.pickerBackdrop, StyleSheet.absoluteFill]}
+            onPress={() => setShowNewTopicSubjectPicker(false)}
+            accessibilityRole="button"
+            accessibilityLabel="Close subject picker"
+          >
+            <Pressable style={[styles.pickerSheet, { backgroundColor: colors.surface }]} onPress={(e) => e.stopPropagation()}>
+              <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>Select subject</Text>
+              {schoolSubjects.length === 0 ? (
+                <Text style={[styles.pickerRowText, { color: colors.textMuted, paddingVertical: 10 }]}>
+                  No subjects yet - ask your school admin to add one.
+                </Text>
+              ) : (
+                <ScrollView style={styles.pickerSheetScroll} nestedScrollEnabled showsVerticalScrollIndicator={false}>
+                  {schoolSubjects.map((s) => (
+                    <Pressable
+                      key={s.id}
+                      style={({ pressed }) => [styles.pickerRow, pressed && { opacity: pressedOpacity }]}
+                      onPress={() => {
+                        setSubject(s.name);
+                        setShowNewTopicSubjectPicker(false);
+                      }}
+                      accessibilityRole="button"
+                    >
+                      <Text style={[styles.pickerRowText, { color: subject === s.name ? colors.accent : colors.textPrimary }]} numberOfLines={1}>
+                        {s.name}
+                      </Text>
+                      {subject === s.name ? <Ionicons name="checkmark" size={16} color={colors.accent} /> : null}
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              )}
+            </Pressable>
           </Pressable>
-        </Pressable>
+        ) : null}
       </Modal>
 
       <Modal transparent animationType="fade" visible={showSubjectPicker} onRequestClose={() => setShowSubjectPicker(false)}>
