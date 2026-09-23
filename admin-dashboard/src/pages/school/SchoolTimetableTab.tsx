@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { api } from "../../api/client";
-import type { AppUserSummary, Subject, TimetableSlot } from "../../api/client";
+import type { AcademicYear, AppUserSummary, ClassSection, Subject, TimetableSlot } from "../../api/client";
 import { Card } from "../../components/Card";
 import type { SchoolOutletContext } from "./SchoolLayout";
 
@@ -22,24 +22,26 @@ const emptyForm = (weekday: number, classSectionId: string): FormState => ({ id:
 // Sets each teacher's weekly timetable. What's entered here is exactly what
 // shows on that teacher's home-screen calendar in the mobile app.
 export function SchoolTimetableTab() {
-  const { id, accessToken, school, canManageAcademics } = useOutletContext<SchoolOutletContext>();
+  const { id, accessToken, canManageAcademics } = useOutletContext<SchoolOutletContext>();
 
   const [teachers, setTeachers] = useState<AppUserSummary[] | null>(null);
   const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
   const [teacherId, setTeacherId] = useState("");
   const [slots, setSlots] = useState<TimetableSlot[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  const classSections = school.classSections ?? [];
+  const classSections: ClassSection[] = (academicYears.find((y) => y.isCurrent) ?? academicYears[0])?.classSections ?? [];
 
   useEffect(() => {
     if (!accessToken) return;
-    Promise.all([api.listUsers(accessToken, { schoolId: id }), api.listSubjectsForSchool(accessToken, id)])
-      .then(([users, subjectList]) => {
+    Promise.all([api.listUsers(accessToken, { schoolId: id }), api.listSubjectsForSchool(accessToken, id), api.listAcademicYears(accessToken, id)])
+      .then(([users, subjectList, years]) => {
         setTeachers(users.filter((u) => u.role === "teacher"));
         setSubjects(subjectList);
+        setAcademicYears(years);
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load teachers"));
   }, [accessToken, id]);

@@ -39,7 +39,7 @@ export function ReceiverSetupWizard({
   return (
     <Modal title="Connect student remotes" onClose={onClose} width={560}>
       <div style={{ display: "flex", gap: 6, marginBottom: 18 }}>
-        {(["connect", "checkin", "ready"] as Step[]).map((s, i) => (
+        {(["connect", "checkin", "ready"] as Step[]).map((s) => (
           <div
             key={s}
             style={{

@@ -83,7 +83,10 @@ export function useClickerReceiver({ onPacket }: UseClickerReceiverOptions) {
       portRef.current = port;
 
       if (!port.readable) throw new Error("Receiver port has no readable stream");
-      const textStream = port.readable.pipeThrough(new TextDecoderStream());
+      // TextDecoderStream's writable side is typed as BufferSource, which TS's lib.dom
+      // doesn't consider assignable to ReadableStream<Uint8Array>'s expected pair even
+      // though it works fine at runtime - cast through the DOM-standard pair type.
+      const textStream = port.readable.pipeThrough(new TextDecoderStream() as unknown as ReadableWritablePair<string, Uint8Array>);
       const reader = textStream.getReader();
       readerRef.current = reader;
 
