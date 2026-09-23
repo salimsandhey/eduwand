@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { PLATFORM_ADMIN_ROLE } from "../lib/roles";
+import { BOARDS, isValidBoard } from "../lib/boards";
 import { seedDefaultPipelineStages } from "../lib/pipeline-stages";
 import { seedDefaultFormDefinitions } from "../lib/form-definitions";
 import { recordAuditEvent } from "../lib/audit";
@@ -87,6 +88,12 @@ export async function schoolRoutes(app: FastifyInstance) {
         return reply.code(400).send({
           data: null,
           error: { code: "validation_error", message: "name and board are required" },
+        });
+      }
+      if (!isValidBoard(body.board)) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: `board must be one of ${BOARDS.join(", ")}` },
         });
       }
       if (!body.trustId) {

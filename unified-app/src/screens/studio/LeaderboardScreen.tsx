@@ -76,7 +76,7 @@ export function LeaderboardScreen({ navigation }: Props) {
         ) : (result?.entries.length ?? 0) === 0 ? (
           <Text style={[styles.emptyText, { color: colors.textMuted }]}>No teacher activity yet this month.</Text>
         ) : (
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
             {result!.entries.map((entry, index) => (
               <View
                 key={entry.teacherUserId}

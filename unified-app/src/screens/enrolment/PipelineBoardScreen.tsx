@@ -23,6 +23,7 @@ import { Screen } from "../../components/Screen";
 import { getStatusColor } from "../../theme/statusColors";
 import { usePipelineStages } from "../../hooks/usePipelineStages";
 import { api, Enquiry, EnquiryStatus } from "../../api/client";
+import { softCardShadow } from "../../theme/tokens";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Pipeline">;
 
@@ -126,7 +127,7 @@ function LeadCard({
       onPress={onPress}
       style={({ pressed }) => [
         styles.leadCard,
-        { backgroundColor: colors.surface, borderColor: colors.border },
+        { backgroundColor: colors.surface, borderWidth: 0 },
         cardShadow,
         pressed && { opacity: pressedOpacity },
       ]}
@@ -268,7 +269,7 @@ export function PipelineBoardScreen({ navigation }: Props) {
   }
 
   return (
-    <Screen>
+    <Screen edges={["top", "bottom"]}>
       <ScrollView
         contentContainerStyle={styles.container}
         showsVerticalScrollIndicator={false}
@@ -710,7 +711,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   leadCard: {
-    borderWidth: 1,
+    ...softCardShadow,
     borderRadius: 16,
     padding: 14,
   },

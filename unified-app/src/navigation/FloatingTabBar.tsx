@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Animated, Easing, Image, ImageSourcePropType, LayoutChangeEvent, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { Ionicons } from "@expo/vector-icons";
+import { BlurView } from "expo-blur";
+import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../theme/ThemeContext";
 import { typography } from "../theme/tokens";
@@ -24,7 +26,7 @@ const targetScale = MASCOT_DOCK_SIZE / MASCOT_CENTER_SIZE;
 type ItemLayout = { x: number; width: number };
 
 export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssistIcon, onAiAssistPress }: FloatingTabBarProps) {
-  const { colors, cardShadow, pressedOpacity } = useTheme();
+  const { colors, mode, pressedOpacity } = useTheme();
   const insets = useSafeAreaInsets();
   // Null on a tab navigator that hasn't wrapped itself in a TabBarScrollProvider -
   // the bar then just renders at a fixed, unanimated size, as before.
@@ -326,63 +328,91 @@ export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssist
           </Animated.View>
         )}
 
-        <View style={[styles.bar, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
-          {activeLayout ? (
-            <Animated.View
-              pointerEvents="none"
+        <View style={[styles.barShadowWrapper, { shadowOpacity: mode === "dark" ? 0.35 : 0.14 }]}>
+          <View
+            style={[
+              styles.bar,
+              {
+                borderColor: mode === "dark" ? "rgba(255, 255, 255, 0.15)" : "rgba(0, 0, 0, 0.09)",
+              },
+            ]}
+          >
+            <BlurView
+              intensity={mode === "dark" ? 50 : 70}
+              tint={mode === "dark" ? "dark" : "light"}
+              style={StyleSheet.absoluteFill}
+            />
+            <View
               style={[
-                styles.slidingIndicator,
+                StyleSheet.absoluteFill,
                 {
-                  backgroundColor: colors.accent,
-                  width: activeLayout.width,
-                  transform: [{ translateX: indicatorX }, { scaleX: indicatorStretch }, { scaleY: indicatorSquash }],
+                  backgroundColor: mode === "dark" ? "rgba(32, 32, 32, 0.82)" : "rgba(255, 255, 255, 0.86)",
                 },
               ]}
             />
-          ) : null}
-          {state.routes.map((route, index) => {
-            const descriptor = descriptors[route.key];
-            const options = descriptor.options;
-            const focused = state.index === index;
-            const label =
-              options.tabBarLabel !== undefined
-                ? String(options.tabBarLabel)
-                : options.title !== undefined
-                  ? options.title
-                  : route.name;
+            {activeLayout ? (
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.slidingIndicator,
+                  {
+                    width: activeLayout.width,
+                    transform: [{ translateX: indicatorX }, { scaleX: indicatorStretch }, { scaleY: indicatorSquash }],
+                  },
+                ]}
+              >
+                <LinearGradient
+                  colors={[colors.accent, colors.accentDark]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.slidingIndicatorGradient}
+                />
+              </Animated.View>
+            ) : null}
+            {state.routes.map((route, index) => {
+              const descriptor = descriptors[route.key];
+              const options = descriptor.options;
+              const focused = state.index === index;
+              const label =
+                options.tabBarLabel !== undefined
+                  ? String(options.tabBarLabel)
+                  : options.title !== undefined
+                    ? options.title
+                    : route.name;
 
-            const onPress = () => {
-              const event = navigation.emit({
-                type: "tabPress",
-                target: route.key,
-                canPreventDefault: true,
-              });
+              const onPress = () => {
+                const event = navigation.emit({
+                  type: "tabPress",
+                  target: route.key,
+                  canPreventDefault: true,
+                });
 
-              if (!focused && !event.defaultPrevented) {
-                navigation.navigate(route.name, route.params);
-              }
-            };
+                if (!focused && !event.defaultPrevented) {
+                  navigation.navigate(route.name, route.params);
+                }
+              };
 
-            const onLongPress = () => {
-              navigation.emit({
-                type: "tabLongPress",
-                target: route.key,
-              });
-            };
+              const onLongPress = () => {
+                navigation.emit({
+                  type: "tabLongPress",
+                  target: route.key,
+                });
+              };
 
-            return (
-              <AnimatedTabItem
-                key={route.key}
-                label={label}
-                focused={focused}
-                icon={icons[route.name] ?? "ellipse-outline"}
-                accessibilityLabel={options.tabBarAccessibilityLabel}
-                onPress={onPress}
-                onLongPress={onLongPress}
-                onLayout={(event) => handleItemLayout(index, event)}
-              />
-            );
-          })}
+              return (
+                <AnimatedTabItem
+                  key={route.key}
+                  label={label}
+                  focused={focused}
+                  icon={icons[route.name] ?? "ellipse-outline"}
+                  accessibilityLabel={options.tabBarAccessibilityLabel}
+                  onPress={onPress}
+                  onLongPress={onLongPress}
+                  onLayout={(event) => handleItemLayout(index, event)}
+                />
+              );
+            })}
+          </View>
         </View>
         {onAiAssistPress ? (
           <View
@@ -559,17 +589,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     backgroundColor: "transparent",
   },
+  barShadowWrapper: {
+    borderRadius: 100,
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowRadius: 18,
+    elevation: 10,
+    zIndex: 5,
+  },
   bar: {
     minHeight: TAB_BAR_HEIGHT,
     borderRadius: 100,
-    borderWidth: 1,
+    borderWidth: 1.2,
     padding: 6,
     paddingHorizontal: 4,
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
     overflow: "hidden",
-    zIndex: 5,
   },
   item: {
     flex: 1,
@@ -585,11 +622,15 @@ const styles = StyleSheet.create({
     top: 2,
     bottom: 2,
     borderRadius: 100,
-    shadowColor: "#7C005A",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.28,
-    shadowRadius: 10,
-    elevation: 4,
+    overflow: "hidden",
+  },
+  slidingIndicatorGradient: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: 100,
   },
   itemContent: {
     alignItems: "center",

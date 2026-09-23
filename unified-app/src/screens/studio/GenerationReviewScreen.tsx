@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Platform, KeyboardAvoidingView } from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Platform, KeyboardAvoidingView, Alert } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import Markdown, { MarkdownIt } from "react-native-markdown-display";
@@ -13,11 +13,14 @@ import { useTheme } from "../../theme/ThemeContext";
 import { ThemeColors, typography, spacing, radius } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { api, Generation } from "../../api/client";
-import { parseGenerationContent, StructuredGenerationContent } from "./generation/content";
+import { parseGenerationContent, StructuredGenerationContent, getAttachedMedia, MediaItem } from "./generation/content";
+import { AttachedMedia } from "./generation/AttachedMedia";
+import { UsedSources } from "./generation/UsedSources";
 import { LessonPlanView } from "./generation/LessonPlanView";
 import { CustomActivityView } from "./generation/CustomActivityView";
 import { FlashcardsView } from "./generation/FlashcardsView";
 import { PresentationView } from "./generation/PresentationView";
+import { ShareAudienceSheet } from "./generation/ShareAudienceSheet";
 import { OUTPUT_TYPE_LABELS, OUTPUT_TYPE_ICONS } from "./generation/outputTypeMeta";
 import { capitalizeFirst } from "../../utils/text";
 import { OrdinalDate } from "../../components/OrdinalDate";
@@ -115,6 +118,7 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
   const [isSaving, setIsSaving] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [showAudiencePicker, setShowAudiencePicker] = useState(false);
   const [isGeneratingAssessment, setIsGeneratingAssessment] = useState(false);
   useAiGenerating(isRetrying || isGeneratingAssessment);
   const [isExportingPptx, setIsExportingPptx] = useState(false);
@@ -199,6 +203,23 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
     }, AUTOSAVE_DEBOUNCE_MS);
   }
 
+  async function toggleSession(session: number, completed: boolean) {
+    if (!accessToken || !generation) return;
+    // Optimistic - a teacher ticking off "Class 2" mid-lesson shouldn't wait
+    // on a round trip to see it stick.
+    const prev = generation.completedSessions;
+    setGeneration({
+      ...generation,
+      completedSessions: completed ? [...prev, session].sort((a, b) => a - b) : prev.filter((s) => s !== session),
+    });
+    try {
+      const updated = await api.setSessionProgress(accessToken, generation.id, session, completed);
+      setGeneration(updated);
+    } catch {
+      setGeneration((g) => (g ? { ...g, completedSessions: prev } : g));
+    }
+  }
+
   async function retry() {
     if (!accessToken) return;
     setIsRetrying(true);
@@ -218,16 +239,33 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
 
   async function togglePublish() {
     if (!accessToken || !generation) return;
+    // Sharing needs an audience choice first; unsharing doesn't.
+    if (generation.shareStatus !== "published") {
+      setShowAudiencePicker(true);
+      return;
+    }
     setIsPublishing(true);
     setError(null);
     try {
-      const updated =
-        generation.shareStatus === "published"
-          ? await api.unpublishGeneration(accessToken, generationId)
-          : await api.publishGeneration(accessToken, generationId);
+      const updated = await api.unpublishGeneration(accessToken, generationId);
       setGeneration(updated);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update sharing");
+    } finally {
+      setIsPublishing(false);
+    }
+  }
+
+  async function confirmShare(studentStubIds: string[] | undefined) {
+    if (!accessToken) return;
+    setIsPublishing(true);
+    setError(null);
+    try {
+      const updated = await api.publishGeneration(accessToken, generationId, studentStubIds);
+      setGeneration(updated);
+      setShowAudiencePicker(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to share with students");
     } finally {
       setIsPublishing(false);
     }
@@ -259,17 +297,46 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
     }
   }
 
-  async function createQuickCheck() {
+  async function startNewQuickCheck() {
     if (!accessToken || !generation) return;
     setIsGeneratingAssessment(true);
     setError(null);
     try {
       const assessment = await api.generateAssessment(accessToken, generation.id);
-      navigation.navigate("AssessmentCapture", { assessmentId: assessment.id });
+      navigation.navigate("AssessmentReady", { assessmentId: assessment.id });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate quick check");
     } finally {
       setIsGeneratingAssessment(false);
+    }
+  }
+
+  // Resumes an unfinished quick check instead of silently generating (and
+  // spending credits on) a new one - the previous one wasn't actually
+  // destroyed by leaving the capture screen, it was just unreachable.
+  async function createQuickCheck() {
+    if (!accessToken || !generation) return;
+    setIsGeneratingAssessment(true);
+    setError(null);
+    try {
+      const active = await api.getActiveAssessment(accessToken, generation.id);
+      setIsGeneratingAssessment(false);
+      if (active) {
+        Alert.alert(
+          "Quick check already in progress",
+          "You have one you haven't finished yet. Resume it, or start a new one?",
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Start new", style: "destructive", onPress: startNewQuickCheck },
+            { text: "Resume", isPreferred: true, onPress: () => navigation.navigate("AssessmentReady", { assessmentId: active.id }) },
+          ]
+        );
+        return;
+      }
+      await startNewQuickCheck();
+    } catch (err) {
+      setIsGeneratingAssessment(false);
+      setError(err instanceof Error ? err.message : "Failed to check for an existing quick check");
     }
   }
 
@@ -287,6 +354,10 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
       </Screen>
     );
   }
+
+  // Where an image / PDF-page the teacher chose to show as-is is loaded from.
+  const mediaUrlFor = (item: MediaItem) =>
+    api.contextMediaUrl(generation.topicId, item.sourceId, accessToken ?? "", { page: item.page, width: 1280 });
 
   if (generation.generationStatus === "failed") {
     return (
@@ -402,17 +473,20 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
             </View> : null}
             {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
             {structuredContent.type === "lesson_plan" ? (
-              <LessonPlanView content={structuredContent} editable={isEditing} onChange={handleStructuredChange} sources={generation.contextSources} scrollRef={scrollRef} />
+              <LessonPlanView content={structuredContent} editable={isEditing} onChange={handleStructuredChange} sources={generation.contextSources} topicId={generation.topicId} shownAsIsIds={new Set(getAttachedMedia(generation.editedOutput ?? generation.aiOutput).map((m) => m.sourceId))} scrollRef={scrollRef} completedSessions={generation.completedSessions} onToggleSession={toggleSession} />
             ) : structuredContent.type === "custom_activity_report" ? (
               <CustomActivityView content={structuredContent} editable={isEditing} onChange={handleStructuredChange} />
             ) : structuredContent.type === "flashcards" ? (
               <FlashcardsView content={structuredContent} editable={isEditing} onChange={handleStructuredChange} />
             ) : (
-              <PresentationView content={structuredContent} editable={isEditing} onChange={handleStructuredChange} />
+              <PresentationView content={structuredContent} editable={isEditing} onChange={handleStructuredChange} mediaUrl={mediaUrlFor} />
             )}
+            {structuredContent.type !== "presentation" ? (
+              <AttachedMedia items={getAttachedMedia(generation.editedOutput ?? generation.aiOutput)} urlFor={mediaUrlFor} />
+            ) : null}
           </View>
         ) : (
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           <View style={styles.headerRow}>
             <View style={{ flex: 1 }}>
               <Text style={[styles.outputTypeLabel, { color: colors.textPrimary }]}>Content review</Text>
@@ -480,19 +554,13 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
         )}
 
         {generation.contextSources.length > 0 && structuredContent?.type !== "lesson_plan" ? (
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow, { marginTop: 14 }]}>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow, { marginTop: 14 }]}>
             <Text style={[styles.label, { color: colors.textSecondary }]}>Sources used</Text>
-            {generation.contextSources.map((s) => (
-              <View
-                key={s.id}
-                style={[styles.sourceRow, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}
-              >
-                <Ionicons name="document-text-outline" size={14} color={colors.textMuted} />
-                <Text style={[styles.meta, { color: colors.textSecondary, flex: 1 }]} numberOfLines={1}>
-                  {s.originalFilename ?? s.sourceUrl ?? s.sourceType}
-                </Text>
-              </View>
-            ))}
+            <UsedSources
+              sources={generation.contextSources}
+              topicId={generation.topicId}
+              shownAsIsIds={new Set(getAttachedMedia(generation.editedOutput ?? generation.aiOutput).map((m) => m.sourceId))}
+            />
           </View>
         ) : null}
 
@@ -547,12 +615,34 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
               >
                 {isPublishing ? <ActivityIndicator color={generation.shareStatus === "published" ? colors.textPrimary : colors.accentOn} /> : <><Text style={[styles.shareButtonText, { color: generation.shareStatus === "published" ? colors.textPrimary : colors.accentOn }]}>{generation.shareStatus === "published" ? "Unshare from students" : "Share with students"}</Text><Ionicons name="arrow-forward" size={19} color={generation.shareStatus === "published" ? colors.textPrimary : colors.accentOn} /></>}
               </Pressable>
-              <Text style={[styles.footerNote, { color: colors.textMuted }]}>{generation.shareStatus === "published" ? "Students can see this in their Materials tab." : "Review before students receive it."}</Text>
+              {generation.shareStatus === "published" ? (
+                <View style={styles.footerNoteRow}>
+                  <Text style={[styles.footerNote, { color: colors.textMuted, marginTop: 0 }]}>
+                    {generation.sharedWithAll
+                      ? "Shared with all students in the class."
+                      : `Shared with ${generation.sharedStudentStubIds.length} selected student${generation.sharedStudentStubIds.length === 1 ? "" : "s"}.`}
+                  </Text>
+                  <Pressable onPress={() => setShowAudiencePicker(true)} hitSlop={8}>
+                    <Text style={[styles.footerNoteLink, { color: colors.accent }]}>Change</Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <Text style={[styles.footerNote, { color: colors.textMuted }]}>Review before students receive it.</Text>
+              )}
             </>
           ) : null}
         </View>
       </ScrollView>
       </KeyboardAvoidingView>
+      <ShareAudienceSheet
+        visible={showAudiencePicker}
+        onClose={() => setShowAudiencePicker(false)}
+        topicId={generation.topicId}
+        initialSharedWithAll={generation.sharedWithAll}
+        initialSelectedIds={generation.sharedStudentStubIds}
+        isSubmitting={isPublishing}
+        onConfirm={confirmShare}
+      />
     </Screen>
   );
 }
@@ -598,6 +688,8 @@ const styles = StyleSheet.create({
   retryButtonText: { fontSize: 14, fontWeight: "700" },
   footer: { marginTop: 20 },
   footerNote: { textAlign: "center", marginTop: 6, fontSize: 10, fontWeight: "500" },
+  footerNoteRow: { flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 6, marginTop: 6 },
+  footerNoteLink: { fontSize: 11, fontWeight: "700" },
   sourceRow: {
     flexDirection: "row",
     alignItems: "center",

@@ -217,7 +217,7 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           <Text style={[styles.label, { color: colors.textSecondary }]}>Title</Text>
           <TextInput
             style={[styles.input, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
@@ -271,7 +271,7 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
           </View>
         </View>
 
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           <View style={styles.questionsHeader}>
             <Text style={[styles.label, { color: colors.textSecondary, marginTop: 0 }]}>Questions</Text>
             <Pressable onPress={addQuestion} hitSlop={8} accessibilityRole="button">

@@ -1,0 +1,195 @@
+/* Styles for the /present/:code Display and Control pages, adapted from the
+   eduwand-demo reference. Everything is scoped under .present-* so it can
+   never collide with the authenticated dashboard's own styles - these pages
+   render standalone (no <Layout>), same as ClassJoinPage. */
+
+.present-shell {
+  min-height: 100vh;
+  background: radial-gradient(1100px 520px at 12% -10%, rgba(255, 255, 255, 0.9), transparent 60%), var(--bg-page, #f4f1e8);
+  color: var(--text-primary, #1f1f1f);
+  font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+.present-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 24px;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(10px) saturate(1.4);
+  -webkit-backdrop-filter: blur(10px) saturate(1.4);
+  box-shadow: 0 1px 0 rgba(20, 20, 20, 0.06), 0 8px 24px -18px rgba(20, 20, 20, 0.3);
+}
+.present-brand { height: 26px; width: auto; object-fit: contain; display: block; }
+.present-header-caption {
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 3px 9px;
+  border-radius: 99px;
+  background: var(--bg-page);
+}
+.present-spacer { flex: 1; }
+.present-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 650;
+  padding: 7px 14px;
+  border-radius: 99px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(20, 20, 20, 0.06), 0 6px 16px -10px rgba(20, 20, 20, 0.25);
+}
+.present-pill .dot { width: 9px; height: 9px; border-radius: 99px; background: var(--text-muted); }
+.present-pill.live { background: #f0faf0; color: #0a6b0a; box-shadow: 0 1px 2px rgba(10, 107, 10, 0.08), 0 6px 16px -10px rgba(10, 107, 10, 0.35); }
+.present-pill.live .dot { background: var(--status-good); animation: present-pulse 1.6s infinite; }
+@keyframes present-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes present-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+.present-main { padding: 28px 24px 80px; max-width: 1240px; margin: 0 auto; }
+.present-centered { min-height: calc(100vh - 200px); display: flex; align-items: center; justify-content: center; }
+
+.present-stage { display: grid; grid-template-columns: 1fr 356px; gap: 22px; align-items: start; width: 100%; animation: present-rise 0.35s ease-out; }
+.present-qcard {
+  background: var(--bg-card);
+  border-radius: 20px;
+  padding: 34px 38px;
+  box-shadow: 0 1px 1px rgba(20, 20, 20, 0.03), 0 20px 44px -26px rgba(20, 20, 20, 0.28);
+}
+.present-qnum { font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-muted); font-weight: 700; }
+.present-qtext { font-size: 32px; line-height: 1.25; font-weight: 700; letter-spacing: -0.02em; margin: 14px 0 28px; }
+.present-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.present-opt {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 20px;
+  border-radius: 15px;
+  font-size: 19px;
+  font-weight: 600;
+  background: var(--bg-card);
+  box-shadow: inset 0 0 0 1.5px var(--border), 0 1px 1px rgba(20, 20, 20, 0.02);
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+.present-opt .k { width: 40px; height: 40px; flex: none; border-radius: 11px; background: var(--bg-page); display: grid; place-items: center; font-size: 18px; font-weight: 800; color: var(--text-secondary); }
+.present-opt.correct { box-shadow: inset 0 0 0 2px var(--status-good), 0 10px 24px -16px rgba(20, 140, 20, 0.5); background: #f2fbf2; transform: translateY(-1px); }
+.present-opt.correct .k { background: var(--status-good); color: #fff; }
+.present-opt.correct::after { content: "✓ correct"; margin-left: auto; font-size: 13px; font-weight: 700; color: var(--status-good); }
+
+.present-side { display: flex; flex-direction: column; gap: 16px; }
+.present-card {
+  background: var(--bg-card);
+  border-radius: 16px;
+  padding: 18px;
+  box-shadow: 0 1px 1px rgba(20, 20, 20, 0.03), 0 16px 36px -26px rgba(20, 20, 20, 0.28);
+}
+.present-card h3 { margin: 0 0 12px; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-muted); font-weight: 700; }
+.present-count { font-size: 36px; font-weight: 800; letter-spacing: -0.03em; line-height: 1; }
+.present-count small { font-size: 15px; font-weight: 600; color: var(--text-muted); letter-spacing: 0; }
+
+.present-seats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 14px; }
+.present-seat {
+  position: relative;
+  aspect-ratio: 1.35;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text-muted);
+  background: var(--bg-page);
+  box-shadow: inset 0 0 0 1.5px var(--border);
+  transition: box-shadow 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+.present-seat.in { box-shadow: inset 0 0 0 2px var(--status-good); background: #f2fbf2; color: #0a6b0a; }
+.present-seat.in::after { content: "✓"; position: absolute; top: 3px; right: 6px; font-size: 11px; color: var(--status-good); }
+
+.present-bars { display: flex; flex-direction: column; gap: 12px; }
+.present-bar .top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 14px; font-weight: 650; }
+.present-bar .ico { width: 17px; height: 17px; border-radius: 5px; display: grid; place-items: center; font-size: 10px; font-weight: 900; color: #fff; flex: none; }
+.present-bar .val { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 800; font-size: 15px; }
+.present-track { height: 12px; background: var(--bg-page); border-radius: 99px; overflow: hidden; box-shadow: inset 0 1px 2px rgba(20, 20, 20, 0.08); }
+.present-fill { height: 100%; border-radius: 99px; transition: width 0.35s cubic-bezier(0.2, 0.7, 0.3, 1); }
+.present-good .ico, .present-good .present-fill { background: var(--status-good); }
+.present-bad .ico, .present-bad .present-fill { background: var(--status-critical); }
+.present-doubt .ico, .present-doubt .present-fill { background: var(--status-warning, #E8952E); }
+
+.present-note { color: var(--text-muted); font-size: 13px; margin: 10px 0 0; line-height: 1.5; }
+.present-empty { text-align: center; padding: 56px 20px; color: var(--text-muted); }
+
+.present-code-hero { text-align: center; }
+.present-code-hero .code { font-size: 64px; font-weight: 800; letter-spacing: 0.12em; margin: 12px 0; }
+
+.present-footbar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(10px) saturate(1.4);
+  -webkit-backdrop-filter: blur(10px) saturate(1.4);
+  box-shadow: 0 -1px 0 rgba(20, 20, 20, 0.06), 0 -12px 30px -20px rgba(20, 20, 20, 0.35);
+  padding: 12px 22px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.present-btn {
+  font: inherit;
+  cursor: pointer;
+  border: none;
+  background: var(--text-primary);
+  color: #fff;
+  border-radius: 10px;
+  padding: 10px 18px;
+  font-weight: 650;
+  font-size: 15px;
+  box-shadow: 0 1px 1px rgba(20, 20, 20, 0.05), 0 10px 20px -14px rgba(20, 20, 20, 0.5);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+.present-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 1px 1px rgba(20, 20, 20, 0.05), 0 14px 26px -14px rgba(20, 20, 20, 0.55); }
+.present-btn:active:not(:disabled) { transform: translateY(0); }
+.present-btn.ghost { background: var(--bg-card); color: var(--text-primary); box-shadow: inset 0 0 0 1.5px var(--border); }
+.present-btn.brand { background: var(--accent); }
+.present-btn:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+
+.present-roster { display: flex; flex-direction: column; gap: 8px; animation: present-rise 0.35s ease-out; }
+.present-roster-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-radius: 13px;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  box-shadow: 0 1px 1px rgba(20, 20, 20, 0.02), 0 10px 22px -18px rgba(20, 20, 20, 0.3);
+  transition: box-shadow 0.15s ease;
+}
+.present-roster-row:hover { box-shadow: 0 1px 1px rgba(20, 20, 20, 0.03), 0 14px 28px -16px rgba(20, 20, 20, 0.35); }
+.present-roster-name { font-weight: 700; font-size: 14px; }
+.present-roster-opts { display: flex; gap: 6px; }
+.present-roster-opt {
+  width: 34px;
+  height: 34px;
+  border-radius: 17px;
+  border: none;
+  background: var(--bg-page);
+  font-weight: 800;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1.5px var(--border);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.present-roster-opt:hover { transform: translateY(-1px); }
+.present-roster-opt.active { background: var(--accent); box-shadow: none; color: #fff; }
+.present-roster-opt.doubt { margin-left: 4px; color: var(--status-warning, #E8952E); box-shadow: inset 0 0 0 1.5px var(--status-warning, #E8952E); }
+.present-roster-opt.doubt.active { background: var(--status-warning, #E8952E); box-shadow: none; color: #fff; }
+
+@media (max-width: 980px) { .present-stage { grid-template-columns: 1fr; } .present-qtext { font-size: 26px; } .present-opts { grid-template-columns: 1fr; } }

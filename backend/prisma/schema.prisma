@@ -107,6 +107,8 @@ model School {
   subjectChangeRequests SubjectChangeRequest[]
   boardChangeTickets    BoardChangeTicket[]
   classChangeRequests   ClassChangeRequest[]
+  timetableSlots        TimetableSlot[]
+  calendarTasks         CalendarTask[]
 
   @@map("school")
 }
@@ -175,6 +177,7 @@ model ClassSection {
   communicationMessages CommunicationMessage[]
   teacherAssignments    ClassSectionTeacher[]
   joinRequests          ClassJoinRequest[]
+  timetableSlots        TimetableSlot[]
 
   @@map("class_section")
 }
@@ -193,6 +196,54 @@ model ClassSectionTeacher {
 
   @@unique([classSectionId, teacherUserId])
   @@map("class_section_teacher")
+}
+
+// A weekly recurring period on a teacher's timetable. Set by the school
+// admin for institutional teachers, and by the teacher themselves for
+// individual accounts (authorizeForSchool already treats an individual
+// teacher as admin of their own school). weekday is ISO: 1=Mon ... 7=Sun.
+// startTime/endTime are 24h "HH:mm" strings - a timetable is a wall-clock
+// schedule, not an instant, so there is no timezone to get wrong.
+model TimetableSlot {
+  id             String       @id @default(uuid()) @db.Uuid
+  schoolId       String       @map("school_id") @db.Uuid
+  school         School       @relation(fields: [schoolId], references: [id])
+  teacherUserId  String       @map("teacher_user_id") @db.Uuid
+  teacher        AppUser      @relation(fields: [teacherUserId], references: [id])
+  classSectionId String       @map("class_section_id") @db.Uuid
+  classSection   ClassSection @relation(fields: [classSectionId], references: [id])
+  subject        String
+  weekday        Int
+  startTime      String       @map("start_time")
+  endTime        String       @map("end_time")
+  room           String?
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  @@index([schoolId, teacherUserId, weekday])
+  @@map("timetable_slot")
+}
+
+// A teacher's personal to-do on a specific day, shown on the home-screen
+// calendar. taskDate is a calendar date (no time/timezone); dueTime is an
+// optional "HH:mm" for ordering within the day.
+model CalendarTask {
+  id            String    @id @default(uuid()) @db.Uuid
+  schoolId      String    @map("school_id") @db.Uuid
+  school        School    @relation(fields: [schoolId], references: [id])
+  teacherUserId String    @map("teacher_user_id") @db.Uuid
+  teacher       AppUser   @relation(fields: [teacherUserId], references: [id])
+  title         String
+  notes         String?
+  taskDate      DateTime  @map("task_date") @db.Date
+  dueTime       String?   @map("due_time")
+  isDone        Boolean   @default(false) @map("is_done")
+  completedAt   DateTime? @map("completed_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@index([teacherUserId, taskDate])
+  @@map("calendar_task")
 }
 
 // Role is one of: front_desk, counsellor, teacher, admin, leadership
@@ -243,10 +294,11 @@ model AppUser {
   observations               Observation[]
   sentCommunicationMessages  CommunicationMessage[]
   classSectionAssignments    ClassSectionTeacher[]
-  roleGrants                 UserRoleGrant[]
+  timetableSlots             TimetableSlot[]
+  calendarTasks              CalendarTask[]
+  roleGrants                UserRoleGrant[]
   interviews                 InterviewRecord[]           @relation("InterviewConductedBy")
   approvals                  EnquiryApproval[]           @relation("ApprovalDecidedBy")
-  aiConversation             AiConversation?
   creditAccount              TeacherCreditAccount?
   creditLedgerEntries        CreditLedgerEntry[]
   subjectChangeRequests      SubjectChangeRequest[]      @relation("SubjectChangeRequester")
@@ -651,6 +703,12 @@ model StudentStub {
   guardianContact String       @map("guardian_contact")
   admissionDate   DateTime     @map("admission_date") @db.Date
   feeStatus       String       @default("pending") @map("fee_status")
+  // A physical clicker's hardware DEVICE_ID (see clicker.ino), assigned once
+  // per student per class. A live Present session's Control page maps an
+  // incoming {"id":N,"ans":"A"} packet to this student via seatNumber, then
+  // records it exactly as if the teacher had tapped it manually - see
+  // admin-dashboard's PresentControlPage.tsx receiver connection.
+  seatNumber      Int?         @map("seat_number")
   // status is one of: active, removed. Soft delete only - Submission/Grade/
   // PersonalisationSuggestion/CommunicationMessage all reference a student
   // with no cascade rule, so a real row delete would fail once a student
@@ -670,6 +728,10 @@ model StudentStub {
   sentCommunicationMessages     CommunicationMessage[]      @relation("CommunicationSenderStudent")
 
   @@index([schoolId])
+  // Two students in the same class can't share a clicker number - Postgres
+  // treats NULLs as distinct here, so any number of not-yet-assigned
+  // students (seatNumber null) coexist fine.
+  @@unique([classSectionId, seatNumber])
   @@map("student_stub")
 }
 
@@ -718,7 +780,6 @@ model Topic {
   classSection   ClassSection @relation(fields: [classSectionId], references: [id])
   subject        String
   name           String
-  board          String
   status         String       @default("active")
   createdAt      DateTime     @default(now()) @map("created_at")
   updatedAt      DateTime     @updatedAt @map("updated_at")
@@ -731,6 +792,7 @@ model Topic {
   attainmentReport      AttainmentReport?
   communicationMessages CommunicationMessage[]
   researchJobs          ContextResearchJob[]
+  savedVideos           SavedVideo[]
 
   @@index([schoolId, teacherUserId])
   @@index([classSectionId, subject])
@@ -748,6 +810,10 @@ model ContextSource {
   originalFilename     String?  @map("original_filename")
   sourceUrl            String?  @map("source_url")
   idreamK12ReferenceId String?  @map("idream_k12_reference_id")
+  // Credit line for a source found by AI research (image author/licence, or
+  // the site a PDF came from) - shown wherever the source is used as-is in
+  // generated content. Null for teacher uploads.
+  attribution          String?
   // PDFs only - total page count, captured at extraction time. Lets the
   // frontend offer a page-range picker for long documents (Generate setup).
   pageCount            Int?     @map("page_count")
@@ -784,6 +850,26 @@ model ContextResearchJob {
 
   @@index([topicId])
   @@map("context_research_job")
+}
+
+// A reference video (found via AI Research's YouTube search - see
+// lib/youtube-search.ts) a teacher chose to keep for a topic. Deliberately
+// separate from ContextSource: these are never fed to the AI as context,
+// only browsed/watched by the teacher, so they need none of ContextSource's
+// extraction machinery - just enough to show a card and open the player.
+model SavedVideo {
+  id            String   @id @default(uuid()) @db.Uuid
+  topicId       String   @map("topic_id") @db.Uuid
+  topic         Topic    @relation(fields: [topicId], references: [id])
+  videoId       String   @map("video_id")
+  title         String
+  channelTitle  String   @map("channel_title")
+  thumbnailUrl  String   @map("thumbnail_url")
+  duration      String
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@unique([topicId, videoId])
+  @@map("saved_video")
 }
 
 // The output template applied to generations/attainment reports so documents
@@ -861,6 +947,11 @@ model Generation {
   // classCount/minutesPerClass already do.
   activityGroupSize      String?               @map("activity_group_size")
   activityResources      String[]              @map("activity_resources")
+  // Only meaningful when outputType is "custom_activity_report" - the
+  // Learning Stage(s) (Bloom's Taxonomy) the teacher constrained this
+  // activity report's objectives to. Empty means "let the AI choose freely",
+  // same default-open behavior as before this existed.
+  learningStages         String[]              @default([]) @map("learning_stages")
   aiOutput               String                @map("ai_output")
   editedOutput           String?               @map("edited_output")
   schoolFormatTemplateId String?               @map("school_format_template_id") @db.Uuid
@@ -879,10 +970,25 @@ model Generation {
 
   // Separate from generationStatus (which is about whether the AI call
   // succeeded) - this gates /student/materials. draft = teacher-only,
-  // published = visible to every student in the topic's class section.
-  // Mirrors Assignment.status/publishedAt.
+  // published = visible to students per sharedWithAll/sharedStudentStubIds
+  // below. Mirrors Assignment.status/publishedAt.
   shareStatus String    @default("draft") @map("share_status")
   publishedAt DateTime? @map("published_at")
+  // When false, published visibility is limited to sharedStudentStubIds
+  // (validated as members of the topic's own class section at publish time)
+  // instead of the whole class - same String[] pattern as activityResources
+  // above, not a join table, since this is just a snapshot of who was picked
+  // at share time, not something else needs to query from the other side.
+  sharedWithAll        Boolean  @default(true) @map("shared_with_all")
+  sharedStudentStubIds String[] @map("shared_student_stub_ids")
+
+  // Which class periods (1-indexed, matching a stage's own "sessions" tag in
+  // the lesson_plan content JSON) the teacher has actually taught, for a
+  // lesson plan that spans more than one class (classCount > 1). Teacher-
+  // reported progress, separate from generationStatus (whether the AI call
+  // succeeded) and from Topic.status (archived/active) - a topic isn't
+  // auto-closed just because every class has been ticked off.
+  completedSessions Int[] @default([]) @map("completed_sessions")
 
   contextSources ContextSource[]
   assessments    Assessment[]
@@ -1109,6 +1215,19 @@ model Assessment {
   resultsReleasedAt         DateTime? @map("results_released_at")
   createdAt                 DateTime  @default(now()) @map("created_at")
 
+  // Presenting on a screen (web/present.ts): a short-lived code stands in for
+  // login on the classroom device - same pattern as ClassJoinRequest's
+  // joinCode. One active code at a time; starting a new session overwrites it,
+  // which invalidates whatever device still has the old link/tab open.
+  presentCode             String?   @unique @map("present_code")
+  presentCodeExpiresAt    DateTime? @map("present_code_expires_at")
+  // Which question is currently being presented, and whether the class has
+  // been shown the correct answer for it yet. Server-side (not per-client)
+  // because the Display and Control pages are two different devices that
+  // must show the same question.
+  currentQuestionIndex    Int       @default(0) @map("current_question_index")
+  currentQuestionRevealed Boolean   @default(false) @map("current_question_revealed")
+
   responses AssessmentResponse[]
 
   @@index([schoolId, classSectionId])
@@ -1127,10 +1246,17 @@ model AssessmentResponse {
   questionId          String     @map("question_id")
   studentStubId       String     @map("student_stub_id") @db.Uuid
   studentStub         StudentStub @relation(fields: [studentStubId], references: [id])
-  selectedOptionIndex Int        @map("selected_option_index")
+  // Null when isDoubt is true - a doubt is "I'm not sure", not a choice.
+  selectedOptionIndex Int?       @map("selected_option_index")
   // Computed at write time via exact match against the question's
   // correctOptionIndex - no separate grading pass or Grade row needed.
-  isCorrect           Boolean    @map("is_correct")
+  // Null when isDoubt is true (a doubt is neither right nor wrong).
+  isCorrect           Boolean?   @map("is_correct")
+  // The student pressed "I'm not sure" instead of picking an option (see
+  // client's Step 6: a live doubt count alongside Correct/Wrong). Kept out of
+  // correctRate/band math entirely rather than counted as wrong, so a topic
+  // students are honestly unsure about doesn't read as "failed."
+  isDoubt             Boolean    @default(false) @map("is_doubt")
   recordedAt          DateTime   @default(now()) @map("recorded_at")
 
   @@unique([assessmentId, questionId, studentStubId])
@@ -1267,13 +1393,15 @@ model AuditLog {
 // See docs/superpowers/specs/2026-09-04-ai-assistant-phase1-design.md
 model AiConversation {
   id        String      @id @default(uuid()) @db.Uuid
+  // AppUser.id for staff, StudentStub.id for students (the JWT sub) - deliberately
+  // no FK, since it points at one of two tables depending on role.
   userId    String      @map("user_id") @db.Uuid
-  user      AppUser     @relation(fields: [userId], references: [id])
   schoolId  String      @map("school_id") @db.Uuid
   school    School      @relation(fields: [schoolId], references: [id])
   createdAt DateTime    @default(now()) @map("created_at")
   updatedAt DateTime    @updatedAt @map("updated_at")
   messages  AiMessage[]
+  actions   AiAction[]
 
   @@unique([userId])
   @@map("ai_conversation")
@@ -1286,10 +1414,39 @@ model AiMessage {
   conversation   AiConversation @relation(fields: [conversationId], references: [id])
   from           String
   text           String
+  // Deep links the app renders as tappable chips under the bubble:
+  // [{ label, screen, params }] - see backend/src/lib/assistant-tools.ts.
+  links          Json?
+  // Set on the message that carries a confirm card for a proposed write.
+  actionId       String?        @unique @map("action_id") @db.Uuid
+  action         AiAction?      @relation(fields: [actionId], references: [id])
   createdAt      DateTime       @default(now()) @map("created_at")
 
   @@index([conversationId, createdAt])
   @@map("ai_message")
+}
+
+// A write the assistant proposed. Never executed by the model itself - only
+// by POST /ai-assistant/actions/:id/confirm, re-run as the user through the
+// normal route (so role checks and validation are identical to the app's).
+// status is one of: pending, confirmed, cancelled, failed.
+model AiAction {
+  id             String         @id @default(uuid()) @db.Uuid
+  conversationId String         @map("conversation_id") @db.Uuid
+  conversation   AiConversation @relation(fields: [conversationId], references: [id])
+  tool           String
+  args           Json
+  summary        String
+  status         String         @default("pending")
+  resultText     String?        @map("result_text")
+  resultLink     Json?          @map("result_link")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  message AiMessage?
+
+  @@index([conversationId, status])
+  @@map("ai_action")
 }
 
 // Individual-teacher onboarding + credits/billing
@@ -1331,6 +1488,33 @@ model PlatformSetting {
   updatedBy String?  @map("updated_by") @db.Uuid
 
   @@map("platform_setting")
+}
+
+// Platform-wide, platform_admin-editable long-form pages (Privacy Policy,
+// Terms of Service, About) - not tenant-scoped, unlike everything else in
+// this schema, because these describe EduWand itself, not a school's data.
+// Served publicly with no auth (GET /content-pages/:key) so it can be linked
+// from Google Play/App Store listings and read by logged-out users, and
+// rendered from the same source in the admin-dashboard public pages, the
+// mobile app's Legal screens, and eventually a marketing site - one place to
+// edit, no app/dashboard rebuild needed to fix a typo or update a clause.
+// key is one of: privacy_policy, terms_of_service, about, contact.
+model ContentPage {
+  id        String   @id @default(uuid()) @db.Uuid
+  key       String   @unique
+  title     String
+  // Markdown source - rendered with react-markdown-display (app) / marked (web).
+  bodyMarkdown String @map("body_markdown")
+  // Structured data for a page that needs more than a wall of text to look
+  // right - currently only "contact" ({ email, phone, whatsapp?, address,
+  // hours? }), rendered as tappable icon cards instead of markdown on every
+  // client. Null for every other key, which stays plain bodyMarkdown.
+  fields    Json?
+  version   Int      @default(1)
+  updatedAt DateTime @updatedAt @map("updated_at")
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  @@map("content_page")
 }
 
 // One row per teacher AppUser. Credits are a one-time grant (Plan resolution

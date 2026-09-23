@@ -9,7 +9,7 @@ import { PageHeader } from "../../components/PageHeader";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { api, Enquiry, FollowUpTask } from "../../api/client";
-import { typography } from "../../theme/tokens";
+import { typography, softCardShadow } from "../../theme/tokens";
 import { decorativeAssets } from "../../theme/decorativeAssets";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Notifications">;
@@ -128,21 +128,21 @@ export function NotificationScreen({ navigation }: Props) {
         />
 
         {isLoading ? (
-          <View style={[styles.stateCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <View style={[styles.stateCard, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
             <ActivityIndicator color={colors.accent} />
             <Text style={[styles.stateText, { color: colors.textMuted }]}>Checking your latest updates...</Text>
           </View>
         ) : null}
 
         {error ? (
-          <View style={[styles.stateCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <View style={[styles.stateCard, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
             <Ionicons name="alert-circle-outline" size={24} color={colors.danger} />
             <Text style={[styles.stateText, { color: colors.danger }]}>{error}</Text>
           </View>
         ) : null}
 
         {!isLoading && !error && items.length === 0 ? (
-          <View style={[styles.stateCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <View style={[styles.stateCard, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
             <Image source={decorativeAssets.checkCircle} style={styles.emptyGraphic} resizeMode="contain" />
             <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>All clear</Text>
             <Text style={[styles.stateText, { color: colors.textMuted }]}>
@@ -167,7 +167,7 @@ export function NotificationScreen({ navigation }: Props) {
                     styles.notificationCard,
                     {
                       backgroundColor: colors.surface,
-                      borderColor: isHigh ? colors.danger : colors.border,
+                      borderWidth: 0,
                     },
                     cardShadow,
                     pressed && { opacity: pressedOpacity },
@@ -207,8 +207,8 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   notificationCard: {
+    ...softCardShadow,
     minHeight: 88,
-    borderWidth: 1,
     borderRadius: 22,
     padding: 14,
     flexDirection: "row",
@@ -256,7 +256,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   stateCard: {
-    borderWidth: 1,
+    ...softCardShadow,
     borderRadius: 24,
     padding: 22,
     alignItems: "center",

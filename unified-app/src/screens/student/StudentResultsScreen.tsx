@@ -7,6 +7,7 @@ import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, StudentSubmissionRecord, StudentAssessmentRecord } from "../../api/client";
 import { decorativeAssets } from "../../theme/decorativeAssets";
+import { useTabBarClearance } from "../../navigation/useTabBarClearance";
 
 type ResultItem =
   | { kind: "assignment"; id: string; date: string; data: StudentSubmissionRecord }
@@ -15,6 +16,7 @@ type ResultItem =
 export function StudentResultsScreen() {
   const { accessToken } = useAuth();
   const { colors, cardShadow } = useTheme();
+  const tabBarClearance = useTabBarClearance();
   const [items, setItems] = useState<ResultItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -60,7 +62,7 @@ export function StudentResultsScreen() {
         <FlatList
           data={items}
           keyExtractor={(item) => `${item.kind}-${item.id}`}
-          contentContainerStyle={styles.list}
+          contentContainerStyle={[styles.list, { paddingBottom: tabBarClearance }]}
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <Image source={decorativeAssets.badgeRibbon} style={styles.emptyGraphic} resizeMode="contain" />
@@ -69,7 +71,7 @@ export function StudentResultsScreen() {
           }
           renderItem={({ item }) =>
             item.kind === "assignment" ? (
-              <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, borderLeftColor: colors.accent }, cardShadow]}>
+              <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0, borderLeftColor: colors.accent }, cardShadow]}>
                 <View style={styles.cardHeader}>
                   <Text style={[styles.cardTitle, { color: colors.textPrimary }]} numberOfLines={1}>
                     {item.data.assignment.title}
@@ -91,7 +93,7 @@ export function StudentResultsScreen() {
                 )}
               </View>
             ) : (
-              <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, borderLeftColor: colors.accent }, cardShadow]}>
+              <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0, borderLeftColor: colors.accent }, cardShadow]}>
                 <View style={styles.cardHeader}>
                   <Text style={[styles.cardTitle, { color: colors.textPrimary }]} numberOfLines={1}>
                     {item.data.topicName}

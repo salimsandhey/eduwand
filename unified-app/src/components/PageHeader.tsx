@@ -2,7 +2,7 @@ import { ReactNode } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme/ThemeContext";
-import { typography } from "../theme/tokens";
+import { typography, softCardShadow } from "../theme/tokens";
 
 interface HeaderMetric {
   label: string;
@@ -23,7 +23,7 @@ export function PageHeader({ eyebrow, title, subtitle, icon, metrics = [], actio
   const { colors, cardShadow } = useTheme();
 
   return (
-    <View style={[styles.header, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+    <View style={[styles.header, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
       <View style={styles.topRow}>
         <View style={styles.titleBlock}>
           {eyebrow ? <Text style={[styles.eyebrow, { color: colors.accent }]}>{eyebrow}</Text> : null}
@@ -62,7 +62,7 @@ export function PageHeader({ eyebrow, title, subtitle, icon, metrics = [], actio
 
 const styles = StyleSheet.create({
   header: {
-    borderWidth: 1,
+    ...softCardShadow,
     borderRadius: 18,
     padding: 16,
     gap: 14,

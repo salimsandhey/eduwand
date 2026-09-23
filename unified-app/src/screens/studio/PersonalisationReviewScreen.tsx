@@ -161,7 +161,7 @@ export function PersonalisationReviewScreen({ route, navigation }: Props) {
           const isBusy = busyId === s.id;
           const isExpanded = expandedId === s.id;
           return (
-            <View key={s.id} style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+            <View key={s.id} style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
               <View style={styles.cardHeader}>
                 <Text style={[styles.studentName, { color: colors.textPrimary }]}>{s.studentStub?.fullName ? capitalizeFirst(s.studentStub.fullName) : "Student"}</Text>
                 {s.status === "pending" ? (
@@ -247,7 +247,7 @@ export function PersonalisationReviewScreen({ route, navigation }: Props) {
           const ineligible = eligibility.filter((e) => !e.eligible && !reviewedIds.has(e.studentStubId));
           if (ineligible.length === 0) return null;
           return (
-            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+            <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
               <Text style={[styles.studentName, { color: colors.textPrimary, marginBottom: 6 }]}>Personalisation unavailable</Text>
               {ineligible.map((e) => (
                 <Text key={e.studentStubId} style={[styles.reasoning, { color: colors.textMuted }]}>

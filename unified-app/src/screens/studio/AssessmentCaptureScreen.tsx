@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -21,10 +21,16 @@ export function AssessmentCaptureScreen({ route, navigation }: Props) {
   const [assessment, setAssessment] = useState<Assessment | null>(null);
   const [students, setStudents] = useState<StudentStub[]>([]);
   const [questionIndex, setQuestionIndex] = useState(0);
-  const [selections, setSelections] = useState<Record<string, number>>({});
+  // "doubt" = the student pressed "not sure" instead of picking an option.
+  const [selections, setSelections] = useState<Record<string, number | "doubt">>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Coming back to an assessment already in progress (e.g. after an
+  // accidental back-button press, or via "Resume" from GenerationReviewScreen)
+  // should pick up where it left off, not restart at question 1 with nothing
+  // selected - only the first load of a mount does this jump.
+  const hasResumedRef = useRef(false);
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -34,7 +40,19 @@ export function AssessmentCaptureScreen({ route, navigation }: Props) {
       const a = await api.getAssessment(accessToken, assessmentId);
       setAssessment(a);
       const roster = await api.listStudents(accessToken, a.classSectionId);
-      setStudents(roster.data ?? []);
+      const rosterData = roster.data ?? [];
+      setStudents(rosterData);
+
+      if (!hasResumedRef.current) {
+        hasResumedRef.current = true;
+        const resumeIndex = a.questions.findIndex((q) => {
+          const answeredCount = a.responses.filter((r) => r.questionId === q.id).length;
+          return answeredCount < rosterData.length;
+        });
+        const startIndex = resumeIndex === -1 ? Math.max(0, a.questions.length - 1) : resumeIndex;
+        setQuestionIndex(startIndex);
+        loadSelectionsForQuestion(a, startIndex);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load quick check");
     } finally {
@@ -50,9 +68,10 @@ export function AssessmentCaptureScreen({ route, navigation }: Props) {
 
   function loadSelectionsForQuestion(a: Assessment, index: number) {
     const question = a.questions[index];
-    const map: Record<string, number> = {};
+    const map: Record<string, number | "doubt"> = {};
     for (const r of a.responses) {
-      if (r.questionId === question.id) map[r.studentStubId] = r.selectedOptionIndex;
+      if (r.questionId !== question.id) continue;
+      map[r.studentStubId] = r.isDoubt ? "doubt" : r.selectedOptionIndex!;
     }
     setSelections(map);
   }
@@ -61,10 +80,16 @@ export function AssessmentCaptureScreen({ route, navigation }: Props) {
     setSelections((prev) => ({ ...prev, [studentStubId]: optionIndex }));
   }
 
+  function selectDoubt(studentStubId: string) {
+    setSelections((prev) => ({ ...prev, [studentStubId]: "doubt" }));
+  }
+
   async function saveAndAdvance() {
     if (!accessToken || !assessment) return;
     const question = assessment.questions[questionIndex];
-    const responses = Object.entries(selections).map(([studentStubId, selectedOptionIndex]) => ({ studentStubId, selectedOptionIndex }));
+    const responses = Object.entries(selections).map(([studentStubId, value]) =>
+      value === "doubt" ? { studentStubId, isDoubt: true } : { studentStubId, selectedOptionIndex: value }
+    );
     setIsSaving(true);
     setError(null);
     try {
@@ -121,9 +146,18 @@ export function AssessmentCaptureScreen({ route, navigation }: Props) {
             Question {questionIndex + 1} of {assessment.questions.length} · {answeredCount}/{students.length} answered
           </Text>
         </View>
+        <Pressable
+          style={({ pressed }) => [styles.presentButton, { backgroundColor: colors.accentSoft }, pressed && { opacity: pressedOpacity }]}
+          onPress={() => navigation.navigate("PresentLaunch", { assessmentId: assessment.id })}
+          accessibilityRole="button"
+          accessibilityLabel="Present on a screen"
+        >
+          <Ionicons name="tv-outline" size={16} color={colors.accent} />
+          <Text style={[styles.presentButtonText, { color: colors.accent }]}>Present</Text>
+        </Pressable>
       </View>
 
-      <View style={[styles.questionCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+      <View style={[styles.questionCard, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
         <Text style={[styles.questionPrompt, { color: colors.textPrimary }]}>{question.prompt}</Text>
         <View style={styles.optionLegend}>
           {question.options.map((opt, i) => (
@@ -164,6 +198,19 @@ export function AssessmentCaptureScreen({ route, navigation }: Props) {
                     </Pressable>
                   );
                 })}
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.doubtButton,
+                    { backgroundColor: selected === "doubt" ? colors.warning : colors.surfaceRaised, borderColor: selected === "doubt" ? colors.warning : colors.border },
+                    pressed && { opacity: pressedOpacity },
+                  ]}
+                  onPress={() => selectDoubt(s.id)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Mark ${s.fullName} as not sure`}
+                  accessibilityState={{ selected: selected === "doubt" }}
+                >
+                  <Ionicons name="help" size={16} color={selected === "doubt" ? "#FFFFFF" : colors.textMuted} />
+                </Pressable>
               </View>
             </View>
           );
@@ -195,6 +242,8 @@ const styles = StyleSheet.create({
   topCopy: { flex: 1 },
   topTitle: { fontSize: 17, fontWeight: "800" },
   topSubtitle: { fontSize: 12, marginTop: 2, fontWeight: "600" },
+  presentButton: { flexDirection: "row", alignItems: "center", gap: 5, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8 },
+  presentButtonText: { fontSize: 12, fontWeight: "800" },
   questionCard: { marginHorizontal: 20, borderWidth: 1, borderRadius: 16, padding: 14 },
   questionPrompt: { fontSize: 15, fontWeight: "700", lineHeight: 21 },
   optionLegend: { marginTop: 10, gap: 6 },
@@ -209,6 +258,7 @@ const styles = StyleSheet.create({
   optionButtonsRow: { flexDirection: "row", gap: 6 },
   optionButton: { width: 34, height: 34, borderRadius: 17, borderWidth: 1, alignItems: "center", justifyContent: "center" },
   optionButtonText: { fontSize: 13, fontWeight: "800" },
+  doubtButton: { width: 34, height: 34, borderRadius: 17, borderWidth: 1, alignItems: "center", justifyContent: "center", marginLeft: 4 },
   footer: { paddingHorizontal: 20, paddingBottom: 16, paddingTop: 4 },
   nextButton: { height: 52, borderRadius: 14, alignItems: "center", justifyContent: "center" },
   nextButtonText: { fontSize: 15, fontWeight: "800" },

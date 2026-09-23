@@ -2,10 +2,11 @@ import { FastifyInstance } from "fastify";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
-import { aiProvider, logAiUsage, AssignmentGenInput, GeneratedAssignmentQuestion } from "../lib/ai";
+import { aiProvider, logAiUsage, AssignmentGenInput, GeneratedAssignmentQuestion, AssignmentQuestionType, ALL_QUESTION_TYPES } from "../lib/ai";
 import { hasSufficientCredits, getFeatureCost } from "../lib/credits";
 import { buildTaughtContentText, buildContextSourceText } from "../lib/generation-content";
 import { markOnboardingTaskComplete } from "../lib/onboarding";
+import { getSchoolBoard } from "../lib/boards";
 
 interface Question {
   id: string;
@@ -54,7 +55,8 @@ interface CreateAssignmentDraftBody {
   questionCount: number;
   difficultyMix: DifficultyMix;
   objectives?: string[];
-  questionTypes?: "short_answer" | "mcq" | "mixed";
+  // Empty/omitted = the AI may use any format.
+  questionTypes?: string[];
   focusPrompt?: string;
 }
 
@@ -62,27 +64,44 @@ interface RegenerateQuestionBody {
   instruction?: string;
 }
 
+interface CreateMultiTopicAssignmentDraftBody extends CreateAssignmentDraftBody {
+  topicIds: string[];
+}
+
 interface StoredAiGenParams {
   questionCount: number;
   difficultyMix: DifficultyMix;
   objectives: string[];
-  questionTypes: "short_answer" | "mcq" | "mixed";
+  questionTypes: AssignmentQuestionType[];
   focusPrompt: string | null;
+  // Every topic this assignment draws content from - one entry for the usual
+  // single-topic case, several for a "mix of topics" assignment made from
+  // the Assignment tab (see /class-sections/:id/assignment-draft). Regenerate
+  // uses this instead of Assignment.topicId (null for a multi-topic one) to
+  // find its way back to the source content.
+  topicIds?: string[];
 }
 
 const VALID_DECISIONS = ["approved", "overridden", "opted_out"];
-const VALID_QUESTION_TYPE_MODES = ["short_answer", "mcq", "mixed"];
+const VALID_QUESTION_TYPES = ALL_QUESTION_TYPES as readonly string[];
 const PERSONALISATION_PREREQUISITE_COUNT = 2;
 
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope, requireRoles("teacher")];
 
 // Shape a generated question into the JSON we persist on Assignment.questions,
-// stamping a stable id.
+// stamping a stable id. Every type-specific field (options/correctOptionIndex
+// for mcq+true_false, pairs for match_following, items for sequencing) must
+// be handled here or it's silently dropped on save/regenerate - fill_blank,
+// very_short and short_answer have no extra fields to carry.
 function toStoredQuestion(q: GeneratedAssignmentQuestion, id: string) {
   const base: Record<string, unknown> = { id, prompt: q.prompt, difficulty: q.difficulty, type: q.type };
-  if (q.type === "mcq") {
+  if (q.type === "mcq" || q.type === "true_false") {
     base.options = q.options ?? [];
     base.correctOptionIndex = q.correctOptionIndex ?? 0;
+  } else if (q.type === "match_following") {
+    base.pairs = q.pairs ?? [];
+  } else if (q.type === "sequencing") {
+    base.items = q.items ?? [];
   }
   return base;
 }
@@ -610,15 +629,33 @@ export async function assignmentRoutes(app: FastifyInstance) {
           error: { code: "validation_error", message: "questionCount (1-20) is required" },
         });
       }
-      const questionTypes =
-        body.questionTypes && VALID_QUESTION_TYPE_MODES.includes(body.questionTypes) ? body.questionTypes : "short_answer";
+      if (body.questionTypes?.some((t) => !VALID_QUESTION_TYPES.includes(t))) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: `questionTypes must only contain: ${VALID_QUESTION_TYPES.join(", ")}` },
+        });
+      }
+      const questionTypes = (body.questionTypes ?? []) as AssignmentQuestionType[];
       const difficultyMix: DifficultyMix = {
         easy: Math.max(0, Math.round(Number(body.difficultyMix?.easy)) || 0),
         medium: Math.max(0, Math.round(Number(body.difficultyMix?.medium)) || 0),
         hard: Math.max(0, Math.round(Number(body.difficultyMix?.hard)) || 0),
       };
-      if (difficultyMix.easy + difficultyMix.medium + difficultyMix.hard === 0) {
+      const difficultyTotal = difficultyMix.easy + difficultyMix.medium + difficultyMix.hard;
+      if (difficultyTotal === 0) {
         difficultyMix.medium = questionCount;
+      } else if (difficultyTotal !== questionCount) {
+        // The split is a breakdown OF the total, not a separate number - a
+        // client that lets these drift apart (e.g. changing question count
+        // without rescaling the mix) is a bug on its end, not something to
+        // silently paper over here.
+        return reply.code(400).send({
+          data: null,
+          error: {
+            code: "validation_error",
+            message: `difficultyMix (easy + medium + hard = ${difficultyTotal}) must sum to questionCount (${questionCount})`,
+          },
+        });
       }
       const objectives = Array.isArray(body.objectives)
         ? body.objectives.map((o) => String(o).trim()).filter(Boolean).slice(0, 20)
@@ -661,7 +698,7 @@ export async function assignmentRoutes(app: FastifyInstance) {
         questionTypes,
         focusPrompt,
         subject: topic.subject,
-        board: topic.board,
+        board: await getSchoolBoard(request.schoolId),
         classLabel: `${topic.classSection.className} ${topic.classSection.sectionName}`,
         schoolFormatInstructions: formatTemplate?.templateBody ?? null,
       };
@@ -680,7 +717,7 @@ export async function assignmentRoutes(app: FastifyInstance) {
       }
 
       const storedQuestions = generated.map((q, i) => toStoredQuestion(q, `q${i + 1}`));
-      const aiGenParams: StoredAiGenParams = { questionCount, difficultyMix, objectives, questionTypes, focusPrompt };
+      const aiGenParams: StoredAiGenParams = { questionCount, difficultyMix, objectives, questionTypes, focusPrompt, topicIds: [topic.id] };
 
       const assignment = await prisma.assignment.create({
         data: {
@@ -689,6 +726,181 @@ export async function assignmentRoutes(app: FastifyInstance) {
           teacherUserId: request.user.sub,
           classSectionId: topic.classSectionId,
           title: `${topic.name} - Assignment`,
+          questions: storedQuestions as unknown as Prisma.InputJsonValue,
+          aiGenParams: aiGenParams as unknown as Prisma.InputJsonValue,
+          personalisationEnabled: false,
+          status: "draft",
+        },
+      });
+
+      await prisma.answerKey.createMany({
+        data: generated.map((q, i) => ({
+          assignmentId: assignment.id,
+          questionId: `q${i + 1}`,
+          questionIndex: i,
+          aiAnswer: q.modelAnswer,
+        })),
+      });
+
+      await logAiUsage({
+        schoolId: request.schoolId,
+        teacherUserId: request.user.sub,
+        feature: "assignment_generation",
+        model,
+        durationMs: Date.now() - start,
+      });
+
+      return reply.code(201).send({ data: assignment, meta: {} });
+    }
+  );
+
+  // Same idea as /topics/:id/assignment-draft above, but reachable from the
+  // Assignment tab directly (not from inside a specific topic) - lets a
+  // teacher build one assignment spanning several topics in a class, e.g. a
+  // revision assignment covering everything taught this term. A single
+  // topicId behaves exactly like the topic-scoped route (and keeps
+  // Assignment.topicId set, so regenerate-a-question and everything else
+  // that assumes one topic still works unmodified); more than one leaves
+  // topicId null and relies on aiGenParams.topicIds instead.
+  app.post<{ Params: { id: string }; Body: CreateMultiTopicAssignmentDraftBody }>(
+    "/class-sections/:id/assignment-draft",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const body = request.body ?? ({} as CreateMultiTopicAssignmentDraftBody);
+      const topicIds = [...new Set(Array.isArray(body.topicIds) ? body.topicIds.filter((id) => typeof id === "string" && id) : [])];
+      if (topicIds.length === 0) {
+        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "At least one topicId is required" } });
+      }
+      if (topicIds.length > 10) {
+        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "Pick at most 10 topics for one assignment" } });
+      }
+
+      const questionCount = Math.max(1, Math.min(20, Math.round(Number(body.questionCount)) || 0));
+      if (!questionCount) {
+        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "questionCount (1-20) is required" } });
+      }
+      if (body.questionTypes?.some((t) => !VALID_QUESTION_TYPES.includes(t))) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: `questionTypes must only contain: ${VALID_QUESTION_TYPES.join(", ")}` },
+        });
+      }
+      const questionTypes = (body.questionTypes ?? []) as AssignmentQuestionType[];
+      const difficultyMix: DifficultyMix = {
+        easy: Math.max(0, Math.round(Number(body.difficultyMix?.easy)) || 0),
+        medium: Math.max(0, Math.round(Number(body.difficultyMix?.medium)) || 0),
+        hard: Math.max(0, Math.round(Number(body.difficultyMix?.hard)) || 0),
+      };
+      const difficultyTotal = difficultyMix.easy + difficultyMix.medium + difficultyMix.hard;
+      if (difficultyTotal === 0) {
+        difficultyMix.medium = questionCount;
+      } else if (difficultyTotal !== questionCount) {
+        return reply.code(400).send({
+          data: null,
+          error: {
+            code: "validation_error",
+            message: `difficultyMix (easy + medium + hard = ${difficultyTotal}) must sum to questionCount (${questionCount})`,
+          },
+        });
+      }
+      const requestedObjectives = Array.isArray(body.objectives)
+        ? body.objectives.map((o) => String(o).trim()).filter(Boolean).slice(0, 20)
+        : [];
+      const focusPrompt = body.focusPrompt?.trim() || null;
+
+      const classSection = await prisma.classSection.findFirst({
+        where: { id: request.params.id, academicYear: { schoolId: request.schoolId } },
+      });
+      if (!classSection) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Class section not found" } });
+      }
+
+      const topics = await prisma.topic.findMany({
+        where: { id: { in: topicIds }, schoolId: request.schoolId, classSectionId: classSection.id },
+        include: { contextSources: true, generations: { orderBy: { generatedAt: "desc" } } },
+      });
+      if (topics.length !== topicIds.length) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "One or more topics weren't found in this class" } });
+      }
+
+      // Each topic's own content, clearly separated - the model reads this as
+      // several distinct sections, not one topic's material stretched thin.
+      const taughtBlocks: string[] = [];
+      const mergedObjectives: string[] = [];
+      const seenObjective = new Set<string>();
+      for (const topic of topics) {
+        const taught = buildTaughtContentText(topic.generations);
+        const topicText = taught.text || buildContextSourceText(topic.contextSources);
+        if (topicText) taughtBlocks.push(`## ${topic.name}\n${topicText}`);
+        for (const o of taught.objectives) {
+          const key = o.trim().toLowerCase();
+          if (!key || seenObjective.has(key)) continue;
+          seenObjective.add(key);
+          mergedObjectives.push(o.trim());
+        }
+      }
+      const taughtContent = taughtBlocks.join("\n\n");
+      if (!taughtContent) {
+        return reply.code(422).send({
+          data: null,
+          error: {
+            code: "no_taught_content",
+            message: "None of the selected topics have a lesson generated (or context sources) yet, so there's nothing for the AI to base questions on.",
+          },
+        });
+      }
+
+      const formatTemplate = await prisma.schoolFormatTemplate.findUnique({
+        where: { schoolId_appliesTo: { schoolId: request.schoolId, appliesTo: "generation" } },
+      });
+
+      const genInput: AssignmentGenInput = {
+        taughtContent,
+        objectives: requestedObjectives.length > 0 ? requestedObjectives : mergedObjectives,
+        questionCount,
+        difficultyMix,
+        questionTypes,
+        focusPrompt,
+        subject: [...new Set(topics.map((t) => t.subject))].join(" & "),
+        board: await getSchoolBoard(request.schoolId),
+        classLabel: `${classSection.className} ${classSection.sectionName}`,
+        schoolFormatInstructions: formatTemplate?.templateBody ?? null,
+      };
+
+      if (!(await hasSufficientCredits(request.user.sub, getFeatureCost("assignment_generation")))) {
+        return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to generate this assignment" } });
+      }
+
+      const start = Date.now();
+      const { questions: generated, model } = await aiProvider.generateAssignmentFromTopic(genInput);
+      if (generated.length === 0) {
+        return reply.code(502).send({
+          data: null,
+          error: { code: "generation_failed", message: "The AI did not return any usable questions. Try again." },
+        });
+      }
+
+      const storedQuestions = generated.map((q, i) => toStoredQuestion(q, `q${i + 1}`));
+      const aiGenParams: StoredAiGenParams = {
+        questionCount,
+        difficultyMix,
+        objectives: requestedObjectives,
+        questionTypes,
+        focusPrompt,
+        topicIds,
+      };
+      const title =
+        topics.length === 1
+          ? `${topics[0].name} - Assignment`
+          : `${topics.map((t) => t.name).join(", ")} - Assignment`.slice(0, 100);
+
+      const assignment = await prisma.assignment.create({
+        data: {
+          schoolId: request.schoolId,
+          topicId: topics.length === 1 ? topics[0].id : null,
+          teacherUserId: request.user.sub,
+          classSectionId: classSection.id,
+          title,
           questions: storedQuestions as unknown as Prisma.InputJsonValue,
           aiGenParams: aiGenParams as unknown as Prisma.InputJsonValue,
           personalisationEnabled: false,
@@ -736,7 +948,13 @@ export async function assignmentRoutes(app: FastifyInstance) {
           error: { code: "validation_error", message: "Only a draft assignment can be edited - unpublish it first" },
         });
       }
-      if (!assignment.topicId) {
+      const stored = (assignment.aiGenParams as unknown as StoredAiGenParams | null) ?? null;
+      // A single-topic assignment (Assignment.topicId set) or a "mix of
+      // topics" one (topicId null, sources in aiGenParams.topicIds instead -
+      // see /class-sections/:id/assignment-draft) - either way, gather every
+      // source topic's content the same way.
+      const topicIds = assignment.topicId ? [assignment.topicId] : stored?.topicIds ?? [];
+      if (topicIds.length === 0) {
         return reply.code(400).send({
           data: null,
           error: { code: "validation_error", message: "Regenerate is only available for AI-generated assignments" },
@@ -755,32 +973,45 @@ export async function assignmentRoutes(app: FastifyInstance) {
       }
       const target = questions[targetIndex];
 
-      const topic = await prisma.topic.findFirst({
-        where: { id: assignment.topicId, schoolId: request.schoolId },
-        include: { classSection: true, contextSources: true, generations: { orderBy: { generatedAt: "desc" } } },
+      const classSection = await prisma.classSection.findFirst({ where: { id: assignment.classSectionId, academicYear: { schoolId: request.schoolId } } });
+      const topics = await prisma.topic.findMany({
+        where: { id: { in: topicIds }, schoolId: request.schoolId },
+        include: { contextSources: true, generations: { orderBy: { generatedAt: "desc" } } },
       });
-      if (!topic) {
+      if (!classSection || topics.length === 0) {
         return reply.code(404).send({ data: null, error: { code: "not_found", message: "Topic not found" } });
       }
 
-      const stored = (assignment.aiGenParams as unknown as StoredAiGenParams | null) ?? null;
-      const taught = buildTaughtContentText(topic.generations);
-      const taughtContent = taught.text || buildContextSourceText(topic.contextSources);
+      const taughtBlocks: string[] = [];
+      const mergedObjectives: string[] = [];
+      const seenObjective = new Set<string>();
+      for (const topic of topics) {
+        const taught = buildTaughtContentText(topic.generations);
+        const topicText = taught.text || buildContextSourceText(topic.contextSources);
+        if (topicText) taughtBlocks.push(topics.length > 1 ? `## ${topic.name}\n${topicText}` : topicText);
+        for (const o of taught.objectives) {
+          const key = o.trim().toLowerCase();
+          if (!key || seenObjective.has(key)) continue;
+          seenObjective.add(key);
+          mergedObjectives.push(o.trim());
+        }
+      }
 
       const formatTemplate = await prisma.schoolFormatTemplate.findUnique({
         where: { schoolId_appliesTo: { schoolId: request.schoolId, appliesTo: "generation" } },
       });
 
       const genInput: AssignmentGenInput = {
-        taughtContent,
-        objectives: stored?.objectives?.length ? stored.objectives : taught.objectives,
+        taughtContent: taughtBlocks.join("\n\n"),
+        objectives: stored?.objectives?.length ? stored.objectives : mergedObjectives,
         questionCount: 1,
         difficultyMix: mixFromDifficulty(target.difficulty ?? "medium"),
-        questionTypes: target.type === "mcq" ? "mcq" : "short_answer",
+        // Regenerate as the same format the question already had.
+        questionTypes: VALID_QUESTION_TYPES.includes(target.type ?? "") ? [target.type as AssignmentQuestionType] : ["short_answer"],
         focusPrompt: [stored?.focusPrompt ?? null, body.instruction?.trim() || null].filter(Boolean).join("\n") || null,
-        subject: topic.subject,
-        board: topic.board,
-        classLabel: `${topic.classSection.className} ${topic.classSection.sectionName}`,
+        subject: [...new Set(topics.map((t) => t.subject))].join(" & "),
+        board: await getSchoolBoard(request.schoolId),
+        classLabel: `${classSection.className} ${classSection.sectionName}`,
         schoolFormatInstructions: formatTemplate?.templateBody ?? null,
       };
 

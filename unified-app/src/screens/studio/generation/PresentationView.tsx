@@ -6,7 +6,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../../../theme/ThemeContext";
 import { radius, spacing, typography } from "../../../theme/tokens";
 import { lockLandscape, lockPortrait } from "../../../utils/safeOrientation";
-import { PresentationContent, PresentationColorScheme, PresentationSlideLayout } from "./content";
+import { PresentationContent, PresentationColorScheme, PresentationSlideLayout, MediaItem } from "./content";
 import { NumberedEditCard, EditActionRow } from "./NumberedEditCard";
 import { pickIconForText } from "./topicIcons";
 
@@ -14,7 +14,13 @@ interface Props {
   content: PresentationContent;
   editable: boolean;
   onChange: (content: PresentationContent) => void;
+  // Where to load an "image" slide's picture from (an uploaded image, or a
+  // rendered PDF page) - supplied by the screen, which knows the topic + token.
+  mediaUrl?: (item: MediaItem) => string;
 }
+
+// What an "image" slide shows: the picture's URL and its credit line.
+type SlideMedia = { url: string; attribution: string | null } | null;
 
 type Scheme = { background: string; accent: string; text: string; mutedText: string };
 // Legacy-only render layouts - no longer generated, but old "more_visual"
@@ -62,7 +68,7 @@ function resolveLayout(slide: PresentationContent["slides"][number]): RenderLayo
   if (raw === "image-left" || raw === "image-right") return raw;
   if (
     raw === "title" || raw === "bullets" || raw === "stat" || raw === "quote" || raw === "divider" ||
-    raw === "stat-grid" || raw === "timeline" || raw === "icon-grid"
+    raw === "stat-grid" || raw === "timeline" || raw === "icon-grid" || raw === "image"
   ) {
     return raw;
   }
@@ -70,6 +76,7 @@ function resolveLayout(slide: PresentationContent["slides"][number]): RenderLayo
 }
 
 const LAYOUT_ICONS: Record<RenderLayout, keyof typeof Ionicons.glyphMap> = {
+  image: "images-outline",
   title: "text-outline",
   bullets: "list-outline",
   "image-right": "image-outline",
@@ -152,9 +159,14 @@ function useScaledSlideStyles(scale: number) {
   );
 }
 
-export function PresentationView({ content, editable, onChange }: Props) {
+export function PresentationView({ content, editable, onChange, mediaUrl }: Props) {
   const { colors } = useTheme();
   const [presentingIndex, setPresentingIndex] = useState<number | null>(null);
+  const mediaById = useMemo(() => new Map((content.media ?? []).map((item) => [item.id, item])), [content.media]);
+  function mediaFor(slide: PresentationContent["slides"][number]): SlideMedia {
+    const item = slide.mediaId ? mediaById.get(slide.mediaId) : undefined;
+    return item && mediaUrl ? { url: mediaUrl(item), attribution: item.attribution } : null;
+  }
   // School branding, when present, takes the place of a fixed COLOR_SCHEMES
   // preset - independent of `template` now (branding applies by default,
   // see GenerationSetupScreen.tsx), falls back to the picked preset otherwise.
@@ -232,7 +244,9 @@ export function PresentationView({ content, editable, onChange }: Props) {
       <View style={styles.grid}>
         {content.slides.map((slide, i) => {
           const layout = resolveLayout(slide);
-          const hasImage = !!slide.imageUrl && (layout === "image-left" || layout === "image-right");
+          const media = layout === "image" ? mediaFor(slide) : null;
+          const tileImageUrl = media?.url ?? (layout === "image-left" || layout === "image-right" ? slide.imageUrl : undefined);
+          const hasImage = !!tileImageUrl;
           const previewLine = slide.bullets[0] ?? slide.items?.[0]?.title ?? "";
           // Only the image layouts still need the single caption line under
           // the title - "bullets" now gets its own mini bullet-list visual
@@ -266,7 +280,7 @@ export function PresentationView({ content, editable, onChange }: Props) {
           );
           return hasImage ? (
             <Pressable key={i} style={({ pressed }) => [styles.tile, pressed && { opacity: 0.85 }]} onPress={() => setPresentingIndex(i)} accessibilityRole="button" accessibilityLabel={`Open slide ${i + 1}`}>
-              <ImageBackground source={{ uri: slide.imageUrl }} style={StyleSheet.absoluteFill} imageStyle={styles.tileImageRadius}>
+              <ImageBackground source={{ uri: tileImageUrl }} style={StyleSheet.absoluteFill} imageStyle={styles.tileImageRadius}>
                 <View style={[StyleSheet.absoluteFill, styles.tileImageOverlay, styles.tileImageRadius]} />
               </ImageBackground>
               {tileInner}
@@ -299,6 +313,7 @@ export function PresentationView({ content, editable, onChange }: Props) {
               scheme={scheme}
               logoUrl={logoUrl}
               footerLabel={content.footerLabel ?? null}
+              mediaFor={mediaFor}
               onClose={() => setPresentingIndex(null)}
             />
           ) : null}
@@ -418,6 +433,7 @@ function SlideContent({
   isInstructional,
   index,
   scale,
+  media,
 }: {
   slide: PresentationContent["slides"][number];
   scheme: Scheme;
@@ -425,6 +441,7 @@ function SlideContent({
   isInstructional: boolean;
   index: number;
   scale: number;
+  media: SlideMedia;
 }) {
   const layout = resolveLayout(slide);
   const { tag: bloomTag, title: cleanTitle } = splitBloomTag(slide.title);
@@ -446,6 +463,29 @@ function SlideContent({
       <Text style={[styles.bloomBadgeText, ss.bloomBadgeText]}>{bloomTag.toUpperCase()}</Text>
     </View>
   ) : null;
+
+  if (layout === "image") {
+    // The teacher's own image / PDF page, shown as-is: caption on top, the
+    // picture scaled to fit (never cropped or stretched), credit line under it.
+    return (
+      <View style={[styles.slidePageInner, ss.slidePageInner, { flex: 1 }]}>
+        {title ? <Text style={[styles.slideshowTitle, ss.slideshowTitle, { color: scheme.text, marginBottom: sz(8, scale) }]} numberOfLines={2}>{title}</Text> : null}
+        {media ? (
+          <Image source={{ uri: media.url }} style={{ flex: 1 }} resizeMode="contain" />
+        ) : (
+          <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+            <Text style={{ color: scheme.mutedText, fontSize: sz(12, scale) }}>This image is no longer available.</Text>
+          </View>
+        )}
+        {media?.attribution ? (
+          <Text style={{ color: scheme.accent, fontSize: sz(9, scale), fontStyle: "italic", textAlign: "center", marginTop: sz(6, scale) }} numberOfLines={1}>
+            {media.attribution}
+          </Text>
+        ) : null}
+        {showLogo ? <Image source={{ uri: logoUrl! }} style={[styles.slideshowLogo, ss.slideshowLogo]} resizeMode="contain" /> : null}
+      </View>
+    );
+  }
 
   if (layout === "title") {
     return (
@@ -611,6 +651,7 @@ function Slideshow({
   scheme,
   logoUrl,
   footerLabel,
+  mediaFor,
   onClose,
 }: {
   slides: PresentationContent["slides"];
@@ -619,6 +660,7 @@ function Slideshow({
   scheme: Scheme;
   logoUrl: string | null;
   footerLabel: string | null;
+  mediaFor: (slide: PresentationContent["slides"][number]) => SlideMedia;
   onClose: () => void;
 }) {
   const [index, setIndex] = useState(initialIndex);
@@ -664,7 +706,7 @@ function Slideshow({
           <PagerView ref={pagerRef} style={{ flex: 1 }} initialPage={initialIndex} onPageSelected={(e) => setIndex(e.nativeEvent.position)}>
             {slides.map((slide, i) => (
               <View key={i} style={styles.slidePageOuter}>
-                <SlideContent slide={slide} scheme={scheme} logoUrl={logoUrl} isInstructional={isInstructional} index={i} scale={scale} />
+                <SlideContent slide={slide} scheme={scheme} logoUrl={logoUrl} isInstructional={isInstructional} index={i} scale={scale} media={mediaFor(slide)} />
                 {/* Tap zones live inside each page (not overlaid on top of the
                     whole PagerView) so a plain tap navigates without stealing
                     the native pager's own swipe-gesture recognition. */}

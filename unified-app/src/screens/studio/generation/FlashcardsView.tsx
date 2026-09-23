@@ -202,7 +202,7 @@ function FlipCard({
           style={[
             styles.flipFace,
             cardShadow,
-            { backgroundColor: colors.surface, borderColor: colors.border, transform: [{ perspective: 1200 }, { rotateY: frontRotateY }] },
+            { backgroundColor: colors.surface, borderWidth: 0, transform: [{ perspective: 1200 }, { rotateY: frontRotateY }] },
           ]}
           pointerEvents={showBack ? "none" : "auto"}
           onLayout={(e) => setFrontHeight(e.nativeEvent.layout.height)}
@@ -237,7 +237,7 @@ function FlipCard({
             styles.flipFace,
             styles.flipFaceBack,
             cardShadow,
-            { backgroundColor: colors.surface, borderColor: colors.border, transform: [{ perspective: 1200 }, { rotateY: backRotateY }] },
+            { backgroundColor: colors.surface, borderWidth: 0, transform: [{ perspective: 1200 }, { rotateY: backRotateY }] },
           ]}
           pointerEvents={showBack ? "auto" : "none"}
           onLayout={(e) => setBackHeight(e.nativeEvent.layout.height)}

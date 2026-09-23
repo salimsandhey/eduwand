@@ -3,6 +3,16 @@ import path from "path";
 import { imageSize } from "image-size";
 import PptxGenJS from "pptxgenjs";
 import { PresentationContent, PresentationColorScheme, PresentationSlideLayout } from "./ai";
+import { sniffImageMime, type MediaItem } from "./media";
+
+// The pixels behind an "image" slide's mediaId - an uploaded image, or one
+// rendered page of a PDF - resolved by the caller (this module has no DB or
+// storage access of its own).
+export interface MediaAsset {
+  data: Buffer;
+  width: number;
+  height: number;
+}
 
 // Same 4 presets PresentationView.tsx uses on mobile, kept in sync manually -
 // there's no shared package between backend/unified-app to source this from.
@@ -155,6 +165,8 @@ interface DeckTheme {
   accent: string;
   logo: LogoAsset | null;
   footerLabel: string | null;
+  mediaAssets: Map<string, MediaAsset>;
+  mediaItems: Map<string, MediaItem>;
 }
 
 function addChrome(slide: PptxGenJS.Slide, theme: DeckTheme, opts?: { skipFooter?: boolean }) {
@@ -209,7 +221,8 @@ async function renderSlide(pptx: PptxGenJS, content: PresentationContent["slides
   const rawLayout = content.layout as string | undefined;
   const layout: PresentationSlideLayout = ((): PresentationSlideLayout => {
     if (rawLayout === "title" || rawLayout === "bullets" || rawLayout === "stat" || rawLayout === "quote" ||
-        rawLayout === "divider" || rawLayout === "stat-grid" || rawLayout === "timeline" || rawLayout === "icon-grid") {
+        rawLayout === "divider" || rawLayout === "stat-grid" || rawLayout === "timeline" || rawLayout === "icon-grid" ||
+        rawLayout === "image") {
       return rawLayout;
     }
     return "bullets";
@@ -224,6 +237,41 @@ async function renderSlide(pptx: PptxGenJS, content: PresentationContent["slides
     case "title": {
       const fontSize = scaledFontSize(title, 44, 30, 70, 26);
       slide.addText(title, { x: 1, y: SLIDE_H / 2 - 1, w: SLIDE_W - 2, h: 2, fontSize, bold: true, color: "FFFFFF", align: "center", valign: "middle", fontFace: HEADLINE_FONT });
+      addChrome(slide, theme);
+      break;
+    }
+    case "image": {
+      // The teacher's own image / PDF page, shown as-is: a caption on top, the
+      // picture scaled to fit (never cropped or stretched) in the middle, and
+      // the credit line under it for anything found by AI research.
+      const asset = content.mediaId ? theme.mediaAssets.get(content.mediaId) : undefined;
+      const item = content.mediaId ? theme.mediaItems.get(content.mediaId) : undefined;
+      const hasCaption = title.trim().length > 0;
+      if (hasCaption) {
+        slide.addText(title, { x: 0.7, y: 0.35, w: SLIDE_W - 1.4, h: 0.7, fontSize: scaledFontSize(title, 26, 40, 90, 16), bold: true, color: "FFFFFF", fontFace: HEADLINE_FONT });
+      }
+      const top = hasCaption ? 1.2 : 0.5;
+      const creditH = item?.attribution ? 0.35 : 0;
+      const supportH = bullets.length > 0 ? 0.55 : 0;
+      const boxW = SLIDE_W - 1.4;
+      const boxH = SLIDE_H - top - 0.55 - creditH - supportH;
+      if (asset) {
+        const scale = Math.min(boxW / asset.width, boxH / asset.height);
+        const w = asset.width * scale;
+        const h = asset.height * scale;
+        const mime = sniffImageMime(asset.data) ?? "image/png";
+        slide.addImage({ data: `data:${mime};base64,${asset.data.toString("base64")}`, x: 0.7 + (boxW - w) / 2, y: top + (boxH - h) / 2, w, h });
+      } else {
+        slide.addText("This image is no longer available.", { x: 0.7, y: top, w: boxW, h: boxH, fontSize: 18, color: "E3E3F0", align: "center", valign: "middle", fontFace: BODY_FONT });
+      }
+      let y = top + boxH + 0.1;
+      if (bullets.length > 0) {
+        slide.addText(bullets.slice(0, 2).join("  ·  "), { x: 0.7, y, w: boxW, h: 0.45, fontSize: 14, color: "E3E3F0", align: "center", fontFace: BODY_FONT });
+        y += 0.5;
+      }
+      if (item?.attribution) {
+        slide.addText(item.attribution, { x: 0.7, y, w: boxW, h: 0.3, fontSize: 9, italic: true, color: theme.accent, align: "center", fontFace: BODY_FONT });
+      }
       addChrome(slide, theme);
       break;
     }
@@ -351,7 +399,11 @@ async function renderSlide(pptx: PptxGenJS, content: PresentationContent["slides
   return slide;
 }
 
-export async function buildPresentationPptx(content: PresentationContent, topicName: string): Promise<Buffer> {
+export async function buildPresentationPptx(
+  content: PresentationContent,
+  topicName: string,
+  mediaAssets: Map<string, MediaAsset> = new Map()
+): Promise<Buffer> {
   const pptx = new PptxGenJS();
   pptx.defineLayout({ name: "WIDE", width: SLIDE_W, height: SLIDE_H });
   pptx.layout = "WIDE";
@@ -364,6 +416,8 @@ export async function buildPresentationPptx(content: PresentationContent, topicN
     accent: hexOf(content.secondaryColor, preset.accent),
     logo: await fetchLogoAsset(content.logoUrl),
     footerLabel: content.footerLabel ?? null,
+    mediaAssets,
+    mediaItems: new Map((content.media ?? []).map((item) => [item.id, item])),
   };
 
   for (const slide of content.slides) {

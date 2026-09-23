@@ -8,12 +8,14 @@ import { Ionicons } from "@expo/vector-icons";
 import { TeacherTabParamList, RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
-import { spacing, radius } from "../../theme/tokens";
+import { spacing, radius, softCardShadow } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { api, ClassSection } from "../../api/client";
 import { decorativeAssets } from "../../theme/decorativeAssets";
 import { getRelativeDateLabel } from "../../utils/date";
 import { capitalizeFirst } from "../../utils/text";
+import { useTabBarClearance } from "../../navigation/useTabBarClearance";
+import { useTabBarScrollHandler } from "../../navigation/TabBarScrollContext";
 
 type Props = CompositeScreenProps<BottomTabScreenProps<TeacherTabParamList, "Studio">, NativeStackScreenProps<RootStackParamList>>;
 
@@ -40,8 +42,10 @@ function getClassCardMeta(index: number) {
 }
 
 export function MyClassesScreen({ navigation }: Props) {
-  const { accessToken, user } = useAuth();
+  const { user, accessToken } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
+  const tabBarClearance = useTabBarClearance();
+  const handleTabBarScroll = useTabBarScrollHandler();
 
   const [classSections, setClassSections] = useState<ClassSection[]>([]);
   const [classStats, setClassStats] = useState<Record<string, ClassCardStats>>({});
@@ -97,13 +101,19 @@ export function MyClassesScreen({ navigation }: Props) {
 
   return (
     <Screen>
-      <ScrollView style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={[styles.content, { paddingBottom: tabBarClearance }]}
+        showsVerticalScrollIndicator={false}
+        onScroll={handleTabBarScroll}
+        scrollEventThrottle={16}
+      >
         <View style={styles.topBar}>
           <Pressable
             onPress={() => navigation.navigate("Home")}
             style={({ pressed }) => [
               styles.circleButton,
-              { backgroundColor: colors.surface, borderColor: colors.border },
+              { backgroundColor: colors.surface, borderWidth: 0 },
               cardShadow,
               pressed && { opacity: pressedOpacity },
             ]}
@@ -119,7 +129,7 @@ export function MyClassesScreen({ navigation }: Props) {
         </View>
 
         <View style={styles.classListHeader}>
-          <Text style={[styles.classListLabelText, { color: colors.textMuted }]}>Class folders</Text>
+          <Text style={[styles.classListLabelText, { color: colors.textMuted }]}>Class Folders</Text>
           <Text style={[styles.classCount, { color: colors.textMuted }]}>{groupedClasses.length} class{groupedClasses.length === 1 ? "" : "es"}</Text>
         </View>
 
@@ -154,7 +164,7 @@ export function MyClassesScreen({ navigation }: Props) {
               return (
                 <View
                   key={group.className}
-                  style={[styles.classFolder, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}
+                  style={[styles.classFolder, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}
                 >
                   <View style={[styles.folderCover, { backgroundColor: `${meta.accent}18` }]} />
                   <View style={[styles.folderTab, { backgroundColor: meta.accent }]} />
@@ -325,8 +335,8 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   classFolder: {
+    ...softCardShadow,
     position: "relative",
-    borderWidth: 1,
     borderRadius: 16,
     overflow: "hidden",
   },

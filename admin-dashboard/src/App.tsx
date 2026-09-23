@@ -5,6 +5,8 @@ import { SchoolProvider } from "./context/SchoolContext";
 import { Layout, NAV_ITEMS } from "./components/Layout";
 import { LoginPage } from "./pages/LoginPage";
 import { ClassJoinPage } from "./pages/ClassJoinPage";
+import { PresentDisplayPage } from "./pages/PresentDisplayPage";
+import { PresentControlPage } from "./pages/PresentControlPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { FunnelPage } from "./pages/FunnelPage";
 import { BySourcePage } from "./pages/BySourcePage";
@@ -30,8 +32,22 @@ import { SchoolAcademicsTab } from "./pages/school/SchoolAcademicsTab";
 import { SchoolTemplatesTab } from "./pages/school/SchoolTemplatesTab";
 import { SchoolBrandingTab } from "./pages/school/SchoolBrandingTab";
 import { SchoolSubjectsTab } from "./pages/school/SchoolSubjectsTab";
+import { SchoolTimetableTab } from "./pages/school/SchoolTimetableTab";
 import { MySchoolRedirect } from "./pages/MySchoolRedirect";
-import { PrivacyPolicyPage } from "./pages/PrivacyPolicyPage";
+import { PublicContentPage } from "./pages/PublicContentPage";
+import { ContentPagesEditor } from "./pages/ContentPagesEditor";
+
+// Public, unauthenticated pages (Privacy Policy, Terms of Service, About,
+// Contact) - reachable without login, from Play Store/App Store listings, a
+// logged-out visitor, or the mobile app's Legal screens' web fallback.
+const PUBLIC_CONTENT_ROUTES: { path: string; key: string }[] = [
+  { path: "/privacy", key: "privacy_policy" },
+  { path: "/privacy-policy", key: "privacy_policy" },
+  { path: "/terms", key: "terms_of_service" },
+  { path: "/terms-of-service", key: "terms_of_service" },
+  { path: "/about", key: "about" },
+  { path: "/contact", key: "contact" },
+];
 
 const EXTRA_ROUTE_ROLES: Record<string, string[]> = {
   "/trusts/:id": ["platform_admin", "leadership"],
@@ -66,12 +82,26 @@ function Root() {
     );
   }
 
-  // Public, unauthenticated - Google Play Console & general privacy policy access
-  if (location.pathname === "/privacy" || location.pathname === "/privacy-policy") {
+  // Public, unauthenticated - the classroom Display/Control screens for a
+  // live quick check (present.ts). No login on the classroom device; the
+  // code from the teacher's "Present on a screen" action is the only gate.
+  if (location.pathname.startsWith("/present/")) {
     return (
       <Routes>
-        <Route path="/privacy" element={<PrivacyPolicyPage />} />
-        <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
+        <Route path="/present/:code/control" element={<PresentControlPage />} />
+        <Route path="/present/:code" element={<PresentDisplayPage />} />
+      </Routes>
+    );
+  }
+
+  // Public, unauthenticated - Google/Apple store listings and logged-out visitors.
+  const publicContentRoute = PUBLIC_CONTENT_ROUTES.find((r) => r.path === location.pathname);
+  if (publicContentRoute) {
+    return (
+      <Routes>
+        {PUBLIC_CONTENT_ROUTES.map((r) => (
+          <Route key={r.path} path={r.path} element={<PublicContentPage contentKey={r.key} />} />
+        ))}
       </Routes>
     );
   }
@@ -88,8 +118,9 @@ function Root() {
 
   return (
     <Routes>
-      <Route path="/privacy" element={<PrivacyPolicyPage />} />
-      <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
+      {PUBLIC_CONTENT_ROUTES.map((r) => (
+        <Route key={r.path} path={r.path} element={<PublicContentPage contentKey={r.key} />} />
+      ))}
       <Route element={<Layout />}>
         <Route index element={<Navigate to="/overview" replace />} />
         <Route path="/overview" element={<OverviewPage />} />
@@ -100,6 +131,7 @@ function Root() {
         <Route path="/ai-usage" element={<RequireRole path="/ai-usage"><AiUsagePage /></RequireRole>} />
         <Route path="/ai-prompts" element={<RequireRole path="/ai-prompts"><AiPromptsPage /></RequireRole>} />
         <Route path="/platform-settings" element={<RequireRole path="/platform-settings"><PlatformSettingsPage /></RequireRole>} />
+        <Route path="/content-pages" element={<RequireRole path="/content-pages"><ContentPagesEditor /></RequireRole>} />
         <Route path="/subject-change-requests" element={<RequireRole path="/subject-change-requests"><SubjectChangeRequestsPage /></RequireRole>} />
         <Route path="/class-change-requests" element={<RequireRole path="/class-change-requests"><ClassChangeRequestsPage /></RequireRole>} />
         <Route path="/board-change-tickets" element={<RequireRole path="/board-change-tickets"><BoardChangeTicketsPage /></RequireRole>} />
@@ -118,6 +150,7 @@ function Root() {
           <Route path="templates" element={<SchoolTemplatesTab />} />
           <Route path="branding" element={<SchoolBrandingTab />} />
           <Route path="subjects" element={<SchoolSubjectsTab />} />
+          <Route path="timetable" element={<SchoolTimetableTab />} />
         </Route>
         <Route path="*" element={<Navigate to="/overview" replace />} />
       </Route>

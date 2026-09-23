@@ -13,6 +13,10 @@ import { api, AssignmentQuestion, AnswerKeyEntry, QuestionDifficulty, Assignment
 type Props = NativeStackScreenProps<RootStackParamList, "AssignmentDraftReview">;
 
 const DIFFICULTIES: QuestionDifficulty[] = ["easy", "medium", "hard"];
+// Platform-wide cap (matches the backend's own generation limit) - used only
+// when this assignment wasn't AI-generated, so there's no "decided" count to
+// hold it to.
+const MAX_QUESTIONS = 20;
 
 let nextLocalId = 1;
 
@@ -40,6 +44,19 @@ export function AssignmentDraftReviewScreen({ route, navigation }: Props) {
 
   const [regenerateTargetId, setRegenerateTargetId] = useState<string | null>(null);
   const [regenerateInstruction, setRegenerateInstruction] = useState("");
+  // The one question "Looks good" found a problem with, so its card can be
+  // highlighted instead of leaving the teacher to hunt for it from the error
+  // text alone.
+  const [invalidQuestionId, setInvalidQuestionId] = useState<string | null>(null);
+
+  // The total the teacher actually decided on - "+ Add question" shouldn't
+  // silently grow past it. aiGenParams.questionCount is the real source when
+  // it exists; failing that (a manually built assignment, or an older draft
+  // saved before that field existed), how many questions were already on the
+  // draft the moment this screen opened is still a real decided count and a
+  // far better cap than an arbitrary platform max.
+  const [originalQuestionCount, setOriginalQuestionCount] = useState<number | null>(null);
+  const questionCap = assignment?.aiGenParams?.questionCount ?? originalQuestionCount ?? MAX_QUESTIONS;
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -52,6 +69,7 @@ export function AssignmentDraftReviewScreen({ route, navigation }: Props) {
       ]);
       setAssignment(a);
       setQuestions(a.questions);
+      setOriginalQuestionCount((prev) => prev ?? a.questions.length);
       setAnswerKeys(keys);
       const byId = new Map(keys.map((k) => [k.questionId, k]));
       setAnswerTextById(Object.fromEntries(a.questions.map((q) => [q.id, answerTextFor(byId.get(q.id))])));
@@ -84,6 +102,7 @@ export function AssignmentDraftReviewScreen({ route, navigation }: Props) {
   }
   function setCorrectOption(id: string, index: number) {
     setQuestions((prev) => prev.map((q) => (q.id === id ? { ...q, correctOptionIndex: index } : q)));
+    setInvalidQuestionId((prev) => (prev === id ? null : prev));
   }
   function addOption(id: string) {
     setQuestions((prev) =>
@@ -101,8 +120,37 @@ export function AssignmentDraftReviewScreen({ route, navigation }: Props) {
       })
     );
   }
+  function updatePair(id: string, index: number, side: "left" | "right", text: string) {
+    setQuestions((prev) =>
+      prev.map((q) => (q.id === id ? { ...q, pairs: (q.pairs ?? []).map((p, i) => (i === index ? { ...p, [side]: text } : p)) } : q))
+    );
+  }
+  function addPair(id: string) {
+    setQuestions((prev) =>
+      prev.map((q) => (q.id === id && (q.pairs?.length ?? 0) < 5 ? { ...q, pairs: [...(q.pairs ?? []), { left: "", right: "" }] } : q))
+    );
+  }
+  function removePair(id: string, index: number) {
+    setQuestions((prev) =>
+      prev.map((q) => (q.id === id && (q.pairs?.length ?? 0) > 2 ? { ...q, pairs: (q.pairs ?? []).filter((_, i) => i !== index) } : q))
+    );
+  }
+  function updateItem(id: string, index: number, text: string) {
+    setQuestions((prev) => prev.map((q) => (q.id === id ? { ...q, items: (q.items ?? []).map((it, i) => (i === index ? text : it)) } : q)));
+  }
+  function addItem(id: string) {
+    setQuestions((prev) =>
+      prev.map((q) => (q.id === id && (q.items?.length ?? 0) < 5 ? { ...q, items: [...(q.items ?? []), ""] } : q))
+    );
+  }
+  function removeItem(id: string, index: number) {
+    setQuestions((prev) =>
+      prev.map((q) => (q.id === id && (q.items?.length ?? 0) > 2 ? { ...q, items: (q.items ?? []).filter((_, i) => i !== index) } : q))
+    );
+  }
 
   function addQuestion() {
+    if (questions.length >= questionCap) return;
     const id = `local${nextLocalId++}`;
     setQuestions((prev) => [...prev, { id, prompt: "", difficulty: "medium", type: "short_answer" }]);
     setAnswerTextById((prev) => ({ ...prev, [id]: "" }));
@@ -148,14 +196,33 @@ export function AssignmentDraftReviewScreen({ route, navigation }: Props) {
 
   async function looksGood() {
     if (!accessToken || !assignment) return;
+    setInvalidQuestionId(null);
     const filledQuestions = questions.filter((q) => q.prompt.trim().length > 0);
     if (filledQuestions.length === 0) {
       setError("Add at least one question");
       return;
     }
     for (const q of filledQuestions) {
-      if (q.type === "mcq" && (!q.options || q.options.filter((o) => o.trim()).length < 2 || typeof q.correctOptionIndex !== "number")) {
+      if (
+        (q.type === "mcq" || q.type === "true_false") &&
+        (!q.options ||
+          q.options.filter((o) => o.trim()).length < 2 ||
+          typeof q.correctOptionIndex !== "number" ||
+          q.correctOptionIndex < 0 ||
+          q.correctOptionIndex >= q.options.length)
+      ) {
+        setInvalidQuestionId(q.id);
         setError(`"${q.prompt.slice(0, 40)}..." needs at least 2 options and a correct answer selected.`);
+        return;
+      }
+      if (q.type === "match_following" && (!q.pairs || q.pairs.filter((p) => p.left.trim() && p.right.trim()).length < 2)) {
+        setInvalidQuestionId(q.id);
+        setError(`"${q.prompt.slice(0, 40)}..." needs at least 2 complete pairs.`);
+        return;
+      }
+      if (q.type === "sequencing" && (!q.items || q.items.filter((it) => it.trim()).length < 2)) {
+        setInvalidQuestionId(q.id);
+        setError(`"${q.prompt.slice(0, 40)}..." needs at least 2 steps.`);
         return;
       }
     }
@@ -232,7 +299,14 @@ export function AssignmentDraftReviewScreen({ route, navigation }: Props) {
           </Text>
 
           {questions.map((q, i) => (
-            <View key={q.id} style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+            <View
+              key={q.id}
+              style={[
+                styles.card,
+                { backgroundColor: colors.surface, borderWidth: invalidQuestionId === q.id ? 1.5 : 0, borderColor: colors.danger },
+                cardShadow,
+              ]}
+            >
               <View style={styles.cardHeaderRow}>
                 <Text style={[styles.questionNumber, { color: colors.accent }]}>{String(i + 1).padStart(2, "0")}</Text>
                 <View style={styles.cardHeaderActions}>
@@ -287,9 +361,15 @@ export function AssignmentDraftReviewScreen({ route, navigation }: Props) {
                 })}
               </View>
 
-              {q.type === "mcq" ? (
+              {q.type === "mcq" || q.type === "true_false" ? (
                 <View style={styles.optionsBlock}>
                   <Text style={[styles.smallLabel, { color: colors.textMuted }]}>Options - tap ✓ to mark the correct one</Text>
+                  {typeof q.correctOptionIndex !== "number" || q.correctOptionIndex < 0 || q.correctOptionIndex >= (q.options?.length ?? 0) ? (
+                    <View style={styles.warningRow}>
+                      <Ionicons name="alert-circle" size={14} color={colors.danger} />
+                      <Text style={[styles.warningText, { color: colors.danger }]}>No correct answer selected yet</Text>
+                    </View>
+                  ) : null}
                   {(q.options ?? []).map((option, idx) => {
                     const correct = q.correctOptionIndex === idx;
                     return (
@@ -308,8 +388,9 @@ export function AssignmentDraftReviewScreen({ route, navigation }: Props) {
                           onChangeText={(text) => updateOption(q.id, idx, text)}
                           placeholder={`Option ${idx + 1}`}
                           placeholderTextColor={colors.textMuted}
+                          editable={q.type !== "true_false"}
                         />
-                        {(q.options?.length ?? 0) > 2 ? (
+                        {q.type === "mcq" && (q.options?.length ?? 0) > 2 ? (
                           <Pressable onPress={() => removeOption(q.id, idx)} hitSlop={8} accessibilityRole="button">
                             <Ionicons name="close-circle-outline" size={18} color={colors.textMuted} />
                           </Pressable>
@@ -317,9 +398,67 @@ export function AssignmentDraftReviewScreen({ route, navigation }: Props) {
                       </View>
                     );
                   })}
-                  {(q.options?.length ?? 0) < 5 ? (
+                  {q.type === "mcq" && (q.options?.length ?? 0) < 5 ? (
                     <Pressable onPress={() => addOption(q.id)} hitSlop={8} accessibilityRole="button">
                       <Text style={[styles.addOptionText, { color: colors.accent }]}>+ Add option</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : q.type === "match_following" ? (
+                <View style={styles.optionsBlock}>
+                  <Text style={[styles.smallLabel, { color: colors.textMuted }]}>Pairs</Text>
+                  {(q.pairs ?? []).map((pair, idx) => (
+                    <View key={idx} style={styles.optionRow}>
+                      <TextInput
+                        style={[styles.optionInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary, flex: 1 }]}
+                        value={pair.left}
+                        onChangeText={(text) => updatePair(q.id, idx, "left", text)}
+                        placeholder="Left item"
+                        placeholderTextColor={colors.textMuted}
+                      />
+                      <TextInput
+                        style={[styles.optionInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary, flex: 1 }]}
+                        value={pair.right}
+                        onChangeText={(text) => updatePair(q.id, idx, "right", text)}
+                        placeholder="Matching right item"
+                        placeholderTextColor={colors.textMuted}
+                      />
+                      {(q.pairs?.length ?? 0) > 2 ? (
+                        <Pressable onPress={() => removePair(q.id, idx)} hitSlop={8} accessibilityRole="button">
+                          <Ionicons name="close-circle-outline" size={18} color={colors.textMuted} />
+                        </Pressable>
+                      ) : null}
+                    </View>
+                  ))}
+                  {(q.pairs?.length ?? 0) < 5 ? (
+                    <Pressable onPress={() => addPair(q.id)} hitSlop={8} accessibilityRole="button">
+                      <Text style={[styles.addOptionText, { color: colors.accent }]}>+ Add pair</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : q.type === "sequencing" ? (
+                <View style={styles.optionsBlock}>
+                  <Text style={[styles.smallLabel, { color: colors.textMuted }]}>Steps, in the correct order</Text>
+                  {(q.items ?? []).map((item, idx) => (
+                    <View key={idx} style={styles.optionRow}>
+                      <Text style={[styles.smallLabel, { color: colors.textMuted, marginTop: 0 }]}>{idx + 1}.</Text>
+                      <TextInput
+                        style={[styles.optionInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
+                        value={item}
+                        onChangeText={(text) => updateItem(q.id, idx, text)}
+                        placeholder={`Step ${idx + 1}`}
+                        placeholderTextColor={colors.textMuted}
+                      />
+                      {(q.items?.length ?? 0) > 2 ? (
+                        <Pressable onPress={() => removeItem(q.id, idx)} hitSlop={8} accessibilityRole="button">
+                          <Ionicons name="close-circle-outline" size={18} color={colors.textMuted} />
+                        </Pressable>
+                      ) : null}
+                    </View>
+                  ))}
+                  {(q.items?.length ?? 0) < 5 ? (
+                    <Pressable onPress={() => addItem(q.id)} hitSlop={8} accessibilityRole="button">
+                      <Text style={[styles.addOptionText, { color: colors.accent }]}>+ Add step</Text>
                     </Pressable>
                   ) : null}
                 </View>
@@ -337,14 +476,20 @@ export function AssignmentDraftReviewScreen({ route, navigation }: Props) {
             </View>
           ))}
 
-          <Pressable
-            onPress={addQuestion}
-            style={({ pressed }) => [styles.addQuestionButton, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
-            accessibilityRole="button"
-          >
-            <Ionicons name="add" size={18} color={colors.accent} />
-            <Text style={[styles.addQuestionText, { color: colors.accent }]}>Add question</Text>
-          </Pressable>
+          {questions.length < questionCap ? (
+            <Pressable
+              onPress={addQuestion}
+              style={({ pressed }) => [styles.addQuestionButton, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+              accessibilityRole="button"
+            >
+              <Ionicons name="add" size={18} color={colors.accent} />
+              <Text style={[styles.addQuestionText, { color: colors.accent }]}>Add question ({questions.length} of {questionCap})</Text>
+            </Pressable>
+          ) : (
+            <Text style={[styles.questionCapNote, { color: colors.textMuted }]}>
+              {assignment?.aiGenParams ? `You've reached the ${questionCap} questions you asked for.` : `Assignments are capped at ${questionCap} questions.`}
+            </Text>
+          )}
 
           {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
@@ -410,9 +555,12 @@ const styles = StyleSheet.create({
   optionCheck: { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, alignItems: "center", justifyContent: "center" },
   optionInput: { flex: 1, borderWidth: 1, borderRadius: 8, padding: 8, fontSize: 13 },
   addOptionText: { fontSize: 12, fontWeight: "700", marginTop: 8 },
+  warningRow: { flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 8 },
+  warningText: { fontSize: 12, fontWeight: "700" },
   answerInput: { marginTop: 6, borderWidth: 1, borderRadius: 8, padding: 10, minHeight: 60, fontSize: 13 },
   addQuestionButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: 1, borderStyle: "dashed", borderRadius: 10, height: 46, marginBottom: 16 },
   addQuestionText: { fontSize: 13, fontWeight: "700" },
+  questionCapNote: { textAlign: "center", fontSize: 12, marginBottom: 16 },
   error: { textAlign: "center", marginBottom: 12 },
   primaryButton: { borderRadius: 10, height: 50, alignItems: "center", justifyContent: "center" },
   primaryButtonText: { fontSize: 14, fontWeight: "700" },

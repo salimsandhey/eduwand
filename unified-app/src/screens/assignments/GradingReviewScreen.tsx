@@ -220,7 +220,7 @@ export function GradingReviewScreen({ route }: Props) {
             const studentName = s.studentStub?.fullName ?? "Student";
             const statusLabel = grade?.status === "released" ? "Released" : grade?.status === "ai_graded" ? "AI graded" : grade?.flaggedForAttention ? "Flagged for review" : null;
             return (
-              <View key={s.id} style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+              <View key={s.id} style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
                 <View style={styles.cardHeader}>
                   <View style={styles.studentIdentity}>
                     <View style={[styles.avatar, { backgroundColor: colors.accentSoft }]}>

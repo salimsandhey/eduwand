@@ -135,7 +135,7 @@ function TimelineCard({
           </View>
           {!isLast ? <View style={[styles.timelineLine, { backgroundColor: colors.border }]} /> : null}
         </View>
-        <View style={[styles.timelineCard, { backgroundColor: colors.surface, borderColor: colors.border }, isLast && { marginBottom: 0 }, cardShadow]}>
+        <View style={[styles.timelineCard, { backgroundColor: colors.surface, borderWidth: 0 }, isLast && { marginBottom: 0 }, cardShadow]}>
           <View style={styles.timelineCardHead}>
             <Text style={[styles.timelineTitle, { color: colors.textPrimary }]}>{activityLabel(item)}</Text>
             <View style={[styles.timelineTypePill, { backgroundColor: colors.accentSoft }]}>
@@ -185,7 +185,7 @@ function TaskQueueCard({
           onPressOut={pressOut}
           style={({ pressed }) => [
             styles.taskCard,
-            { backgroundColor: colors.surface, borderColor: isOverdue ? colors.accentSoftAlt : colors.border },
+            { backgroundColor: colors.surface, borderWidth: 0 },
             cardShadow,
             pressed && { opacity: pressedOpacity },
           ]}
@@ -1449,7 +1449,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
 
         {activeTab === "lead" ? (
           <>
-            <View style={[styles.stageWorkspace, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+            <View style={[styles.stageWorkspace, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
               <View style={styles.stageWorkspaceCopy}>
                 <Text style={[styles.stageKicker, { color: colors.accent }]}>Progress</Text>
                 <Text style={[styles.stageSubtitle, { color: colors.textMuted }]} numberOfLines={2}>
@@ -1597,11 +1597,11 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
                 <Text style={[styles.tileValue, { color: colors.accent }]}>{openTasksCount}</Text>
                 <Text style={[styles.tileLabel, { color: colors.accent }]}>Tasks open</Text>
               </View>
-              <View style={[styles.tile, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+              <View style={[styles.tile, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
                 <Text style={[styles.tileValue, { color: overdueTasksCount > 0 ? colors.warning : colors.textPrimary }]}>{overdueTasksCount}</Text>
                 <Text style={[styles.tileLabel, { color: colors.textMuted }]}>Overdue</Text>
               </View>
-              <View style={[styles.tile, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+              <View style={[styles.tile, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
                 <Text style={[styles.tileValue, { color: colors.textPrimary }]}>{daysInStage}</Text>
                 <Text style={[styles.tileLabel, { color: colors.textMuted }]}>Days in stage</Text>
               </View>
@@ -1691,7 +1691,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
                 ) : null}
               </View>
 
-              <View style={[styles.admissionStatCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+              <View style={[styles.admissionStatCard, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
                 <View style={[styles.admissionStatIconWrap, { backgroundColor: colors.surfaceRaised }]}>
                   <Ionicons name="folder-open-outline" size={15} color={colors.accent} />
                 </View>
@@ -1714,7 +1714,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
                 </View>
               </View>
 
-              <View style={[styles.admissionStatCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+              <View style={[styles.admissionStatCard, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
                 <View style={[styles.admissionStatIconWrap, { backgroundColor: colors.surfaceRaised }]}>
                   <Ionicons name="flag-outline" size={15} color={colors.accent} />
                 </View>

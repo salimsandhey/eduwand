@@ -1,5 +1,17 @@
-import { useMemo, useRef, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, Modal, PanResponder, GestureResponderEvent } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Animated,
+  Easing,
+  GestureResponderEvent,
+  Modal,
+  PanResponder,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import Svg, { Rect, Defs, LinearGradient, Stop } from "react-native-svg";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme/ThemeContext";
@@ -64,13 +76,80 @@ export function ColorPickerModal({
   onClose: () => void;
   onSelect: (hex: string) => void;
 }) {
-  const { colors, pressedOpacity } = useTheme();
+  const { colors, pressedOpacity, mode } = useTheme();
   const initial = useMemo(() => hexToHsv(initialColor) ?? { h: 220, s: 0.7, v: 0.7 }, [initialColor]);
   const [h, setH] = useState(initial.h);
   const [s, setS] = useState(initial.s);
   const [v, setV] = useState(initial.v);
   const [hexInput, setHexInput] = useState(hsvToHex(initial.h, initial.s, initial.v));
   const svRef = useRef<View>(null);
+
+  const [isRendered, setIsRendered] = useState(visible);
+  const backdropAnim = useRef(new Animated.Value(0)).current;
+  const cardScale = useRef(new Animated.Value(0.92)).current;
+  const cardOpacity = useRef(new Animated.Value(0)).current;
+  const isClosingRef = useRef(false);
+
+  useEffect(() => {
+    if (visible) {
+      isClosingRef.current = false;
+      setIsRendered(true);
+      backdropAnim.setValue(0);
+      cardScale.setValue(0.92);
+      cardOpacity.setValue(0);
+
+      Animated.parallel([
+        Animated.timing(backdropAnim, {
+          toValue: 1,
+          duration: 220,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.spring(cardScale, {
+          toValue: 1,
+          tension: 280,
+          friction: 24,
+          useNativeDriver: true,
+        }),
+        Animated.timing(cardOpacity, {
+          toValue: 1,
+          duration: 180,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else if (isRendered && !isClosingRef.current) {
+      animateAndClose(onClose);
+    }
+  }, [visible]);
+
+  function animateAndClose(callback: () => void) {
+    if (isClosingRef.current) return;
+    isClosingRef.current = true;
+
+    Animated.parallel([
+      Animated.timing(backdropAnim, {
+        toValue: 0,
+        duration: 180,
+        easing: Easing.in(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.timing(cardScale, {
+        toValue: 0.94,
+        duration: 180,
+        easing: Easing.in(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.timing(cardOpacity, {
+        toValue: 0,
+        duration: 160,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      setIsRendered(false);
+      isClosingRef.current = false;
+      callback();
+    });
+  }
   const hueRef = useRef<View>(null);
   const svLayout = useRef({ x: 0, y: 0 });
   const hueLayout = useRef({ x: 0, y: 0 });
@@ -126,13 +205,51 @@ export function ColorPickerModal({
 
   const hueColor = hsvToHex(h, 1, 1);
 
+  if (!isRendered) return null;
+
+  const isDark = mode === "dark";
+
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal
+      visible={isRendered}
+      transparent
+      animationType="none"
+      statusBarTranslucent
+      navigationBarTranslucent={Platform.OS === "android"}
+      onRequestClose={() => animateAndClose(onClose)}
+    >
       <View style={styles.overlay}>
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <Animated.View
+          style={[
+            styles.backdrop,
+            {
+              opacity: backdropAnim,
+              backgroundColor: isDark ? "rgba(0,0,0,0.65)" : "rgba(15,23,42,0.4)",
+            },
+          ]}
+        >
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => animateAndClose(onClose)}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+          />
+        </Animated.View>
+
+        <Animated.View
+          style={[
+            styles.card,
+            {
+              backgroundColor: colors.surface,
+              borderColor: colors.border,
+              opacity: cardOpacity,
+              transform: [{ scale: cardScale }],
+            },
+          ]}
+        >
           <View style={styles.headerRow}>
             <Text style={[styles.title, { color: colors.textPrimary }]}>Choose a color</Text>
-            <Pressable onPress={onClose} hitSlop={8} accessibilityRole="button" accessibilityLabel="Close">
+            <Pressable onPress={() => animateAndClose(onClose)} hitSlop={8} accessibilityRole="button" accessibilityLabel="Close">
               <Ionicons name="close" size={22} color={colors.textMuted} />
             </Pressable>
           </View>
@@ -201,20 +318,21 @@ export function ColorPickerModal({
 
           <Pressable
             style={({ pressed }) => [styles.doneButton, { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]}
-            onPress={() => onSelect(hex)}
+            onPress={() => animateAndClose(() => onSelect(hex))}
             accessibilityRole="button"
           >
             <Text style={[styles.doneButtonText, { color: colors.accentOn }]}>Use this color</Text>
           </Pressable>
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", alignItems: "center", justifyContent: "center", padding: 20 },
-  card: { width: "100%", maxWidth: 320, borderRadius: 20, borderWidth: 1, padding: 20 },
+  overlay: { flex: 1, alignItems: "center", justifyContent: "center", padding: 20 },
+  backdrop: { ...StyleSheet.absoluteFill },
+  card: { width: "100%", maxWidth: 320, borderRadius: 20, borderWidth: 1, padding: 20, elevation: 12 },
   headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 16 },
   title: { fontSize: 16, fontWeight: "800" },
   svBox: { width: SV_SIZE, height: SV_SIZE, borderRadius: 10, overflow: "hidden", alignSelf: "center" },

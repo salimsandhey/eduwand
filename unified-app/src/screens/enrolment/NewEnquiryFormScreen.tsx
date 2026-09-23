@@ -143,7 +143,7 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
           </Text>
         </View>
 
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>How did they enquire?</Text>
           <View style={styles.chipRow}>
             <Pressable
@@ -165,13 +165,13 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
         </View>
 
         {}
-        {intakeFlow === "walk_in" ? <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        {intakeFlow === "walk_in" ? <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Profile photo (optional)</Text>
           <ProfilePhotoPicker value={photoPick} onChange={setPhotoPick} />
         </View> : null}
 
         {}
-        {intakeFlow === "walk_in" ? <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        {intakeFlow === "walk_in" ? <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Student details</Text>
 
           <Text style={[styles.label, { color: colors.textSecondary }]}>Student name (optional)</Text>
@@ -193,7 +193,7 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
         </View> : null}
 
         {}
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Lead details</Text>
 
           <Text style={[styles.label, { color: colors.textSecondary }]}>Contact name</Text>
@@ -264,7 +264,7 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
         </View>
 
         {}
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Preferences & Context</Text>
 
           <Text style={[styles.label, { color: colors.textSecondary }]}>Lead source</Text>
@@ -327,7 +327,7 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
 
         {}
         {intakeFlow === "walk_in" && intakeFields.length > 0 ? (
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
             <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Additional details</Text>
             <DynamicFormFields fields={intakeFields} values={formResponses} onChange={setFormResponse} />
           </View>

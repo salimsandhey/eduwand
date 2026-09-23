@@ -59,12 +59,12 @@ test("stub generateContent(presentation) is JSON with a slides array", async () 
   assert.ok(Array.isArray(parsed.slides));
 });
 
-test("stub generateContent(custom_activity_report) has objective + activities + reportFormat", async () => {
+test("stub generateContent(custom_activity_report) has objectives + activities + reportFormat", async () => {
   const { content } = await aiProvider.generateContent({ ...baseInput, outputType: "custom_activity_report" });
   const parsed = JSON.parse(content);
-  assert.equal(typeof parsed.objective, "string");
+  assert.ok(Array.isArray(parsed.objectives) && parsed.objectives.length > 0);
   assert.ok(Array.isArray(parsed.activities));
-  assert.equal(typeof parsed.reportFormat, "string");
+  assert.ok(Array.isArray(parsed.reportFormat));
 });
 
 // --- generateAssignmentFromTopic -------------------------------------------
@@ -74,7 +74,7 @@ const baseAssignmentInput: AssignmentGenInput = {
   objectives: ["[Understand] Explain photosynthesis", "[Apply] Apply the concept to a real plant"],
   questionCount: 4,
   difficultyMix: { easy: 1, medium: 2, hard: 1 },
-  questionTypes: "short_answer",
+  questionTypes: ["short_answer"],
   focusPrompt: null,
   subject: "Biology",
   board: "CBSE",
@@ -93,7 +93,7 @@ test("stub generateAssignmentFromTopic returns the requested count with a model 
 });
 
 test("stub generateAssignmentFromTopic(mcq) produces valid options and a correct index", async () => {
-  const { questions } = await aiProvider.generateAssignmentFromTopic({ ...baseAssignmentInput, questionTypes: "mcq" });
+  const { questions } = await aiProvider.generateAssignmentFromTopic({ ...baseAssignmentInput, questionTypes: ["mcq"] });
   for (const q of questions) {
     assert.equal(q.type, "mcq");
     assert.ok(Array.isArray(q.options) && q.options.length >= 2);
@@ -114,7 +114,7 @@ test("heuristicAssignmentQuestions falls back to generic seeds when there are no
 
 test("normaliseGeneratedQuestions drops rows with no prompt and defaults a missing model answer", () => {
   const rows = [{ prompt: "What is X?" }, { prompt: "" }, { prompt: "Explain Y", modelAnswer: "Because Z" }];
-  const out = normaliseGeneratedQuestions(rows, ["easy", "medium", "hard"], "short_answer");
+  const out = normaliseGeneratedQuestions(rows, ["easy", "medium", "hard"], ["short_answer"]);
   assert.equal(out.length, 2);
   assert.equal(out[0].modelAnswer, "Teacher review required before use.");
   assert.equal(out[1].modelAnswer, "Because Z");
@@ -125,7 +125,7 @@ test("normaliseGeneratedQuestions in mcq mode requires >=2 options or falls back
     { prompt: "Pick one", type: "mcq", options: ["A", "B", "C"], correctOptionIndex: 1, modelAnswer: "B" },
     { prompt: "Not enough options", type: "mcq", options: ["only one"] },
   ];
-  const out = normaliseGeneratedQuestions(rows, ["easy", "medium"], "mcq");
+  const out = normaliseGeneratedQuestions(rows, ["easy", "medium"], ["mcq"]);
   assert.equal(out[0].type, "mcq");
   assert.equal(out[0].correctOptionIndex, 1);
   assert.equal(out[1].type, "short_answer");
@@ -171,6 +171,48 @@ test("settleMcqQuestions respects the answer key's marks for that question", () 
     { questionId: "q1", verifiedAnswer: "4", marks: 3 },
   ]);
   assert.equal(mcqDetails[0].marksAwarded, 3);
+});
+
+test("settleMcqQuestions grades true_false the same way as mcq", () => {
+  const trueFalseQuestion: GradingQuestion = { id: "q4", prompt: "The sky is blue.", type: "true_false", options: ["True", "False"], correctOptionIndex: 0 };
+  const { mcqDetails } = settleMcqQuestions([trueFalseQuestion], { q4: "True" });
+  assert.equal(mcqDetails[0].correct, true);
+  assert.equal(mcqDetails[0].marksAwarded, 1);
+});
+
+test("settleMcqQuestions gives match_following partial credit for partially-correct pairing", () => {
+  const matchingQuestion: GradingQuestion = {
+    id: "q5",
+    prompt: "Match the terms",
+    type: "match_following",
+    pairs: [{ left: "A", right: "1" }, { left: "B", right: "2" }, { left: "C", right: "3" }],
+  };
+  // left[0] and left[2] correctly matched (submitted index === position), left[1] swapped with left[2].
+  const { mcqDetails } = settleMcqQuestions([matchingQuestion], { q5: "0,2,1" }, [{ questionId: "q5", verifiedAnswer: "", marks: 3 }]);
+  assert.equal(mcqDetails[0].correct, false);
+  assert.equal(mcqDetails[0].marksAwarded, 1); // 1 of 3 pairs correct * 3 marks
+});
+
+test("settleMcqQuestions grades sequencing as fully correct only when every position matches", () => {
+  const sequencingQuestion: GradingQuestion = { id: "q6", prompt: "Order the steps", type: "sequencing", items: ["First", "Second", "Third"] };
+  const correct = settleMcqQuestions([sequencingQuestion], { q6: "0,1,2" });
+  assert.equal(correct.mcqDetails[0].correct, true);
+  assert.equal(correct.mcqDetails[0].marksAwarded, 1);
+
+  const partial = settleMcqQuestions([sequencingQuestion], { q6: "1,0,2" });
+  assert.equal(partial.mcqDetails[0].correct, false);
+  const partialMarks = partial.mcqDetails[0].marksAwarded ?? 0;
+  assert.ok(partialMarks > 0 && partialMarks < 1);
+});
+
+test("normaliseGeneratedQuestions falls back match_following/sequencing to short_answer when the shape is too thin", () => {
+  const rows = [
+    { prompt: "Match these", type: "match_following", pairs: [{ left: "A", right: "1" }], modelAnswer: "A - 1" },
+    { prompt: "Order these", type: "sequencing", items: ["Only one"], modelAnswer: "Only one" },
+  ];
+  const out = normaliseGeneratedQuestions(rows, ["easy", "medium"], ["match_following", "sequencing"]);
+  assert.equal(out[0].type, "short_answer");
+  assert.equal(out[1].type, "short_answer");
 });
 
 test("stub gradeSubmission grades an all-MCQ submission without touching the completeness heuristic", async () => {

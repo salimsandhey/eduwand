@@ -8,6 +8,7 @@ import { Screen } from "../../components/Screen";
 import { api, StudentMaterial } from "../../api/client";
 import { decorativeAssets } from "../../theme/decorativeAssets";
 import { capitalizeFirst } from "../../utils/text";
+import { useTabBarClearance } from "../../navigation/useTabBarClearance";
 
 const OUTPUT_TYPE_LABELS: Record<string, string> = {
   lesson_plan: "Lesson Plan",
@@ -19,6 +20,7 @@ const OUTPUT_TYPE_LABELS: Record<string, string> = {
 export function StudentMaterialsScreen() {
   const { accessToken } = useAuth();
   const { colors, cardShadow } = useTheme();
+  const tabBarClearance = useTabBarClearance();
   const [materials, setMaterials] = useState<StudentMaterial[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -56,7 +58,7 @@ export function StudentMaterialsScreen() {
         <FlatList
           data={materials}
           keyExtractor={(m) => m.id}
-          contentContainerStyle={styles.list}
+          contentContainerStyle={[styles.list, { paddingBottom: tabBarClearance }]}
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <Image source={decorativeAssets.book} style={styles.emptyGraphic} resizeMode="contain" />
@@ -64,7 +66,7 @@ export function StudentMaterialsScreen() {
             </View>
           }
           renderItem={({ item }) => (
-            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, borderLeftColor: colors.accent }, cardShadow]}>
+            <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0, borderLeftColor: colors.accent }, cardShadow]}>
               <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{capitalizeFirst(item.topic.name)}</Text>
               <Text style={[styles.cardMeta, { color: colors.textMuted }]}>
                 {OUTPUT_TYPE_LABELS[item.outputType] ?? item.outputType} · {capitalizeFirst(item.topic.subject)}

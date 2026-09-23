@@ -9,6 +9,9 @@ import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, AssignmentDetail, StudentStub } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
+import { MatchingQuestion, SequencingQuestion } from "./MatchAndSequenceQuestions";
+
+const CHOICE_TYPES = new Set(["mcq", "true_false"]);
 
 type Props = NativeStackScreenProps<RootStackParamList, "LogSubmission">;
 
@@ -88,7 +91,7 @@ export function LogSubmissionScreen({ route, navigation }: Props) {
         <Text style={[styles.title, { color: colors.textPrimary }]}>Log a submission</Text>
         <Text style={[styles.subtitle, { color: colors.textMuted }]}>{assignment.title}</Text>
 
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           <Text style={[styles.meta, { color: colors.textMuted }]}>
             Represents work handed in in class while student login is still unavailable in this build.
           </Text>
@@ -125,14 +128,14 @@ export function LogSubmissionScreen({ route, navigation }: Props) {
         </View>
 
         {submittingStudentId ? (
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
             <Text style={[styles.label, { color: colors.textSecondary, marginTop: 0 }]}>Answers</Text>
             {assignment.questions.map((question, index) => (
               <View key={question.id} style={styles.answerGroup}>
                 <Text style={[styles.answerPrompt, { color: colors.textSecondary }]}>
                   {index + 1}. {question.prompt}
                 </Text>
-                {question.type === "mcq" ? (
+                {question.type && CHOICE_TYPES.has(question.type) ? (
                   <View style={styles.mcqAnswerOptions}>
                     {(question.options ?? []).map((option, optionIndex) => {
                       const selected = (answers[question.id] ?? "") === option;
@@ -155,12 +158,26 @@ export function LogSubmissionScreen({ route, navigation }: Props) {
                       );
                     })}
                   </View>
+                ) : question.type === "match_following" && question.pairs?.length ? (
+                  <MatchingQuestion
+                    pairs={question.pairs}
+                    value={answers[question.id] ?? ""}
+                    onChange={(value) => setAnswers((prev) => ({ ...prev, [question.id]: value }))}
+                    colors={colors}
+                  />
+                ) : question.type === "sequencing" && question.items?.length ? (
+                  <SequencingQuestion
+                    items={question.items}
+                    value={answers[question.id] ?? ""}
+                    onChange={(value) => setAnswers((prev) => ({ ...prev, [question.id]: value }))}
+                    colors={colors}
+                  />
                 ) : (
                   <TextInput
                     style={[styles.answerInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
                     value={answers[question.id] ?? ""}
                     onChangeText={(text) => setAnswers((prev) => ({ ...prev, [question.id]: text }))}
-                    placeholder="Student's answer"
+                    placeholder={question.type === "very_short" ? "One word or short phrase" : question.type === "fill_blank" ? "Fill in the blank" : "Student's answer"}
                     placeholderTextColor={colors.textMuted}
                     multiline
                   />

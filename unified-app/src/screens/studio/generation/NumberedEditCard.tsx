@@ -95,7 +95,7 @@ export function EditActionRow({ onCancel, onDone, doneLabel = "Done" }: EditActi
 }
 
 const styles = StyleSheet.create({
-  card: { borderWidth: 1, borderRadius: 18, padding: spacing.lg, marginBottom: spacing.md },
+  card: { borderWidth: 1, borderRadius: 18, padding: spacing.md, marginBottom: spacing.sm },
   row: { flexDirection: "row", alignItems: "flex-start", gap: 11 },
   badge: {
     width: 34,

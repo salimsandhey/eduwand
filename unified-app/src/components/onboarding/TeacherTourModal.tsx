@@ -204,7 +204,7 @@ export function TeacherTourModal({ visible, onDone }: TeacherTourModalProps) {
         <Animated.View
           style={[
             styles.card,
-            { backgroundColor: colors.surface, borderColor: colors.border },
+            { backgroundColor: colors.surface, borderWidth: 0 },
             cardShadow,
             { opacity: cardOpacity, transform: [{ scale: cardScale }] },
           ]}

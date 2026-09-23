@@ -13,7 +13,9 @@ import { useAiGenerating } from "../../context/AiAssistantGlowContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { spacing, radius } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
-import { api, TopicDetail, ContextSource, Generation, GenerationOutputType, Observation, Assignment } from "../../api/client";
+import { SheetModal } from "../../components/SheetModal";
+import { api, TopicDetail, ContextSource, Generation, GenerationOutputType, Observation, Assignment, SavedVideo } from "../../api/client";
+import { VideoPlayerModal } from "../../components/VideoPlayerModal";
 import { parseGenerationContent } from "./generation/content";
 import { OUTPUT_TYPE_LABELS, OUTPUT_TYPE_ICONS, OUTPUT_TYPE_ORDER } from "./generation/outputTypeMeta";
 import { capitalizeFirst } from "../../utils/text";
@@ -24,13 +26,13 @@ import { DatePicker, parseISODate } from "../../components/DatePicker";
 type Props = NativeStackScreenProps<RootStackParamList, "TopicDetail">;
 
 type DetailTab = "context" | "generations" | "assignments" | "observations";
-type SourceFilter = "images" | "files" | "links";
+type SourceFilter = "images" | "pdfs" | "files" | "links";
 
 const DETAIL_TABS: DetailTab[] = ["context", "generations", "assignments", "observations"];
 
 const DETAIL_TAB_LABELS: Record<DetailTab, string> = {
   context: "Context",
-  generations: "Learning Material",
+  generations: "Material",
   assignments: "Assignments",
   observations: "Notes",
 };
@@ -136,7 +138,8 @@ const STICKY_NOTE_INK_MUTED = "#7A7359";
 
 const SOURCE_FILTER_OPTIONS: { key: SourceFilter; label: string }[] = [
   { key: "images", label: "Images" },
-  { key: "files", label: "Files" },
+  { key: "pdfs", label: "PDFs" },
+  { key: "files", label: "Docs" },
   { key: "links", label: "Links" },
 ];
 
@@ -165,7 +168,7 @@ function generationPreview(g: Generation): string {
       case "lesson_plan":
         return truncate(content.overview);
       case "custom_activity_report":
-        return truncate(content.objective);
+        return truncate(content.objectives?.[0] ?? content.objective ?? "Activity report");
       case "flashcards":
         return `${content.cards.length} flashcard${content.cards.length === 1 ? "" : "s"}`;
       case "presentation":
@@ -193,7 +196,7 @@ function formatRelativeTime(dateString: string): string {
 
 export function TopicDetailScreen({ route, navigation }: Props) {
   const { topicId } = route.params;
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
   const keyboardHeight = useKeyboardHeight();
 
@@ -237,6 +240,11 @@ export function TopicDetailScreen({ route, navigation }: Props) {
   const [deletingSourceIds, setDeletingSourceIds] = useState<Set<string>>(new Set());
   const sourceSwipeRefs = useRef<Map<string, Swipeable>>(new Map());
 
+  const [savedVideos, setSavedVideos] = useState<SavedVideo[]>([]);
+  const [watchingVideo, setWatchingVideo] = useState<SavedVideo | null>(null);
+  const [deletingVideoIds, setDeletingVideoIds] = useState<Set<string>>(new Set());
+  const videoSwipeRefs = useRef<Map<string, Swipeable>>(new Map());
+
   function selectTab(tab: DetailTab) {
     if (tab === activeTab) return;
     const tabIndex = DETAIL_TABS.indexOf(tab);
@@ -257,14 +265,86 @@ export function TopicDetailScreen({ route, navigation }: Props) {
     setIsLoading(true);
     setError(null);
     try {
-      const t = await api.getTopic(accessToken, topicId);
+      const [t, videos] = await Promise.all([api.getTopic(accessToken, topicId), api.listSavedVideos(accessToken, topicId)]);
       setTopic(t);
+      setSavedVideos(videos);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load topic");
     } finally {
       setIsLoading(false);
     }
   }, [accessToken, topicId]);
+
+  function confirmDeleteVideo(video: SavedVideo) {
+    if (!accessToken) return;
+    Alert.alert("Remove this video?", "It will no longer show under Reference videos for this topic.", [
+      { text: "Cancel", style: "cancel", onPress: () => videoSwipeRefs.current.get(video.id)?.close() },
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: async () => {
+          setDeletingVideoIds((prev) => new Set(prev).add(video.id));
+          setError(null);
+          try {
+            await api.deleteSavedVideo(accessToken, topicId, video.id);
+            videoSwipeRefs.current.delete(video.id);
+            setSavedVideos((prev) => prev.filter((v) => v.id !== video.id));
+          } catch (err) {
+            setError(err instanceof Error ? err.message : "Failed to remove video");
+            videoSwipeRefs.current.get(video.id)?.close();
+          } finally {
+            setDeletingVideoIds((prev) => {
+              const next = new Set(prev);
+              next.delete(video.id);
+              return next;
+            });
+          }
+        },
+      },
+    ]);
+  }
+
+  function renderVideoRow(v: SavedVideo) {
+    const busy = deletingVideoIds.has(v.id);
+    return (
+      <Swipeable
+        key={v.id}
+        ref={(r) => {
+          if (r) videoSwipeRefs.current.set(v.id, r);
+          else videoSwipeRefs.current.delete(v.id);
+        }}
+        overshootRight={false}
+        rightThreshold={40}
+        renderRightActions={(_progress, dragX) => (
+          <Pressable style={[styles.swipeDeleteAction, { backgroundColor: colors.danger }]} onPress={() => confirmDeleteVideo(v)} accessibilityRole="button" accessibilityLabel="Remove video">
+            <Animated.View style={{ transform: [{ translateX: dragX.interpolate({ inputRange: [-80, 0], outputRange: [0, 56], extrapolate: "clamp" }) }] }}>
+              {busy ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Ionicons name="trash-outline" size={20} color="#FFFFFF" />}
+            </Animated.View>
+          </Pressable>
+        )}
+      >
+        <Pressable
+          style={({ pressed }) => [styles.videoRow, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow, pressed && { opacity: pressedOpacity }]}
+          onPress={() => setWatchingVideo(v)}
+          accessibilityRole="button"
+          accessibilityLabel={`Watch ${v.title}`}
+        >
+          <View>
+            <Image source={{ uri: v.thumbnailUrl }} style={[styles.videoRowThumb, { backgroundColor: colors.surfaceRaised }]} resizeMode="cover" />
+            <View style={styles.videoRowPlayBadge}>
+              <Ionicons name="play" size={12} color="#FFFFFF" />
+            </View>
+          </View>
+          <View style={styles.sourceListCopy}>
+            <Text style={[styles.sourceName, { color: colors.textPrimary, marginTop: 0 }]} numberOfLines={2}>{v.title}</Text>
+            <Text style={[styles.sourceListSnippet, { color: colors.textMuted, marginLeft: 0, marginTop: 2 }]} numberOfLines={1}>
+              {v.channelTitle}{v.duration ? ` · ${v.duration}` : ""}
+            </Text>
+          </View>
+        </Pressable>
+      </Swipeable>
+    );
+  }
 
   useFocusEffect(
     useCallback(() => {
@@ -505,7 +585,8 @@ export function TopicDetailScreen({ route, navigation }: Props) {
 
   const displayedSources = topic.contextSources.filter((source) => {
     if (sourceFilter === "images") return source.sourceType === "image";
-    if (sourceFilter === "files") return ["pdf", "docx", "pptx"].includes(source.sourceType);
+    if (sourceFilter === "pdfs") return source.sourceType === "pdf";
+    if (sourceFilter === "files") return source.sourceType === "docx" || source.sourceType === "pptx";
     return source.sourceType === "url" || source.sourceType === "youtube" || source.sourceType === "idream_k12";
   });
 
@@ -547,7 +628,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
         style={({ pressed }) => [
           styles.sourceCard,
           styles.sourceImageCard,
-          { backgroundColor: colors.surface, borderColor: colors.border },
+          { backgroundColor: colors.surface, borderWidth: 0 },
           cardShadow,
           pressed && { opacity: pressedOpacity },
         ]}
@@ -608,7 +689,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
         <Pressable
           style={({ pressed }) => [
             styles.sourceListRow,
-            { backgroundColor: colors.surface, borderColor: colors.border },
+            { backgroundColor: colors.surface, borderWidth: 0 },
             cardShadow,
             pressed && { opacity: pressedOpacity },
           ]}
@@ -660,7 +741,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
           <View style={styles.topicHeroGlowSmall} />
           <View style={styles.topicHeroCopy}>
             <Text style={styles.topicHeroTitle} numberOfLines={2}>{capitalizeFirst(topic.name)}</Text>
-            <Text style={styles.topicHeroMeta} numberOfLines={1}>{capitalizeFirst(topic.subject)} · {topic.board}</Text>
+            <Text style={styles.topicHeroMeta} numberOfLines={1}>{capitalizeFirst(topic.subject)}</Text>
             <View style={styles.topicHeroStats}>
               <View style={styles.topicHeroStat}><Text style={styles.topicHeroStatValue}>{topic.contextSources.length}</Text><Text style={styles.topicHeroStatLabel}>Sources</Text></View>
               <View style={styles.topicHeroStatDivider} />
@@ -699,7 +780,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
                   <View style={[styles.tabIcon, active && { backgroundColor: colors.accentSoft }]}><Ionicons name={DETAIL_TAB_ICONS[tab]} size={14} color={active ? colors.accent : colors.textMuted} /></View>
                   {count > 0 ? <View style={[styles.tabCountDot, { backgroundColor: active ? colors.accent : colors.textMuted }]} /> : null}
                 </View>
-                <Text style={[styles.tabText, { color: active ? colors.accent : colors.textMuted }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                <Text style={[styles.tabText, { color: active ? colors.accent : colors.textMuted }]} numberOfLines={1}>
                   {DETAIL_TAB_LABELS[tab]}
                 </Text>
               </Pressable>
@@ -765,6 +846,25 @@ export function TopicDetailScreen({ route, navigation }: Props) {
                 )}
               </>
             )}
+
+            {savedVideos.length > 0 ? (
+              <View style={{ marginTop: 22 }}>
+                <View style={styles.workbenchLead}>
+                  <View style={styles.workbenchCopy}>
+                    <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Reference videos</Text>
+                  </View>
+                  <Pressable
+                    onPress={() => navigation.navigate("ContextResearch", { topicId })}
+                    style={({ pressed }) => [styles.workbenchAction, { backgroundColor: colors.accentSoft }, pressed && { opacity: pressedOpacity }]}
+                    accessibilityRole="button"
+                  >
+                    <Ionicons name="search" size={14} color={colors.accent} />
+                    <Text style={[styles.workbenchActionText, { color: colors.accent }]}>Find more</Text>
+                  </Pressable>
+                </View>
+                <View style={styles.sourceList}>{savedVideos.map(renderVideoRow)}</View>
+              </View>
+            ) : null}
           </View>
         ) : null}
 
@@ -824,7 +924,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
                         key={g.id}
                         style={({ pressed }) => [
                           styles.genCard,
-                          { backgroundColor: colors.surface, borderColor: colors.border },
+                          { backgroundColor: colors.surface, borderWidth: 0 },
                           cardShadow,
                           pressed && { opacity: pressedOpacity },
                         ]}
@@ -892,7 +992,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
                       key={a.id}
                       style={({ pressed }) => [
                         styles.sourceListRow,
-                        { backgroundColor: colors.surface, borderColor: colors.border },
+                        { backgroundColor: colors.surface, borderWidth: 0 },
                         cardShadow,
                         pressed && { opacity: pressedOpacity },
                       ]}
@@ -975,249 +1075,228 @@ export function TopicDetailScreen({ route, navigation }: Props) {
         ) : null}
       </ScrollView>
 
-      <Modal transparent animationType="slide" visible={showAddContextMethod} onRequestClose={() => setShowAddContextMethod(false)}>
-        <GestureHandlerRootView style={{ flex: 1 }}>
-        <View style={styles.modalRoot}>
-          <Pressable style={styles.modalBackdrop} onPress={() => setShowAddContextMethod(false)} accessibilityRole="button" accessibilityLabel="Close add context" />
-          <View style={[styles.modalSheet, { backgroundColor: colors.surface }]}>
-            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
-            <View style={styles.modalHeader}>
-              <View><Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Add context</Text><Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>How do you want to build up this topic's material?</Text></View>
-              <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setShowAddContextMethod(false)} accessibilityRole="button"><Ionicons name="close" size={20} color={colors.textPrimary} /></Pressable>
+      <SheetModal
+        visible={showAddContextMethod}
+        onClose={() => setShowAddContextMethod(false)}
+        closeLabel="Close add context"
+      >
+        <View style={styles.modalHeader}>
+          <View><Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Add context</Text><Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>How do you want to build up this topic's material?</Text></View>
+          <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setShowAddContextMethod(false)} accessibilityRole="button"><Ionicons name="close" size={20} color={colors.textPrimary} /></Pressable>
+        </View>
+        <View style={styles.contextMethodList}>
+          <Pressable
+            style={({ pressed }) => [styles.contextMethodRow, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+            onPress={() => {
+              setShowAddContextMethod(false);
+              navigation.navigate("ContextResearch", { topicId });
+            }}
+            accessibilityRole="button"
+          >
+            <View style={[styles.contextMethodIcon, { backgroundColor: colors.accentSoft }]}><Ionicons name="sparkles-outline" size={19} color={colors.accent} /></View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.contextMethodTitle, { color: colors.textPrimary }]}>AI Research</Text>
+              <Text style={[styles.contextMethodDetail, { color: colors.textMuted }]}>Find PDFs, articles and videos from the web to review and approve.</Text>
             </View>
-            <View style={styles.contextMethodList}>
-              <Pressable
-                style={({ pressed }) => [styles.contextMethodRow, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
-                onPress={() => {
-                  setShowAddContextMethod(false);
-                  navigation.navigate("ContextResearch", { topicId });
-                }}
-                accessibilityRole="button"
-              >
-                <View style={[styles.contextMethodIcon, { backgroundColor: colors.accentSoft }]}><Ionicons name="sparkles-outline" size={19} color={colors.accent} /></View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.contextMethodTitle, { color: colors.textPrimary }]}>AI Research</Text>
-                  <Text style={[styles.contextMethodDetail, { color: colors.textMuted }]}>Find PDFs, articles and videos from the web to review and approve.</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={17} color={colors.textMuted} />
+            <Ionicons name="chevron-forward" size={17} color={colors.textMuted} />
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.contextMethodRow, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+            onPress={() => {
+              setShowAddContextMethod(false);
+              navigation.navigate("ImportContext", { topicId });
+            }}
+            accessibilityRole="button"
+          >
+            <View style={[styles.contextMethodIcon, { backgroundColor: colors.accentSoft }]}><Ionicons name="copy-outline" size={19} color={colors.accent} /></View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.contextMethodTitle, { color: colors.textPrimary }]}>Import from another class</Text>
+              <Text style={[styles.contextMethodDetail, { color: colors.textMuted }]}>Reuse sources you already uploaded for a different section.</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={17} color={colors.textMuted} />
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.contextMethodRow, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+            onPress={() => {
+              setShowAddContextMethod(false);
+              setShowUrlInput(false);
+              setShowAddContext(true);
+            }}
+            accessibilityRole="button"
+          >
+            <View style={[styles.contextMethodIcon, { backgroundColor: colors.accentSoft }]}><Ionicons name="cloud-upload-outline" size={19} color={colors.accent} /></View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.contextMethodTitle, { color: colors.textPrimary }]}>Upload your own</Text>
+              <Text style={[styles.contextMethodDetail, { color: colors.textMuted }]}>Camera, gallery, file, or a web link.</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={17} color={colors.textMuted} />
+          </Pressable>
+        </View>
+      </SheetModal>
+
+      <SheetModal
+        visible={showAddContext}
+        onClose={() => setShowAddContext(false)}
+        closeLabel="Close add source"
+        maxHeightRatio={0.88}
+      >
+        <View style={styles.modalHeader}>
+          <View><Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Add context</Text><Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>Give your generation reliable source material.</Text></View>
+          <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setShowAddContext(false)} accessibilityRole="button"><Ionicons name="close" size={20} color={colors.textPrimary} /></Pressable>
+        </View>
+        {!showUrlInput ? (
+          <View style={styles.sourceActionGrid}>
+            {[
+              ["camera-outline", "Camera", pickContextPhoto],
+              ["image-outline", "Gallery", pickContextGalleryImage],
+              ["document-attach-outline", "File", pickContextDocument],
+              ["link-outline", "Web link", () => setShowUrlInput(true)],
+            ].map(([icon, label, onPress]) => (
+              <Pressable key={String(label)} style={({ pressed }) => [styles.sourceAction, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, (isAddingContext || pressed) && { opacity: pressedOpacity }]} onPress={onPress as () => void} disabled={isAddingContext} accessibilityRole="button">
+                <Ionicons name={icon as keyof typeof Ionicons.glyphMap} size={22} color={colors.accent} />
+                <Text style={[styles.sourceActionText, { color: colors.textPrimary }]}>{String(label)}</Text>
               </Pressable>
-              <Pressable
-                style={({ pressed }) => [styles.contextMethodRow, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
-                onPress={() => {
-                  setShowAddContextMethod(false);
-                  navigation.navigate("ImportContext", { topicId });
-                }}
-                accessibilityRole="button"
-              >
-                <View style={[styles.contextMethodIcon, { backgroundColor: colors.accentSoft }]}><Ionicons name="copy-outline" size={19} color={colors.accent} /></View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.contextMethodTitle, { color: colors.textPrimary }]}>Import from another class</Text>
-                  <Text style={[styles.contextMethodDetail, { color: colors.textMuted }]}>Reuse sources you already uploaded for a different section.</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={17} color={colors.textMuted} />
-              </Pressable>
-              <Pressable
-                style={({ pressed }) => [styles.contextMethodRow, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
-                onPress={() => {
-                  setShowAddContextMethod(false);
-                  setShowUrlInput(false);
-                  setShowAddContext(true);
-                }}
-                accessibilityRole="button"
-              >
-                <View style={[styles.contextMethodIcon, { backgroundColor: colors.accentSoft }]}><Ionicons name="cloud-upload-outline" size={19} color={colors.accent} /></View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.contextMethodTitle, { color: colors.textPrimary }]}>Upload your own</Text>
-                  <Text style={[styles.contextMethodDetail, { color: colors.textMuted }]}>Camera, gallery, file, or a web link.</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={17} color={colors.textMuted} />
-              </Pressable>
-            </View>
+            ))}
           </View>
-        </View>
-        </GestureHandlerRootView>
-      </Modal>
-
-      <Modal transparent animationType="slide" visible={showAddContext} onRequestClose={() => setShowAddContext(false)}>
-        <GestureHandlerRootView style={{ flex: 1 }}>
-        <View style={styles.modalRoot}>
-          <Pressable style={styles.modalBackdrop} onPress={() => setShowAddContext(false)} accessibilityRole="button" accessibilityLabel="Close add source" />
-          <View style={[styles.modalSheet, { backgroundColor: colors.surface, marginBottom: keyboardHeight }]}>
-            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
-            <View style={styles.modalHeader}>
-              <View><Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Add context</Text><Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>Give your generation reliable source material.</Text></View>
-              <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setShowAddContext(false)} accessibilityRole="button"><Ionicons name="close" size={20} color={colors.textPrimary} /></Pressable>
-            </View>
-            {!showUrlInput ? (
-              <View style={styles.sourceActionGrid}>
-                {[
-                  ["camera-outline", "Camera", pickContextPhoto],
-                  ["image-outline", "Gallery", pickContextGalleryImage],
-                  ["document-attach-outline", "File", pickContextDocument],
-                  ["link-outline", "Web link", () => setShowUrlInput(true)],
-                ].map(([icon, label, onPress]) => (
-                  <Pressable key={String(label)} style={({ pressed }) => [styles.sourceAction, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, (isAddingContext || pressed) && { opacity: pressedOpacity }]} onPress={onPress as () => void} disabled={isAddingContext} accessibilityRole="button">
-                    <Ionicons name={icon as keyof typeof Ionicons.glyphMap} size={22} color={colors.accent} />
-                    <Text style={[styles.sourceActionText, { color: colors.textPrimary }]}>{String(label)}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            ) : (
-              <View>
-                <Pressable style={styles.backToSources} onPress={() => setShowUrlInput(false)} accessibilityRole="button"><Ionicons name="arrow-back" size={16} color={colors.accent} /><Text style={[styles.backToSourcesText, { color: colors.accent }]}>Choose another source</Text></Pressable>
-                <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Source URL</Text>
-                <TextInput style={[styles.input, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]} value={contextUrl} onChangeText={setContextUrl} placeholder="https://..." placeholderTextColor={colors.textMuted} autoCapitalize="none" keyboardType="url" autoFocus />
-                <Pressable style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent }, (isAddingContext || !contextUrl.trim() || pressed) && { opacity: pressedOpacity }]} onPress={addContextUrl} disabled={isAddingContext || !contextUrl.trim()} accessibilityRole="button">
-                  {isAddingContext ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Add link</Text>}
-                </Pressable>
-              </View>
-            )}
-            {isAddingContext && !showUrlInput ? <ActivityIndicator color={colors.accent} style={styles.modalLoader} /> : null}
-          </View>
-        </View>
-        </GestureHandlerRootView>
-      </Modal>
-
-      <Modal transparent animationType="slide" visible={showTypeFilterModal} onRequestClose={() => setShowTypeFilterModal(false)}>
-        <GestureHandlerRootView style={{ flex: 1 }}>
-        <View style={styles.modalRoot}>
-          <Pressable style={styles.modalBackdrop} onPress={() => setShowTypeFilterModal(false)} accessibilityRole="button" accessibilityLabel="Close type filter" />
-          <View style={[styles.modalSheet, { backgroundColor: colors.surface }]}>
-            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Filter by type</Text>
-              <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setShowTypeFilterModal(false)} accessibilityRole="button"><Ionicons name="close" size={20} color={colors.textPrimary} /></Pressable>
-            </View>
-            <View style={styles.filterOptionList}>
-              {GENERATION_FILTER_OPTIONS.map((filter) => {
-                const active = generationFilter === filter.key;
-                return (
-                  <Pressable
-                    key={filter.key}
-                    style={({ pressed }) => [styles.filterOptionRow, pressed && { opacity: pressedOpacity }]}
-                    onPress={() => selectGenerationTypeFilter(filter.key)}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: active }}
-                  >
-                    <Text style={[styles.filterOptionText, { color: active ? colors.accent : colors.textPrimary, fontWeight: active ? "800" : "500" }]}>{filter.label}</Text>
-                    {active ? <Ionicons name="checkmark-circle" size={19} color={colors.accent} /> : <View style={[styles.filterOptionUncheckedCircle, { borderColor: colors.border }]} />}
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
-        </View>
-        </GestureHandlerRootView>
-      </Modal>
-
-      <Modal transparent animationType="slide" visible={showDateFilterModal} onRequestClose={() => setShowDateFilterModal(false)}>
-        <GestureHandlerRootView style={{ flex: 1 }}>
-        <View style={styles.modalRoot}>
-          <Pressable style={styles.modalBackdrop} onPress={() => setShowDateFilterModal(false)} accessibilityRole="button" accessibilityLabel="Close date filter" />
-          <View style={[styles.modalSheet, { backgroundColor: colors.surface }]}>
-            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Filter by date</Text>
-              <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setShowDateFilterModal(false)} accessibilityRole="button"><Ionicons name="close" size={20} color={colors.textPrimary} /></Pressable>
-            </View>
-            <View style={styles.filterOptionList}>
-              {DATE_FILTER_PRESETS.map((preset) => {
-                const active = dateFilterPreset === preset;
-                const label =
-                  preset === "custom" && customFrom && customTo
-                    ? `Custom: ${formatDateShort(customFrom)} – ${formatDateShort(customTo)}`
-                    : DATE_FILTER_PRESET_LABELS[preset];
-                return (
-                  <Pressable
-                    key={preset}
-                    style={({ pressed }) => [styles.filterOptionRow, pressed && { opacity: pressedOpacity }]}
-                    onPress={() => selectDateFilterPreset(preset)}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: active }}
-                  >
-                    <Text style={[styles.filterOptionText, { color: active ? colors.accent : colors.textPrimary, fontWeight: active ? "800" : "500" }]}>{label}</Text>
-                    {preset === "custom" ? (
-                      <Ionicons name="chevron-forward" size={17} color={colors.textMuted} />
-                    ) : active ? (
-                      <Ionicons name="checkmark-circle" size={19} color={colors.accent} />
-                    ) : (
-                      <View style={[styles.filterOptionUncheckedCircle, { borderColor: colors.border }]} />
-                    )}
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
-        </View>
-        </GestureHandlerRootView>
-      </Modal>
-
-      <Modal transparent animationType="slide" visible={showCustomRangeModal} onRequestClose={() => setShowCustomRangeModal(false)}>
-        <GestureHandlerRootView style={{ flex: 1 }}>
-        <View style={styles.modalRoot}>
-          <Pressable style={styles.modalBackdrop} onPress={() => setShowCustomRangeModal(false)} accessibilityRole="button" accessibilityLabel="Close custom date range" />
-          <View style={[styles.modalSheet, { backgroundColor: colors.surface, marginBottom: keyboardHeight }]}>
-            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
-            <View style={styles.modalHeader}>
-              <View><Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Custom date range</Text><Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>Show generations created within these dates.</Text></View>
-              <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setShowCustomRangeModal(false)} accessibilityRole="button"><Ionicons name="close" size={20} color={colors.textPrimary} /></Pressable>
-            </View>
-            <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>From</Text>
-            <DatePicker value={draftCustomFrom} onChange={setDraftCustomFrom} placeholder="Start date" />
-            <Text style={[styles.fieldLabel, { color: colors.textMuted, marginTop: 12 }]}>To</Text>
-            <DatePicker value={draftCustomTo} onChange={setDraftCustomTo} placeholder="End date" minimumDate={draftCustomFrom ? parseISODate(draftCustomFrom) : undefined} />
-            <Pressable
-              style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent, marginTop: 16 }, (!draftCustomFrom || !draftCustomTo || pressed) && { opacity: pressedOpacity }]}
-              onPress={applyCustomRange}
-              disabled={!draftCustomFrom || !draftCustomTo}
-              accessibilityRole="button"
-            >
-              <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Apply</Text>
+        ) : (
+          <View>
+            <Pressable style={styles.backToSources} onPress={() => setShowUrlInput(false)} accessibilityRole="button"><Ionicons name="arrow-back" size={16} color={colors.accent} /><Text style={[styles.backToSourcesText, { color: colors.accent }]}>Choose another source</Text></Pressable>
+            <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Source URL</Text>
+            <TextInput style={[styles.input, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]} value={contextUrl} onChangeText={setContextUrl} placeholder="https://..." placeholderTextColor={colors.textMuted} autoCapitalize="none" keyboardType="url" autoFocus />
+            <Pressable style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent }, (isAddingContext || !contextUrl.trim() || pressed) && { opacity: pressedOpacity }]} onPress={addContextUrl} disabled={isAddingContext || !contextUrl.trim()} accessibilityRole="button">
+              {isAddingContext ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Add link</Text>}
             </Pressable>
           </View>
-        </View>
-        </GestureHandlerRootView>
-      </Modal>
+        )}
+        {isAddingContext && !showUrlInput ? <ActivityIndicator color={colors.accent} style={styles.modalLoader} /> : null}
+      </SheetModal>
 
-      <Modal transparent animationType="slide" visible={showAddObservation} onRequestClose={() => { setShowAddObservation(false); setNotePhoto(null); }}>
-        <GestureHandlerRootView style={{ flex: 1 }}>
-        <View style={styles.modalRoot}>
-          <Pressable style={styles.modalBackdrop} onPress={() => { setShowAddObservation(false); setNotePhoto(null); }} accessibilityRole="button" accessibilityLabel="Close new note" />
-          <View style={[styles.modalSheet, { backgroundColor: colors.surface, marginBottom: keyboardHeight }]}>
-            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
-            <View style={styles.modalHeader}>
-              <View><Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Add teaching note</Text><Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>Capture what happened while it is fresh.</Text></View>
-              <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => { setShowAddObservation(false); setNotePhoto(null); }} accessibilityRole="button"><Ionicons name="close" size={20} color={colors.textPrimary} /></Pressable>
-            </View>
-            <TextInput style={[styles.input, styles.multilineInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]} value={observationText} onChangeText={setObservationText} placeholder="What happened in class?" placeholderTextColor={colors.textMuted} multiline autoFocus />
-            {notePhoto ? (
-              <View style={styles.notePhotoPreviewWrap}>
-                <Image source={{ uri: notePhoto.uri }} style={styles.notePhotoPreview} resizeMode="cover" />
-                <Pressable style={styles.notePhotoRemove} onPress={() => setNotePhoto(null)} accessibilityRole="button" accessibilityLabel="Remove photo" hitSlop={8}>
-                  <Ionicons name="close-circle" size={22} color="#FFFFFF" />
-                </Pressable>
-              </View>
-            ) : (
-              <View style={styles.notePhotoActions}>
-                <Pressable style={({ pressed }) => [styles.notePhotoAction, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]} onPress={pickNotePhoto} accessibilityRole="button">
-                  <Ionicons name="camera-outline" size={16} color={colors.accent} />
-                  <Text style={[styles.notePhotoActionText, { color: colors.accent }]}>Take photo</Text>
-                </Pressable>
-                <Pressable style={({ pressed }) => [styles.notePhotoAction, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]} onPress={pickNoteGalleryPhoto} accessibilityRole="button">
-                  <Ionicons name="image-outline" size={16} color={colors.accent} />
-                  <Text style={[styles.notePhotoActionText, { color: colors.accent }]}>Choose photo</Text>
-                </Pressable>
-              </View>
-            )}
-            <Pressable style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent }, (isAddingObservation || !observationText.trim() || pressed) && { opacity: pressedOpacity }]} onPress={addObservation} disabled={isAddingObservation || !observationText.trim()} accessibilityRole="button">
-              {isAddingObservation ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Save note</Text>}
+      <SheetModal
+        visible={showTypeFilterModal}
+        onClose={() => setShowTypeFilterModal(false)}
+        closeLabel="Close type filter"
+      >
+        <View style={styles.modalHeader}>
+          <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Filter by type</Text>
+          <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setShowTypeFilterModal(false)} accessibilityRole="button"><Ionicons name="close" size={20} color={colors.textPrimary} /></Pressable>
+        </View>
+        <View style={styles.filterOptionList}>
+          {GENERATION_FILTER_OPTIONS.map((filter) => {
+            const active = generationFilter === filter.key;
+            return (
+              <Pressable
+                key={filter.key}
+                style={({ pressed }) => [styles.filterOptionRow, pressed && { opacity: pressedOpacity }]}
+                onPress={() => selectGenerationTypeFilter(filter.key)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+              >
+                <Text style={[styles.filterOptionText, { color: active ? colors.accent : colors.textPrimary, fontWeight: active ? "800" : "500" }]}>{filter.label}</Text>
+                {active ? <Ionicons name="checkmark-circle" size={19} color={colors.accent} /> : <View style={[styles.filterOptionUncheckedCircle, { borderColor: colors.border }]} />}
+              </Pressable>
+            );
+          })}
+        </View>
+      </SheetModal>
+
+      <SheetModal
+        visible={showDateFilterModal}
+        onClose={() => setShowDateFilterModal(false)}
+        closeLabel="Close date filter"
+      >
+        <View style={styles.modalHeader}>
+          <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Filter by date</Text>
+          <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setShowDateFilterModal(false)} accessibilityRole="button"><Ionicons name="close" size={20} color={colors.textPrimary} /></Pressable>
+        </View>
+        <View style={styles.filterOptionList}>
+          {DATE_FILTER_PRESETS.map((preset) => {
+            const active = dateFilterPreset === preset;
+            const label =
+              preset === "custom" && customFrom && customTo
+                ? `Custom: ${formatDateShort(customFrom)} – ${formatDateShort(customTo)}`
+                : DATE_FILTER_PRESET_LABELS[preset];
+            return (
+              <Pressable
+                key={preset}
+                style={({ pressed }) => [styles.filterOptionRow, pressed && { opacity: pressedOpacity }]}
+                onPress={() => selectDateFilterPreset(preset)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+              >
+                <Text style={[styles.filterOptionText, { color: active ? colors.accent : colors.textPrimary, fontWeight: active ? "800" : "500" }]}>{label}</Text>
+                {preset === "custom" ? (
+                  <Ionicons name="chevron-forward" size={17} color={colors.textMuted} />
+                ) : active ? (
+                  <Ionicons name="checkmark-circle" size={19} color={colors.accent} />
+                ) : (
+                  <View style={[styles.filterOptionUncheckedCircle, { borderColor: colors.border }]} />
+                )}
+              </Pressable>
+            );
+          })}
+        </View>
+      </SheetModal>
+
+      <SheetModal
+        visible={showCustomRangeModal}
+        onClose={() => setShowCustomRangeModal(false)}
+        closeLabel="Close custom date range"
+        maxHeightRatio={0.88}
+      >
+        <View style={styles.modalHeader}>
+          <View><Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Custom date range</Text><Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>Show generations created within these dates.</Text></View>
+          <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setShowCustomRangeModal(false)} accessibilityRole="button"><Ionicons name="close" size={20} color={colors.textPrimary} /></Pressable>
+        </View>
+        <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>From</Text>
+        <DatePicker value={draftCustomFrom} onChange={setDraftCustomFrom} placeholder="Start date" />
+        <Text style={[styles.fieldLabel, { color: colors.textMuted, marginTop: 12 }]}>To</Text>
+        <DatePicker value={draftCustomTo} onChange={setDraftCustomTo} placeholder="End date" minimumDate={draftCustomFrom ? parseISODate(draftCustomFrom) : undefined} />
+        <Pressable
+          style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent, marginTop: 16 }, (!draftCustomFrom || !draftCustomTo || pressed) && { opacity: pressedOpacity }]}
+          onPress={applyCustomRange}
+          disabled={!draftCustomFrom || !draftCustomTo}
+          accessibilityRole="button"
+        >
+          <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Apply</Text>
+        </Pressable>
+      </SheetModal>
+
+      <SheetModal
+        visible={showAddObservation}
+        onClose={() => { setShowAddObservation(false); setNotePhoto(null); }}
+        closeLabel="Close new note"
+        maxHeightRatio={0.88}
+      >
+        <View style={styles.modalHeader}>
+          <View><Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Add teaching note</Text><Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>Capture what happened while it is fresh.</Text></View>
+          <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => { setShowAddObservation(false); setNotePhoto(null); }} accessibilityRole="button"><Ionicons name="close" size={20} color={colors.textPrimary} /></Pressable>
+        </View>
+        <TextInput style={[styles.input, styles.multilineInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]} value={observationText} onChangeText={setObservationText} placeholder="What happened in class?" placeholderTextColor={colors.textMuted} multiline autoFocus />
+        {notePhoto ? (
+          <View style={styles.notePhotoPreviewWrap}>
+            <Image source={{ uri: notePhoto.uri }} style={styles.notePhotoPreview} resizeMode="cover" />
+            <Pressable style={styles.notePhotoRemove} onPress={() => setNotePhoto(null)} accessibilityRole="button" accessibilityLabel="Remove photo" hitSlop={8}>
+              <Ionicons name="close-circle" size={22} color="#FFFFFF" />
             </Pressable>
           </View>
-        </View>
-        </GestureHandlerRootView>
-      </Modal>
+        ) : (
+          <View style={styles.notePhotoActions}>
+            <Pressable style={({ pressed }) => [styles.notePhotoAction, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]} onPress={pickNotePhoto} accessibilityRole="button">
+              <Ionicons name="camera-outline" size={16} color={colors.accent} />
+              <Text style={[styles.notePhotoActionText, { color: colors.accent }]}>Take photo</Text>
+            </Pressable>
+            <Pressable style={({ pressed }) => [styles.notePhotoAction, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]} onPress={pickNoteGalleryPhoto} accessibilityRole="button">
+              <Ionicons name="image-outline" size={16} color={colors.accent} />
+              <Text style={[styles.notePhotoActionText, { color: colors.accent }]}>Choose photo</Text>
+            </Pressable>
+          </View>
+        )}
+        <Pressable style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent }, (isAddingObservation || !observationText.trim() || pressed) && { opacity: pressedOpacity }]} onPress={addObservation} disabled={isAddingObservation || !observationText.trim()} accessibilityRole="button">
+          {isAddingObservation ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Save note</Text>}
+        </Pressable>
+      </SheetModal>
 
-      <Modal visible={lightboxUrl !== null} transparent animationType="fade" onRequestClose={() => setLightboxUrl(null)}>
+      <Modal visible={lightboxUrl !== null} transparent statusBarTranslucent animationType="fade" onRequestClose={() => setLightboxUrl(null)}>
         <GestureHandlerRootView style={{ flex: 1 }}>
         <Pressable style={styles.lightboxBackdrop} onPress={() => setLightboxUrl(null)}>
           {lightboxUrl ? <Image source={{ uri: lightboxUrl }} style={styles.lightboxImage} resizeMode="contain" /> : null}
@@ -1228,183 +1307,179 @@ export function TopicDetailScreen({ route, navigation }: Props) {
         </GestureHandlerRootView>
       </Modal>
 
-      <Modal transparent animationType="slide" visible={openObservation !== null} onRequestClose={() => setOpenObservation(null)}>
-        <GestureHandlerRootView style={{ flex: 1 }}>
-        <View style={styles.modalRoot}>
-          <Pressable style={styles.modalBackdrop} onPress={() => setOpenObservation(null)} accessibilityRole="button" accessibilityLabel="Close note" />
-          <View style={[styles.modalSheet, { backgroundColor: colors.surface }]}>
-            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
-            <View style={styles.modalHeader}>
-              <View>
-                <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Note</Text>
-                <Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>
-                  {openObservation ? formatRelativeTime(openObservation.recordedAt) : ""}
-                </Text>
-              </View>
-              <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setOpenObservation(null)} accessibilityRole="button">
-                <Ionicons name="close" size={20} color={colors.textPrimary} />
-              </Pressable>
-            </View>
-            <ScrollView style={styles.noteDetailScroll} showsVerticalScrollIndicator={false}>
-              <Text style={[styles.noteDetailBody, { color: colors.textSecondary }]}>{openObservation?.body}</Text>
-              {openObservation?.photoUrl ? (
-                <Pressable onPress={() => setLightboxUrl(openObservation.photoUrl!)} accessibilityRole="button" accessibilityLabel="View note photo">
-                  <Image source={{ uri: openObservation.photoUrl }} style={styles.noteDetailPhoto} resizeMode="cover" />
-                </Pressable>
-              ) : null}
-            </ScrollView>
+      <VideoPlayerModal videoId={watchingVideo?.videoId ?? null} title={watchingVideo?.title ?? ""} onClose={() => setWatchingVideo(null)} />
+
+      <SheetModal
+        visible={openObservation !== null}
+        onClose={() => setOpenObservation(null)}
+        closeLabel="Close note"
+        maxHeightRatio={0.88}
+      >
+        <View style={styles.modalHeader}>
+          <View>
+            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Note</Text>
+            <Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>
+              {openObservation ? formatRelativeTime(openObservation.recordedAt) : ""}
+            </Text>
           </View>
+          <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setOpenObservation(null)} accessibilityRole="button">
+            <Ionicons name="close" size={20} color={colors.textPrimary} />
+          </Pressable>
         </View>
-        </GestureHandlerRootView>
-      </Modal>
+        <ScrollView style={styles.noteDetailScroll} showsVerticalScrollIndicator={false}>
+          <Text style={[styles.noteDetailBody, { color: colors.textSecondary }]}>{openObservation?.body}</Text>
+          {openObservation?.photoUrl ? (
+            <Pressable onPress={() => setLightboxUrl(openObservation.photoUrl!)} accessibilityRole="button" accessibilityLabel="View note photo">
+              <Image source={{ uri: openObservation.photoUrl }} style={styles.noteDetailPhoto} resizeMode="cover" />
+            </Pressable>
+          ) : null}
+        </ScrollView>
+      </SheetModal>
 
-      <Modal transparent animationType="slide" visible={openSource !== null} onRequestClose={() => setOpenSource(null)}>
-        <GestureHandlerRootView style={{ flex: 1 }}>
-        <View style={styles.modalRoot}>
-          <Pressable style={styles.modalBackdrop} onPress={() => setOpenSource(null)} accessibilityRole="button" accessibilityLabel="Close source" />
-          <View style={[styles.modalSheet, { backgroundColor: colors.surface, marginBottom: keyboardHeight }]}>
-            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
-            <View style={styles.modalHeader}>
-              <View style={{ flex: 1, paddingRight: 12 }}>
-                <Text style={[styles.modalTitle, { color: colors.textPrimary }]} numberOfLines={1}>
-                  {openSource?.originalFilename ?? openSource?.sourceUrl ?? openSource?.sourceType ?? "Source"}
-                </Text>
-                <Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>
-                  {openSource ? (openSource.extractionStatus === "extracted" ? "Text ready — used when you generate" : openSource.extractionStatus === "pending" ? "Not read yet — won't be used until it is" : "No text found — won't be used") : ""}
-                </Text>
-              </View>
-              <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setOpenSource(null)} accessibilityRole="button">
-                <Ionicons name="close" size={20} color={colors.textPrimary} />
-              </Pressable>
-            </View>
+      <SheetModal
+        visible={openSource !== null}
+        onClose={() => setOpenSource(null)}
+        closeLabel="Close source"
+        maxHeightRatio={0.88}
+      >
+        <View style={styles.modalHeader}>
+          <View style={{ flex: 1, paddingRight: 12 }}>
+            <Text style={[styles.modalTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+              {openSource?.originalFilename ?? openSource?.sourceUrl ?? openSource?.sourceType ?? "Source"}
+            </Text>
+            <Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>
+              {openSource ? (openSource.extractionStatus === "extracted" ? "Text ready — used when you generate" : openSource.extractionStatus === "pending" ? "Not read yet — won't be used until it is" : "No text found — won't be used") : ""}
+            </Text>
+          </View>
+          <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setOpenSource(null)} accessibilityRole="button">
+            <Ionicons name="close" size={20} color={colors.textPrimary} />
+          </Pressable>
+        </View>
 
-            {openSource?.extractionError ? (
-              <Text style={[styles.meta, { color: colors.danger, marginTop: 8 }]}>{openSource.extractionError}</Text>
-            ) : null}
-            {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
+        {openSource?.extractionError ? (
+          <Text style={[styles.meta, { color: colors.danger, marginTop: 8 }]}>{openSource.extractionError}</Text>
+        ) : null}
+        {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
-            <View style={styles.sourceDetailActionRow}>
-              {openSource && (openSource.fileLocation || openSource.sourceUrl) ? (
-                <Pressable
-                  style={({ pressed }) => [styles.sourceGhostButton, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
-                  onPress={() => {
-                    if (openSource.sourceType === "image" && openSource.fileLocation && accessToken) {
-                      // Two native <Modal>s visible at once is unreliable
-                      // (especially on Android) - close this one before
-                      // opening the lightbox instead of stacking them.
-                      const imageUrl = api.contextSourceFileUrl(topicId, openSource.id, accessToken);
-                      setOpenSource(null);
-                      setLightboxUrl(imageUrl);
-                    } else {
-                      openContextSource(openSource);
-                    }
-                  }}
-                  accessibilityRole="button"
-                >
-                  <Ionicons name={openSource.sourceType === "image" ? "image-outline" : openSource.sourceType === "url" ? "link-outline" : "document-text-outline"} size={15} color={colors.accent} />
-                  <Text style={[styles.sourceGhostButtonText, { color: colors.accent }]}>
-                    {openSource.sourceType === "image" ? "View image" : openSource.sourceType === "url" ? "Open link" : "Open file"}
-                  </Text>
-                </Pressable>
-              ) : null}
-              {openSource && openSource.sourceType !== "idream_k12" ? (
-                <Pressable
-                  style={({ pressed }) => [styles.sourceGhostButton, { borderColor: colors.border }, (isRetryingSource || pressed) && { opacity: pressedOpacity }]}
-                  onPress={retrySourceExtraction}
-                  disabled={isRetryingSource}
-                  accessibilityRole="button"
-                >
-                  {isRetryingSource ? (
-                    <ActivityIndicator color={colors.accent} size="small" />
-                  ) : (
-                    <>
-                      <Ionicons name="refresh-outline" size={15} color={colors.accent} />
-                      <Text style={[styles.sourceGhostButtonText, { color: colors.accent }]}>
-                        {openSource.sourceType === "image" ? "Re-transcribe" : "Re-extract"}
-                      </Text>
-                    </>
-                  )}
-                </Pressable>
-              ) : null}
-              {openSource ? (
-                <Pressable
-                  style={({ pressed }) => [styles.sourceGhostButton, { borderColor: colors.danger }, (deletingSourceIds.has(openSource.id) || pressed) && { opacity: pressedOpacity }]}
-                  onPress={() => confirmDeleteSource(openSource)}
-                  disabled={deletingSourceIds.has(openSource.id)}
-                  accessibilityRole="button"
-                >
-                  {deletingSourceIds.has(openSource.id) ? (
-                    <ActivityIndicator color={colors.danger} size="small" />
-                  ) : (
-                    <>
-                      <Ionicons name="trash-outline" size={15} color={colors.danger} />
-                      <Text style={[styles.sourceGhostButtonText, { color: colors.danger }]}>Delete</Text>
-                    </>
-                  )}
-                </Pressable>
-              ) : null}
-            </View>
-
-            <View style={styles.sourceTextHeaderRow}>
-              <Text style={[styles.fieldLabel, { color: colors.textMuted, marginTop: isEditingSourceText ? 18 : 0 }]}>
-                {isEditingSourceText ? "Edit extracted text" : "Extracted text"}
+        <View style={styles.sourceDetailActionRow}>
+          {openSource && (openSource.fileLocation || openSource.sourceUrl) ? (
+            <Pressable
+              style={({ pressed }) => [styles.sourceGhostButton, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+              onPress={() => {
+                if (openSource.sourceType === "image" && openSource.fileLocation && accessToken) {
+                  // Two native <Modal>s visible at once is unreliable
+                  // (especially on Android) - close this one before
+                  // opening the lightbox instead of stacking them.
+                  const imageUrl = api.contextSourceFileUrl(topicId, openSource.id, accessToken);
+                  setOpenSource(null);
+                  setLightboxUrl(imageUrl);
+                } else {
+                  openContextSource(openSource);
+                }
+              }}
+              accessibilityRole="button"
+            >
+              <Ionicons name={openSource.sourceType === "image" ? "image-outline" : openSource.sourceType === "url" ? "link-outline" : "document-text-outline"} size={15} color={colors.accent} />
+              <Text style={[styles.sourceGhostButtonText, { color: colors.accent }]}>
+                {openSource.sourceType === "image" ? "View image" : openSource.sourceType === "url" ? "Open link" : "Open file"}
               </Text>
-              {!isEditingSourceText ? (
-                <Pressable
-                  style={({ pressed }) => [styles.editTextButton, { backgroundColor: colors.accentSoft }, pressed && { opacity: pressedOpacity }]}
-                  onPress={() => setIsEditingSourceText(true)}
-                  accessibilityRole="button"
-                >
-                  <Ionicons name="pencil-outline" size={13} color={colors.accent} />
-                  <Text style={[styles.editTextButtonText, { color: colors.accent }]}>Edit</Text>
-                </Pressable>
-              ) : null}
-            </View>
-
-            {isEditingSourceText ? (
-              <>
-                <TextInput
-                  style={[styles.input, styles.sourceTextInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
-                  value={sourceDraft}
-                  onChangeText={setSourceDraft}
-                  placeholder="Nothing was pulled from this source. Paste or type the text you want the AI to use."
-                  placeholderTextColor={colors.textMuted}
-                  multiline
-                  textAlignVertical="top"
-                  autoFocus
-                />
-                <View style={styles.sourceEditActionRow}>
-                  <Pressable
-                    style={({ pressed }) => [styles.sourceGhostButton, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
-                    onPress={() => {
-                      setSourceDraft(openSource?.extractedText ?? "");
-                      setIsEditingSourceText(false);
-                    }}
-                    accessibilityRole="button"
-                  >
-                    <Text style={[styles.sourceGhostButtonText, { color: colors.textSecondary }]}>Cancel</Text>
-                  </Pressable>
-                  <Pressable
-                    style={({ pressed }) => [styles.smallButton, styles.sourceSaveButton, { backgroundColor: colors.accent }, (isSavingSource || !sourceDraft.trim() || pressed) && { opacity: pressedOpacity }]}
-                    onPress={saveSourceText}
-                    disabled={isSavingSource || !sourceDraft.trim()}
-                    accessibilityRole="button"
-                  >
-                    {isSavingSource ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Save text</Text>}
-                  </Pressable>
-                </View>
-              </>
-            ) : (
-              <ScrollView style={[styles.sourceTextView, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
-                <Text style={[styles.sourceTextViewBody, { color: colors.textSecondary }]}>
-                  {sourceDraft.trim() ? sourceDraft : "Nothing was pulled from this source yet. Tap Edit to add text yourself."}
-                </Text>
-              </ScrollView>
-            )}
-          </View>
+            </Pressable>
+          ) : null}
+          {openSource && openSource.sourceType !== "idream_k12" ? (
+            <Pressable
+              style={({ pressed }) => [styles.sourceGhostButton, { borderColor: colors.border }, (isRetryingSource || pressed) && { opacity: pressedOpacity }]}
+              onPress={retrySourceExtraction}
+              disabled={isRetryingSource}
+              accessibilityRole="button"
+            >
+              {isRetryingSource ? (
+                <ActivityIndicator color={colors.accent} size="small" />
+              ) : (
+                <>
+                  <Ionicons name="refresh-outline" size={15} color={colors.accent} />
+                  <Text style={[styles.sourceGhostButtonText, { color: colors.accent }]}>
+                    {openSource.sourceType === "image" ? "Re-transcribe" : "Re-extract"}
+                  </Text>
+                </>
+              )}
+            </Pressable>
+          ) : null}
+          {openSource ? (
+            <Pressable
+              style={({ pressed }) => [styles.sourceGhostButton, { borderColor: colors.danger }, (deletingSourceIds.has(openSource.id) || pressed) && { opacity: pressedOpacity }]}
+              onPress={() => confirmDeleteSource(openSource)}
+              disabled={deletingSourceIds.has(openSource.id)}
+              accessibilityRole="button"
+            >
+              {deletingSourceIds.has(openSource.id) ? (
+                <ActivityIndicator color={colors.danger} size="small" />
+              ) : (
+                <>
+                  <Ionicons name="trash-outline" size={15} color={colors.danger} />
+                  <Text style={[styles.sourceGhostButtonText, { color: colors.danger }]}>Delete</Text>
+                </>
+              )}
+            </Pressable>
+          ) : null}
         </View>
-        </GestureHandlerRootView>
-      </Modal>
+
+        <View style={styles.sourceTextHeaderRow}>
+          <Text style={[styles.fieldLabel, { color: colors.textMuted, marginTop: isEditingSourceText ? 18 : 0 }]}>
+            {isEditingSourceText ? "Edit extracted text" : "Extracted text"}
+          </Text>
+          {!isEditingSourceText ? (
+            <Pressable
+              style={({ pressed }) => [styles.editTextButton, { backgroundColor: colors.accentSoft }, pressed && { opacity: pressedOpacity }]}
+              onPress={() => setIsEditingSourceText(true)}
+              accessibilityRole="button"
+            >
+              <Ionicons name="pencil-outline" size={13} color={colors.accent} />
+              <Text style={[styles.editTextButtonText, { color: colors.accent }]}>Edit</Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        {isEditingSourceText ? (
+          <>
+            <TextInput
+              style={[styles.input, styles.sourceTextInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
+              value={sourceDraft}
+              onChangeText={setSourceDraft}
+              placeholder="Nothing was pulled from this source. Paste or type the text you want the AI to use."
+              placeholderTextColor={colors.textMuted}
+              multiline
+              textAlignVertical="top"
+              autoFocus
+            />
+            <View style={styles.sourceEditActionRow}>
+              <Pressable
+                style={({ pressed }) => [styles.sourceGhostButton, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+                onPress={() => {
+                  setSourceDraft(openSource?.extractedText ?? "");
+                  setIsEditingSourceText(false);
+                }}
+                accessibilityRole="button"
+              >
+                <Text style={[styles.sourceGhostButtonText, { color: colors.textSecondary }]}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.smallButton, styles.sourceSaveButton, { backgroundColor: colors.accent }, (isSavingSource || !sourceDraft.trim() || pressed) && { opacity: pressedOpacity }]}
+                onPress={saveSourceText}
+                disabled={isSavingSource || !sourceDraft.trim()}
+                accessibilityRole="button"
+              >
+                {isSavingSource ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Save text</Text>}
+              </Pressable>
+            </View>
+          </>
+        ) : (
+          <ScrollView style={[styles.sourceTextView, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+            <Text style={[styles.sourceTextViewBody, { color: colors.textSecondary }]}>
+              {sourceDraft.trim() ? sourceDraft : "Nothing was pulled from this source yet. Tap Edit to add text yourself."}
+            </Text>
+          </ScrollView>
+        )}
+      </SheetModal>
     </Screen>
   );
 }
@@ -1468,12 +1543,13 @@ const styles = StyleSheet.create({
   sourceEditActionRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 12 },
   sourceSaveButton: { flex: 1, marginTop: 0 },
   tabBar: { flexDirection: "row", borderBottomWidth: 1, marginBottom: 16 },
-  tab: { position: "relative", flex: 1, minHeight: 51, paddingBottom: 7, paddingHorizontal: 2, flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3 },
+  tab: { position: "relative", flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0, paddingTop: 6, paddingBottom: 8, paddingHorizontal: 2, flexDirection: "column", alignItems: "center", justifyContent: "flex-start", gap: 3 },
   tabActive: { marginTop: -1 },
-  tabIconRow: { flexDirection: "row", alignItems: "center", gap: 3 },
+  tabIconRow: { position: "relative", alignItems: "center", justifyContent: "center" },
   tabIcon: { width: 22, height: 22, borderRadius: 8, alignItems: "center", justifyContent: "center" },
-  tabCountDot: { width: 5, height: 5, borderRadius: 2.5 },
-  tabText: { fontSize: 10, fontWeight: "800" },
+  // Overlaid on the icon corner (not inline) so every tab's icon stays centred.
+  tabCountDot: { position: "absolute", top: -1, right: -3, width: 6, height: 6, borderRadius: 3 },
+  tabText: { alignSelf: "stretch", textAlign: "center", fontSize: 10, lineHeight: 12, fontWeight: "800" },
   tabActiveIndicator: { position: "absolute", left: 0, bottom: -1, height: 3, paddingHorizontal: 18 },
   tabActiveIndicatorLine: { flex: 1, height: 3, borderRadius: 3 },
   folderSheet: { position: "relative", minHeight: 350, borderWidth: 1, borderTopWidth: 0, borderBottomLeftRadius: 20, borderBottomRightRadius: 20, overflow: "hidden" },
@@ -1608,6 +1684,9 @@ const styles = StyleSheet.create({
   sourceListTypeText: { fontSize: 10, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.2 },
   sourceListSnippet: { fontSize: 11, marginLeft: 4, flexShrink: 1, fontWeight: "500" },
   sourceName: { marginTop: 9, fontSize: 12, lineHeight: 17, fontWeight: "800" },
+  videoRow: { flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 13, paddingVertical: 10, paddingHorizontal: 10, minHeight: 56 },
+  videoRowThumb: { width: 72, height: 48, borderRadius: 8 },
+  videoRowPlayBadge: { position: "absolute", right: 3, bottom: 3, width: 18, height: 18, borderRadius: 9, backgroundColor: "rgba(0,0,0,0.65)", alignItems: "center", justifyContent: "center" },
   sourcePreview: { flex: 1, width: "100%", borderRadius: radius.sm, marginTop: spacing.sm, overflow: "hidden", alignItems: "center", justifyContent: "center" },
   sourceThumbnail: { width: "100%", height: "100%" },
   modalRoot: { flex: 1, justifyContent: "flex-end" },

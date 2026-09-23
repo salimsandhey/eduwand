@@ -10,11 +10,15 @@ import {
   ActivityGroupSize,
   ACTIVITY_GROUP_SIZE_LABELS,
   ACTIVITY_RESOURCE_OPTIONS,
+  LEARNING_STAGE_OPTIONS,
 } from "../lib/ai";
 import { hasSufficientCredits, getFeatureCost } from "../lib/credits";
 import { storage } from "../lib/storage";
 import { extractPdfPageRangeText } from "../lib/extraction";
 import { buildPresentationPptx } from "../lib/pptxExport";
+import { getSchoolBoard } from "../lib/boards";
+import type { MediaItem } from "../lib/media";
+import { EmbedSelection, applyMedia, assemblePresentation, buildMediaItems, catalogFor, loadMediaAssets, mediaItemsFromContent } from "../lib/generation-media";
 import { ContextSource } from "@prisma/client";
 
 const MAX_CONTEXT_CHARS_FOR_PROMPT = 12000;
@@ -127,6 +131,7 @@ const VALID_MODES = ["plan", "generate"];
 const VALID_PRESENTATION_TEMPLATES: PresentationTemplate[] = ["detailed", "instructional", "school_format", "more_visual"];
 const VALID_ACTIVITY_GROUP_SIZES = Object.keys(ACTIVITY_GROUP_SIZE_LABELS) as ActivityGroupSize[];
 const VALID_ACTIVITY_RESOURCES = ACTIVITY_RESOURCE_OPTIONS.map((r) => r.key);
+const VALID_LEARNING_STAGES = LEARNING_STAGE_OPTIONS as readonly string[];
 const HEX_COLOR_RE = /^#[0-9a-f]{6}$/i;
 
 interface CreateGenerationBody {
@@ -146,13 +151,43 @@ interface CreateGenerationBody {
   // this generation in. Empty/omitted means "no context" - not "everything",
   // that implicit-everything behavior is what this field replaces.
   sources?: SourceSelection[];
+  // Uploaded/researched images and PDF pages to show as-is in the output
+  // (instead of the AI re-creating them). Independent of `sources`, which only
+  // feeds text to the model.
+  embeds?: EmbedSelection[];
+  // Presentation only: build the deck purely from `embeds` with no AI call -
+  // free, since nothing is generated.
+  assembleOnly?: boolean;
   // Only meaningful when outputType is "custom_activity_report".
   activityGroupSize?: string;
   activityResources?: string[];
+  learningStages?: string[];
+}
+
+// A retried deck asks for the same items again: turn what the previous
+// content attached back into the selection shape (one entry per source, page
+// range spanning what was shown).
+function selectionFromMedia(items: MediaItem[]): EmbedSelection[] {
+  const bySource = new Map<string, EmbedSelection>();
+  for (const item of items) {
+    const existing = bySource.get(item.sourceId);
+    if (!existing) {
+      bySource.set(item.sourceId, item.page ? { contextSourceId: item.sourceId, pageFrom: item.page, pageTo: item.page } : { contextSourceId: item.sourceId });
+    } else if (item.page) {
+      existing.pageFrom = Math.min(existing.pageFrom ?? item.page, item.page);
+      existing.pageTo = Math.max(existing.pageTo ?? item.page, item.page);
+    }
+  }
+  return [...bySource.values()];
 }
 
 interface UpdateGenerationBody {
   editedOutput: string;
+}
+
+interface SessionProgressBody {
+  session: number;
+  completed: boolean;
 }
 
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope, requireRoles("teacher")];
@@ -201,6 +236,12 @@ export async function generationRoutes(app: FastifyInstance) {
           error: { code: "validation_error", message: `activityResources must only contain: ${VALID_ACTIVITY_RESOURCES.join(", ")}` },
         });
       }
+      if (body.learningStages?.some((stage) => !VALID_LEARNING_STAGES.includes(stage))) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: `learningStages must only contain: ${VALID_LEARNING_STAGES.join(", ")}` },
+        });
+      }
 
       const topic = await prisma.topic.findFirst({
         where: { id: request.params.id, schoolId: request.schoolId },
@@ -222,7 +263,27 @@ export async function generationRoutes(app: FastifyInstance) {
         });
       }
 
-      if (!(await hasSufficientCredits(request.user.sub, getFeatureCost("generation")))) {
+      let mediaItems: MediaItem[] = [];
+      let mediaCatalog: ReturnType<typeof catalogFor> | undefined;
+      if (body.embeds && body.embeds.length > 0) {
+        const built = buildMediaItems(topic.contextSources, body.embeds);
+        if ("error" in built) {
+          return reply.code(400).send({ data: null, error: { code: "validation_error", message: built.error } });
+        }
+        mediaItems = built.items;
+        mediaCatalog = catalogFor(built.items, built.descriptions);
+      }
+      const assembleOnly = body.assembleOnly === true;
+      if (assembleOnly && (body.outputType !== "presentation" || mediaItems.length === 0)) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "assembleOnly needs a presentation and at least one image or PDF page to use as-is" },
+        });
+      }
+      const embeddedSources = topic.contextSources.filter((s) => mediaItems.some((item) => item.sourceId === s.id));
+
+      // Assembling from the teacher's own media makes no AI call, so it is free.
+      if (!assembleOnly && !(await hasSufficientCredits(request.user.sub, getFeatureCost("generation")))) {
         return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to generate this content" } });
       }
 
@@ -231,31 +292,46 @@ export async function generationRoutes(app: FastifyInstance) {
       let model: string;
       let generationStatus = "succeeded";
       try {
-        const result = await aiProvider.generateContent({
-          topicName: topic.name,
-          subject: topic.subject,
-          board: topic.board,
-          outputType: body.outputType,
-          classCount,
-          minutesPerClass,
-          language: body.language ?? "English",
-          customPrompt: body.customPrompt ?? null,
-          classLabel: `${topic.classSection.className} ${topic.classSection.sectionName}`,
-          contextText,
-          schoolFormatInstructions: formatTemplate?.templateBody ?? null,
-          presentationTemplate: body.presentationTemplate as PresentationTemplate | undefined,
-          activityGroupSize: body.activityGroupSize as ActivityGroupSize | undefined,
-          activityResources: body.activityResources,
-        });
-        content = await applyPresentationTemplateExtras({
-          content: result.content,
-          outputType: body.outputType,
-          schoolId: request.schoolId,
-          teacherUserId: request.user.sub,
-          overridePrimaryColor: body.overridePrimaryColor,
-          overrideSecondaryColor: body.overrideSecondaryColor,
-        });
-        model = result.model;
+        const classLabel = `${topic.classSection.className} ${topic.classSection.sectionName}`;
+        if (assembleOnly) {
+          content = await applyPresentationTemplateExtras({
+            content: assemblePresentation({ topicName: topic.name, subtitle: `${topic.subject} · ${classLabel}`, items: mediaItems }),
+            outputType: body.outputType,
+            schoolId: request.schoolId,
+            teacherUserId: request.user.sub,
+            overridePrimaryColor: body.overridePrimaryColor,
+            overrideSecondaryColor: body.overrideSecondaryColor,
+          });
+          model = "assembled";
+        } else {
+          const result = await aiProvider.generateContent({
+            topicName: topic.name,
+            subject: topic.subject,
+            board: await getSchoolBoard(request.schoolId),
+            outputType: body.outputType,
+            classCount,
+            minutesPerClass,
+            language: body.language ?? "English",
+            customPrompt: body.customPrompt ?? null,
+            classLabel,
+            contextText,
+            schoolFormatInstructions: formatTemplate?.templateBody ?? null,
+            presentationTemplate: body.presentationTemplate as PresentationTemplate | undefined,
+            activityGroupSize: body.activityGroupSize as ActivityGroupSize | undefined,
+            activityResources: body.activityResources,
+            learningStages: body.learningStages,
+            mediaCatalog,
+          });
+          content = await applyPresentationTemplateExtras({
+            content: applyMedia(result.content, body.outputType, mediaItems),
+            outputType: body.outputType,
+            schoolId: request.schoolId,
+            teacherUserId: request.user.sub,
+            overridePrimaryColor: body.overridePrimaryColor,
+            overrideSecondaryColor: body.overrideSecondaryColor,
+          });
+          model = result.model;
+        }
       } catch (err) {
         app.log.error(err, "Generation failed");
         const failed = await prisma.generation.create({
@@ -270,6 +346,7 @@ export async function generationRoutes(app: FastifyInstance) {
             customPrompt: body.customPrompt ?? null,
             activityGroupSize: body.activityGroupSize ?? null,
             activityResources: body.activityResources ?? [],
+            learningStages: body.learningStages ?? [],
             aiOutput: "",
             modelUsed: "unknown",
             generationStatus: "failed",
@@ -286,6 +363,7 @@ export async function generationRoutes(app: FastifyInstance) {
           outputType: body.outputType,
           activityGroupSize: body.activityGroupSize ?? null,
           activityResources: body.activityResources ?? [],
+          learningStages: body.learningStages ?? [],
           mode,
           classCount,
           minutesPerClass,
@@ -294,23 +372,27 @@ export async function generationRoutes(app: FastifyInstance) {
           aiOutput: content,
           modelUsed: model,
           generationStatus,
-          contextSources: { connect: usedSources.map((s) => ({ id: s.id })) },
+          // Sources used as text context plus the ones shown as-is - both are
+          // "what this generation is based on".
+          contextSources: { connect: [...new Map([...usedSources, ...embeddedSources].map((s) => [s.id, { id: s.id }])).values()] },
           selectedSources: (body.sources ?? []) as unknown as object,
           schoolFormatTemplateId: formatTemplate?.id ?? null,
         },
         include: {
           contextSources: true,
-          topic: { select: { name: true, subject: true, board: true, classSection: { select: { className: true, sectionName: true } } } },
+          topic: { select: { name: true, subject: true, classSection: { select: { className: true, sectionName: true } } } },
         },
       });
 
-      await logAiUsage({
-        schoolId: request.schoolId,
-        teacherUserId: request.user.sub,
-        feature: "generation",
-        model,
-        durationMs: Date.now() - start,
-      });
+      if (!assembleOnly) {
+        await logAiUsage({
+          schoolId: request.schoolId,
+          teacherUserId: request.user.sub,
+          feature: "generation",
+          model,
+          durationMs: Date.now() - start,
+        });
+      }
 
       return reply.code(201).send({ data: generation, meta: {} });
     }
@@ -321,7 +403,7 @@ export async function generationRoutes(app: FastifyInstance) {
       where: { id: request.params.id, topic: { schoolId: request.schoolId } },
       include: {
         contextSources: true,
-        topic: { select: { name: true, subject: true, board: true, classSection: { select: { className: true, sectionName: true } } } },
+        topic: { select: { name: true, subject: true, classSection: { select: { className: true, sectionName: true } } } },
       },
     });
     if (!generation) {
@@ -357,7 +439,7 @@ export async function generationRoutes(app: FastifyInstance) {
       return reply.code(500).send({ data: null, error: { code: "invalid_content", message: "Stored presentation content has no slides" } });
     }
 
-    const buffer = await buildPresentationPptx(content, generation.topic.name);
+    const buffer = await buildPresentationPptx(content, generation.topic.name, await loadMediaAssets(generation.topicId, content));
     const safeName = generation.topic.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase().slice(0, 60) || "presentation";
     reply.header("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
     reply.header("Content-Disposition", `attachment; filename="${safeName}.pptx"`);
@@ -383,6 +465,39 @@ export async function generationRoutes(app: FastifyInstance) {
       const updated = await prisma.generation.update({
         where: { id: generation.id },
         data: { editedOutput: body.editedOutput },
+        include: { contextSources: true },
+      });
+
+      return { data: updated, meta: {} };
+    }
+  );
+
+  // Teacher-reported "I taught class period N" progress for a lesson plan
+  // spanning multiple classes (classCount > 1) - separate from whether the
+  // content itself was edited, and never auto-closes the topic.
+  app.post<{ Params: { id: string }; Body: SessionProgressBody }>(
+    "/generations/:id/session-progress",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const body = request.body ?? ({} as SessionProgressBody);
+      if (typeof body.session !== "number" || typeof body.completed !== "boolean") {
+        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "session (number) and completed (boolean) are required" } });
+      }
+
+      const generation = await prisma.generation.findFirst({
+        where: { id: request.params.id, topic: { schoolId: request.schoolId } },
+      });
+      if (!generation) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Generation not found" } });
+      }
+
+      const completedSessions = body.completed
+        ? [...new Set([...generation.completedSessions, body.session])].sort((a, b) => a - b)
+        : generation.completedSessions.filter((s) => s !== body.session);
+
+      const updated = await prisma.generation.update({
+        where: { id: generation.id },
+        data: { completedSessions },
         include: { contextSources: true },
       });
 
@@ -432,36 +547,64 @@ export async function generationRoutes(app: FastifyInstance) {
       }
     }
 
-    if (!(await hasSufficientCredits(request.user.sub, getFeatureCost("generation")))) {
+    // Put the same images / PDF pages back, from whatever the previous output
+    // attached - skipping any whose source has since been deleted.
+    const stillThere = new Set(generation.topic.contextSources.map((s) => s.id));
+    const previousMedia = mediaItemsFromContent(generation.aiOutput).filter((item) => stillThere.has(item.sourceId));
+    let mediaItems: MediaItem[] = [];
+    let mediaCatalog: ReturnType<typeof catalogFor> | undefined;
+    if (previousMedia.length > 0) {
+      const built = buildMediaItems(generation.topic.contextSources, selectionFromMedia(previousMedia));
+      if (!("error" in built)) {
+        mediaItems = built.items;
+        mediaCatalog = catalogFor(built.items, built.descriptions);
+      }
+    }
+    const embeddedSources = generation.topic.contextSources.filter((s) => mediaItems.some((item) => item.sourceId === s.id));
+    // A deck assembled purely from the teacher's media has no AI step to redo.
+    const wasAssembled = generation.modelUsed === "assembled" && mediaItems.length > 0;
+
+    if (!wasAssembled && !(await hasSufficientCredits(request.user.sub, getFeatureCost("generation")))) {
       return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to retry this generation" } });
     }
 
     const start = Date.now();
-    const result = await aiProvider.generateContent({
-      topicName: generation.topic.name,
-      subject: generation.topic.subject,
-      board: generation.topic.board,
-      outputType: generation.outputType as GenerationOutputType,
-      classCount: generation.classCount ?? 1,
-      minutesPerClass: generation.minutesPerClass ?? 45,
-      language: generation.language,
-      customPrompt: generation.customPrompt,
-      classLabel: `${generation.topic.classSection.className} ${generation.topic.classSection.sectionName}`,
-      contextText,
-      schoolFormatInstructions: formatTemplate?.templateBody ?? null,
-      presentationTemplate,
-      activityGroupSize: (generation.activityGroupSize as ActivityGroupSize | null) ?? undefined,
-      activityResources: generation.activityResources,
-    });
+    const classLabel = `${generation.topic.classSection.className} ${generation.topic.classSection.sectionName}`;
+    let rawContent: string;
+    let model: string;
+    if (wasAssembled) {
+      rawContent = assemblePresentation({ topicName: generation.topic.name, subtitle: `${generation.topic.subject} · ${classLabel}`, items: mediaItems });
+      model = "assembled";
+    } else {
+      const result = await aiProvider.generateContent({
+        topicName: generation.topic.name,
+        subject: generation.topic.subject,
+        board: await getSchoolBoard(request.schoolId),
+        outputType: generation.outputType as GenerationOutputType,
+        classCount: generation.classCount ?? 1,
+        minutesPerClass: generation.minutesPerClass ?? 45,
+        language: generation.language,
+        customPrompt: generation.customPrompt,
+        classLabel,
+        contextText,
+        schoolFormatInstructions: formatTemplate?.templateBody ?? null,
+        presentationTemplate,
+        activityGroupSize: (generation.activityGroupSize as ActivityGroupSize | null) ?? undefined,
+        activityResources: generation.activityResources,
+        learningStages: generation.learningStages,
+        mediaCatalog,
+      });
+      rawContent = applyMedia(result.content, generation.outputType, mediaItems);
+      model = result.model;
+    }
     const content = await applyPresentationTemplateExtras({
-      content: result.content,
+      content: rawContent,
       outputType: generation.outputType as GenerationOutputType,
       schoolId: request.schoolId,
       teacherUserId: request.user.sub,
       overridePrimaryColor,
       overrideSecondaryColor,
     });
-    const model = result.model;
 
     const updated = await prisma.generation.update({
       where: { id: generation.id },
@@ -470,23 +613,25 @@ export async function generationRoutes(app: FastifyInstance) {
         modelUsed: model,
         generationStatus: "succeeded",
         editedOutput: null,
-        contextSources: { set: usedSources.map((s) => ({ id: s.id })) },
+        contextSources: { set: [...new Map([...usedSources, ...embeddedSources].map((s) => [s.id, { id: s.id }])).values()] },
         selectedSources: selection as unknown as object,
         schoolFormatTemplateId: formatTemplate?.id ?? null,
       },
       include: {
         contextSources: true,
-        topic: { select: { name: true, subject: true, board: true, classSection: { select: { className: true, sectionName: true } } } },
+        topic: { select: { name: true, subject: true, classSection: { select: { className: true, sectionName: true } } } },
       },
     });
 
-    await logAiUsage({
-      schoolId: request.schoolId,
-      teacherUserId: request.user.sub,
-      feature: "generation",
-      model,
-      durationMs: Date.now() - start,
-    });
+    if (!wasAssembled) {
+      await logAiUsage({
+        schoolId: request.schoolId,
+        teacherUserId: request.user.sub,
+        feature: "generation",
+        model,
+        durationMs: Date.now() - start,
+      });
+    }
 
     return { data: updated, meta: {} };
   });
@@ -494,23 +639,42 @@ export async function generationRoutes(app: FastifyInstance) {
   // Publishing/unpublishing is what actually gates /student/materials - see
   // shareStatus on the Generation model. This is distinct from a future
   // "push to Communication Hub" delivery feature, which doesn't exist yet.
-  app.post<{ Params: { id: string } }>("/generations/:id/publish", { onRequest: scoped(app) }, async (request, reply) => {
-    const generation = await prisma.generation.findFirst({
-      where: { id: request.params.id, topic: { schoolId: request.schoolId } },
-    });
-    if (!generation) {
-      return reply.code(404).send({ data: null, error: { code: "not_found", message: "Generation not found" } });
+  // studentStubIds omitted or empty = shared with the whole class (the
+  // default, unchanged behavior); a non-empty list narrows it to just them.
+  app.post<{ Params: { id: string }; Body: { studentStubIds?: string[] } }>(
+    "/generations/:id/publish",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const generation = await prisma.generation.findFirst({
+        where: { id: request.params.id, topic: { schoolId: request.schoolId } },
+        include: { topic: { select: { classSectionId: true } } },
+      });
+      if (!generation) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Generation not found" } });
+      }
+      if (generation.generationStatus !== "succeeded") {
+        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "Only a succeeded generation can be shared with students" } });
+      }
+
+      const studentStubIds = [...new Set(request.body?.studentStubIds ?? [])];
+      const sharedWithAll = studentStubIds.length === 0;
+      if (!sharedWithAll) {
+        const validCount = await prisma.studentStub.count({
+          where: { id: { in: studentStubIds }, classSectionId: generation.topic.classSectionId, status: "active" },
+        });
+        if (validCount !== studentStubIds.length) {
+          return reply.code(400).send({ data: null, error: { code: "validation_error", message: "One or more selected students aren't in this topic's class" } });
+        }
+      }
+
+      const updated = await prisma.generation.update({
+        where: { id: generation.id },
+        data: { shareStatus: "published", publishedAt: new Date(), sharedWithAll, sharedStudentStubIds: sharedWithAll ? [] : studentStubIds },
+        include: { contextSources: true },
+      });
+      return { data: updated, meta: {} };
     }
-    if (generation.generationStatus !== "succeeded") {
-      return reply.code(400).send({ data: null, error: { code: "validation_error", message: "Only a succeeded generation can be shared with students" } });
-    }
-    const updated = await prisma.generation.update({
-      where: { id: generation.id },
-      data: { shareStatus: "published", publishedAt: new Date() },
-      include: { contextSources: true },
-    });
-    return { data: updated, meta: {} };
-  });
+  );
 
   app.post<{ Params: { id: string } }>("/generations/:id/unpublish", { onRequest: scoped(app) }, async (request, reply) => {
     const generation = await prisma.generation.findFirst({

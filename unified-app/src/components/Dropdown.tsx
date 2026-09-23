@@ -1,5 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { Animated, FlatList, Modal, Pressable, StyleSheet, StyleProp, Text, View, ViewStyle } from "react-native";
+import {
+  Animated,
+  Easing,
+  FlatList,
+  Modal,
+  Platform,
+  Pressable,
+  StyleProp,
+  StyleSheet,
+  Text,
+  View,
+  ViewStyle,
+} from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme/ThemeContext";
@@ -33,15 +45,83 @@ export function Dropdown({
   onSelect,
   triggerLabel,
   triggerIcon,
-  variant = "field",
+  variant = "plain",
   hue,
   active = false,
   style,
 }: DropdownProps) {
-  const { colors, cardShadow, pressedOpacity } = useTheme();
+  const { colors, cardShadow, pressedOpacity, mode } = useTheme();
   const [open, setOpen] = useState(false);
+  const [isRendered, setIsRendered] = useState(open);
   const chevronAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
+
+  const modalBackdropAnim = useRef(new Animated.Value(0)).current;
+  const modalSheetScale = useRef(new Animated.Value(0.92)).current;
+  const modalSheetOpacity = useRef(new Animated.Value(0)).current;
+  const isClosingRef = useRef(false);
+
+  useEffect(() => {
+    if (open) {
+      isClosingRef.current = false;
+      setIsRendered(true);
+      modalBackdropAnim.setValue(0);
+      modalSheetScale.setValue(0.92);
+      modalSheetOpacity.setValue(0);
+
+      Animated.parallel([
+        Animated.timing(modalBackdropAnim, {
+          toValue: 1,
+          duration: 200,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.spring(modalSheetScale, {
+          toValue: 1,
+          tension: 280,
+          friction: 24,
+          useNativeDriver: true,
+        }),
+        Animated.timing(modalSheetOpacity, {
+          toValue: 1,
+          duration: 160,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else if (isRendered && !isClosingRef.current) {
+      animateAndClose();
+    }
+  }, [open]);
+
+  function animateAndClose(callback?: () => void) {
+    if (isClosingRef.current) return;
+    isClosingRef.current = true;
+
+    Animated.parallel([
+      Animated.timing(modalBackdropAnim, {
+        toValue: 0,
+        duration: 160,
+        easing: Easing.in(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.timing(modalSheetScale, {
+        toValue: 0.94,
+        duration: 160,
+        easing: Easing.in(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.timing(modalSheetOpacity, {
+        toValue: 0,
+        duration: 140,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      setIsRendered(false);
+      isClosingRef.current = false;
+      setOpen(false);
+      if (callback) callback();
+    });
+  }
 
   useEffect(() => {
     Animated.timing(chevronAnim, {
@@ -78,7 +158,7 @@ export function Dropdown({
                 styles.triggerField,
                 {
                   backgroundColor: active ? hue : colors.surfaceRaised,
-                  borderColor: active ? hue : hue + "45",
+                  borderWidth: 0,
                 },
                 cardShadow,
                 pressed && { opacity: pressedOpacity },
@@ -138,66 +218,98 @@ export function Dropdown({
         )}
       </Animated.View>
 
-      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+      <Modal
+        visible={isRendered}
+        transparent
+        animationType="none"
+        statusBarTranslucent
+        navigationBarTranslucent={Platform.OS === "android"}
+        onRequestClose={() => animateAndClose()}
+      >
         <GestureHandlerRootView style={{ flex: 1 }}>
-        <Pressable style={styles.backdrop} onPress={() => setOpen(false)} accessibilityLabel="Close">
-          <Pressable
-            style={[styles.sheet, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}
-            onPress={() => {}}
-          >
-            <View style={styles.sheetTitleRow}>
-              <View style={[styles.sheetTitleDot, { backgroundColor: hue }]} />
-              <Text style={[styles.sheetTitle, { color: colors.textPrimary }]}>{title}</Text>
-            </View>
-            <View style={[styles.sheetDivider, { backgroundColor: colors.border }]} />
-            <FlatList
-              data={options}
-              keyExtractor={(item) => item.key}
-              style={styles.optionList}
-              showsVerticalScrollIndicator={false}
-              ItemSeparatorComponent={() => <View style={[styles.optionDivider, { backgroundColor: colors.border }]} />}
-              renderItem={({ item }) => {
-                const isSelected = item.key === selectedKey;
-                return (
-                  <Pressable
-                    onPress={() => {
-                      onSelect(item.key);
-                      setOpen(false);
-                    }}
-                    style={({ pressed }) => [styles.optionRow, pressed && { opacity: pressedOpacity }]}
-                    accessibilityRole="button"
-                  >
-                    {item.icon ? (
-                      <Ionicons
-                        name={item.icon}
-                        size={16}
-                        color={isSelected ? hue : colors.textSecondary}
-                        style={styles.optionIcon}
-                      />
-                    ) : null}
-                    <Text
-                      style={[
-                        styles.optionText,
-                        { color: isSelected ? hue : colors.textPrimary, fontWeight: isSelected ? "800" : "600" },
-                      ]}
-                      numberOfLines={1}
+          <View style={styles.modalRoot}>
+            <Animated.View
+              style={[
+                styles.backdrop,
+                {
+                  opacity: modalBackdropAnim,
+                  backgroundColor: mode === "dark" ? "rgba(0,0,0,0.65)" : "rgba(15,23,42,0.4)",
+                },
+              ]}
+            >
+              <Pressable
+                style={StyleSheet.absoluteFill}
+                onPress={() => animateAndClose()}
+                accessibilityLabel="Close"
+              />
+            </Animated.View>
+
+            <Animated.View
+              style={[
+                styles.sheet,
+                {
+                  backgroundColor: colors.surface,
+                  borderWidth: 0,
+                  opacity: modalSheetOpacity,
+                  transform: [{ scale: modalSheetScale }],
+                },
+                cardShadow,
+              ]}
+            >
+              <View style={styles.sheetTitleRow}>
+                <View style={[styles.sheetTitleDot, { backgroundColor: hue }]} />
+                <Text style={[styles.sheetTitle, { color: colors.textPrimary }]}>{title}</Text>
+              </View>
+              <View style={[styles.sheetDivider, { backgroundColor: colors.border }]} />
+              <FlatList
+                data={options}
+                keyExtractor={(item) => item.key}
+                style={styles.optionList}
+                showsVerticalScrollIndicator={false}
+                ItemSeparatorComponent={() => <View style={[styles.optionDivider, { backgroundColor: colors.border }]} />}
+                renderItem={({ item }) => {
+                  const isSelected = item.key === selectedKey;
+                  return (
+                    <Pressable
+                      onPress={() => {
+                        animateAndClose(() => onSelect(item.key));
+                      }}
+                      style={({ pressed }) => [styles.optionRow, pressed && { opacity: pressedOpacity }]}
+                      accessibilityRole="button"
                     >
-                      {item.label}
-                    </Text>
-                    {item.meta ? (
-                      <View style={[styles.optionMetaBadge, { backgroundColor: colors.backgroundMuted }]}>
-                        <Text style={[styles.optionMetaText, { color: colors.textMuted }]}>{item.meta}</Text>
-                      </View>
-                    ) : null}
-                    {isSelected ? (
-                      <Ionicons name="checkmark" size={18} color={hue} style={styles.optionCheck} />
-                    ) : null}
-                  </Pressable>
-                );
-              }}
-            />
-          </Pressable>
-        </Pressable>
+                      {item.icon ? (
+                        <Ionicons
+                          name={item.icon}
+                          size={16}
+                          color={isSelected ? hue : colors.textSecondary}
+                          style={styles.optionIcon}
+                        />
+                      ) : null}
+                      <Text
+                        style={[
+                          styles.optionText,
+                          {
+                            color: isSelected ? hue : colors.textPrimary,
+                            fontWeight: isSelected ? "800" : "500",
+                          },
+                        ]}
+                      >
+                        {item.label}
+                      </Text>
+                      {item.meta ? (
+                        <View style={[styles.optionMetaBadge, { backgroundColor: colors.surfaceRaised }]}>
+                          <Text style={[styles.optionMetaText, { color: colors.textMuted }]}>{item.meta}</Text>
+                        </View>
+                      ) : null}
+                      {isSelected ? (
+                        <Ionicons name="checkmark" size={16} color={hue} style={styles.optionCheck} />
+                      ) : null}
+                    </Pressable>
+                  );
+                }}
+              />
+            </Animated.View>
+          </View>
         </GestureHandlerRootView>
       </Modal>
     </>
@@ -273,12 +385,14 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     fontWeight: "700",
   },
-  backdrop: {
+  modalRoot: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFill,
   },
   sheet: {
     width: "88%",

@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
+import { softCardShadow } from "../../theme/tokens";
 
 const SUPPORT_EMAIL = "support@eduwand.com";
 const SUPPORT_PHONE = "+91 22 4000 1234";
@@ -36,7 +37,7 @@ export function HelpSupportScreen() {
   const [openFaq, setOpenFaq] = useState<number | null>(0);
 
   return (
-    <Screen>
+    <Screen edges={["bottom"]}>
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
         <LinearGradient colors={[colors.accent, colors.accentDark]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
           <View style={styles.heroGlowLarge} />
@@ -50,7 +51,7 @@ export function HelpSupportScreen() {
           </Text>
         </LinearGradient>
 
-        <View style={[styles.contactCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        <View style={[styles.contactCard, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           <Pressable
             onPress={() => Linking.openURL(`mailto:${SUPPORT_EMAIL}`)}
             style={({ pressed }) => [styles.contactTile, pressed && { opacity: pressedOpacity }]}
@@ -86,7 +87,7 @@ export function HelpSupportScreen() {
 
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Frequently asked</Text>
-          <View style={[styles.faqCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <View style={[styles.faqCard, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
             {FAQS.map((faq, index) => {
               const isOpen = openFaq === index;
               return (
@@ -178,10 +179,10 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   contactCard: {
+    ...softCardShadow,
     flexDirection: "row",
     alignItems: "stretch",
     borderRadius: 20,
-    borderWidth: 1,
   },
   contactTile: { flex: 1, alignItems: "center", paddingVertical: 18, paddingHorizontal: 8, gap: 6 },
   contactDivider: { width: 1, alignSelf: "stretch", marginVertical: 14 },

@@ -55,6 +55,17 @@ export const darkColors: ThemeColors = {
   primaryBrand: brandPalette.deepPlum,
 };
 
+// The app's card look: borderless "floating" cards - a wide, low-opacity
+// neutral shadow in place of an outline. This is what cardShadow resolves to
+// in light mode, so any box using cardShadow should not also draw a border.
+export const softCardShadow = {
+  shadowColor: "#1F1F1F",
+  shadowOffset: { width: 0, height: 8 },
+  shadowOpacity: 0.08,
+  shadowRadius: 22,
+  elevation: 4,
+} as const;
+
 export function getCardShadow(mode: "light" | "dark") {
   if (mode === "dark") {
     return {
@@ -65,13 +76,7 @@ export function getCardShadow(mode: "light" | "dark") {
       elevation: 2,
     };
   }
-  return {
-    shadowColor: "#1F1F1F",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.045,
-    shadowRadius: 8,
-    elevation: 1,
-  };
+  return { ...softCardShadow };
 }
 
 export const PRESSED_OPACITY = 0.65;

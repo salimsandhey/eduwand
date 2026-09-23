@@ -91,7 +91,9 @@ export function AssessmentInsightScreen({ route, navigation }: Props) {
         </Pressable>
         <View style={styles.topCopy}>
           <Text style={[styles.topTitle, { color: colors.textPrimary }]} numberOfLines={1}>{assessment.title}</Text>
-          <Text style={[styles.topSubtitle, { color: colors.textMuted }]}>{insight.respondentCount} responded</Text>
+          <Text style={[styles.topSubtitle, { color: colors.textMuted }]}>
+            {insight.respondentCount} responded{insight.totalDoubts > 0 ? ` · ${insight.totalDoubts} doubt${insight.totalDoubts === 1 ? "" : "s"} raised` : ""}
+          </Text>
         </View>
       </View>
 
@@ -104,7 +106,7 @@ export function AssessmentInsightScreen({ route, navigation }: Props) {
           <Text style={[styles.bodyText, { color: colors.textPrimary, marginTop: 6 }]}>{insight.recommendation}</Text>
         </View>
 
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           <Text style={[styles.cardHeading, { color: colors.textPrimary }]}>Understanding bands</Text>
           {(["level_1", "level_2", "level_3"] as const).map((band) => (
             <View key={band} style={styles.bandRow}>
@@ -120,11 +122,17 @@ export function AssessmentInsightScreen({ route, navigation }: Props) {
           ) : null}
         </View>
 
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           <Text style={[styles.cardHeading, { color: colors.textPrimary }]}>Question breakdown</Text>
           {insight.itemAnalysis.map((q, i) => (
             <View key={q.questionId} style={styles.itemRow}>
               <Text style={[styles.bodyTextSmall, { color: colors.textSecondary, flex: 1 }]} numberOfLines={2}>{i + 1}. {q.prompt}</Text>
+              {q.doubtCount > 0 ? (
+                <View style={[styles.doubtTag, { backgroundColor: colors.warning + "26" }]}>
+                  <Ionicons name="help-circle-outline" size={11} color={colors.warning} />
+                  <Text style={[styles.doubtTagText, { color: colors.warning }]}>{q.doubtCount}</Text>
+                </View>
+              ) : null}
               <Text style={[styles.itemRate, { color: q.correctRate !== null && q.correctRate < 0.5 ? colors.danger : colors.accent }]}>
                 {q.correctRate === null ? "—" : `${Math.round(q.correctRate * 100)}%`}
               </Text>
@@ -175,6 +183,8 @@ const styles = StyleSheet.create({
   bandLabel: { flex: 1, fontSize: 13, fontWeight: "700" },
   bandCount: { fontSize: 12, fontWeight: "600" },
   itemRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10 },
+  doubtTag: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 3, borderRadius: 999 },
+  doubtTagText: { fontSize: 10, fontWeight: "800" },
   itemRate: { fontSize: 13, fontWeight: "800" },
   error: { textAlign: "center", fontSize: 13 },
   releaseButton: { height: 52, borderRadius: 14, borderWidth: 1, alignItems: "center", justifyContent: "center" },

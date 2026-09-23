@@ -22,12 +22,13 @@ import { Screen } from "../../components/Screen";
 import { Dropdown } from "../../components/Dropdown";
 import { TypewriterText } from "../../components/TypewriterText";
 import { getStatusColor } from "../../theme/statusColors";
-import { brandPalette } from "../../theme/tokens";
+import { brandPalette, softCardShadow } from "../../theme/tokens";
 import { usePipelineStages } from "../../hooks/usePipelineStages";
 import { useTabBarScrollHandler } from "../../navigation/TabBarScrollContext";
 import { api, AcademicYear, Enquiry, EnquiryStatus, PipelineStage } from "../../api/client";
 import { resolveEnquiryImageSource } from "../../theme/avatars";
 import { decorativeAssets } from "../../theme/decorativeAssets";
+import { useTabBarClearance } from "../../navigation/useTabBarClearance";
 
 type Props = CompositeScreenProps<
   BottomTabScreenProps<EnrolmentTabParamList, "Enquiries">,
@@ -172,7 +173,7 @@ function AnimatedCard({
         onPressOut={handlePressOut}
         style={({ pressed }) => [
           styles.card,
-          { backgroundColor: colors.surface, borderColor: colors.border },
+          { backgroundColor: colors.surface, borderWidth: 0 },
           cardShadow,
           pressed && { opacity: pressedOpacity },
         ]}
@@ -266,6 +267,7 @@ function AnimatedCard({
 export function EnquiryListScreen({ navigation }: Props) {
   const { accessToken } = useAuth();
   const { colors, mode, cardShadow, pressedOpacity } = useTheme();
+  const tabBarClearance = useTabBarClearance(18);
   const { stages } = usePipelineStages();
   const handleTabBarScroll = useTabBarScrollHandler();
   const statusFilters: (EnquiryStatus | "all")[] = ["all", ...stages.map((stage) => stage.key)];
@@ -408,7 +410,7 @@ export function EnquiryListScreen({ navigation }: Props) {
         data={filtered}
         keyExtractor={(item) => item.id}
         refreshControl={<RefreshControl refreshing={isLoading} onRefresh={load} tintColor={colors.accent} />}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[styles.list, { paddingBottom: tabBarClearance }]}
         showsVerticalScrollIndicator={false}
         onScroll={handleTabBarScroll}
         scrollEventThrottle={16}
@@ -422,7 +424,7 @@ export function EnquiryListScreen({ navigation }: Props) {
             </View>
 
             {/* Enrolment overview hero card — commented out per request
-            <View style={[styles.statHero, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+            <View style={[styles.statHero, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
               <View style={styles.statHeroTopRow}>
                 <Text style={[styles.statHeroEyebrow, { color: colors.textMuted }]}>Enrolment overview</Text>
               </View>
@@ -555,7 +557,7 @@ export function EnquiryListScreen({ navigation }: Props) {
         pointerEvents={quickMenuOpen ? "auto" : "none"}
         style={[
           styles.quickMenuPanel,
-          { backgroundColor: colors.surface, borderColor: colors.border },
+          { backgroundColor: colors.surface, borderWidth: 0 },
           cardShadow,
           {
             opacity: quickMenuOpacity,
@@ -637,9 +639,9 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   statHero: {
+    ...softCardShadow,
     marginTop: 16,
     borderRadius: 26,
-    borderWidth: 1,
     paddingTop: 16,
     paddingBottom: 16,
     paddingHorizontal: 14,
@@ -714,10 +716,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
   },
   searchCard: {
+    ...softCardShadow,
     marginTop: 16,
     minHeight: 52,
     borderRadius: 26,
-    borderWidth: 1,
     paddingHorizontal: 18,
     paddingRight: 46,
     flexDirection: "row",
@@ -766,10 +768,10 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   card: {
+    ...softCardShadow,
     flexDirection: "row",
     alignItems: "stretch",
     borderRadius: 24,
-    borderWidth: 1,
     overflow: "hidden",
   },
   cardStub: {
@@ -895,9 +897,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   emptyState: {
+    ...softCardShadow,
     marginTop: 18,
     borderRadius: 24,
-    borderWidth: 1,
     paddingVertical: 28,
     paddingHorizontal: 20,
     alignItems: "center",

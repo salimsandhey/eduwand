@@ -9,7 +9,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
-import { spacing } from "../../theme/tokens";
+import { spacing, softCardShadow } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { DatePicker } from "../../components/DatePicker";
 import { api, ClassSection, ClassJoinRequest, getClassJoinLink } from "../../api/client";
@@ -241,7 +241,7 @@ export function AddStudentScreen({ navigation }: Props) {
           )}
 
           {mode === "manual" ? (
-            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+            <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
               <Text style={[styles.label, { color: colors.textPrimary, marginTop: 0 }]}>Full name</Text>
               <TextInput
                 style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
@@ -279,7 +279,7 @@ export function AddStudentScreen({ navigation }: Props) {
               </Pressable>
             </View>
           ) : mode === "bulk" ? (
-            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+            <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
               <Text style={[styles.hint, { color: colors.textMuted }]}>
                 Upload a CSV (opens fine in Excel) with columns: full_name, date_of_birth, guardian_name, guardian_contact.
               </Text>
@@ -304,7 +304,7 @@ export function AddStudentScreen({ navigation }: Props) {
             </View>
           ) : (
             <>
-              <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+              <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
                 <Text style={[styles.hint, { color: colors.textMuted }]}>
                   This link is only for the class selected above. Parents/students who open it just submit a request - you
                   still confirm each one below before they're added.
@@ -334,7 +334,7 @@ export function AddStudentScreen({ navigation }: Props) {
                 <Text style={[styles.hint, { color: colors.textMuted, marginTop: 16 }]}>No requests here.</Text>
               ) : (
                 requests.map((req) => (
-                  <View key={req.id} style={[styles.requestCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+                  <View key={req.id} style={[styles.requestCard, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
                     <View style={{ flex: 1 }}>
                       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                         <Text style={[styles.rowName, { color: colors.textPrimary }]}>{req.studentName}</Text>
@@ -425,8 +425,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   card: {
+    ...softCardShadow,
     marginTop: 16,
-    borderWidth: 1,
     borderRadius: 16,
     padding: 16,
   },
@@ -467,10 +467,10 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   requestCard: {
+    ...softCardShadow,
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    borderWidth: 1,
     borderRadius: 14,
     padding: 14,
     marginTop: 10,

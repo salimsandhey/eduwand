@@ -14,6 +14,7 @@ import { AnimatedSplashScreen } from "./src/components/AnimatedSplashScreen";
 import { AiAssistantGlowOverlay } from "./src/components/ai/AiAssistantGlowOverlay";
 import { WelcomeMascotProvider, useWelcomeMascot } from "./src/context/WelcomeMascotContext";
 import { MascotWelcomeOverlay } from "./src/components/MascotWelcomeOverlay";
+import { OfflineBanner } from "./src/components/OfflineBanner";
 import { lockPortrait } from "./src/utils/safeOrientation";
 
 applyGlobalTypography();
@@ -44,6 +45,7 @@ function Root() {
       )}
       {splashDone && !!user && <MascotWelcomeOverlay key={welcomeCount} />}
       <AiAssistantGlowOverlay />
+      {splashDone && <OfflineBanner />}
       <StatusBar style={mode === "dark" ? "light" : "dark"} />
     </SplashDoneProvider>
   );

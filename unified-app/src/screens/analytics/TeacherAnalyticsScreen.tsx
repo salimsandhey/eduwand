@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Share, StyleSheet, Text, View } from "react-native";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../../theme/ThemeContext";
 import { useAuth } from "../../context/AuthContext";
 import { Screen } from "../../components/Screen";
 import { api, ClassAnalytics, ClassSection, StudentAnalytics } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
+import { useTabBarClearance } from "../../navigation/useTabBarClearance";
+import { useTabBarScrollHandler } from "../../navigation/TabBarScrollContext";
 
 type AnalyticsTab = "class" | "students";
 const BAND_COLORS = ["#18A957", "#7C3AED", "#F97316"];
@@ -27,7 +29,10 @@ function weeklyTrendPercent(trend: ClassAnalytics["weeklyTrend"]): number | null
 }
 
 export function TeacherAnalyticsScreen() {
+  const navigation = useNavigation<any>();
   const { colors, pressedOpacity } = useTheme();
+  const tabBarClearance = useTabBarClearance();
+  const handleTabBarScroll = useTabBarScrollHandler();
   const { accessToken } = useAuth();
   const [classSections, setClassSections] = useState<ClassSection[]>([]);
   const [classSectionId, setClassSectionId] = useState<string | null>(null);
@@ -97,7 +102,13 @@ export function TeacherAnalyticsScreen() {
 
   return (
     <Screen edges={["top"]}>
-      <ScrollView style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={[styles.content, { paddingBottom: tabBarClearance }]}
+        showsVerticalScrollIndicator={false}
+        onScroll={handleTabBarScroll}
+        scrollEventThrottle={16}
+      >
         <View style={styles.topRow}>
           <Text style={[styles.pageTitle, { color: colors.textPrimary }]}>Analytics</Text>
           <Pressable style={({ pressed }) => [styles.shareButton, { borderColor: colors.accentSoftAlt }, pressed && { opacity: pressedOpacity }]} onPress={shareAnalytics} disabled={!analytics} accessibilityRole="button">
@@ -175,7 +186,7 @@ export function TeacherAnalyticsScreen() {
               </View>
             </View>
 
-            <View style={[styles.insightCard, { backgroundColor: colors.accentSoft }]}><View style={[styles.insightIcon, { backgroundColor: colors.surface }]}><Ionicons name="bulb-outline" size={19} color={colors.accent} /></View><View style={styles.insightCopy}><Text style={[styles.insightTitle, { color: colors.textPrimary }]}>Key insight</Text><Text style={[styles.insightText, { color: colors.textSecondary }]}>{weakestArea ? `${weakestArea.title} is the lowest-scoring assignment at ${Math.round(weakestArea.averageScore)}%. Consider a short recap before moving ahead.` : "Grade an assignment to unlock class-level teaching insights."}</Text><View style={[styles.insightChip, { backgroundColor: colors.surface, borderColor: colors.accentSoftAlt }]}><Text style={[styles.insightChipText, { color: colors.accent }]}>Focus area</Text><Ionicons name="arrow-forward" size={13} color={colors.accent} /></View></View></View>
+            <View style={[styles.insightCard, { backgroundColor: colors.accentSoft }]}><View style={[styles.insightIcon, { backgroundColor: colors.surface }]}><Ionicons name="bulb-outline" size={19} color={colors.accent} /></View><View style={styles.insightCopy}><Text style={[styles.insightTitle, { color: colors.textPrimary }]}>Key insight</Text><Text style={[styles.insightText, { color: colors.textSecondary }]}>{weakestArea ? `${weakestArea.title} is the lowest-scoring assignment at ${Math.round(weakestArea.averageScore)}%. Consider a short recap before moving ahead.` : "Grade an assignment to unlock class-level teaching insights."}</Text>{weakestArea ? <Pressable style={({ pressed }) => [styles.insightChip, { backgroundColor: colors.surface, borderColor: colors.accentSoftAlt }, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.navigate("AssignmentDetail", { assignmentId: weakestArea.assignmentId })} accessibilityRole="button" accessibilityLabel={`Open ${weakestArea.title}`}><Text style={[styles.insightChipText, { color: colors.accent }]}>Focus area</Text><Ionicons name="arrow-forward" size={13} color={colors.accent} /></Pressable> : null}</View></View>
           </> : <>
             <Text style={[styles.studentHeading, { color: colors.textPrimary }]}>Student attainment</Text>
             {analytics.students.length === 0 ? <Text style={[styles.emptyText, { color: colors.textMuted }]}>No graded submissions yet for this class.</Text> : analytics.students.map((student) => <Pressable key={student.studentStubId} style={({ pressed }) => [styles.studentRow, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]} onPress={() => viewStudent(student.studentStubId)} accessibilityRole="button"><View style={[styles.studentAvatar, { backgroundColor: colors.accentSoft }]}><Text style={[styles.studentAvatarText, { color: colors.accent }]}>{student.fullName.slice(0, 1).toUpperCase()}</Text></View><View style={styles.studentCopy}><Text style={[styles.studentName, { color: colors.textPrimary }]}>{capitalizeFirst(student.fullName)}</Text><Text style={[styles.studentMeta, { color: colors.textMuted }]}>{student.submissionCount} submission{student.submissionCount === 1 ? "" : "s"}</Text></View><Text style={[styles.studentScore, { color: student.averageScore < 60 ? colors.danger : colors.accent }]}>{Math.round(student.averageScore)}%</Text><Ionicons name="chevron-forward" size={16} color={colors.textMuted} /></Pressable>)}

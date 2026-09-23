@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
+import { publish } from "../lib/realtime";
 import { storage } from "../lib/storage";
 import { aiProvider } from "../lib/ai";
 import { selectQuestionsForMix } from "../lib/personalisation";
@@ -270,6 +271,8 @@ export async function studentPortalRoutes(app: FastifyInstance) {
         topic: { schoolId: request.schoolId, classSectionId: student.classSectionId },
         generationStatus: "succeeded",
         shareStatus: "published",
+        // Shared with the whole class, or this student was specifically picked.
+        OR: [{ sharedWithAll: true }, { sharedStudentStubIds: { has: student.id } }],
       },
       include: { topic: { select: { id: true, name: true, subject: true } } },
       orderBy: { publishedAt: "desc" },
@@ -334,6 +337,12 @@ export async function studentPortalRoutes(app: FastifyInstance) {
         sentAt: new Date(),
       },
     });
+
+    const teachers = await prisma.classSectionTeacher.findMany({
+      where: { classSectionId: student.classSectionId },
+      select: { teacherUserId: true },
+    });
+    publish([`user:${student.id}`, ...teachers.map((t) => `user:${t.teacherUserId}`)], { type: "message", message });
 
     return reply.code(201).send({ data: message, meta: {} });
   });

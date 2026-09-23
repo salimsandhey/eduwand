@@ -28,6 +28,26 @@ const LANGUAGES = ["English", "Hindi"];
 const CLASS_COUNTS = [1, 2, 3, 5];
 const DURATIONS = [30, 45, 60, 90];
 const PAGE_RANGE_THRESHOLD = 10;
+// Most PDF pages one generation can show as-is (matches the backend cap), and
+// how many are pre-selected when a PDF is first switched on.
+const EMBED_PAGE_CAP = 20;
+const EMBED_DEFAULT_PAGES = 10;
+
+type SourceListFilter = "all" | "pdfs" | "images" | "docs" | "links";
+const SOURCE_LIST_FILTERS: { key: SourceListFilter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "pdfs", label: "PDFs" },
+  { key: "images", label: "Images" },
+  { key: "docs", label: "Docs" },
+  { key: "links", label: "Links" },
+];
+function matchesSourceFilter(source: ContextSource, filter: SourceListFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "pdfs") return source.sourceType === "pdf";
+  if (filter === "images") return source.sourceType === "image";
+  if (filter === "docs") return source.sourceType === "docx" || source.sourceType === "pptx";
+  return source.sourceType === "url" || source.sourceType === "youtube" || source.sourceType === "idream_k12";
+}
 
 // "School format" and "More visual" are no longer selectable styles -
 // branding applies by default to every deck (see the branding color block
@@ -63,6 +83,11 @@ const ACTIVITY_RESOURCES: { key: string; label: string; icon: keyof typeof Ionic
   { key: "lab_equipment", label: "Science lab equipment", icon: "flask-outline" },
   { key: "audio", label: "Speakers / audio", icon: "volume-high-outline" },
 ];
+// The six Bloom's Taxonomy stages, shown as "Learning Stage" (same concept,
+// renamed label - never show "Bloom's Level" in the product). Mirrors
+// backend/src/lib/ai.ts's LEARNING_STAGE_OPTIONS (kept in sync manually,
+// same pattern as the other small duplicated tables above).
+const LEARNING_STAGES = ["Remember", "Understand", "Apply", "Analyze", "Evaluate", "Create"];
 // Same fixed palette used for school-wide branding in FormatTemplateScreen.tsx -
 // reused here so a per-generation color tweak picks from the same set. Kept
 // to 6 (not more) so the row - 6 presets + the custom-picker swatch - fits
@@ -99,8 +124,14 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
   const [presentationTemplate, setPresentationTemplate] = useState<PresentationTemplate>("detailed");
   const [activityGroupSize, setActivityGroupSize] = useState<ActivityGroupSize>("small_group");
   const [activityResources, setActivityResources] = useState<string[]>([]);
+  const [learningStages, setLearningStages] = useState<string[]>([]);
   const [selectedSourceIds, setSelectedSourceIds] = useState<Set<string>>(new Set());
   const [pageRanges, setPageRanges] = useState<Record<string, PageRange>>({});
+  const [sourceFilter, setSourceFilter] = useState<SourceListFilter>("all");
+  // Images / PDF pages shown as-is in the output (not fed to the AI as text).
+  const [embedIds, setEmbedIds] = useState<Set<string>>(new Set());
+  const [embedRanges, setEmbedRanges] = useState<Record<string, PageRange>>({});
+  const [assembleOnlyChoice, setAssembleOnlyChoice] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   useAiGenerating(isGenerating);
   const [error, setError] = useState<string | null>(null);
@@ -143,7 +174,7 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
   );
 
   const topicMeta = topic
-    ? `${capitalizeFirst(topic.subject)} · ${topic.board} · ${capitalizeFirst(topic.classSection.className)} ${capitalizeFirst(topic.classSection.sectionName)}`
+    ? `${capitalizeFirst(topic.subject)}${user?.board ? ` · ${user.board}` : ""} ·${capitalizeFirst(topic.classSection.className)} ${capitalizeFirst(topic.classSection.sectionName)}`
     : null;
 
   function selectOutput(item: (typeof OUTPUT_TYPES)[number]) {
@@ -157,6 +188,10 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
 
   function toggleActivityResource(key: string) {
     setActivityResources((current) => (current.includes(key) ? current.filter((item) => item !== key) : [...current, key]));
+  }
+
+  function toggleLearningStage(stage: string) {
+    setLearningStages((current) => (current.includes(stage) ? current.filter((item) => item !== stage) : [...current, stage]));
   }
 
   function toggleSource(source: ContextSource) {
@@ -187,6 +222,38 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
     });
   }
 
+  function toggleEmbed(source: ContextSource) {
+    setEmbedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(source.id)) {
+        next.delete(source.id);
+      } else {
+        next.add(source.id);
+        if (source.sourceType === "pdf" && !embedRanges[source.id]) {
+          setEmbedRanges((r) => ({ ...r, [source.id]: { from: 1, to: Math.min(source.pageCount ?? 1, EMBED_DEFAULT_PAGES) } }));
+        }
+      }
+      return next;
+    });
+  }
+
+  function adjustEmbedRange(sourceId: string, field: "from" | "to", delta: number, pageCount: number) {
+    setEmbedRanges((prev) => {
+      const current = prev[sourceId] ?? { from: 1, to: Math.min(pageCount, EMBED_DEFAULT_PAGES) };
+      const next = { ...current, [field]: Math.min(pageCount, Math.max(1, current[field] + delta)) };
+      if (next.from > next.to) {
+        if (field === "from") next.to = next.from;
+        else next.from = next.to;
+      }
+      // Never more than the backend allows in one go.
+      if (next.to - next.from + 1 > EMBED_PAGE_CAP) {
+        if (field === "from") next.to = next.from + EMBED_PAGE_CAP - 1;
+        else next.from = next.to - EMBED_PAGE_CAP + 1;
+      }
+      return { ...prev, [sourceId]: next };
+    });
+  }
+
   async function generate() {
     if (!accessToken) return;
     setIsGenerating(true);
@@ -197,13 +264,20 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
       const range = pageRanges[id];
       return range ? { contextSourceId: id, pageFrom: range.from, pageTo: range.to } : { contextSourceId: id };
     });
+    const embeds: GenerationSourceSelection[] = (topic?.contextSources ?? [])
+      .filter((source) => embedIds.has(source.id))
+      .map((source) => {
+        const range = embedRanges[source.id];
+        return source.sourceType === "pdf" && range ? { contextSourceId: source.id, pageFrom: range.from, pageTo: range.to } : { contextSourceId: source.id };
+      });
     try {
       const generation = await api.createGeneration(accessToken, topicId, {
         outputType, classCount, minutesPerClass, language, customPrompt: combinedPrompt || undefined, sources,
+        ...(embeds.length > 0 ? { embeds, ...(assembleOnly ? { assembleOnly: true } : {}) } : {}),
         ...(outputType === "presentation"
           ? { presentationTemplate, ...(colorOverride ? { overridePrimaryColor: colorOverride.primary, overrideSecondaryColor: colorOverride.secondary } : {}) }
           : {}),
-        ...(outputType === "custom_activity_report" ? { activityGroupSize, activityResources } : {}),
+        ...(outputType === "custom_activity_report" ? { activityGroupSize, activityResources, learningStages } : {}),
       });
       navigation.replace("GenerationReview", { generationId: generation.id });
     } catch (err) {
@@ -214,7 +288,11 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
   }
 
   const hasSources = (topic?.contextSources.length ?? 0) > 0;
-  const blockedByNoSourceSelection = hasSources && selectedSourceIds.size === 0;
+  const blockedByNoSourceSelection = hasSources && selectedSourceIds.size === 0 && embedIds.size === 0;
+  // A deck can be built from the chosen images / pages alone - no AI, free.
+  const canAssemble = outputType === "presentation" && embedIds.size > 0;
+  const assembleOnly = canAssemble && assembleOnlyChoice;
+  const shownSources = (topic?.contextSources ?? []).filter((source) => matchesSourceFilter(source, sourceFilter));
 
   return (
     <Screen edges={["top", "bottom"]}>
@@ -405,6 +483,28 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
                 );
               })}
             </View>
+
+            <Text style={[styles.sectionHeading, { color: colors.textPrimary }]}>Learning stage</Text>
+            <Text style={[styles.resourceHint, { color: colors.textMuted }]}>
+              Pick one or more to constrain what this activity targets. Leave blank to let the AI choose.
+            </Text>
+            <View style={styles.resourceGrid}>
+              {LEARNING_STAGES.map((stage) => {
+                const active = learningStages.includes(stage);
+                return (
+                  <Pressable
+                    key={stage}
+                    style={({ pressed }) => [styles.resourceChip, { backgroundColor: active ? colors.accentSoft : colors.surface, borderColor: active ? colors.accent : colors.border }, pressed && { opacity: pressedOpacity }]}
+                    onPress={() => toggleLearningStage(stage)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                  >
+                    <Text style={[styles.resourceChipText, { color: active ? colors.accent : colors.textSecondary }]}>{stage}</Text>
+                    {active ? <Ionicons name="checkmark-circle" size={14} color={colors.accent} /> : null}
+                  </Pressable>
+                );
+              })}
+            </View>
           </View>
         ) : null}
 
@@ -418,8 +518,29 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
           </View>
         ) : (
           <View style={styles.sourceList}>
-            {topic.contextSources.map((source) => {
+            <View style={styles.sourceFilterRow}>
+              {SOURCE_LIST_FILTERS.map((filter) => {
+                const active = sourceFilter === filter.key;
+                const count = topic.contextSources.filter((s) => matchesSourceFilter(s, filter.key)).length;
+                return (
+                  <Pressable
+                    key={filter.key}
+                    onPress={() => setSourceFilter(filter.key)}
+                    style={[styles.sourceFilterChip, { backgroundColor: active ? colors.accent : colors.surfaceRaised }]}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                  >
+                    <Text style={[styles.sourceFilterText, { color: active ? colors.accentOn : colors.textMuted }]}>{filter.label} {count}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            {shownSources.length === 0 ? <Text style={[styles.sourceHint, { color: colors.textMuted }]}>No sources of this type on the topic.</Text> : null}
+            {shownSources.map((source) => {
               const selected = selectedSourceIds.has(source.id);
+              const canEmbed = (source.sourceType === "pdf" || source.sourceType === "image") && !!source.fileLocation;
+              const embedded = embedIds.has(source.id);
+              const embedRange = embedRanges[source.id];
               const label = source.originalFilename ?? source.sourceUrl ?? source.idreamK12ReferenceId ?? source.sourceType;
               const showPageRange = selected && source.sourceType === "pdf" && (source.pageCount ?? 0) > PAGE_RANGE_THRESHOLD;
               const range = pageRanges[source.id];
@@ -443,9 +564,41 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
                       <PageStepper value={range.to} onDecrement={() => adjustPageRange(source.id, "to", -1, source.pageCount!)} onIncrement={() => adjustPageRange(source.id, "to", 1, source.pageCount!)} />
                     </View>
                   ) : null}
+                  {canEmbed ? (
+                    <View style={[styles.pageRangeRow, { borderTopColor: colors.border, flexWrap: "wrap" }]}>
+                      <Pressable style={styles.asIsRow} onPress={() => toggleEmbed(source)} accessibilityRole="switch" accessibilityState={{ checked: embedded }}>
+                        <Ionicons name={embedded ? "checkbox" : "square-outline"} size={19} color={embedded ? colors.accent : colors.textMuted} />
+                        <Text style={[styles.asIsText, { color: colors.textPrimary }]}>
+                          {source.sourceType === "pdf" ? "Show these pages as-is in the output" : "Show this image as-is in the output"}
+                        </Text>
+                      </Pressable>
+                      {embedded && source.sourceType === "pdf" && embedRange ? (
+                        <View style={styles.asIsPages}>
+                          <Text style={[styles.pageRangeLabel, { color: colors.textMuted }]}>Pages</Text>
+                          <PageStepper value={embedRange.from} onDecrement={() => adjustEmbedRange(source.id, "from", -1, source.pageCount ?? 1)} onIncrement={() => adjustEmbedRange(source.id, "from", 1, source.pageCount ?? 1)} />
+                          <Text style={{ color: colors.textMuted }}>to</Text>
+                          <PageStepper value={embedRange.to} onDecrement={() => adjustEmbedRange(source.id, "to", -1, source.pageCount ?? 1)} onIncrement={() => adjustEmbedRange(source.id, "to", 1, source.pageCount ?? 1)} />
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : null}
                 </View>
               );
             })}
+            {canAssemble ? (
+              <Pressable
+                style={[styles.assembleCard, { backgroundColor: assembleOnly ? colors.accentSoft : colors.surfaceRaised, borderColor: assembleOnly ? colors.accent : colors.border }]}
+                onPress={() => setAssembleOnlyChoice((v) => !v)}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: assembleOnly }}
+              >
+                <Ionicons name={assembleOnly ? "checkbox" : "square-outline"} size={20} color={assembleOnly ? colors.accent : colors.textMuted} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.asIsText, { color: colors.textPrimary }]}>Build the deck from these only</Text>
+                  <Text style={[styles.sourceHint, { color: colors.textMuted }]}>No AI writing - your images and pages become the slides. Free.</Text>
+                </View>
+              </Pressable>
+            ) : null}
             {blockedByNoSourceSelection ? (
               <Text style={[styles.sourceHint, { color: colors.textMuted }]}>Select at least one source to ground this generation in, or it won't have anything specific to work from.</Text>
             ) : null}
@@ -460,7 +613,7 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
           <View style={styles.goalRow}>{LEARNING_GOALS.map((goal) => { const active = !goalsDisabled && learningGoals.includes(goal); return <Pressable key={goal} style={({ pressed }) => [styles.goalChip, { backgroundColor: active ? colors.accent : colors.surface, borderColor: active ? colors.accent : colors.border }, pressed && { opacity: pressedOpacity }]} onPress={() => toggleGoal(goal)} accessibilityRole="button" accessibilityState={{ selected: active }}><Text style={[styles.goalText, { color: active ? colors.accentOn : colors.textSecondary }]}>{goal}</Text></Pressable>; })}</View>
         </View>
 
-        <View style={[styles.focusCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        <View style={[styles.focusCard, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           <View style={styles.settingChips}>
             <SelectChip
               title="Language"
@@ -651,6 +804,13 @@ const styles = StyleSheet.create({
   sourceRowMain: { flexDirection: "row", alignItems: "center", paddingVertical: 11, paddingHorizontal: 12, minHeight: 50 },
   sourceRowLabel: { fontSize: 13, fontWeight: "700" },
   sourceRowMeta: { fontSize: 10, marginTop: 1, fontWeight: "600" },
+  sourceFilterRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 4 },
+  sourceFilterChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999 },
+  sourceFilterText: { fontSize: 12, fontWeight: "700" },
+  asIsRow: { flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 1 },
+  asIsText: { fontSize: 12, fontWeight: "700", flexShrink: 1 },
+  asIsPages: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 8, width: "100%" },
+  assembleCard: { flexDirection: "row", alignItems: "center", gap: 10, borderWidth: 1, borderRadius: 13, padding: 12, marginTop: 4 },
   pageRangeRow: { flexDirection: "row", alignItems: "center", gap: 10, borderTopWidth: 1, paddingHorizontal: 12, paddingVertical: 10 },
   pageRangeLabel: { fontSize: 11, fontWeight: "700" },
   pageStepper: { flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, borderRadius: 8, paddingHorizontal: 8, height: 28 },

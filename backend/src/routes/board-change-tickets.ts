@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { PLATFORM_ADMIN_ROLE } from "../lib/roles";
+import { BOARDS, isValidBoard } from "../lib/boards";
 
 // School.board is a request/approval-only setting for every school - see the
 // PATCH /schools/:id guard in schools.ts and Docs/superpowers/plans/2026-09-
@@ -10,7 +11,6 @@ import { PLATFORM_ADMIN_ROLE } from "../lib/roles";
 // individual school, admin/leadership for an institutional one), decided by
 // platform_admin. Approval applies requestedBoard directly to School.board.
 
-const BOARDS = ["CBSE", "ICSE", "IB"];
 
 interface CreateBoardChangeTicketBody {
   requestedBoard: string;
@@ -46,7 +46,7 @@ export async function boardChangeTicketRoutes(app: FastifyInstance) {
 
       const body = request.body ?? ({} as CreateBoardChangeTicketBody);
       const requestedBoard = body.requestedBoard?.trim();
-      if (!requestedBoard || !BOARDS.includes(requestedBoard)) {
+      if (!isValidBoard(requestedBoard)) {
         return reply.code(400).send({
           data: null,
           error: { code: "validation_error", message: `requestedBoard must be one of ${BOARDS.join(", ")}` },

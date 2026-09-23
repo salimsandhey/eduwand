@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator } from "react-native";
+import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Image } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import * as WebBrowser from "expo-web-browser";
@@ -8,7 +8,11 @@ import { useAuth } from "../../context/AuthContext";
 import { useAiGenerating } from "../../context/AiAssistantGlowContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
+import { VideoPlayerModal } from "../../components/VideoPlayerModal";
 import { api, ContextResearchJob, ResearchCandidate, ResearchCandidateType } from "../../api/client";
+
+// Kept small - "did I already save this exact video" is all this screen
+// needs; the full list with remove/watch lives on the Topic screen.
 
 type Props = NativeStackScreenProps<RootStackParamList, "ContextResearch">;
 
@@ -25,6 +29,7 @@ const CANDIDATE_TYPE_ICONS: Record<ResearchCandidateType, keyof typeof Ionicons.
   video: "logo-youtube",
   presentation: "easel-outline",
   article: "newspaper-outline",
+  image: "image-outline",
 };
 
 const CANDIDATE_TYPE_LABELS: Record<ResearchCandidateType, string> = {
@@ -32,7 +37,32 @@ const CANDIDATE_TYPE_LABELS: Record<ResearchCandidateType, string> = {
   video: "Video",
   presentation: "Slides",
   article: "Article",
+  image: "Image",
 };
+
+// Filter chips above the results. "Links" is every web page type (articles,
+// slide decks, videos); PDFs and images are real files that get downloaded and
+// stored when added.
+type TypeFilter = "all" | "links" | "pdfs" | "images" | "videos";
+const TYPE_FILTERS: { key: TypeFilter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "links", label: "Links" },
+  { key: "pdfs", label: "PDFs" },
+  { key: "images", label: "Images" },
+  { key: "videos", label: "Videos" },
+];
+function matchesFilter(candidate: ResearchCandidate, filter: TypeFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "pdfs") return candidate.type === "pdf";
+  if (filter === "images") return candidate.type === "image";
+  if (filter === "videos") return candidate.type === "video";
+  return candidate.type !== "pdf" && candidate.type !== "image" && candidate.type !== "video";
+}
+function addButtonLabel(candidate: ResearchCandidate): string {
+  if (candidate.type === "image") return "Add image";
+  if (candidate.type === "pdf") return "Add PDF";
+  return "Add to topic";
+}
 
 export function ContextResearchScreen({ route, navigation }: Props) {
   const { topicId } = route.params;
@@ -45,6 +75,15 @@ export function ContextResearchScreen({ route, navigation }: Props) {
   // A Set, not a single id - approving/dismissing one candidate must not
   // block acting on another at the same time.
   const [busyCandidateIds, setBusyCandidateIds] = useState<Set<string>>(new Set());
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
+  // Reference videos are watch-only (see backend/src/lib/youtube-search.ts) -
+  // this just opens the in-app player, no server call.
+  const [watching, setWatching] = useState<ResearchCandidate | null>(null);
+  // Which videos are already saved (see backend's SavedVideo) - drives the
+  // filled/outline bookmark state per card.
+  const [savedVideoIds, setSavedVideoIds] = useState<Set<string>>(new Set());
+  const [savingVideoIds, setSavingVideoIds] = useState<Set<string>>(new Set());
+  const [isStarting, setIsStarting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function stopPolling() {
@@ -54,7 +93,25 @@ export function ContextResearchScreen({ route, navigation }: Props) {
     }
   }
 
-  async function start() {
+  function pollJob(jobId: string) {
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      if (!accessToken) return;
+      try {
+        const latest = await api.getContextResearchJob(accessToken, topicId, jobId);
+        setJob(latest);
+        if (latest.status !== "running") stopPolling();
+      } catch (err) {
+        stopPolling();
+        setError(err instanceof Error ? err.message : "Failed to check research progress");
+      }
+    }, POLL_MS);
+  }
+
+  // Runs a brand-new search - burns YouTube/Gemini quota, so this only ever
+  // fires on an explicit "Search again" tap (or a first-ever visit to this
+  // topic, when there's nothing to resume).
+  async function startNewSearch() {
     if (!accessToken) return;
     setError(null);
     setJob(null);
@@ -62,26 +119,68 @@ export function ContextResearchScreen({ route, navigation }: Props) {
     try {
       const created = await api.startContextResearch(accessToken, topicId);
       setJob(created);
-      pollRef.current = setInterval(async () => {
-        try {
-          const latest = await api.getContextResearchJob(accessToken, topicId, created.id);
-          setJob(latest);
-          if (latest.status !== "running") stopPolling();
-        } catch (err) {
-          stopPolling();
-          setError(err instanceof Error ? err.message : "Failed to check research progress");
-        }
-      }, POLL_MS);
+      pollJob(created.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start research");
     }
   }
 
   useEffect(() => {
-    start();
-    return () => stopPolling();
+    if (!accessToken) return;
+    let cancelled = false;
+    setIsStarting(true);
+    api
+      .getLatestContextResearchJob(accessToken, topicId)
+      .then((latest) => {
+        if (cancelled) return;
+        if (!latest) {
+          // Nothing has ever been searched for this topic yet - only this
+          // first run auto-starts; every run after this is explicit.
+          return startNewSearch();
+        }
+        setJob(latest);
+        if (latest.status === "running") pollJob(latest.id);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load research");
+      })
+      .finally(() => {
+        if (!cancelled) setIsStarting(false);
+      });
+    api
+      .listSavedVideos(accessToken, topicId)
+      .then((videos) => setSavedVideoIds(new Set(videos.map((v) => v.videoId))))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      stopPolling();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken, topicId]);
+
+  async function saveVideo(candidate: ResearchCandidate) {
+    if (!accessToken || !candidate.videoId || !candidate.thumbnailUrl) return;
+    setSavingVideoIds((prev) => new Set(prev).add(candidate.videoId!));
+    setError(null);
+    try {
+      await api.saveVideo(accessToken, topicId, {
+        videoId: candidate.videoId,
+        title: candidate.title,
+        channelTitle: candidate.channelTitle ?? "",
+        thumbnailUrl: candidate.thumbnailUrl,
+        duration: candidate.duration,
+      });
+      setSavedVideoIds((prev) => new Set(prev).add(candidate.videoId!));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save video");
+    } finally {
+      setSavingVideoIds((prev) => {
+        const next = new Set(prev);
+        next.delete(candidate.videoId!);
+        return next;
+      });
+    }
+  }
 
   function setCandidateBusy(candidateId: string, busy: boolean) {
     setBusyCandidateIds((prev) => {
@@ -121,6 +220,8 @@ export function ContextResearchScreen({ route, navigation }: Props) {
   }
 
   const approvedCount = job?.candidates.filter((c) => c.status === "approved").length ?? 0;
+  const visibleCandidates = (job?.candidates ?? []).filter((c) => c.status !== "dismissed");
+  const shownCandidates = visibleCandidates.filter((c) => matchesFilter(c, typeFilter));
 
   return (
     <Screen edges={["top", "bottom"]}>
@@ -145,11 +246,11 @@ export function ContextResearchScreen({ route, navigation }: Props) {
         <View style={styles.centered}>
           <Ionicons name="alert-circle-outline" size={28} color={colors.danger} />
           <Text style={[styles.stateText, { color: colors.textPrimary, marginTop: 10 }]}>{error}</Text>
-          <Pressable style={({ pressed }) => [styles.primaryButton, { backgroundColor: colors.accent, marginTop: 16 }, pressed && { opacity: pressedOpacity }]} onPress={start} accessibilityRole="button">
+          <Pressable style={({ pressed }) => [styles.primaryButton, { backgroundColor: colors.accent, marginTop: 16 }, pressed && { opacity: pressedOpacity }]} onPress={startNewSearch} accessibilityRole="button">
             <Text style={[styles.primaryButtonText, { color: colors.accentOn }]}>Try again</Text>
           </Pressable>
         </View>
-      ) : !job || job.status === "running" ? (
+      ) : isStarting || !job || job.status === "running" ? (
         <View style={styles.centered}>
           <ActivityIndicator color={colors.accent} size="large" />
           <Text style={[styles.stateText, { color: colors.textPrimary, marginTop: 16 }]}>{STAGE_LABELS[job?.stage ?? "searching"]}</Text>
@@ -159,11 +260,11 @@ export function ContextResearchScreen({ route, navigation }: Props) {
         <View style={styles.centered}>
           <Ionicons name="alert-circle-outline" size={28} color={colors.danger} />
           <Text style={[styles.stateText, { color: colors.textPrimary, marginTop: 10 }]}>{job.errorMessage ?? "Research failed"}</Text>
-          <Pressable style={({ pressed }) => [styles.primaryButton, { backgroundColor: colors.accent, marginTop: 16 }, pressed && { opacity: pressedOpacity }]} onPress={start} accessibilityRole="button">
+          <Pressable style={({ pressed }) => [styles.primaryButton, { backgroundColor: colors.accent, marginTop: 16 }, pressed && { opacity: pressedOpacity }]} onPress={startNewSearch} accessibilityRole="button">
             <Text style={[styles.primaryButtonText, { color: colors.accentOn }]}>Try again</Text>
           </Pressable>
         </View>
-      ) : job.candidates.filter((c) => c.status !== "dismissed").length === 0 ? (
+      ) : visibleCandidates.length === 0 ? (
         <View style={styles.centered}>
           <Ionicons name="search-outline" size={28} color={colors.textMuted} />
           <Text style={[styles.stateText, { color: colors.textPrimary, marginTop: 10 }]}>Nothing left to review</Text>
@@ -171,13 +272,32 @@ export function ContextResearchScreen({ route, navigation }: Props) {
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
           {error ? <Text style={{ color: colors.danger, marginBottom: 8 }}>{error}</Text> : null}
-          {job.candidates
-            .filter((c) => c.status !== "dismissed")
+          <View style={styles.filterRow}>
+            {TYPE_FILTERS.map((filter) => {
+              const active = typeFilter === filter.key;
+              const count = visibleCandidates.filter((c) => matchesFilter(c, filter.key)).length;
+              return (
+                <Pressable
+                  key={filter.key}
+                  onPress={() => setTypeFilter(filter.key)}
+                  style={[styles.filterChip, { backgroundColor: active ? colors.accent : colors.surfaceRaised }]}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                >
+                  <Text style={[styles.filterChipText, { color: active ? colors.accentOn : colors.textMuted }]}>{filter.label} {count}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          {shownCandidates.length === 0 ? (
+            <Text style={[styles.stateSubtext, { color: colors.textMuted, marginTop: 24 }]}>Nothing of this type was found.</Text>
+          ) : null}
+          {shownCandidates
             .map((candidate) => {
               const busy = busyCandidateIds.has(candidate.id);
               const approved = candidate.status === "approved";
               return (
-                <View key={candidate.id} style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+                <View key={candidate.id} style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
                   <View style={styles.cardTopRow}>
                     <View style={[styles.typeTag, { backgroundColor: colors.accentSoft }]}>
                       <Ionicons name={CANDIDATE_TYPE_ICONS[candidate.type]} size={12} color={colors.accent} />
@@ -190,16 +310,74 @@ export function ContextResearchScreen({ route, navigation }: Props) {
                       </View>
                     ) : null}
                   </View>
+                  {candidate.type === "image" && candidate.thumbnailUrl ? (
+                    <Image source={{ uri: candidate.thumbnailUrl }} style={[styles.thumbnail, { backgroundColor: colors.surfaceRaised }]} resizeMode="contain" accessibilityLabel={candidate.title} />
+                  ) : null}
+                  {candidate.type === "video" && candidate.thumbnailUrl ? (
+                    <Pressable onPress={() => setWatching(candidate)} accessibilityRole="button" accessibilityLabel={`Watch ${candidate.title}`}>
+                      <Image source={{ uri: candidate.thumbnailUrl }} style={[styles.thumbnail, { backgroundColor: colors.surfaceRaised }]} resizeMode="cover" />
+                      <View style={styles.playOverlay}>
+                        <Ionicons name="play-circle" size={44} color="#FFFFFF" />
+                      </View>
+                      {candidate.duration ? (
+                        <View style={styles.durationBadge}>
+                          <Text style={styles.durationBadgeText}>{candidate.duration}</Text>
+                        </View>
+                      ) : null}
+                    </Pressable>
+                  ) : null}
                   <Text style={[styles.cardTitle, { color: colors.textPrimary }]} numberOfLines={2}>{candidate.title}</Text>
-                  {candidate.snippet ? (
+                  {candidate.type === "video" ? (
+                    <Text style={[styles.cardSnippet, { color: colors.textMuted }]} numberOfLines={1}>{candidate.channelTitle}</Text>
+                  ) : candidate.snippet ? (
                     <Text style={[styles.cardSnippet, { color: colors.textMuted }]} numberOfLines={3}>{candidate.snippet}</Text>
                   ) : null}
-                  <Pressable onPress={() => WebBrowser.openBrowserAsync(candidate.url)} accessibilityRole="button" style={styles.sourceLink}>
-                    <Ionicons name="open-outline" size={13} color={colors.accent} />
-                    <Text style={[styles.sourceLinkText, { color: colors.accent }]} numberOfLines={1}>{candidate.url}</Text>
-                  </Pressable>
+                  {candidate.type !== "video" ? (
+                    <Pressable onPress={() => WebBrowser.openBrowserAsync(candidate.url)} accessibilityRole="button" style={styles.sourceLink}>
+                      <Ionicons name="open-outline" size={13} color={colors.accent} />
+                      <Text style={[styles.sourceLinkText, { color: colors.accent }]} numberOfLines={1}>{candidate.url}</Text>
+                    </Pressable>
+                  ) : null}
 
-                  {!approved ? (
+                  {candidate.type === "video" ? (
+                    <View style={styles.cardActions}>
+                      <Pressable
+                        style={({ pressed }) => [styles.ghostButton, { borderColor: colors.border }, (busy || pressed) && { opacity: pressedOpacity }]}
+                        onPress={() => dismiss(candidate)}
+                        disabled={busy}
+                        accessibilityRole="button"
+                      >
+                        {busy ? <ActivityIndicator color={colors.textSecondary} size="small" /> : <Text style={[styles.ghostButtonText, { color: colors.textSecondary }]}>Dismiss</Text>}
+                      </Pressable>
+                      {(() => {
+                        const isSaved = !!candidate.videoId && savedVideoIds.has(candidate.videoId);
+                        const isSaving = !!candidate.videoId && savingVideoIds.has(candidate.videoId);
+                        return (
+                          <Pressable
+                            style={({ pressed }) => [styles.iconButton, { borderColor: colors.border }, (isSaving || pressed) && { opacity: pressedOpacity }]}
+                            onPress={() => saveVideo(candidate)}
+                            disabled={isSaved || isSaving}
+                            accessibilityRole="button"
+                            accessibilityLabel={isSaved ? "Saved" : `Save ${candidate.title}`}
+                          >
+                            {isSaving ? (
+                              <ActivityIndicator color={colors.accent} size="small" />
+                            ) : (
+                              <Ionicons name={isSaved ? "bookmark" : "bookmark-outline"} size={18} color={colors.accent} />
+                            )}
+                          </Pressable>
+                        );
+                      })()}
+                      <Pressable
+                        style={({ pressed }) => [styles.approveButton, { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]}
+                        onPress={() => setWatching(candidate)}
+                        accessibilityRole="button"
+                      >
+                        <Ionicons name="play" size={14} color={colors.accentOn} style={{ marginRight: 6 }} />
+                        <Text style={[styles.approveButtonText, { color: colors.accentOn }]}>Watch</Text>
+                      </Pressable>
+                    </View>
+                  ) : !approved ? (
                     <View style={styles.cardActions}>
                       <Pressable
                         style={({ pressed }) => [styles.ghostButton, { borderColor: colors.border }, (busy || pressed) && { opacity: pressedOpacity }]}
@@ -215,7 +393,7 @@ export function ContextResearchScreen({ route, navigation }: Props) {
                         disabled={busy}
                         accessibilityRole="button"
                       >
-                        {busy ? <ActivityIndicator color={colors.accentOn} size="small" /> : <Text style={[styles.approveButtonText, { color: colors.accentOn }]}>Add to topic</Text>}
+                        {busy ? <ActivityIndicator color={colors.accentOn} size="small" /> : <Text style={[styles.approveButtonText, { color: colors.accentOn }]}>{addButtonLabel(candidate)}</Text>}
                       </Pressable>
                     </View>
                   ) : null}
@@ -225,9 +403,19 @@ export function ContextResearchScreen({ route, navigation }: Props) {
         </ScrollView>
       )}
 
+      <VideoPlayerModal videoId={watching?.videoId ?? null} title={watching?.title ?? ""} onClose={() => setWatching(null)} />
+
       {job && job.status !== "running" ? (
         <View style={styles.footer}>
-          <Pressable style={({ pressed }) => [styles.primaryButton, { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.goBack()} accessibilityRole="button">
+          <Pressable
+            style={({ pressed }) => [styles.footerGhostButton, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+            onPress={startNewSearch}
+            accessibilityRole="button"
+          >
+            <Ionicons name="refresh" size={16} color={colors.textSecondary} style={{ marginRight: 6 }} />
+            <Text style={[styles.ghostButtonText, { color: colors.textSecondary }]}>Search again</Text>
+          </Pressable>
+          <Pressable style={({ pressed }) => [styles.primaryButton, { backgroundColor: colors.accent, flex: 1 }, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.goBack()} accessibilityRole="button">
             <Text style={[styles.primaryButtonText, { color: colors.accentOn }]}>Done</Text>
           </Pressable>
         </View>
@@ -253,15 +441,24 @@ const styles = StyleSheet.create({
   addedBadge: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
   addedBadgeText: { fontSize: 10, fontWeight: "800" },
   cardTitle: { fontSize: 15, fontWeight: "800", marginTop: 10 },
+  thumbnail: { width: "100%", height: 170, borderRadius: 12, marginTop: 10 },
+  filterRow: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
+  filterChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999 },
+  filterChipText: { fontSize: 12, fontWeight: "700" },
   cardSnippet: { fontSize: 12, lineHeight: 17, marginTop: 4, fontWeight: "500" },
   sourceLink: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 8 },
   sourceLinkText: { fontSize: 11, fontWeight: "600", flexShrink: 1 },
   cardActions: { flexDirection: "row", gap: 8, marginTop: 12 },
   ghostButton: { flex: 1, height: 40, borderWidth: 1, borderRadius: 11, alignItems: "center", justifyContent: "center" },
   ghostButtonText: { fontSize: 13, fontWeight: "700" },
-  approveButton: { flex: 1, height: 40, borderRadius: 11, alignItems: "center", justifyContent: "center" },
+  approveButton: { flex: 1, height: 40, borderRadius: 11, alignItems: "center", justifyContent: "center", flexDirection: "row" },
+  playOverlay: { ...StyleSheet.absoluteFill, alignItems: "center", justifyContent: "center" },
+  durationBadge: { position: "absolute", right: 8, bottom: 8, backgroundColor: "rgba(0,0,0,0.75)", borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  durationBadgeText: { color: "#FFFFFF", fontSize: 11, fontWeight: "700" },
   approveButtonText: { fontSize: 13, fontWeight: "800" },
-  footer: { paddingHorizontal: 20, paddingBottom: 16, paddingTop: 8 },
+  footer: { flexDirection: "row", gap: 10, paddingHorizontal: 20, paddingBottom: 16, paddingTop: 8 },
+  footerGhostButton: { flexDirection: "row", height: 50, paddingHorizontal: 16, borderWidth: 1, borderRadius: 14, alignItems: "center", justifyContent: "center" },
+  iconButton: { width: 40, height: 40, borderWidth: 1, borderRadius: 11, alignItems: "center", justifyContent: "center" },
   primaryButton: { height: 50, borderRadius: 14, alignItems: "center", justifyContent: "center" },
   primaryButtonText: { fontSize: 15, fontWeight: "800" },
 });

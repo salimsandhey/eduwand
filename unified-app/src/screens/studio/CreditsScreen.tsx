@@ -6,7 +6,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
-import { spacing } from "../../theme/tokens";
+import { spacing, softCardShadow } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { api, CreditAccountSummary } from "../../api/client";
 import { getRelativeDateLabel } from "../../utils/date";
@@ -102,7 +102,7 @@ export function CreditsScreen({ navigation }: Props) {
             {(summary?.ledgerEntries ?? []).length === 0 ? (
               <Text style={[styles.emptyText, { color: colors.textMuted }]}>No credit activity yet.</Text>
             ) : (
-              <View style={[styles.historyCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+              <View style={[styles.historyCard, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
                 {(summary?.ledgerEntries ?? []).map((entry, index) => (
                   <View
                     key={entry.id}
@@ -178,11 +178,11 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   linkRow: {
+    ...softCardShadow,
     marginTop: 14,
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    borderWidth: 1,
     borderRadius: 14,
     padding: 14,
   },
@@ -202,7 +202,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   historyCard: {
-    borderWidth: 1,
+    ...softCardShadow,
     borderRadius: 14,
     overflow: "hidden",
   },

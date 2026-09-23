@@ -143,6 +143,7 @@ export async function authRoutes(app: FastifyInstance) {
           photoMimeType: null,
           avatarKey: null,
           accountType: null,
+          board: null,
           hasSeenOnboardingTour: true,
         },
         meta: {},
@@ -163,7 +164,7 @@ export async function authRoutes(app: FastifyInstance) {
         photoMimeType: true,
         avatarKey: true,
         hasSeenOnboardingTour: true,
-        school: { select: { accountType: true } },
+        school: { select: { accountType: true, board: true } },
       },
     });
 
@@ -176,7 +177,7 @@ export async function authRoutes(app: FastifyInstance) {
     // superpowers/plans/2026-09-09-individual-teacher-onboarding-and-
     // credits.md). null for staff with no school (e.g. platform_admin).
     const { school, ...rest } = user;
-    return { data: { ...rest, accountType: school?.accountType ?? null }, meta: {} };
+    return { data: { ...rest, accountType: school?.accountType ?? null, board: school?.board ?? null }, meta: {} };
   });
 
   app.post<{ Body: RequestPasswordResetBody }>(

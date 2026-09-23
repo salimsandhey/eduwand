@@ -9,6 +9,7 @@ import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
+import { SheetModal } from "../../components/SheetModal";
 import { api, AttainmentReportRecord, SubjectAttainmentReport, StudentAttainmentRow, GenerationOutputType } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
 import { OUTPUT_TYPE_ICONS } from "../studio/generation/outputTypeMeta";
@@ -32,7 +33,7 @@ function formatRelativeTime(dateString: string): string {
 }
 
 type ReportTab = "class" | "students" | "topics";
-type ClassSubTab = "overview" | "notes";
+type ClassSubTab = "overview" | "notes" | "stages";
 
 function displayScore(score: number | null) {
   return score === null ? "-" : `${Math.round(score)}%`;
@@ -173,6 +174,10 @@ export function AttainmentReportScreen({ route, navigation }: Props) {
                   <Text style={[styles.subTabText, { color: classSubTab === "notes" ? brandAccent : colors.textMuted }, classSubTab === "notes" && styles.subTabTextActive]}>Notes & Reflection</Text>
                   {classSubTab === "notes" ? <View style={[styles.subTabIndicator, { backgroundColor: brandAccent }]} /> : null}
                 </Pressable>
+                <Pressable style={styles.subTab} onPress={() => setClassSubTab("stages")} accessibilityRole="tab">
+                  <Text style={[styles.subTabText, { color: classSubTab === "stages" ? brandAccent : colors.textMuted }, classSubTab === "stages" && styles.subTabTextActive]}>Objectives</Text>
+                  {classSubTab === "stages" ? <View style={[styles.subTabIndicator, { backgroundColor: brandAccent }]} /> : null}
+                </Pressable>
               </View>
             ) : null}
 
@@ -217,6 +222,34 @@ export function AttainmentReportScreen({ route, navigation }: Props) {
                 <NotesSection observations={topicReport!.observations} colors={colors} pressedOpacity={pressedOpacity} onOpenPhoto={setViewingPhoto} />
               </View>
             ) : null}
+
+            {isTopicMode && classSubTab === "stages" ? (
+              <View style={styles.tabContentTop}>
+                <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                  <View style={styles.cardHeading}>
+                    <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Learning stages covered</Text>
+                    <Ionicons name="information-circle-outline" size={16} color={colors.textMuted} />
+                  </View>
+                  <Text style={[styles.overallSummary, { color: colors.textSecondary, marginBottom: 4 }]}>
+                    Which stages this topic's lesson plans and activities address - not how students scored on them.
+                  </Text>
+                  {topicReport!.stageCoverage.every((s) => s.count === 0) ? (
+                    <Text style={[styles.emptyChartText, { color: colors.textMuted }]}>No tagged objectives yet - generate a lesson plan or activity report for this topic.</Text>
+                  ) : (
+                    topicReport!.stageCoverage.map((s) => <StageBar key={s.stage} stage={s.stage} count={s.count} max={Math.max(...topicReport!.stageCoverage.map((x) => x.count), 1)} colors={colors} />)
+                  )}
+                </View>
+
+                <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                  <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Objective based analysis</Text>
+                  {topicReport!.objectiveCoverage.length > 0 ? (
+                    topicReport!.objectiveCoverage.map((o, i) => <ObjectiveRow key={i} objective={o.objective} stage={o.stage} colors={colors} />)
+                  ) : (
+                    <Text style={[styles.emptyChartText, { color: colors.textMuted }]}>No objectives recorded for this topic yet.</Text>
+                  )}
+                </View>
+              </View>
+            ) : null}
           </>
         ) : null}
 
@@ -238,39 +271,39 @@ export function AttainmentReportScreen({ route, navigation }: Props) {
         ) : null}
       </ScrollView>
 
-      <Modal transparent visible={viewingPhoto !== null} animationType="fade" onRequestClose={() => setViewingPhoto(null)}>
+      <Modal transparent statusBarTranslucent visible={viewingPhoto !== null} animationType="fade" onRequestClose={() => setViewingPhoto(null)}>
         <Pressable style={styles.photoModalBackdrop} onPress={() => setViewingPhoto(null)} accessibilityRole="button" accessibilityLabel="Close photo">
           {viewingPhoto ? <Image source={{ uri: viewingPhoto }} style={styles.photoModalImage} resizeMode="contain" /> : null}
         </Pressable>
       </Modal>
 
-      <Modal transparent visible={selectedStudent !== null} animationType="slide" onRequestClose={() => setSelectedStudent(null)}>
-        <Pressable style={styles.studentModalBackdrop} onPress={() => setSelectedStudent(null)} accessibilityRole="button" accessibilityLabel="Close student detail">
-          <Pressable style={[styles.studentModalSheet, { backgroundColor: colors.surface }]} onPress={(e) => e.stopPropagation()}>
-            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
-            {selectedStudent ? (
-              <>
-                <View style={styles.studentModalHeader}>
-                  <View style={[styles.studentAvatar, { backgroundColor: colors.accentSoft }]}><Text style={[styles.studentAvatarText, { color: colors.accent }]}>{selectedStudent.fullName.slice(0, 1).toUpperCase()}</Text></View>
-                  <View style={styles.studentCopy}>
-                    <Text style={[styles.studentName, { color: colors.textPrimary }]}>{capitalizeFirst(selectedStudent.fullName)}</Text>
-                    <Text style={[styles.studentMeta, { color: colors.textMuted }]}>{selectedStudent.submissionCount} submission{selectedStudent.submissionCount === 1 ? "" : "s"} · {Math.round(selectedStudent.averageScore)}% average</Text>
-                  </View>
+      <SheetModal
+        visible={selectedStudent !== null}
+        onClose={() => setSelectedStudent(null)}
+        closeLabel="Close student detail"
+        maxHeightRatio={0.75}
+      >
+        {selectedStudent ? (
+          <>
+            <View style={styles.studentModalHeader}>
+              <View style={[styles.studentAvatar, { backgroundColor: colors.accentSoft }]}><Text style={[styles.studentAvatarText, { color: colors.accent }]}>{selectedStudent.fullName.slice(0, 1).toUpperCase()}</Text></View>
+              <View style={styles.studentCopy}>
+                <Text style={[styles.studentName, { color: colors.textPrimary }]}>{capitalizeFirst(selectedStudent.fullName)}</Text>
+                <Text style={[styles.studentMeta, { color: colors.textMuted }]}>{selectedStudent.submissionCount} submission{selectedStudent.submissionCount === 1 ? "" : "s"} · {Math.round(selectedStudent.averageScore)}% average</Text>
+              </View>
+            </View>
+            <Text style={[styles.studentModalSectionLabel, { color: colors.textMuted }]}>{isTopicMode ? "By assignment" : "By topic"}</Text>
+            <ScrollView style={styles.studentModalScroll} showsVerticalScrollIndicator={false}>
+              {selectedStudent.breakdown.map((item, index) => (
+                <View key={`${item.label}-${index}`} style={styles.breakdownRow}>
+                  <Text style={[styles.breakdownLabel, { color: colors.textSecondary }]}>{capitalizeFirst(item.label)}</Text>
+                  <Text style={[styles.breakdownScore, { color: item.averageScore < 60 ? colors.danger : colors.textPrimary }]}>{displayScore(item.averageScore)}</Text>
                 </View>
-                <Text style={[styles.studentModalSectionLabel, { color: colors.textMuted }]}>{isTopicMode ? "By assignment" : "By topic"}</Text>
-                <ScrollView style={styles.studentModalScroll} showsVerticalScrollIndicator={false}>
-                  {selectedStudent.breakdown.map((item, index) => (
-                    <View key={`${item.label}-${index}`} style={styles.breakdownRow}>
-                      <Text style={[styles.breakdownLabel, { color: colors.textSecondary }]} numberOfLines={1}>{capitalizeFirst(item.label)}</Text>
-                      <Text style={[styles.breakdownScore, { color: item.averageScore < 60 ? colors.danger : colors.textPrimary }]}>{displayScore(item.averageScore)}</Text>
-                    </View>
-                  ))}
-                </ScrollView>
-              </>
-            ) : null}
-          </Pressable>
-        </Pressable>
-      </Modal>
+              ))}
+            </ScrollView>
+          </>
+        ) : null}
+      </SheetModal>
     </Screen>
   );
 }
@@ -289,6 +322,49 @@ function BarRow({ label, value, accentA, accentB, index, colors }: { label: stri
       <Text style={[styles.barLabel, { color: colors.textSecondary }]} numberOfLines={1}>{capitalizeFirst(label)}</Text>
       <View style={[styles.barTrack, { backgroundColor: colors.backgroundMuted }]}><View style={[styles.barFill, { width: `${Math.max(0, Math.min(100, value ?? 0))}%`, backgroundColor: index % 2 === 0 ? accentA : accentB }]} /></View>
       <Text style={[styles.barValue, { color: colors.textPrimary }]}>{displayScore(value)}</Text>
+    </View>
+  );
+}
+
+// Same six Bloom's Taxonomy stages/colors as LessonPlanView's BLOOM_LEVELS
+// (kept in sync manually, same small-duplicated-table pattern used
+// elsewhere) - shown here as "Learning Stage" tiles, never "Bloom's Level".
+const LEARNING_STAGE_STYLE: Record<string, { color: string; icon: keyof typeof Ionicons.glyphMap }> = {
+  Remember: { color: "#4C6FEA", icon: "bookmark-outline" },
+  Understand: { color: "#2FAE66", icon: "bulb-outline" },
+  Apply: { color: "#E8952E", icon: "construct-outline" },
+  Analyze: { color: "#E4574F", icon: "search-outline" },
+  Evaluate: { color: "#8B5CF6", icon: "checkmark-done-outline" },
+  Create: { color: "#2AACC9", icon: "sparkles-outline" },
+};
+
+function StageBar({ stage, count, max, colors }: { stage: string; count: number; max: number; colors: ReturnType<typeof useTheme>["colors"] }) {
+  const style = LEARNING_STAGE_STYLE[stage] ?? { color: colors.accent, icon: "ellipse-outline" as const };
+  return (
+    <View style={styles.barRow}>
+      <View style={styles.stageBarLabel}>
+        <Ionicons name={style.icon} size={13} color={style.color} />
+        <Text style={[styles.stageBarLabelText, { color: colors.textSecondary }]} numberOfLines={1}>{stage}</Text>
+      </View>
+      <View style={[styles.barTrack, { backgroundColor: colors.backgroundMuted }]}>
+        <View style={[styles.barFill, { width: `${(100 * count) / max}%`, backgroundColor: style.color }]} />
+      </View>
+      <Text style={[styles.barValue, { color: colors.textPrimary }]}>{count}</Text>
+    </View>
+  );
+}
+
+function ObjectiveRow({ objective, stage, colors }: { objective: string; stage: string | null; colors: ReturnType<typeof useTheme>["colors"] }) {
+  const style = stage ? LEARNING_STAGE_STYLE[stage] : null;
+  return (
+    <View style={styles.objectiveRow}>
+      {style && stage ? (
+        <View style={[styles.stageTile, { backgroundColor: `${style.color}22` }]}>
+          <Ionicons name={style.icon} size={11} color={style.color} />
+          <Text style={[styles.stageTileText, { color: style.color }]}>{stage.toUpperCase()}</Text>
+        </View>
+      ) : null}
+      <Text style={[styles.bodyText, { color: colors.textPrimary, flex: 1 }]}>{objective}</Text>
     </View>
   );
 }
@@ -413,6 +489,9 @@ const styles = StyleSheet.create({
   card: { borderWidth: 1, borderRadius: 22, padding: 20, marginBottom: 28 }, overallCard: { alignItems: "stretch" }, cardHeading: { flexDirection: "row", alignItems: "center", gap: 6 }, cardTitle: { fontSize: 16, lineHeight: 22, fontWeight: "800", letterSpacing: -0.2 }, scoreRing: { width: 128, height: 128, borderRadius: 64, borderWidth: 12, alignSelf: "center", alignItems: "center", justifyContent: "center", marginTop: 18, marginBottom: 19 }, scoreRingInner: { width: 90, height: 90, borderRadius: 45, alignItems: "center", justifyContent: "center" }, scoreValue: { fontSize: 26, lineHeight: 31, fontWeight: "800", letterSpacing: -0.6 }, scoreLabel: { marginTop: 1, fontSize: 10, fontWeight: "700" },
   overallSummary: { fontSize: 13, lineHeight: 21, fontWeight: "500", marginBottom: 17 }, bandRow: { flexDirection: "row", alignItems: "center", minHeight: 27 }, bandDot: { width: 8, height: 8, borderRadius: 4, marginRight: 9 }, bandLabel: { flex: 1, fontSize: 12, fontWeight: "500" }, bandValue: { fontSize: 12, fontWeight: "800" },
   barRow: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 15 }, barLabel: { width: 105, fontSize: 12, fontWeight: "500" }, barTrack: { flex: 1, height: 10, borderRadius: 6, overflow: "hidden" }, barFill: { height: "100%", borderRadius: 6 }, barValue: { width: 36, textAlign: "right", fontSize: 12, fontWeight: "800" }, emptyChartText: { marginTop: 20, fontSize: 13, lineHeight: 19, textAlign: "center" },
+  stageBarLabel: { width: 105, flexDirection: "row", alignItems: "center", gap: 5 }, stageBarLabelText: { fontSize: 12, fontWeight: "500", flexShrink: 1 },
+  objectiveRow: { flexDirection: "row", alignItems: "flex-start", gap: 8, marginTop: 14 }, bodyText: { fontSize: 13, lineHeight: 19, fontWeight: "500" },
+  stageTile: { flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start", borderRadius: 999, paddingHorizontal: 9, paddingVertical: 4, marginTop: 1 }, stageTileText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.3 },
   insightCard: { flexDirection: "row", borderRadius: 18, padding: 18, marginBottom: 24 }, insightIcon: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center", marginRight: 13 }, insightCopy: { flex: 1 }, insightTitle: { fontSize: 14, fontWeight: "800" }, insightText: { marginTop: 5, fontSize: 12, lineHeight: 19, fontWeight: "500" }, insightChip: { alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 5, height: 34, paddingHorizontal: 12, borderWidth: 1, borderRadius: 18, marginTop: 13 }, insightChipText: { fontSize: 11, fontWeight: "800" },
   reportNote: { borderWidth: 1, borderRadius: 16, padding: 16, marginBottom: 12 }, reportNoteTitle: { fontSize: 13, fontWeight: "800", marginBottom: 6 }, reportNoteBody: { fontSize: 12, lineHeight: 19, fontWeight: "500" },
   doneCardTitle: { marginBottom: 6 },

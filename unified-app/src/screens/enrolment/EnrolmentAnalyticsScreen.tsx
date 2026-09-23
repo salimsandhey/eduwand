@@ -24,6 +24,7 @@ import {
   EnrolmentYearlyTrend,
 } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
+import { useTabBarClearance } from "../../navigation/useTabBarClearance";
 
 const PALETTE = ["#7359D9", "#F2675B", "#E5A72D", "#3B9EDB", "#2FA678", "#C24039"];
 
@@ -47,6 +48,7 @@ function monthLabel(period: string): string {
 export function EnrolmentAnalyticsScreen() {
   const { accessToken } = useAuth();
   const { colors, cardShadow } = useTheme();
+  const tabBarClearance = useTabBarClearance(8);
   const { stages } = usePipelineStages();
   const handleTabBarScroll = useTabBarScrollHandler();
 
@@ -121,7 +123,7 @@ export function EnrolmentAnalyticsScreen() {
   return (
     <Screen>
       <ScrollView
-        contentContainerStyle={styles.container}
+        contentContainerStyle={[styles.container, { paddingBottom: tabBarClearance }]}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={isLoading} onRefresh={load} tintColor={colors.accent} />}
         onScroll={handleTabBarScroll}
@@ -200,7 +202,7 @@ function ChartCard({
   children: ReactNode;
 }) {
   return (
-    <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+    <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
       <View style={styles.cardHeader}>
         <Ionicons name={icon} size={16} color={colors.textMuted} />
         <View style={styles.cardHeaderText}>

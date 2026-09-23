@@ -8,12 +8,12 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { radius } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
+import { SheetModal } from "../../components/SheetModal";
 import { api, Topic, Subject } from "../../api/client";
 import { decorativeAssets } from "../../theme/decorativeAssets";
 import { useKeyboardHeight } from "../../hooks/useKeyboardHeight";
 import { capitalizeFirst } from "../../utils/text";
 import { getRelativeDateLabel } from "../../utils/date";
-import { BOARDS } from "../../constants/boards";
 
 type Props = NativeStackScreenProps<RootStackParamList, "TopicList">;
 
@@ -23,7 +23,7 @@ function displayClassName(className: string, sectionName: string) {
 
 export function TopicListScreen({ navigation, route }: Props) {
   const { classSectionId, className, sectionName } = route.params;
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
   const keyboardHeight = useKeyboardHeight();
 
@@ -33,7 +33,6 @@ export function TopicListScreen({ navigation, route }: Props) {
   const [showNewTopic, setShowNewTopic] = useState(false);
   const [name, setName] = useState("");
   const [subject, setSubject] = useState("");
-  const [board, setBoard] = useState(BOARDS[0]);
   const [isCreating, setIsCreating] = useState(false);
 
   const [subjectFilter, setSubjectFilter] = useState<string | null>(null);
@@ -71,7 +70,7 @@ export function TopicListScreen({ navigation, route }: Props) {
     setIsCreating(true);
     setError(null);
     try {
-      const topic = await api.createTopic(accessToken, { classSectionId, subject: subject.trim(), name: name.trim(), board });
+      const topic = await api.createTopic(accessToken, { classSectionId, subject: subject.trim(), name: name.trim() });
       setShowNewTopic(false);
       setName("");
       navigation.navigate("TopicDetail", { topicId: topic.id });
@@ -181,7 +180,7 @@ export function TopicListScreen({ navigation, route }: Props) {
               </View>
               <View style={styles.topicCopy}>
                 <Text style={[styles.topicName, { color: colors.textPrimary }]} numberOfLines={2}>{capitalizeFirst(topic.name)}</Text>
-                <Text style={[styles.topicMeta, { color: colors.textMuted }]} numberOfLines={1}>{capitalizeFirst(topic.subject)} · {topic.board} · {getRelativeDateLabel(topic.updatedAt)}</Text>
+                <Text style={[styles.topicMeta, { color: colors.textMuted }]} numberOfLines={1}>{capitalizeFirst(topic.subject)} · {getRelativeDateLabel(topic.updatedAt)}</Text>
               </View>
               <Ionicons name="chevron-forward" size={24} color={colors.accent} />
             </Pressable>
@@ -190,83 +189,68 @@ export function TopicListScreen({ navigation, route }: Props) {
 
       </ScrollView>
 
-      <Modal transparent animationType="slide" visible={showNewTopic} onRequestClose={() => setShowNewTopic(false)}>
-        <View style={styles.modalRoot}>
-          <Pressable style={styles.modalBackdrop} onPress={() => setShowNewTopic(false)} accessibilityRole="button" accessibilityLabel="Close new topic form" />
-          <View style={[styles.modalSheet, { backgroundColor: colors.surface, marginBottom: keyboardHeight }]}>
-            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
-            <View style={styles.modalHeader}>
-              <View>
-                <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>New topic</Text>
-                <Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>Set up a topic for {displayClassName(className, sectionName)}.</Text>
-              </View>
+      <SheetModal
+        visible={showNewTopic}
+        onClose={() => {
+          setShowNewTopic(false);
+          setShowNewTopicSubjectPicker(false);
+        }}
+        closeLabel="Close new topic form"
+        maxHeightRatio={0.88}
+        sheetStyle={{ paddingHorizontal: 24, paddingBottom: 24 }}
+      >
+        <View style={styles.modalHeader}>
+          <View>
+            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>New topic</Text>
+            <Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>Set up a topic for {displayClassName(className, sectionName)}.</Text>
+          </View>
+          <Pressable
+            style={({ pressed }) => [styles.closeButton, { backgroundColor: colors.surfaceRaised }, pressed && { opacity: pressedOpacity }]}
+            onPress={() => setShowNewTopic(false)}
+            accessibilityRole="button"
+            accessibilityLabel="Close new topic form"
+          >
+            <Ionicons name="close" size={21} color={colors.textPrimary} />
+          </Pressable>
+        </View>
+
+        <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={styles.modalContent}>
+          <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Topic name</Text>
+          <TextInput
+            style={[styles.topicInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
+            value={name}
+            onChangeText={setName}
+            placeholder="Enter topic name"
+            placeholderTextColor={colors.textMuted}
+            autoFocus
+          />
+
+          <View style={styles.formRow}>
+            <View style={styles.subjectField}>
+              <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Subject</Text>
               <Pressable
-                style={({ pressed }) => [styles.closeButton, { backgroundColor: colors.surfaceRaised }, pressed && { opacity: pressedOpacity }]}
-                onPress={() => setShowNewTopic(false)}
+                style={[styles.subjectInputWrap, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}
+                onPress={() => setShowNewTopicSubjectPicker(true)}
                 accessibilityRole="button"
-                accessibilityLabel="Close new topic form"
+                accessibilityLabel="Choose subject"
               >
-                <Ionicons name="close" size={21} color={colors.textPrimary} />
+                <Text style={[styles.subjectInput, { color: subject ? colors.textPrimary : colors.textMuted }]} numberOfLines={1}>
+                  {subject || "Select subject"}
+                </Text>
+                <Ionicons name="chevron-down" size={18} color={colors.accent} />
               </Pressable>
             </View>
-
-            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={styles.modalContent}>
-              <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Topic name</Text>
-              <TextInput
-                style={[styles.topicInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
-                value={name}
-                onChangeText={setName}
-                placeholder="Enter topic name"
-                placeholderTextColor={colors.textMuted}
-                autoFocus
-              />
-
-              <View style={styles.formRow}>
-                <View style={styles.subjectField}>
-                  <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Subject</Text>
-                  <Pressable
-                    style={[styles.subjectInputWrap, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}
-                    onPress={() => setShowNewTopicSubjectPicker(true)}
-                    accessibilityRole="button"
-                    accessibilityLabel="Choose subject"
-                  >
-                    <Text style={[styles.subjectInput, { color: subject ? colors.textPrimary : colors.textMuted }]} numberOfLines={1}>
-                      {subject || "Select subject"}
-                    </Text>
-                    <Ionicons name="chevron-down" size={18} color={colors.accent} />
-                  </Pressable>
-                </View>
-                <View style={styles.boardField}>
-                  <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Board</Text>
-                  <View style={[styles.boardSwitch, { borderColor: colors.border }]}>
-                    {BOARDS.map((option) => {
-                      const isActive = board === option;
-                      return (
-                        <Pressable
-                          key={option}
-                          style={({ pressed }) => [styles.boardOption, isActive && { backgroundColor: colors.accentSoft }, pressed && { opacity: pressedOpacity }]}
-                          onPress={() => setBoard(option)}
-                          accessibilityRole="button"
-                        >
-                          <Text style={[styles.boardOptionText, { color: isActive ? colors.accent : colors.textMuted }]}>{option}</Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                </View>
-              </View>
-
-              <Pressable
-                style={({ pressed }) => [styles.startButton, { backgroundColor: colors.accent }, (isCreating || !name.trim() || !subject.trim() || pressed) && { opacity: pressedOpacity }]}
-                onPress={createTopic}
-                disabled={isCreating || !name.trim() || !subject.trim()}
-                accessibilityRole="button"
-              >
-                {isCreating ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.startButtonText, { color: colors.accentOn }]}>Start topic</Text>}
-              </Pressable>
-            </ScrollView>
           </View>
-        </View>
+
+          <Pressable
+            style={({ pressed }) => [styles.startButton, { backgroundColor: colors.accent }, (isCreating || !name.trim() || !subject.trim() || pressed) && { opacity: pressedOpacity }]}
+            onPress={createTopic}
+            disabled={isCreating || !name.trim() || !subject.trim()}
+            accessibilityRole="button"
+          >
+            {isCreating ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.startButtonText, { color: colors.accentOn }]}>Start topic</Text>}
+          </Pressable>
+        </ScrollView>
 
         {showNewTopicSubjectPicker ? (
           <Pressable
@@ -304,47 +288,43 @@ export function TopicListScreen({ navigation, route }: Props) {
             </Pressable>
           </Pressable>
         ) : null}
-      </Modal>
+      </SheetModal>
 
-      <Modal transparent animationType="fade" visible={showSubjectPicker} onRequestClose={() => setShowSubjectPicker(false)}>
-        <Pressable
-          style={styles.pickerBackdrop}
-          onPress={() => setShowSubjectPicker(false)}
-          accessibilityRole="button"
-          accessibilityLabel="Close subject filter"
-        >
-          <Pressable style={[styles.pickerSheet, { backgroundColor: colors.surface }]} onPress={(e) => e.stopPropagation()}>
-            <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>Filter by subject</Text>
-            <ScrollView style={styles.pickerSheetScroll} nestedScrollEnabled showsVerticalScrollIndicator={false}>
-              <Pressable
-                style={({ pressed }) => [styles.pickerRow, pressed && { opacity: pressedOpacity }]}
-                onPress={() => {
-                  setSubjectFilter(null);
-                  setShowSubjectPicker(false);
-                }}
-                accessibilityRole="button"
-              >
-                <Text style={[styles.pickerRowText, { color: subjectFilter === null ? colors.accent : colors.textPrimary }]}>All subjects</Text>
-                {subjectFilter === null ? <Ionicons name="checkmark" size={18} color={colors.accent} /> : null}
-              </Pressable>
-              {availableSubjects.map((s) => (
-                <Pressable
-                  key={s}
-                  style={({ pressed }) => [styles.pickerRow, pressed && { opacity: pressedOpacity }]}
-                  onPress={() => {
-                    setSubjectFilter(s);
-                    setShowSubjectPicker(false);
-                  }}
-                  accessibilityRole="button"
-                >
-                  <Text style={[styles.pickerRowText, { color: subjectFilter === s ? colors.accent : colors.textPrimary }]}>{capitalizeFirst(s)}</Text>
-                  {subjectFilter === s ? <Ionicons name="checkmark" size={18} color={colors.accent} /> : null}
-                </Pressable>
-              ))}
-            </ScrollView>
+      <SheetModal
+        visible={showSubjectPicker}
+        onClose={() => setShowSubjectPicker(false)}
+        closeLabel="Close subject filter"
+        maxHeightRatio={0.65}
+      >
+        <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>Filter by subject</Text>
+        <ScrollView style={styles.pickerSheetScroll} nestedScrollEnabled showsVerticalScrollIndicator={false}>
+          <Pressable
+            style={({ pressed }) => [styles.pickerRow, pressed && { opacity: pressedOpacity }]}
+            onPress={() => {
+              setSubjectFilter(null);
+              setShowSubjectPicker(false);
+            }}
+            accessibilityRole="button"
+          >
+            <Text style={[styles.pickerRowText, { color: subjectFilter === null ? colors.accent : colors.textPrimary }]}>All subjects</Text>
+            {subjectFilter === null ? <Ionicons name="checkmark" size={18} color={colors.accent} /> : null}
           </Pressable>
-        </Pressable>
-      </Modal>
+          {availableSubjects.map((s) => (
+            <Pressable
+              key={s}
+              style={({ pressed }) => [styles.pickerRow, pressed && { opacity: pressedOpacity }]}
+              onPress={() => {
+                setSubjectFilter(s);
+                setShowSubjectPicker(false);
+              }}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.pickerRowText, { color: subjectFilter === s ? colors.accent : colors.textPrimary }]}>{capitalizeFirst(s)}</Text>
+              {subjectFilter === s ? <Ionicons name="checkmark" size={18} color={colors.accent} /> : null}
+            </Pressable>
+          ))}
+        </ScrollView>
+      </SheetModal>
     </Screen>
   );
 }
@@ -391,12 +371,8 @@ const styles = StyleSheet.create({
   topicInput: { height: 50, borderWidth: 1, borderRadius: 12, paddingHorizontal: 16, fontSize: 14, fontWeight: "500" },
   formRow: { flexDirection: "row", gap: 16 },
   subjectField: { flex: 1 },
-  boardField: { flex: 1.02 },
   subjectInputWrap: { height: 44, flexDirection: "row", alignItems: "center", borderWidth: 1, borderRadius: 12, paddingLeft: 14, paddingRight: 12 },
   subjectInput: { flex: 1, height: "100%", fontSize: 14, fontWeight: "500", textAlignVertical: "center" },
-  boardSwitch: { height: 44, flexDirection: "row", borderWidth: 1, borderRadius: 12, overflow: "hidden" },
-  boardOption: { flex: 1, alignItems: "center", justifyContent: "center" },
-  boardOptionText: { fontSize: 11, fontWeight: "700" },
   startButton: { height: 56, alignItems: "center", justifyContent: "center", borderRadius: 12, marginTop: 20 },
   startButtonText: { fontSize: 16, fontWeight: "800" },
   pickerBackdrop: { flex: 1, backgroundColor: "rgba(22, 15, 20, 0.48)", justifyContent: "center", alignItems: "center", padding: 24 },

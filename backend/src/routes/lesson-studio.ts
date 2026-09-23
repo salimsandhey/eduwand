@@ -3,8 +3,9 @@ import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { aiProvider, logAiUsage } from "../lib/ai";
 import { hasSufficientCredits, getFeatureCost } from "../lib/credits";
+import { BOARDS } from "../lib/boards";
 
-const VALID_BOARDS = ["CBSE", "ICSE", "State"];
+const VALID_BOARDS: readonly string[] = BOARDS;
 const VALID_FORMATS = ["lesson_plan", "learning_material"];
 
 interface GenerateLessonPlanBody {

@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { buildTopicAttainmentReportPdf, buildSubjectAttainmentReportPdf } from "../lib/pdfExport";
+import { getSchoolBoard } from "../lib/boards";
 
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope, requireRoles("teacher", "leadership", "admin")];
 
@@ -41,8 +42,10 @@ function summarizeGeneration(outputType: string, raw: string): string {
   switch (outputType) {
     case "lesson_plan":
       return typeof parsed?.overview === "string" ? parsed.overview.slice(0, 200) : "Lesson plan created";
-    case "custom_activity_report":
-      return typeof parsed?.objective === "string" ? parsed.objective.slice(0, 200) : "Activity report created";
+    case "custom_activity_report": {
+      const firstObjective = Array.isArray(parsed?.objectives) ? parsed.objectives[0] : parsed?.objective;
+      return typeof firstObjective === "string" ? firstObjective.slice(0, 200) : "Activity report created";
+    }
     case "flashcards":
       return Array.isArray(parsed?.cards) ? `${parsed.cards.length} flashcards created` : "Flashcards created";
     case "presentation": {
@@ -53,6 +56,57 @@ function summarizeGeneration(outputType: string, raw: string): string {
     default:
       return `${outputTypeLabel(outputType)} created`;
   }
+}
+
+// The six Bloom's Taxonomy stages, shown to teachers as "Learning Stage" -
+// same list ai.ts's LEARNING_STAGE_OPTIONS defines (duplicated, not
+// imported - same small-duplicated-table pattern as OUTPUT_TYPE_LABELS
+// above; this file already can't share types with the mobile app either).
+const LEARNING_STAGES = ["Remember", "Understand", "Apply", "Analyze", "Evaluate", "Create"] as const;
+
+function extractStage(text: string): { stage: string | null; text: string } {
+  const match = text.match(BLOOM_TAG_RE);
+  if (!match) return { stage: null, text: text.trim() };
+  const stage = match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
+  return { stage, text: text.slice(match[0].length).trim() };
+}
+
+interface ObjectiveCoverageEntry {
+  objective: string;
+  stage: string | null;
+  outputType: string;
+}
+
+// "Objective based analysis" + "learning stage" segments of the attainment
+// report (client requirement: Activity Report Format iii/iv) - this is
+// COVERAGE (which objectives/stages this topic's material actually
+// addresses), not performance. Scoring by objective/stage isn't possible yet
+// since assignment/assessment questions don't record which one they target.
+function collectObjectiveCoverage(generations: { outputType: string; aiOutput: string; editedOutput: string | null; generationStatus: string }[]): ObjectiveCoverageEntry[] {
+  const entries: ObjectiveCoverageEntry[] = [];
+  for (const g of generations) {
+    if (g.generationStatus !== "succeeded") continue;
+    let parsed: any;
+    try {
+      parsed = JSON.parse(g.editedOutput ?? g.aiOutput);
+    } catch {
+      continue;
+    }
+
+    let raw: unknown[] = [];
+    if (g.outputType === "lesson_plan" && Array.isArray(parsed?.objectives)) raw = parsed.objectives;
+    else if (g.outputType === "custom_activity_report") {
+      if (Array.isArray(parsed?.objectives)) raw = parsed.objectives;
+      else if (typeof parsed?.objective === "string") raw = [parsed.objective];
+    }
+
+    for (const o of raw) {
+      if (typeof o !== "string" || !o.trim()) continue;
+      const { stage, text } = extractStage(o);
+      entries.push({ objective: text, stage, outputType: g.outputType });
+    }
+  }
+  return entries;
 }
 
 function scoreOf(grade: { finalScore: number | null; aiScore: number | null } | null | undefined): number | null {
@@ -144,6 +198,12 @@ export async function computeTopicReport(topicId: string, schoolId: string) {
       ? generationSummaries.map((s) => `${s.label}: ${s.summary}`).join("\n\n")
       : "No generations recorded for this topic yet.";
 
+  const objectiveCoverage = collectObjectiveCoverage(topic.generations);
+  const stageCoverage = LEARNING_STAGES.map((stage) => ({
+    stage,
+    count: objectiveCoverage.filter((o) => o.stage === stage).length,
+  }));
+
   const allSubmissions = topic.assignments.flatMap((a) => a.submissions);
   const gradedWithScore = allSubmissions.filter((s) => scoreOf(s.grade) != null);
   const scores = gradedWithScore.map((s) => scoreOf(s.grade)!);
@@ -181,16 +241,16 @@ export async function computeTopicReport(topicId: string, schoolId: string) {
       whatWasDone,
       outcomes,
       improvementNotes,
-      bloomsTaxonomyMapping: Prisma.JsonNull,
+      bloomsTaxonomyMapping: { objectiveCoverage, stageCoverage } as unknown as Prisma.InputJsonValue,
     },
-    update: { whatWasDone, outcomes, improvementNotes },
+    update: { whatWasDone, outcomes, improvementNotes, bloomsTaxonomyMapping: { objectiveCoverage, stageCoverage } as unknown as Prisma.InputJsonValue },
   });
 
   return {
     ...report,
     topicName: topic.name,
     subject: topic.subject,
-    board: topic.board,
+    board: await getSchoolBoard(schoolId),
     className: topic.classSection.className,
     sectionName: topic.classSection.sectionName,
     studentCount: topic.classSection.studentStubs.length,
@@ -200,6 +260,10 @@ export async function computeTopicReport(topicId: string, schoolId: string) {
     assignmentAttainment,
     studentAttainment,
     generationSummaries,
+    // "Objective based analysis" + "Learning stage" segments - coverage, not
+    // performance (see collectObjectiveCoverage above).
+    objectiveCoverage,
+    stageCoverage,
     observations: topic.observations.map((o) => ({ id: o.id, body: o.body, photoUrl: o.photoUrl, recordedAt: o.recordedAt })),
   };
 }

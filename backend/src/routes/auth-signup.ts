@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { prisma } from "../lib/prisma";
 import { grantInitialCredits } from "../lib/credits";
+import { BOARDS, isValidBoard } from "../lib/boards";
 
 // Public self-signup for individual teachers - the only account-creation
 // path in this codebase that doesn't require an existing admin/leadership
@@ -11,7 +12,6 @@ import { grantInitialCredits } from "../lib/credits";
 const ACCESS_TOKEN_EXPIRY = "15m";
 const REFRESH_TOKEN_EXPIRY = "30d";
 const MIN_PASSWORD_LENGTH = 8;
-const BOARDS = ["CBSE", "ICSE", "IB"];
 
 interface SignupTeacherBody {
   fullName: string;
@@ -67,7 +67,7 @@ export async function authSignupRoutes(app: FastifyInstance) {
           error: { code: "validation_error", message: `password must be at least ${MIN_PASSWORD_LENGTH} characters` },
         });
       }
-      if (!board || !BOARDS.includes(board)) {
+      if (!isValidBoard(board)) {
         return reply.code(400).send({
           data: null,
           error: { code: "validation_error", message: `board must be one of ${BOARDS.join(", ")}` },

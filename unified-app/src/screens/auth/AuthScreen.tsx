@@ -15,7 +15,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { StudentOtpMatch, api } from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
-import { getCardShadow, lightColors, PRESSED_OPACITY, typography } from "../../theme/tokens";
+import { getCardShadow, lightColors, PRESSED_OPACITY, typography, softCardShadow } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { brandAssets } from "../../theme/brandAssets";
 import { BlinkingMascot } from "../../components/BlinkingMascot";
@@ -491,7 +491,7 @@ export function AuthScreen() {
                                 disabled={isLoading}
                                 style={({ pressed }) => [
                                   styles.quickLoginCard,
-                                  { backgroundColor: colors.surface, borderColor: colors.border },
+                                  { backgroundColor: colors.surface, borderWidth: 0 },
                                   cardShadow,
                                   pressed && { opacity: pressedOpacity },
                                 ]}
@@ -1053,8 +1053,8 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   quickLoginCard: {
+    ...softCardShadow,
     flex: 1,
-    borderWidth: 1,
     borderRadius: 18,
     padding: 14,
     gap: 6,

@@ -12,6 +12,9 @@ import {
   NativeScrollEvent,
   NativeSyntheticEvent,
   useWindowDimensions,
+  LayoutAnimation,
+  Platform,
+  UIManager,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
@@ -19,7 +22,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "../../context/AuthContext";
 import { useSplashDone } from "../../context/SplashContext";
 import { useTheme } from "../../theme/ThemeContext";
-import { ThemeColors } from "../../theme/tokens";
+import { ThemeColors, softCardShadow } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { getStatusColor } from "../../theme/statusColors";
 import {
@@ -27,6 +30,7 @@ import {
   Enquiry,
   FollowUpTask,
   TeacherDashboardSummary,
+  TeacherNudge,
   TeacherDashboardActivityItem,
   EnrolmentTrend,
 } from "../../api/client";
@@ -38,6 +42,10 @@ import { useTabBarScrollHandler } from "../../navigation/TabBarScrollContext";
 import { TeacherTourModal } from "../../components/onboarding/TeacherTourModal";
 import { TeacherOnboardingTasksResult } from "../../api/client";
 import { TypewriterText } from "../../components/TypewriterText";
+import { TeacherCalendar } from "../../components/TeacherCalendar";
+import { TeacherNotificationsSheet, NUDGE_TYPE_COLORS, renderNudgeText } from "../../components/TeacherNotificationsSheet";
+import { useTabBarClearance } from "../../navigation/useTabBarClearance";
+import { MadeWithLoveFooter } from "../../components/MadeWithLoveFooter";
 
 const ENROLMENT_ROLES = ["front_desk", "counsellor", "admin", "leadership"];
 
@@ -48,8 +56,32 @@ const CAT_REVEAL_SCROLL_PROGRESS = 0.12;
 const CAT_HIDDEN_OFFSET = 100;
 
 const TEACHER_SUMMARY_CARD_CONFIG = [
-  { key: "lessons", title: "Lessons", accent: "#5B3FD6", icon: "book-outline" as const, graphic: decorativeAssets.teacherLessonCat },
-  { key: "assignments", title: "Assignments", accent: "#F46B5B", icon: "clipboard-outline" as const, graphic: decorativeAssets.teacherAssignment },
+  {
+    key: "lessons",
+    kicker: "LEARNING MATERIAL",
+    title: "Lessons",
+    icon: "book-outline" as const,
+    graphic: decorativeAssets.teacherLessonCat,
+    lightAccent: "#2563EB",
+    darkAccent: "#60A5FA",
+    lightBorder: "rgba(37, 99, 235, 0.28)",
+    darkBorder: "rgba(96, 165, 250, 0.38)",
+    lightTint: "rgba(37, 99, 235, 0.08)",
+    darkTint: "rgba(96, 165, 250, 0.16)",
+  },
+  {
+    key: "assignments",
+    kicker: "ASSESSMENT",
+    title: "Assignments",
+    icon: "clipboard-outline" as const,
+    graphic: decorativeAssets.teacherAssignment,
+    lightAccent: "#EA580C",
+    darkAccent: "#FB923C",
+    lightBorder: "rgba(234, 88, 12, 0.28)",
+    darkBorder: "rgba(251, 146, 60, 0.38)",
+    lightTint: "rgba(234, 88, 12, 0.08)",
+    darkTint: "rgba(251, 146, 60, 0.16)",
+  },
 ] as const;
 
 function getActivityTypeConfig(type: TeacherDashboardActivityItem["type"], colors: ThemeColors) {
@@ -135,6 +167,7 @@ export function HomeScreen() {
   // view, so its tab bar keeps its fixed size for now.
   const handleTabBarScroll = useTabBarScrollHandler();
   const { colors, mode, cardShadow, pressedOpacity } = useTheme();
+  const tabBarClearance = useTabBarClearance();
   const { stages } = usePipelineStages();
   const navigation = useNavigation<any>();
   const { width: windowWidth } = useWindowDimensions();
@@ -159,9 +192,22 @@ export function HomeScreen() {
   const [isLoadingStats, setIsLoadingStats] = useState(false);
 
   const [teacherSummary, setTeacherSummary] = useState<TeacherDashboardSummary | null>(null);
+  const [nudges, setNudges] = useState<TeacherNudge[] | null>(null);
+  // Bumped to ask the calendar to open today's agenda sheet (tapping the
+  // "TODAY" nudge) - the calendar and ticker are siblings, so a counter prop
+  // is the lightest link between them.
+  const [openAgendaSignal, setOpenAgendaSignal] = useState(0);
+  const [isCalendarDragging, setIsCalendarDragging] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  // Getting-started already has its own dot on the avatar, so the bell badge
+  // counts only the things that need action.
+  const alertCount = (nudges ?? []).filter((n) => n.type !== "onboarding").length;
   const [isLoadingTeacherSummary, setIsLoadingTeacherSummary] = useState(false);
 
   const [onboardingTasks, setOnboardingTasks] = useState<TeacherOnboardingTasksResult | null>(null);
+  // Getting-started lives in the More menu now (not a banner on home); this
+  // just puts a small dot on the profile avatar while steps are outstanding.
+  const setupIncomplete = !!onboardingTasks && onboardingTasks.completedCount < onboardingTasks.totalCount;
   // Shows once per teacher, on first login only - hasSeenOnboardingTour is
   // persisted server-side (set by markOnboardingTourSeen below) and never
   // resets itself. splashDone keeps it from popping up over the splash
@@ -238,17 +284,6 @@ export function HomeScreen() {
     }, 70);
     return () => clearInterval(interval);
   }, [teacherDisplayName, isTeacher]);
-
-  useEffect(() => {
-    if (!isTeacher || notificationCount === 0) return;
-
-    notificationBellAnimation.setValue(0);
-    notificationBadgeScale.setValue(0.7);
-    Animated.parallel([
-      Animated.timing(notificationBellAnimation, { toValue: 1, duration: 460, useNativeDriver: true }),
-      Animated.spring(notificationBadgeScale, { toValue: 1, friction: 5, tension: 150, useNativeDriver: true }),
-    ]).start();
-  }, [isTeacher, notificationBadgeScale, notificationBellAnimation, notificationCount]);
 
   const followUpCount = stats?.followUps ?? 0;
 
@@ -334,6 +369,31 @@ export function HomeScreen() {
     }
   }, [accessToken, isTeacher]);
 
+  const loadNudges = useCallback(async () => {
+    if (!accessToken || !isTeacher) return;
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    try {
+      setNudges(
+        await api.getTeacherNudges(
+          accessToken,
+          `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
+          `${pad(now.getHours())}:${pad(now.getMinutes())}`
+        )
+      );
+    } catch {
+      setNudges(null);
+    }
+  }, [accessToken, isTeacher]);
+
+  function handleNudgePress(nudge: TeacherNudge) {
+    const { action } = nudge;
+    if (action.kind === "assignment") navigation.navigate("AssignmentDetail", { assignmentId: action.assignmentId });
+    else if (action.kind === "topic") navigation.navigate("TopicDetail", { topicId: action.topicId });
+    else if (action.kind === "getting_started") navigation.navigate("GettingStarted");
+    else setOpenAgendaSignal((n) => n + 1);
+  }
+
   const loadStats = useCallback(async () => {
     if (!accessToken || !isEnrolmentRole) return;
     setIsLoadingStats(true);
@@ -397,8 +457,9 @@ export function HomeScreen() {
     useCallback(() => {
       loadStats();
       loadTeacherSummary();
+      loadNudges();
       loadEnrolmentAnalytics();
-    }, [loadStats, loadTeacherSummary, loadEnrolmentAnalytics])
+    }, [loadStats, loadTeacherSummary, loadNudges, loadEnrolmentAnalytics])
   );
 
   if (!user) return null;
@@ -408,7 +469,7 @@ export function HomeScreen() {
     <Screen>
       {isEnrolmentRole ? (
         <ScrollView
-          contentContainerStyle={[styles.container, { backgroundColor: colors.background }]}
+          contentContainerStyle={[styles.container, { backgroundColor: colors.background, paddingBottom: tabBarClearance }]}
           showsVerticalScrollIndicator={false}
           onScroll={handleEnrolmentScroll}
           scrollEventThrottle={16}
@@ -429,7 +490,7 @@ export function HomeScreen() {
                     </Text>
                   </View>
                 </View>
-                <View style={[styles.headerActions, { backgroundColor: colors.surface }, cardShadow]}>
+                <View style={[styles.headerActions, { backgroundColor: colors.surface }, softCardShadow]}>
                   <Pressable
                     onPress={() => navigation.navigate("Notifications")}
                     style={({ pressed }) => [styles.headerBell, pressed && { opacity: pressedOpacity }]}
@@ -494,7 +555,7 @@ export function HomeScreen() {
                 trend={enrolmentTrend}
                 isLoading={isLoadingAnalytics}
                 colors={colors}
-                cardShadow={cardShadow}
+                cardShadow={softCardShadow}
               />
 
               {isLoadingStats && !stats ? (
@@ -506,7 +567,7 @@ export function HomeScreen() {
                     icon="people-outline"
                     tone="#7359D9"
                     graphic={decorativeAssets.teacherLessonCat}
-                    shadow={cardShadow}
+                    shadow={softCardShadow}
                     stat={{ value: stats?.newEnquiries ?? 0, label: "New enquiries" }}
                   />
                   <KpiCard
@@ -514,7 +575,7 @@ export function HomeScreen() {
                     icon="person-add-outline"
                     tone="#F2675B"
                     graphic={decorativeAssets.teacherAssignment}
-                    shadow={cardShadow}
+                    shadow={softCardShadow}
                     stat={{ value: stats?.followUps ?? 0, label: "Open tasks" }}
                   />
                   <KpiCard
@@ -522,7 +583,7 @@ export function HomeScreen() {
                     icon="calendar-outline"
                     tone="#E5A72D"
                     graphic={decorativeAssets.classBooks}
-                    shadow={cardShadow}
+                    shadow={softCardShadow}
                     stat={{ value: stats?.visitsToday ?? 0, label: "Visits scheduled" }}
                   />
                   <KpiCard
@@ -530,7 +591,7 @@ export function HomeScreen() {
                     icon="checkmark-done-outline"
                     tone="#2FA678"
                     graphic={decorativeAssets.checkCircle}
-                    shadow={cardShadow}
+                    shadow={softCardShadow}
                     stat={{ value: stats?.converted ?? 0, label: "Converted" }}
                   />
                 </View>
@@ -587,7 +648,7 @@ export function HomeScreen() {
                     </Pressable>
                   </View>
 
-                  <View style={[styles.panelCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+                  <View style={[styles.panelCard, { backgroundColor: colors.surface }, softCardShadow]}>
                     {recentEnquiries.length === 0 ? (
                       <Text style={[styles.emptyText, { color: colors.textMuted }]}>No recent enquiries yet.</Text>
                     ) : (
@@ -618,7 +679,7 @@ export function HomeScreen() {
                     </Pressable>
                   </View>
 
-                  <View style={[styles.panelCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+                  <View style={[styles.panelCard, { backgroundColor: colors.surface }, softCardShadow]}>
                     {pendingTasks.length === 0 ? (
                       <Text style={[styles.emptyText, { color: colors.textMuted }]}>No pending tasks right now.</Text>
                     ) : (
@@ -636,14 +697,19 @@ export function HomeScreen() {
                 </View>
               </View>
             </View>
+
+            <MadeWithLoveFooter />
           </>
         </ScrollView>
       ) : isTeacher ? (
         <View style={styles.teacherWrap}>
           <ScrollView
             style={{ flex: 1 }}
-            contentContainerStyle={styles.teacherHomeScroll}
+            contentContainerStyle={[styles.teacherHomeScroll, { paddingBottom: tabBarClearance }]}
             showsVerticalScrollIndicator={false}
+            onScroll={handleTabBarScroll}
+            scrollEventThrottle={16}
+            scrollEnabled={!isCalendarDragging}
           >
             <View style={styles.teacherFixedHeader}>
               <View style={styles.teacherTopRow}>
@@ -652,7 +718,24 @@ export function HomeScreen() {
                     {greeting()}, <Text style={[styles.teacherGreetingName, { color: colors.accent }]}>{typedTeacherName}</Text>
                   </Text>
                 </View>
-                <View style={[styles.teacherTopActions, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+                <View style={[styles.teacherTopActions, { backgroundColor: colors.surface }, softCardShadow]}>
+                  <Pressable
+                    onPress={() => setShowNotifications(true)}
+                    style={({ pressed }) => [
+                      styles.teacherIconButton,
+                      { backgroundColor: colors.surface },
+                      pressed && { opacity: pressedOpacity },
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={alertCount > 0 ? `Open notifications, ${alertCount} need attention` : "Open notifications"}
+                  >
+                    <Ionicons name="notifications" size={18} color={colors.accent} />
+                    {alertCount > 0 ? (
+                      <View style={[styles.teacherNotificationDot, { backgroundColor: colors.danger, borderColor: colors.surface }]}>
+                        <Text style={styles.teacherNotificationCount}>{alertCount > 9 ? "9+" : alertCount}</Text>
+                      </View>
+                    ) : null}
+                  </Pressable>
                   <Pressable
                     onPress={() => navigation.navigate("CommunicationHub")}
                     style={({ pressed }) => [
@@ -661,62 +744,32 @@ export function HomeScreen() {
                       pressed && { opacity: pressedOpacity },
                     ]}
                     accessibilityRole="button"
-                    accessibilityLabel="Open communication hub"
+                    accessibilityLabel="Open messages"
                   >
-                    <Animated.View style={{ transform: [{ rotate: notificationBellRotation }] }}>
-                      <Ionicons name="notifications" size={18} color={colors.accent} />
-                    </Animated.View>
-                    {notificationCount > 0 ? <Animated.View style={[styles.teacherNotificationDot, { backgroundColor: colors.danger, transform: [{ scale: notificationBadgeScale }] }]}><Text style={styles.teacherNotificationCount}>{notificationCount > 9 ? "9+" : notificationCount}</Text></Animated.View> : null}
+                    <Ionicons name="chatbubble-ellipses" size={18} color={colors.accent} />
                   </Pressable>
-                  <Pressable style={({ pressed }) => [styles.teacherAvatarRing, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.navigate("More")} accessibilityRole="button" accessibilityLabel="Open more menu">
+                  <Pressable style={({ pressed }) => [styles.teacherAvatarRing, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.navigate("More")} accessibilityRole="button" accessibilityLabel={setupIncomplete ? "Open more menu, setup not finished" : "Open more menu"}>
                     <View style={[styles.teacherAvatarFrame, { backgroundColor: colors.accentSoft }]}>
                       {teacherProfileImage ? <Image source={teacherProfileImage} style={user?.photoMimeType ? styles.teacherAvatarPhoto : styles.teacherAvatar} resizeMode={user?.photoMimeType ? "cover" : "contain"} /> : null}
                     </View>
+                    {setupIncomplete ? <View style={[styles.avatarSetupDot, { backgroundColor: colors.danger, borderColor: colors.surface }]} /> : null}
                   </Pressable>
                 </View>
               </View>
-              <View style={styles.teacherWeekRow} accessibilityLabel="Current week calendar">
-                {weekDates.map((date) => {
-                  const isToday = date.toDateString() === today.toDateString();
-                  return (
-                    <View
-                      key={date.toISOString()}
-                      style={[
-                        styles.teacherWeekDay,
-                        { backgroundColor: isToday ? colors.accent : colors.surfaceRaised },
-                      ]}
-                    >
-                      <Text style={[styles.teacherWeekDayLabel, { color: isToday ? colors.accentOn : colors.textMuted }]}>
-                        {date.toLocaleDateString("en-IN", { weekday: "short" })}
-                      </Text>
-                      <Text style={[styles.teacherWeekDate, { color: isToday ? colors.accentOn : colors.textPrimary }]}>{date.getDate()}</Text>
-                    </View>
-                  );
-                })}
-              </View>
+              <TeacherCalendar
+                openAgendaSignal={openAgendaSignal}
+                onDragStateChange={setIsCalendarDragging}
+              />
+              <TeacherNotificationsSheet
+                visible={showNotifications}
+                onClose={() => setShowNotifications(false)}
+                notifications={nudges ?? []}
+                onPressNotification={(nudge) => {
+                  setShowNotifications(false);
+                  handleNudgePress(nudge);
+                }}
+              />
             </View>
-            {onboardingTasks && onboardingTasks.completedCount < onboardingTasks.totalCount ? (
-              <Pressable
-                onPress={() => navigation.navigate("GettingStarted")}
-                style={({ pressed }) => [
-                  styles.gettingStartedBanner,
-                  { backgroundColor: colors.surfaceRaised, borderColor: colors.border },
-                  pressed && { opacity: pressedOpacity },
-                ]}
-                accessibilityRole="button"
-              >
-                <View style={[styles.gettingStartedIconWrap, { backgroundColor: colors.accentSoft }]}>
-                  <Ionicons name="checkmark-circle-outline" size={20} color={colors.accent} />
-                </View>
-                <View style={styles.gettingStartedCopy}>
-                  <Text style={[styles.gettingStartedTitle, { color: colors.textPrimary }]}>Finish getting started</Text>
-                  <Text style={[styles.gettingStartedSubtitle, { color: colors.textMuted }]}>
-                    {onboardingTasks.completedCount} of {onboardingTasks.totalCount} tasks complete
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-              </Pressable>
-            ) : null}
             <View style={styles.teacherHeroCarousel}>
               <ScrollView
                 ref={heroCarouselRef}
@@ -741,20 +794,24 @@ export function HomeScreen() {
                 >
                   <View style={styles.teacherHeroGlow} />
                   <View style={styles.teacherHeroCopy}>
-                    <Text style={styles.teacherHeroEyebrow}>ASSIGNMENTS</Text>
-                    <Text style={styles.teacherHeroTitle} numberOfLines={2}>
-                      {notificationCount > 0 ? `${notificationCount} submission${notificationCount === 1 ? "" : "s"} to review` : "Your assignments are ready"}
-                    </Text>
-                    <Text style={styles.teacherHeroSubtitle}>
-                      {teacherSummary?.publishedAssignmentCount ?? 0} published assignment{(teacherSummary?.publishedAssignmentCount ?? 0) === 1 ? "" : "s"} in progress.
-                    </Text>
+                    <View style={styles.teacherHeroTextGroup}>
+                      <Text style={styles.teacherHeroEyebrow}>ASSIGNMENTS</Text>
+                      <Text style={styles.teacherHeroTitle} numberOfLines={2}>
+                        Review Student Submissions
+                      </Text>
+                      <Text style={styles.teacherHeroSubtitle} numberOfLines={2}>
+                        Track test submissions, evaluate student answers, and send quick feedback.
+                      </Text>
+                    </View>
                     <View style={styles.teacherHeroPanel}>
                       <Pressable
                         onPress={() => navigation.navigate("Assignment")}
                         style={({ pressed }) => [styles.teacherHeroPanelButton, pressed && { opacity: pressedOpacity }]}
                       >
-                        <Text style={[styles.teacherHeroPanelButtonText, { color: colors.textPrimary }]}>{notificationCount > 0 ? "Review submissions" : "Open assignments"}</Text>
-                        <Ionicons name="arrow-forward" size={16} color={colors.textPrimary} />
+                        <Text style={[styles.teacherHeroPanelButtonText, { color: colors.textPrimary }]}>
+                          {notificationCount > 0 ? "Review submissions" : "Open assignments"}
+                        </Text>
+                        <Ionicons name="arrow-forward" size={15} color={colors.textPrimary} />
                       </Pressable>
                     </View>
                   </View>
@@ -778,28 +835,24 @@ export function HomeScreen() {
                     </Animated.View>
                   </View>
                   <View style={styles.teacherHeroCopy}>
-                    <Text style={styles.teacherHeroEyebrow}>{teacherSummary?.continueTopic ? "CONTINUE" : "LESSON STUDIO"}</Text>
-                    {teacherSummary?.continueTopic ? (
-                      <>
-                        <Text style={styles.teacherHeroTitle} numberOfLines={2}>{capitalizeFirst(teacherSummary.continueTopic.name)}</Text>
-                        <View style={styles.teacherHeroChip}>
-                          <Text style={[styles.teacherHeroChipText, { color: colors.textPrimary }]}>{capitalizeFirst(teacherSummary.continueTopic.subject)}</Text>
-                        </View>
-                        <Text style={styles.teacherHeroSubtitle}>Updated {formatRelativeTime(teacherSummary.continueTopic.updatedAt)}</Text>
-                      </>
-                    ) : (
-                      <>
-                        <Text style={styles.teacherHeroTitle}>Start your first topic with AI</Text>
-                        <Text style={styles.teacherHeroSubtitle}>Create a lesson plan in a few guided steps.</Text>
-                      </>
-                    )}
+                    <View style={styles.teacherHeroTextGroup}>
+                      <Text style={styles.teacherHeroEyebrow}>LESSON STUDIO</Text>
+                      <Text style={styles.teacherHeroTitle} numberOfLines={2}>
+                        Generate Lessons with AI
+                      </Text>
+                      <Text style={styles.teacherHeroSubtitle} numberOfLines={2}>
+                        Create structured lesson plans, slides, and study material in seconds.
+                      </Text>
+                    </View>
                     <View style={styles.teacherHeroPanel}>
                       <Pressable
                         onPress={() => navigation.navigate(teacherSummary?.continueTopic ? "TopicDetail" : "Studio", teacherSummary?.continueTopic ? { topicId: teacherSummary.continueTopic.id } : undefined)}
                         style={({ pressed }) => [styles.teacherHeroPanelButton, pressed && { opacity: pressedOpacity }]}
                       >
-                        <Text style={[styles.teacherHeroPanelButtonText, { color: colors.textPrimary }]}>{teacherSummary?.continueTopic ? "Open topic" : "Get started"}</Text>
-                        <Ionicons name="arrow-forward" size={16} color={colors.textPrimary} />
+                        <Text style={[styles.teacherHeroPanelButtonText, { color: colors.textPrimary }]}>
+                          {teacherSummary?.continueTopic ? "Continue topic" : "Get started"}
+                        </Text>
+                        <Ionicons name="arrow-forward" size={15} color={colors.textPrimary} />
                       </Pressable>
                     </View>
                   </View>
@@ -811,11 +864,11 @@ export function HomeScreen() {
               </View>
             </View>
 
-            <TeacherInsightTicker colors={colors} />
+            <TeacherInsightTicker colors={colors} nudges={nudges ? nudges.slice(0, TICKER_MAX_ITEMS) : null} onPressNudge={handleNudgePress} />
 
             <View style={styles.teacherSectionHeader}>
               <View>
-                <Text style={[styles.teacherSectionTitle, { color: colors.textPrimary }]}>Your plan</Text>
+                <Text style={[styles.teacherSectionTitle, { color: colors.textPrimary }]}>Your Workspace</Text>
                 <Text style={[styles.teacherSectionHint, { color: colors.textMuted }]}>Your lesson and assessment workspace.</Text>
               </View>
               <Pressable onPress={() => navigation.navigate("Analytics")}>
@@ -831,40 +884,46 @@ export function HomeScreen() {
                 const metaTopValue = isLessons ? teacherSummary?.topicsUpdatedThisWeek ?? 0 : teacherSummary?.draftAssignmentCount ?? 0;
                 const metaBottom = isLessons ? null : "Published";
                 const metaBottomValue = isLessons ? null : teacherSummary?.publishedAssignmentCount ?? 0;
+                const accentColor = mode === "dark" ? card.darkAccent : card.lightAccent;
+                const tintBg = mode === "dark" ? card.darkTint : card.lightTint;
+                const borderColor = mode === "dark" ? card.darkBorder : card.lightBorder;
                 return (
                   <Pressable
                     key={card.key}
                     onPress={() => navigation.navigate(isLessons ? "Studio" : "Assignment")}
                     style={({ pressed }) => [
                       styles.teacherSummaryCard,
-                      { backgroundColor: card.accent },
+                      {
+                        backgroundColor: colors.surface,
+                        borderColor,
+                      },
                       cardShadow,
                       pressed && { opacity: pressedOpacity },
                     ]}
                   >
                     <View style={styles.teacherSummaryHeader}>
-                      <View style={styles.teacherSummaryIcon}>
-                        <Ionicons name={card.icon} size={16} color="#FFFFFF" />
+                      <View style={[styles.teacherSummaryIcon, { backgroundColor: tintBg }]}>
+                        <Ionicons name={card.icon} size={15} color={accentColor} />
                       </View>
-                      <Text style={styles.teacherSummaryKicker}>{isLessons ? "CONTENT" : "ASSESSMENT"}</Text>
+                      <Text style={[styles.teacherSummaryKicker, { color: accentColor }]} numberOfLines={1}>
+                        {card.kicker}
+                      </Text>
+                      <Ionicons name="chevron-forward" size={13} color={colors.textMuted} style={styles.teacherSummaryChevron} />
                     </View>
-                    <Text style={styles.teacherSummaryTitle}>{card.title}</Text>
-                    <View style={styles.teacherSummaryCountRow}>
-                      <Text style={styles.teacherSummaryValue}>{value}</Text>
-                      <Text style={styles.teacherSummaryCountLabel}>Total</Text>
+
+                    <View style={styles.teacherSummaryBody}>
+                      <Text style={[styles.teacherSummaryValue, { color: colors.textPrimary }]}>{value}</Text>
+                      <Text style={[styles.teacherSummaryTitle, { color: colors.textSecondary }]}>{card.title}</Text>
                     </View>
+
                     <View style={styles.teacherSummaryStatusRow}>
-                      <View style={styles.teacherSummaryStatusDot} />
-                      <Text style={styles.teacherSummaryMetaLabel}>
+                      <View style={[styles.teacherSummaryStatusDot, { backgroundColor: accentColor }]} />
+                      <Text style={[styles.teacherSummaryMetaLabel, { color: colors.textMuted }]} numberOfLines={1}>
                         {metaTopValue} {metaTop.toLowerCase()}{metaBottom ? ` · ${metaBottomValue} ${metaBottom.toLowerCase()}` : ""}
                       </Text>
                     </View>
-                    <View style={styles.teacherSummaryFooter}>
-                      <View style={styles.teacherSummaryButton}>
-                        <Ionicons name="arrow-forward" size={15} color="#FFFFFF" />
-                      </View>
-                    </View>
-                    <Image source={card.graphic} style={styles.teacherSummaryGraphic} resizeMode="contain" />
+
+                    <Image source={card.graphic} style={[styles.teacherSummaryGraphic, { opacity: mode === "dark" ? 0.12 : 0.08 }]} resizeMode="contain" />
                   </Pressable>
                 );
               })}
@@ -874,8 +933,8 @@ export function HomeScreen() {
               onPress={() => navigation.navigate("Assignment")}
               style={({ pressed }) => [
                 styles.teacherHighlightCard,
-                { backgroundColor: colors.accentSoft, borderColor: colors.accentSoftAlt },
-                cardShadow,
+                { backgroundColor: colors.accentSoft },
+                softCardShadow,
                 pressed && { opacity: pressedOpacity },
               ]}
             >
@@ -920,7 +979,7 @@ export function HomeScreen() {
                 <Text style={[styles.teacherSectionHint, { color: colors.textMuted }]}>Latest updates across your workspace.</Text>
               </View>
             </View>
-            <View style={[styles.teacherTimelineCard, { backgroundColor: colors.surface }, cardShadow]}>
+            <View style={[styles.teacherTimelineCard, { backgroundColor: colors.surface }, softCardShadow]}>
               {!teacherSummary || teacherSummary.recentActivity.length === 0 ? (
                 <Text style={[styles.emptyText, { color: colors.textMuted }]}>
                   {isLoadingTeacherSummary ? "Loading…" : "No recent activity yet."}
@@ -957,6 +1016,8 @@ export function HomeScreen() {
                 })
               )}
             </View>
+
+            <MadeWithLoveFooter />
           </ScrollView>
         </View>
       ) : (
@@ -1236,7 +1297,7 @@ function EnrolmentAnalyticsSection({
   cardShadow: ReturnType<typeof useTheme>["cardShadow"];
 }) {
   return (
-    <View style={[styles.analyticsCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+    <View style={[styles.analyticsCard, { backgroundColor: colors.surface }, cardShadow]}>
       <Text style={[styles.analyticsCaption, { color: colors.textSecondary }]}>Monthly enquiry trend</Text>
       {isLoading && !trend ? (
         <ActivityIndicator color={colors.accent} style={{ marginVertical: 24 }} />
@@ -1299,66 +1360,77 @@ function LegendDot({ color, label, colors }: { color: string; label: string; col
   );
 }
 
-const TEACHER_TICKER_ITEMS: { label: string; text: string; avatars: number[] }[] = [
-  { label: "SUBMISSIONS", text: "10 students just submitted their assignment.", avatars: [0, 1, 2] },
-  { label: "ASSIGN A TEST", text: "It's time to assign a new test to your class.", avatars: [3, 4, 5] },
-  { label: "LESSON PLANS", text: "3 lesson plans are ready to review this week.", avatars: [5, 6, 7] },
-];
+const NUDGE_ROTATE_MS = 4500;
+// The ticker rotates through only the first few; the bell's sheet shows all.
+const TICKER_MAX_ITEMS = 4;
 
-function TeacherInsightTicker({ colors }: { colors: ThemeColors }) {
+if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
+// Live "needs your attention" ticker. nudges === null means still loading (or
+// failed) - render nothing rather than flash placeholder text; an empty list
+// means genuinely nothing to do.
+function TeacherInsightTicker({
+  colors,
+  nudges,
+  onPressNudge,
+}: {
+  colors: ThemeColors;
+  nudges: TeacherNudge[] | null;
+  onPressNudge: (nudge: TeacherNudge) => void;
+}) {
   const [messageIndex, setMessageIndex] = useState(0);
   const translateY = useRef(new Animated.Value(0)).current;
   const opacity = useRef(new Animated.Value(1)).current;
+  const count = nudges?.length ?? 0;
 
   useEffect(() => {
+    if (count < 2) return;
     const timer = setInterval(() => {
       Animated.parallel([
         Animated.timing(translateY, { toValue: -14, duration: 260, useNativeDriver: true }),
         Animated.timing(opacity, { toValue: 0, duration: 220, useNativeDriver: true }),
       ]).start(() => {
-        setMessageIndex((current) => (current + 1) % TEACHER_TICKER_ITEMS.length);
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+        setMessageIndex((current) => (current + 1) % count);
         translateY.setValue(14);
         Animated.parallel([
           Animated.timing(translateY, { toValue: 0, duration: 280, useNativeDriver: true }),
           Animated.timing(opacity, { toValue: 1, duration: 280, useNativeDriver: true }),
         ]).start();
       });
-    }, 3200);
+    }, NUDGE_ROTATE_MS);
     return () => clearInterval(timer);
-  }, [opacity, translateY]);
+  }, [count, opacity, translateY]);
 
-  const currentItem = TEACHER_TICKER_ITEMS[messageIndex];
+  if (nudges === null) return null;
+
+  const current = count > 0 ? nudges[messageIndex % count] : null;
+  const label = current?.label ?? "ALL CAUGHT UP";
+  const text = current?.text ?? "Nothing needs your attention right now.";
+  const typeColor = current ? NUDGE_TYPE_COLORS[current.type] : colors.textMuted;
 
   return (
-    <View style={[styles.tickerWrap, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-      <View style={styles.tickerAvatarStack}>
-        {currentItem.avatars.map((avatarIndex, position) => (
-          <Image
-            key={position}
-            source={AVATAR_SOURCES[avatarIndex]}
-            style={[
-              styles.tickerAvatar,
-              { borderColor: colors.surface, marginLeft: position === 0 ? 0 : -10, zIndex: currentItem.avatars.length - position },
-            ]}
-          />
-        ))}
-        <View style={[styles.tickerLiveDot, { backgroundColor: "#3DDC84", borderColor: colors.surface }]} />
-      </View>
-
+    <Pressable
+      onPress={() => current && onPressNudge(current)}
+      disabled={!current}
+      style={({ pressed }) => [styles.tickerWrap, pressed && { opacity: 0.6 }]}
+      accessibilityRole={current ? "button" : "text"}
+      accessibilityLabel={`${label}. ${text.replace(/"/g, "")}`}
+    >
+      <View style={[styles.tickerBar, { backgroundColor: typeColor }]} />
       <View style={styles.tickerBody}>
-        <Text style={[styles.tickerLabel, { color: colors.accent }]} numberOfLines={1}>
-          {currentItem.label}
+        <Text style={[styles.tickerLabel, { color: typeColor }]} numberOfLines={1}>
+          {label}
         </Text>
         <View style={styles.tickerTextClip}>
-          <Animated.Text
-            style={[styles.tickerText, { color: colors.textPrimary, opacity, transform: [{ translateY }] }]}
-            numberOfLines={1}
-          >
-            {currentItem.text}
+          <Animated.Text style={[styles.tickerText, { color: colors.textSecondary, opacity, transform: [{ translateY }] }]} numberOfLines={2}>
+            {renderNudgeText(text, colors.textPrimary)}
           </Animated.Text>
         </View>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -1456,7 +1528,6 @@ const styles = StyleSheet.create({
   },
   analyticsCard: {
     borderRadius: 24,
-    borderWidth: 1,
     padding: 18,
     gap: 16,
   },
@@ -1681,7 +1752,6 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   panelCard: {
-    borderWidth: 1,
     borderRadius: 24,
     paddingHorizontal: 14,
     paddingVertical: 6,
@@ -1782,7 +1852,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 7,
-    borderWidth: 1,
     borderRadius: 22,
     padding: 3,
   },
@@ -1851,38 +1920,20 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
   teacherAvatarPhoto: { width: "100%", height: "100%" },
-  gettingStartedBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 14,
-  },
-  gettingStartedIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  gettingStartedCopy: {
-    flex: 1,
-  },
-  gettingStartedTitle: {
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  gettingStartedSubtitle: {
-    fontSize: 11,
-    marginTop: 2,
+  avatarSetupDot: {
+    position: "absolute",
+    top: -2,
+    right: -2,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 2,
   },
   teacherHeroCarousel: {
     gap: 10,
   },
   teacherHeroCard: {
-    minHeight: 220,
+    height: 206,
     borderRadius: 22,
     padding: 18,
     overflow: "hidden",
@@ -1899,7 +1950,7 @@ const styles = StyleSheet.create({
   },
   teacherHeroBulb: {
     position: "absolute",
-    bottom: 122,
+    bottom: 110,
     right: 86,
     width: 36,
     height: 42,
@@ -1935,8 +1986,13 @@ const styles = StyleSheet.create({
     transform: [{ rotate: "48deg" }],
   },
   teacherHeroCopy: {
-    maxWidth: "64%",
+    flex: 1,
+    maxWidth: "63%",
     zIndex: 2,
+    justifyContent: "space-between",
+  },
+  teacherHeroTextGroup: {
+    gap: 3,
   },
   teacherHeroEyebrow: {
     color: "rgba(255,255,255,0.78)",
@@ -1945,7 +2001,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1.1,
   },
   teacherHeroTitle: {
-    marginTop: 3,
+    marginTop: 2,
     color: "#FFFFFF",
     fontSize: 20,
     lineHeight: 25,
@@ -1953,11 +2009,11 @@ const styles = StyleSheet.create({
     letterSpacing: -0.55,
   },
   teacherHeroSubtitle: {
-    marginTop: 3,
-    color: "rgba(255,255,255,0.82)",
-    fontSize: 11,
-    lineHeight: 16,
-    fontWeight: "600",
+    marginTop: 2,
+    color: "rgba(255,255,255,0.84)",
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: "500",
   },
   teacherHeroChip: {
     marginTop: 8,
@@ -1972,21 +2028,20 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   teacherHeroPanel: {
-    marginTop: 14,
     alignSelf: "flex-start",
     backgroundColor: "rgba(255,255,255,0.12)",
-    borderRadius: 16,
-    padding: 6,
+    borderRadius: 14,
+    padding: 4,
   },
   teacherHeroPanelButton: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 11,
-    paddingHorizontal: 12,
+    borderRadius: 10,
+    paddingHorizontal: 13,
     paddingVertical: 8,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
+    gap: 7,
   },
   teacherHeroPanelButtonText: {
     fontSize: 12,
@@ -2013,42 +2068,18 @@ const styles = StyleSheet.create({
   },
   tickerWrap: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "stretch",
     gap: 12,
-    borderWidth: 1,
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    shadowColor: "#7C005A",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.06,
-    shadowRadius: 14,
-    elevation: 2,
+    marginVertical: 4,
   },
-  tickerAvatarStack: {
-    flexDirection: "row",
-    alignItems: "center",
-    flexShrink: 0,
-    position: "relative",
-  },
-  tickerAvatar: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    borderWidth: 2,
-  },
-  tickerLiveDot: {
-    position: "absolute",
-    bottom: -1,
-    right: -1,
-    width: 11,
-    height: 11,
-    borderRadius: 6,
-    borderWidth: 2,
+  tickerBar: {
+    width: 3,
+    borderRadius: 2,
   },
   tickerBody: {
     flex: 1,
-    gap: 3,
+    gap: 4,
+    paddingVertical: 2,
   },
   tickerLabel: {
     fontSize: 9,
@@ -2056,13 +2087,13 @@ const styles = StyleSheet.create({
     letterSpacing: 0.7,
   },
   tickerTextClip: {
-    height: 18,
+    minHeight: 19,
     overflow: "hidden",
   },
   tickerText: {
-    fontSize: 13,
-    fontWeight: "700",
-    lineHeight: 18,
+    fontSize: 14,
+    fontWeight: "500",
+    lineHeight: 19,
   },
   teacherSectionHeader: {
     flexDirection: "row",
@@ -2085,98 +2116,77 @@ const styles = StyleSheet.create({
   },
   teacherSummaryCard: {
     flex: 1,
-    minHeight: 184,
-    borderRadius: 24,
-    padding: 16,
+    minHeight: 118,
+    borderRadius: 18,
+    paddingVertical: 12,
+    paddingHorizontal: 13,
+    borderWidth: 1.5,
     overflow: "hidden",
+    justifyContent: "space-between",
   },
   teacherSummaryHeader: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 6,
   },
   teacherSummaryIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 13,
-    backgroundColor: "rgba(255,255,255,0.18)",
+    width: 26,
+    height: 26,
+    borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
   },
   teacherSummaryKicker: {
-    color: "rgba(255,255,255,0.8)",
     fontSize: 9,
     fontWeight: "800",
-    letterSpacing: 0.7,
+    letterSpacing: 0.5,
+    flexShrink: 1,
   },
-  teacherSummaryTitle: {
-    marginTop: 16,
-    color: "#FFFFFF",
-    fontSize: 15,
-    fontWeight: "800",
+  teacherSummaryChevron: {
+    marginLeft: "auto",
   },
-  teacherSummaryCountRow: {
+  teacherSummaryBody: {
     flexDirection: "row",
-    alignItems: "flex-end",
-    gap: 5,
+    alignItems: "baseline",
+    gap: 6,
+    marginTop: 8,
+    marginBottom: 4,
   },
   teacherSummaryValue: {
-    color: "#FFFFFF",
-    fontSize: 34,
-    lineHeight: 40,
+    fontSize: 24,
+    lineHeight: 28,
     fontWeight: "800",
   },
-  teacherSummaryCountLabel: {
-    color: "rgba(255,255,255,0.75)",
-    fontSize: 11,
+  teacherSummaryTitle: {
+    fontSize: 13,
     lineHeight: 18,
-    fontWeight: "700",
-    paddingBottom: 7,
+    fontWeight: "600",
   },
   teacherSummaryStatusRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    marginTop: 4,
   },
   teacherSummaryStatusDot: {
     width: 5,
     height: 5,
-    borderRadius: 3,
-    backgroundColor: "rgba(255,255,255,0.9)",
+    borderRadius: 2.5,
   },
   teacherSummaryMetaLabel: {
-    color: "rgba(255,255,255,0.82)",
     fontSize: 10,
-    lineHeight: 15,
-    fontWeight: "600",
+    lineHeight: 14,
+    fontWeight: "500",
     flexShrink: 1,
-  },
-  teacherSummaryFooter: {
-    flex: 1,
-    justifyContent: "flex-end",
-    marginTop: 8,
-  },
-  teacherSummaryButton: {
-    alignSelf: "flex-start",
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: "rgba(255,255,255,0.18)",
-    alignItems: "center",
-    justifyContent: "center",
   },
   teacherSummaryGraphic: {
     position: "absolute",
-    right: -2,
-    bottom: 6,
-    width: 78,
-    height: 78,
-    opacity: 0.25,
+    right: -4,
+    bottom: -4,
+    width: 48,
+    height: 48,
   },
   teacherHighlightCard: {
-    borderWidth: 1,
-    borderRadius: 20,
+    borderRadius: 22,
     padding: 14,
     overflow: "hidden",
   },

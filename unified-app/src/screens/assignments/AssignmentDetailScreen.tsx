@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Image, Animated } from "react-native";
+import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Image, Animated, Alert } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
@@ -13,18 +13,19 @@ import { SlideToPublishButton } from "../../components/SlideToPublishButton";
 import { api, ApiError, AssignmentDetail, ClassSection, StudentStub } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
 import { decorativeAssets } from "../../theme/decorativeAssets";
+import { softCardShadow } from "../../theme/tokens";
 
 type Props = NativeStackScreenProps<RootStackParamList, "AssignmentDetail">;
 
 export function AssignmentDetailScreen({ route, navigation }: Props) {
   const { assignmentId } = route.params;
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
 
   const [assignment, setAssignment] = useState<AssignmentDetail | null>(null);
   const [students, setStudents] = useState<StudentStub[]>([]);
   const [classSection, setClassSection] = useState<ClassSection | null>(null);
-  const [topicMeta, setTopicMeta] = useState<{ subject: string; board: string } | null>(null);
+  const [topicMeta, setTopicMeta] = useState<{ subject: string } | null>(null);
   const [answerKeyStats, setAnswerKeyStats] = useState<{ verified: number; total: number } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +59,7 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
 
       setStudents(studentsRes.data ?? []);
       setClassSection(sections.find((item) => item.id === a.classSectionId) ?? null);
-      setTopicMeta(topic ? { subject: topic.subject, board: topic.board } : null);
+      setTopicMeta(topic ? { subject: topic.subject } : null);
       setAnswerKeyStats({ verified: answerKeys.filter((k) => !!k.teacherVerifiedAnswer).length, total: answerKeys.length });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load assignment");
@@ -149,7 +150,13 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
       await api.unpublishAssignment(accessToken, assignment.id);
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to unpublish");
+      const message = err instanceof Error ? err.message : "Failed to unpublish";
+      setError(message);
+      // The Unpublish button sits at the top of what can be a long, scrolling
+      // page - an inline error near the bottom of the screen is easy to miss
+      // entirely, so the actual reason (e.g. "3 student submissions already
+      // exist") needs to show up right where the teacher is looking.
+      Alert.alert("Can't unpublish this assignment", message);
       return false;
     } finally {
       setIsUnpublishing(false);
@@ -201,7 +208,7 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
   const metaLine = [
     classSection?.className ? capitalizeFirst(classSection.className) : undefined,
     topicMeta?.subject ? capitalizeFirst(topicMeta.subject) : undefined,
-    topicMeta?.board,
+    user?.board ?? undefined,
   ].filter(Boolean).join(" • ");
   const createdAt = new Date(assignment.createdAt);
   const now = new Date();
@@ -223,7 +230,7 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
             onPress={() => navigation.goBack()}
             style={({ pressed }) => [
               styles.backButton,
-              { backgroundColor: colors.surface, borderColor: colors.border },
+              { backgroundColor: colors.surface, borderWidth: 0 },
               cardShadow,
               pressed && { opacity: pressedOpacity },
             ]}
@@ -237,7 +244,7 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
             onPress={() => navigation.navigate("MainTabs", { screen: "Home" })}
             style={({ pressed }) => [
               styles.backButton,
-              { backgroundColor: colors.surface, borderColor: colors.border },
+              { backgroundColor: colors.surface, borderWidth: 0 },
               cardShadow,
               pressed && { opacity: pressedOpacity },
             ]}
@@ -280,7 +287,12 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
           ) : null}
         </View>
 
-        <View style={styles.heroVisual}>
+        {/* Purely decorative - its negative marginTop deliberately overlaps
+            heroCopy above (including the Unpublish button) to sit alongside
+            the title. Without pointerEvents="none" this transparent-background
+            image's whole bounding box (not just the visible pixels) swallows
+            taps meant for whatever's underneath it. */}
+        <View style={styles.heroVisual} pointerEvents="none">
           <Image source={decorativeAssets.assignmentStudent} style={styles.heroImage} resizeMode="contain" />
         </View>
 
@@ -337,7 +349,7 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
               <Text style={[styles.questionIndex, { color: colors.accent }]}>{String(index + 1).padStart(2, "0")}</Text>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.questionText, { color: colors.textSecondary }]}>{question.prompt}</Text>
-                {question.type === "mcq" && question.options ? (
+                {(question.type === "mcq" || question.type === "true_false") && question.options ? (
                   <View style={styles.mcqOptionList}>
                     {question.options.map((option, optionIndex) => (
                       <Text
@@ -349,6 +361,22 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
                       >
                         {optionIndex === question.correctOptionIndex ? "✓ " : "• "}
                         {option}
+                      </Text>
+                    ))}
+                  </View>
+                ) : question.type === "match_following" && question.pairs ? (
+                  <View style={styles.mcqOptionList}>
+                    {question.pairs.map((pair, pairIndex) => (
+                      <Text key={pairIndex} style={[styles.mcqOptionText, { color: colors.textMuted }]}>
+                        {pair.left} → {pair.right}
+                      </Text>
+                    ))}
+                  </View>
+                ) : question.type === "sequencing" && question.items ? (
+                  <View style={styles.mcqOptionList}>
+                    {question.items.map((item, itemIndex) => (
+                      <Text key={itemIndex} style={[styles.mcqOptionText, { color: colors.textMuted }]}>
+                        {itemIndex + 1}. {item}
                       </Text>
                     ))}
                   </View>
@@ -373,7 +401,7 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
         </View>
 
         {assignment.status === "published" ? (
-          <View style={[styles.submissionsCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <View style={[styles.submissionsCard, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
             <View style={styles.submissionsHeader}>
               <View style={styles.submissionsHeaderLeft}>
                 <View style={[styles.infoIconWrap, { backgroundColor: colors.accentSoft }]}>
@@ -436,7 +464,7 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
         {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
         {assignment.status === "draft" ? (
-          <View style={[styles.bottomActions, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <View style={[styles.bottomActions, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
             <View style={styles.publishCardHeader}>
               <Text style={[styles.publishCardTitle, { color: colors.textPrimary }]}>Ready to publish</Text>
               <View style={styles.publishCardActions}>
@@ -609,9 +637,9 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   statsCard: {
+    ...softCardShadow,
     flexDirection: "row",
     alignItems: "stretch",
-    borderWidth: 1,
     borderRadius: 16,
     paddingHorizontal: 18,
     paddingVertical: 18,
@@ -669,7 +697,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   questionCard: {
-    borderWidth: 1,
+    ...softCardShadow,
     borderRadius: 16,
     overflow: "hidden",
     marginBottom: 18,
@@ -773,7 +801,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   submissionsCard: {
-    borderWidth: 1,
+    ...softCardShadow,
     borderRadius: 22,
     padding: 16,
     marginBottom: 16,
@@ -864,8 +892,8 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   bottomActions: {
+    ...softCardShadow,
     marginTop: 8,
-    borderWidth: 1,
     borderRadius: 24,
     padding: 16,
     marginBottom: 8,

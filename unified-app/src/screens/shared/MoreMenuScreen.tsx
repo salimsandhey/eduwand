@@ -1,7 +1,8 @@
+import { useCallback, useState } from "react";
 import { Image, ImageSourcePropType, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { useNavigation } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
@@ -10,6 +11,7 @@ import { resolveUserImageSource } from "../../theme/avatars";
 import { api, CurrentUser } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
 import { useTabBarScrollHandler } from "../../navigation/TabBarScrollContext";
+import { useTabBarClearance } from "../../navigation/useTabBarClearance";
 
 const ENROLMENT_ROLES = ["front_desk", "counsellor"];
 
@@ -25,11 +27,30 @@ function formatRole(role: string) {
 }
 
 export function MoreMenuScreen() {
+  const tabBarClearance = useTabBarClearance();
   const { user, accessToken, logout } = useAuth();
   const { colors, pressedOpacity } = useTheme();
   const navigation = useNavigation<any>();
+  const [setupProgress, setSetupProgress] = useState<{ completed: number; total: number } | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!accessToken || user?.role !== "teacher") return;
+      api
+        .getOnboardingTasks(accessToken)
+        .then((result) => setSetupProgress({ completed: result.completedCount, total: result.totalCount }))
+        .catch(() => {});
+    }, [accessToken, user?.role])
+  );
 
   if (!user) return null;
+
+  const setupCaption =
+    setupProgress && setupProgress.completed < setupProgress.total
+      ? `${setupProgress.completed} of ${setupProgress.total} steps done - finish to unlock badges`
+      : setupProgress
+      ? "All steps done"
+      : "Finish your profile and unlock badges";
 
   const parentTabs = navigation.getParent();
   const root = parentTabs?.getParent();
@@ -54,14 +75,14 @@ export function MoreMenuScreen() {
   // individual-teacher-onboarding-and-credits.md.
   const isIndividualTeacher = isTeacher && user.accountType === "individual";
 
+  // Studio, Assignments, Analytics and Messages already have a permanent entry
+  // point (a tab, or the Home header icon) - More only lists pages that have
+  // no other way in, so those are left out here rather than duplicated.
   const tools: ToolItem[] = isTeacher
     ? [
-        { title: "Studio", caption: "Manage topics and generated lessons", icon: "book-outline", onPress: () => parentTabs?.navigate("Studio") },
-        { title: "Assignments", caption: "Create and review class work", icon: "document-text-outline", onPress: () => parentTabs?.navigate("Assignment") },
-        { title: "Analytics", caption: "View attainment and class progress", icon: "bar-chart-outline", onPress: () => parentTabs?.navigate("Analytics") },
         { title: "Credits", caption: "View balance and usage history", icon: "wallet-outline", onPress: () => root?.navigate("Credits") },
         { title: "Students", caption: "Roster across all your classes, add or invite students", icon: "people-outline", onPress: () => root?.navigate("Students") },
-        { title: "Getting started", caption: "Finish your profile and unlock badges", icon: "checkmark-circle-outline", onPress: () => root?.navigate("GettingStarted") },
+        { title: "Getting started", caption: setupCaption, icon: "checkmark-circle-outline", onPress: () => root?.navigate("GettingStarted") },
         { title: "Leaderboard", caption: "See how you rank in your school this month", icon: "trophy-outline", onPress: () => root?.navigate("Leaderboard") },
         ...(isIndividualTeacher
           ? [{ title: "Academic year", caption: "Start a new session when this one ends", icon: "calendar-outline" as const, onPress: () => root?.navigate("StartNewAcademicYear") }]
@@ -69,13 +90,16 @@ export function MoreMenuScreen() {
       ]
     : [];
 
-  const communicationTools: ToolItem[] = isTeacher
-    ? [{ title: "Messages", caption: "Stay connected with your class", icon: "chatbubble-ellipses-outline", onPress: () => root?.navigate("CommunicationHub") }]
-    : [];
+  const legalTools: ToolItem[] = [
+    { title: "Privacy Policy", caption: "How we handle your data", icon: "shield-checkmark-outline", onPress: () => root?.navigate("LegalDocument", { contentKey: "privacy_policy", title: "Privacy Policy" }) },
+    { title: "Terms of Service", caption: "The rules for using EduWand", icon: "document-text-outline", onPress: () => root?.navigate("LegalDocument", { contentKey: "terms_of_service", title: "Terms of Service" }) },
+    { title: "About EduWand", caption: "What EduWand is, and who makes it", icon: "information-circle-outline", onPress: () => root?.navigate("LegalDocument", { contentKey: "about", title: "About EduWand" }) },
+    { title: "Contact Us", caption: "Reach the EduWand team", icon: "call-outline", onPress: () => root?.navigate("Contact") },
+  ];
 
   return (
     <Screen>
-      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.container, { paddingBottom: tabBarClearance }]} showsVerticalScrollIndicator={false}>
         <LinearGradient colors={[colors.accent, colors.accentDark]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.profileGradient}>
           <View style={styles.profileGlowLarge} />
           <View style={styles.profileGlowSmall} />
@@ -109,13 +133,9 @@ export function MoreMenuScreen() {
           </View>
         </LinearGradient>
 
-        {isTeacher ? <Pressable style={({ pressed }) => [styles.featureCard, { backgroundColor: colors.accentSoft, borderColor: colors.accentSoftAlt }, pressed && { opacity: pressedOpacity }]} onPress={() => parentTabs?.navigate("Studio")} accessibilityRole="button">
-          <View style={[styles.featureIcon, { backgroundColor: colors.surface }]}><Ionicons name="color-wand-outline" size={20} color={colors.accent} /></View><View style={styles.featureCopy}><Text style={[styles.featureTitle, { color: colors.textPrimary }]}>AI lesson studio</Text><Text style={[styles.featureCaption, { color: colors.textSecondary }]}>Plan and manage your teaching with AI.</Text></View>
-          <View style={[styles.featureAction, { backgroundColor: colors.accent }]}><Ionicons name="arrow-forward" size={19} color={colors.accentOn} /></View>
-        </Pressable> : null}
-
         {tools.length > 0 ? <MenuSection title={isTeacher ? "Teaching tools" : "Tools"} items={tools} /> : null}
-        {communicationTools.length > 0 ? <MenuSection title="Communication" items={communicationTools} /> : null}
+
+        <MenuSection title="Legal" items={legalTools} />
 
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Account</Text>
@@ -139,11 +159,15 @@ function EnrolmentMoreScreen({
   logout: () => void;
 }) {
   const { colors, cardShadow, pressedOpacity } = useTheme();
+  const tabBarClearance = useTabBarClearance(18);
   const navigation = useNavigation<any>();
   const parentTabs = navigation.getParent();
   const root = parentTabs?.getParent();
   const handleTabBarScroll = useTabBarScrollHandler();
 
+  // Enquiries, Analytics and Tasks already have a tab, and Notifications has
+  // both the bell in this screen's own header and one on Home - More only
+  // lists pages that have no other way in, so those are left out here.
   const sections: { title: string; rows: ToolItem[] }[] = [
     {
       title: "Quick tools",
@@ -151,15 +175,15 @@ function EnrolmentMoreScreen({
         { title: "Bulk Upload", caption: "Import multiple enquiries", icon: "cloud-upload-outline", onPress: () => root?.navigate("BulkUpload") },
         { title: "CSV Export", caption: "Export enquiry data", icon: "download-outline", onPress: () => navigation.navigate("CsvExport") },
         { title: "Pipeline board", caption: "Kanban view of every stage", icon: "git-network-outline", onPress: () => root?.navigate("Pipeline") },
-        { title: "Notifications", caption: "View recent updates", icon: "notifications-outline", onPress: () => root?.navigate("Notifications") },
       ],
     },
     {
-      title: "Manage",
+      title: "Legal",
       rows: [
-        { title: "Enquiries", caption: "View and manage all leads", icon: "people-outline", onPress: () => parentTabs?.navigate("Enquiries") },
-        { title: "Analytics", caption: "Trends, sources, and funnel", icon: "bar-chart-outline", onPress: () => parentTabs?.navigate("Analytics") },
-        { title: "Tasks", caption: "Manage follow-ups", icon: "checkbox-outline", onPress: () => parentTabs?.navigate("Tasks") },
+        { title: "Privacy Policy", caption: "How we handle your data", icon: "shield-checkmark-outline", onPress: () => root?.navigate("LegalDocument", { contentKey: "privacy_policy", title: "Privacy Policy" }) },
+        { title: "Terms of Service", caption: "The rules for using EduWand", icon: "document-text-outline", onPress: () => root?.navigate("LegalDocument", { contentKey: "terms_of_service", title: "Terms of Service" }) },
+        { title: "About EduWand", caption: "What EduWand is, and who makes it", icon: "information-circle-outline", onPress: () => root?.navigate("LegalDocument", { contentKey: "about", title: "About EduWand" }) },
+        { title: "Contact Us", caption: "Reach the EduWand team", icon: "call-outline", onPress: () => root?.navigate("Contact") },
       ],
     },
     {
@@ -179,7 +203,7 @@ function EnrolmentMoreScreen({
   return (
     <Screen>
       <ScrollView
-        contentContainerStyle={styles.eContainer}
+        contentContainerStyle={[styles.eContainer, { paddingBottom: tabBarClearance }]}
         showsVerticalScrollIndicator={false}
         onScroll={handleTabBarScroll}
         scrollEventThrottle={16}
@@ -244,7 +268,7 @@ function EnrolmentMoreScreen({
         {sections.map((section) => (
           <View key={section.title} style={styles.eSection}>
             <Text style={[styles.eSectionTitle, { color: colors.textPrimary }]}>{section.title}</Text>
-            <View style={[styles.eGroup, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+            <View style={[styles.eGroup, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
               {section.rows.map((row, index) => (
                 <Pressable
                   key={row.title}

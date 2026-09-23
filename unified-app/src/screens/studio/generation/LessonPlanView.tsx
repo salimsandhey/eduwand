@@ -1,34 +1,25 @@
 import { useRef, useState } from "react";
 import { View, Text, TextInput, Pressable, ScrollView, StyleSheet } from "react-native";
-import Markdown from "react-native-markdown-display";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../../../theme/ThemeContext";
 import { ThemeColors, radius, spacing, typography } from "../../../theme/tokens";
 import { ContextSource } from "../../../api/client";
 import { LessonPlanContent, LessonPlanStage } from "./content";
 import { NumberedEditCard, EditActionRow } from "./NumberedEditCard";
-
-function assessmentMarkdownStyles(colors: ThemeColors) {
-  return {
-    body: { color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontFamily: typography.fontFamily },
-    heading1: { color: colors.textPrimary, fontFamily: typography.bold, fontSize: 16, marginTop: 0, marginBottom: 6 },
-    heading2: { color: colors.textPrimary, fontFamily: typography.bold, fontSize: 15, marginTop: 10, marginBottom: 4 },
-    heading3: { color: colors.textPrimary, fontFamily: typography.semiBold, fontSize: 14, marginTop: 8, marginBottom: 4 },
-    strong: { fontFamily: typography.semiBold, color: colors.textPrimary },
-    paragraph: { marginTop: 0, marginBottom: 8 },
-    bullet_list: { marginBottom: 6 },
-    ordered_list: { marginBottom: 6 },
-    list_item: { marginBottom: 4 },
-    bullet_list_icon: { color: colors.accent },
-  };
-}
+import { UsedSources } from "./UsedSources";
 
 interface Props {
   content: LessonPlanContent;
   editable: boolean;
   onChange: (content: LessonPlanContent) => void;
   sources: ContextSource[];
+  topicId: string;
+  shownAsIsIds?: Set<string>;
   scrollRef?: React.RefObject<ScrollView | null>;
+  // Which class periods the teacher has ticked off as taught - only relevant
+  // when the plan spans more than one class (see stages[].sessions).
+  completedSessions?: number[];
+  onToggleSession?: (session: number, completed: boolean) => void;
 }
 
 // Scrolls the field being edited to the top of the visible (above-keyboard) area, instead of
@@ -88,7 +79,7 @@ const LEAD_PHRASE_RE =
 
 // Detects a Bloom's-taxonomy verb within the first few words and returns the sentence with the
 // lead-in phrase and that verb removed (so the tile shown alongside the text doesn't just repeat it).
-function extractBloom(text: string): { level: string; color: string; icon: keyof typeof Ionicons.glyphMap; rest: string } | null {
+export function extractBloom(text: string): { level: string; color: string; icon: keyof typeof Ionicons.glyphMap; rest: string } | null {
   const trimmed = text.trim();
   const leadMatch = trimmed.toLowerCase().match(LEAD_PHRASE_RE);
   const afterLead = (leadMatch ? trimmed.slice(leadMatch[0].length) : trimmed).trim();
@@ -106,11 +97,35 @@ function extractBloom(text: string): { level: string; color: string; icon: keyof
   return null;
 }
 
-export function LessonPlanView({ content, editable, onChange, sources, scrollRef }: Props) {
+export type Bloom = NonNullable<ReturnType<typeof extractBloom>>;
+
+// The one place a Bloom's-level tag renders as a colored tile - used
+// everywhere a "[Level] ..." string shows up (Objectives, the Overview
+// preview, and each Assessment line), so a raw "[Understand]" bracket is
+// never shown as literal text anywhere in the lesson plan.
+export function BloomTile({ bloom, inline }: { bloom: Bloom; inline?: boolean }) {
+  return (
+    <View style={[styles.bloomTile, { backgroundColor: `${bloom.color}22` }, inline && styles.bloomTileInline]}>
+      <Ionicons name={bloom.icon} size={12} color={bloom.color} />
+      <Text style={[styles.bloomTileText, { color: bloom.color }]}>{bloom.level.toUpperCase()}</Text>
+    </View>
+  );
+}
+
+export function LessonPlanView({ content, editable, onChange, sources, topicId, shownAsIsIds, scrollRef, completedSessions, onToggleSession }: Props) {
   const { colors, cardShadow } = useTheme();
   const [step, setStep] = useState("overview");
   const overviewInputRef = useRef<TextInput>(null);
   const assessmentInputRef = useRef<TextInput>(null);
+
+  // Self-describing from the content itself (not a separate classCount prop)
+  // so it always matches what the stages actually say, even after an edit.
+  const totalSessions = Math.max(1, ...(content.stages ?? []).flatMap((s) => s.sessions ?? []));
+  const [selectedSession, setSelectedSession] = useState(1);
+  const completedSet = new Set(completedSessions ?? []);
+  function stageIsComplete(stage: LessonPlanStage): boolean {
+    return !!stage.sessions?.length && stage.sessions.every((s) => completedSet.has(s));
+  }
 
   function updateObjective(i: number, value: string) {
     const objectives = [...content.objectives];
@@ -211,14 +226,20 @@ export function LessonPlanView({ content, editable, onChange, sources, scrollRef
             <View style={styles.tagRow}>
               <Tag colors={colors} icon="checkmark-circle-outline" label={`${content.objectives.length} objective${content.objectives.length === 1 ? "" : "s"}`} />
             </View>
-            {content.objectives.slice(0, 2).map((obj, i) => (
-              <View key={i} style={styles.checkRow}>
-                <View style={[styles.checkIcon, { backgroundColor: colors.accentSoft }]}>
-                  <Ionicons name="checkmark" size={13} color={colors.accent} />
+            {content.objectives.slice(0, 2).map((obj, i) => {
+              const bloom = extractBloom(obj);
+              return (
+                <View key={i} style={styles.checkRow}>
+                  <View style={[styles.checkIcon, { backgroundColor: colors.accentSoft }]}>
+                    <Ionicons name="checkmark" size={13} color={colors.accent} />
+                  </View>
+                  <View style={styles.objectivePreviewText}>
+                    {bloom ? <BloomTile bloom={bloom} inline /> : null}
+                    <Text style={[styles.bodyText, { color: colors.textSecondary, flex: 1 }]} numberOfLines={1}>{bloom ? bloom.rest : obj}</Text>
+                  </View>
                 </View>
-                <Text style={[styles.bodyText, { color: colors.textSecondary, flex: 1 }]} numberOfLines={1}>{obj}</Text>
-              </View>
-            ))}
+              );
+            })}
             {content.objectives.length > 2 ? (
               <Pressable onPress={() => setStep("objectives")} accessibilityRole="button" hitSlop={8} style={{ marginTop: spacing.xs }}>
                 <Text style={[styles.link, { color: colors.textMuted }]}>+{content.objectives.length - 2} more</Text>
@@ -229,14 +250,7 @@ export function LessonPlanView({ content, editable, onChange, sources, scrollRef
           {sources.length > 0 ? (
             <Card colors={colors} cardShadow={cardShadow}>
               <CardLabel colors={colors}>Sources used</CardLabel>
-              {sources.map((s) => (
-                <View key={s.id} style={styles.sourceRow}>
-                  <Ionicons name="document-text-outline" size={14} color={colors.textMuted} />
-                  <Text style={[styles.bodyText, { color: colors.textSecondary, flex: 1 }]} numberOfLines={1}>
-                    {s.originalFilename ?? s.sourceUrl ?? s.sourceType}
-                  </Text>
-                </View>
-              ))}
+              <UsedSources sources={sources} topicId={topicId} shownAsIsIds={shownAsIsIds} />
             </Card>
           ) : null}
         </View>
@@ -257,12 +271,7 @@ export function LessonPlanView({ content, editable, onChange, sources, scrollRef
                 onRemove={editable && content.objectives.length > 1 ? () => removeObjective(i) : undefined}
                 renderView={() => (
                   <View>
-                    {bloom ? (
-                      <View style={[styles.bloomTile, { backgroundColor: `${bloom.color}22` }]}>
-                        <Ionicons name={bloom.icon} size={12} color={bloom.color} />
-                        <Text style={[styles.bloomTileText, { color: bloom.color }]}>{bloom.level.toUpperCase()}</Text>
-                      </View>
-                    ) : null}
+                    {bloom ? <BloomTile bloom={bloom} /> : null}
                     <Text style={[styles.bodyText, { color: colors.textPrimary, marginTop: bloom ? 6 : 0 }]}>{bloom ? bloom.rest : obj}</Text>
                   </View>
                 )}
@@ -278,13 +287,49 @@ export function LessonPlanView({ content, editable, onChange, sources, scrollRef
 
       {step === "activities" && content.stages ? (
         <View style={{ marginTop: spacing.md }}>
-          <Text style={[styles.sectionHint, { color: colors.textMuted }]}>What happens in each stage of the lesson?</Text>
-          {content.stages.map((stg, si) => (
-            <View key={si} style={[styles.stageCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          {totalSessions > 1 ? (
+            <>
+              <Text style={[styles.sectionHint, { color: colors.textMuted }]}>Which class are you teaching?</Text>
+              <ClassTabBar
+                totalSessions={totalSessions}
+                selected={selectedSession}
+                completedSessions={completedSet}
+                onSelect={setSelectedSession}
+                colors={colors}
+              />
+              {onToggleSession ? (
+                <Pressable
+                  style={[styles.markTaughtRow, { backgroundColor: colors.surfaceRaised }]}
+                  onPress={() => onToggleSession(selectedSession, !completedSet.has(selectedSession))}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: completedSet.has(selectedSession) }}
+                >
+                  <Ionicons
+                    name={completedSet.has(selectedSession) ? "checkmark-circle" : "ellipse-outline"}
+                    size={18}
+                    color={completedSet.has(selectedSession) ? colors.accent : colors.textMuted}
+                  />
+                  <Text style={[styles.markTaughtText, { color: completedSet.has(selectedSession) ? colors.accent : colors.textSecondary }]}>
+                    {completedSet.has(selectedSession) ? `Class ${selectedSession} marked as taught` : `Mark Class ${selectedSession} as taught`}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </>
+          ) : (
+            <Text style={[styles.sectionHint, { color: colors.textMuted }]}>What happens in each stage of the lesson?</Text>
+          )}
+          {content.stages.map((stg, si) => {
+            if (totalSessions > 1 && !stg.sessions?.includes(selectedSession)) return null;
+            return (
+            <View key={si} style={[styles.stageCard, { backgroundColor: colors.surface, borderColor: colors.border }, stageIsComplete(stg) && { opacity: 0.6 }]}>
               <View style={styles.stageHeadingRow}>
                 <View style={[styles.stageDot, { backgroundColor: FLOW_COLORS[si % FLOW_COLORS.length] }]} />
                 <Text style={[styles.stageName, { color: colors.textPrimary }]}>{stg.stage}</Text>
+                {stg.sessions && stg.sessions.length > 1 ? (
+                  <Tag colors={colors} icon="school-outline" label={`Also class ${stg.sessions.filter((s) => s !== selectedSession).join(", ")}`} />
+                ) : null}
                 <Tag colors={colors} icon="time-outline" label={`${stg.durationMinutes} min`} />
+                {stageIsComplete(stg) ? <Ionicons name="checkmark-circle" size={18} color={colors.accent} /> : null}
               </View>
               {editable ? (
                 <TextInput
@@ -297,6 +342,7 @@ export function LessonPlanView({ content, editable, onChange, sources, scrollRef
                 <Text style={[styles.bodyText, { color: colors.textSecondary, marginTop: spacing.sm }]}>{stg.summary}</Text>
               )}
 
+              <View style={{ marginTop: spacing.md }}>
               {stg.activities.map((act, ai) => (
                 <NumberedEditCard
                   key={ai}
@@ -313,9 +359,7 @@ export function LessonPlanView({ content, editable, onChange, sources, scrollRef
                           ))}
                         </View>
                       ) : null}
-                      {act.description ? (
-                        <Text style={[styles.bodyText, { color: colors.textSecondary, marginTop: spacing.sm }]}>{act.description}</Text>
-                      ) : null}
+                      <ActivityDescription description={act.description} colors={colors} />
                     </View>
                   )}
                   renderEditor={(done, cancel) => (
@@ -330,8 +374,15 @@ export function LessonPlanView({ content, editable, onChange, sources, scrollRef
                 />
               ))}
               {editable ? <AddButton colors={colors} label="Add activity" onPress={() => addStageActivity(si)} /> : null}
+              </View>
             </View>
-          ))}
+            );
+          })}
+          {totalSessions > 1 && !content.stages.some((s) => s.sessions?.includes(selectedSession)) ? (
+            <Text style={[styles.sectionHint, { color: colors.textMuted, marginTop: spacing.sm }]}>
+              Nothing tagged for Class {selectedSession} - check the other classes, or edit a stage to add it here.
+            </Text>
+          ) : null}
         </View>
       ) : null}
 
@@ -353,9 +404,7 @@ export function LessonPlanView({ content, editable, onChange, sources, scrollRef
                       <Tag key={mi} colors={colors} icon="cube-outline" label={m} />
                     ))}
                   </View>
-                  {act.description ? (
-                    <Text style={[styles.bodyText, { color: colors.textSecondary, marginTop: spacing.sm }]}>{act.description}</Text>
-                  ) : null}
+                  <ActivityDescription description={act.description} colors={colors} />
                 </View>
               )}
               renderEditor={(done, cancel) => (
@@ -388,23 +437,30 @@ export function LessonPlanView({ content, editable, onChange, sources, scrollRef
               />
             </Card>
           ) : (
-            (() => {
-              const lines = content.assessment.split("\n");
-              const bloom = extractBloom(lines[0] ?? "");
-              const displayText = bloom ? [bloom.rest, ...lines.slice(1)].join("\n") : content.assessment;
-              return (
-                <Card colors={colors} cardShadow={cardShadow}>
-                  <CardLabel colors={colors}>Assessment</CardLabel>
-                  {bloom ? (
-                    <View style={[styles.bloomTile, { backgroundColor: `${bloom.color}22` }]}>
-                      <Ionicons name={bloom.icon} size={12} color={bloom.color} />
-                      <Text style={[styles.bloomTileText, { color: bloom.color }]}>{bloom.level.toUpperCase()}</Text>
+            <Card colors={colors} cardShadow={cardShadow}>
+              <CardLabel colors={colors}>Assessment</CardLabel>
+              {content.assessment
+                .split("\n")
+                .map((l) => l.trim())
+                .filter(Boolean)
+                .map((line, i) => {
+                  // The AI numbers each line itself ("1. Check: ...") - stripped
+                  // here since we draw our own numbered badge instead.
+                  const withoutNumber = line.replace(/^\d+[.)]\s*/, "");
+                  const bloom = extractBloom(withoutNumber);
+                  return (
+                    <View key={i} style={[styles.checkRow, i === 0 && { marginTop: 0 }]}>
+                      <View style={[styles.checkIcon, { backgroundColor: colors.accentSoft }]}>
+                        <Text style={[styles.assessmentIndexText, { color: colors.accent }]}>{i + 1}</Text>
+                      </View>
+                      <View style={styles.objectivePreviewText}>
+                        {bloom ? <BloomTile bloom={bloom} inline /> : null}
+                        <Text style={[styles.bodyText, { color: colors.textPrimary, flex: 1 }]}>{bloom ? bloom.rest : withoutNumber}</Text>
+                      </View>
                     </View>
-                  ) : null}
-                  <Markdown style={assessmentMarkdownStyles(colors)}>{displayText}</Markdown>
-                </Card>
-              );
-            })()
+                  );
+                })}
+            </Card>
           )}
         </View>
       ) : null}
@@ -457,7 +513,7 @@ function EditableActivity({
   scrollRef?: React.RefObject<ScrollView | null>;
 }) {
   const [title, setTitle] = useState(initial.title);
-  const [description, setDescription] = useState(initial.description);
+  const [description, setDescription] = useState(joinDescription(initial.description));
   const [durationMinutes, setDurationMinutes] = useState(String(initial.durationMinutes));
   const [materials, setMaterials] = useState(initial.materials.join(", "));
   const titleInputRef = useRef<TextInput>(null);
@@ -473,11 +529,12 @@ function EditableActivity({
         onFocus={() => scrollFieldIntoView(titleInputRef, scrollRef)}
         autoFocus
       />
+      <Text style={[styles.editorHint, { color: colors.textMuted }]}>One step per line - shown as bullet points</Text>
       <TextInput
-        style={[styles.multilineInput, { color: colors.textPrimary, borderColor: colors.border, marginTop: spacing.xs }]}
+        style={[styles.multilineInput, { color: colors.textPrimary, borderColor: colors.border }]}
         value={description}
         onChangeText={setDescription}
-        placeholder="Description"
+        placeholder={"Step one\nStep two"}
         placeholderTextColor={colors.textMuted}
         multiline
       />
@@ -503,7 +560,7 @@ function EditableActivity({
         onDone={() =>
           onDone({
             title: title.trim() || initial.title,
-            description: description.trim(),
+            description: splitDescription(description) ?? initial.description,
             durationMinutes: Math.max(1, parseInt(durationMinutes, 10) || initial.durationMinutes),
             materials: materials.split(",").map((m) => m.trim()).filter(Boolean),
           })
@@ -527,7 +584,7 @@ function EditableStageActivity({
   scrollRef?: React.RefObject<ScrollView | null>;
 }) {
   const [title, setTitle] = useState(initial.title);
-  const [description, setDescription] = useState(initial.description);
+  const [description, setDescription] = useState(joinDescription(initial.description));
   const [materials, setMaterials] = useState(initial.materials.join(", "));
   const titleInputRef = useRef<TextInput>(null);
   return (
@@ -542,11 +599,12 @@ function EditableStageActivity({
         onFocus={() => scrollFieldIntoView(titleInputRef, scrollRef)}
         autoFocus
       />
+      <Text style={[styles.editorHint, { color: colors.textMuted }]}>One step per line - shown as bullet points</Text>
       <TextInput
-        style={[styles.multilineInput, { color: colors.textPrimary, borderColor: colors.border, marginTop: spacing.xs }]}
+        style={[styles.multilineInput, { color: colors.textPrimary, borderColor: colors.border }]}
         value={description}
         onChangeText={setDescription}
-        placeholder="Description"
+        placeholder={"Step one\nStep two"}
         placeholderTextColor={colors.textMuted}
         multiline
       />
@@ -562,11 +620,51 @@ function EditableStageActivity({
         onDone={() =>
           onDone({
             title: title.trim() || initial.title,
-            description: description.trim(),
+            description: splitDescription(description) ?? initial.description,
             materials: materials.split(",").map((m) => m.trim()).filter(Boolean),
           })
         }
       />
+    </View>
+  );
+}
+
+// Editors work on one text field (one step per line); these convert to/from
+// the string | string[] the content actually stores.
+function joinDescription(description: string | string[]): string {
+  return Array.isArray(description) ? description.map(cleanBulletText).join("\n") : description;
+}
+// Always returns bullets (even for one line) once a teacher has edited it,
+// regardless of how the original (possibly legacy, plain-string) content
+// looked - editing is the natural migration point to the new shape.
+function splitDescription(text: string): string[] | null {
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  return lines.length === 0 ? null : lines;
+}
+
+// New generations give steps as an array (bulleted); older rows still have
+// one prose string and keep rendering exactly as they always have - no
+// attempt to guess sentence boundaries and retrofit bullets onto old text.
+// The model sometimes writes its own leading "- "/"• " marker or indentation
+// into a step (formatting habit from being asked for a bulleted list) - left
+// alone, that shows up as blank-looking space between our own dot and the
+// first visible word. Stripped defensively so our marker is always the only one.
+function cleanBulletText(step: string): string {
+  return step.replace(/^[\s\-–—*••‣◦]+/, "").trim();
+}
+
+function ActivityDescription({ description, colors }: { description: string | string[]; colors: ThemeColors }) {
+  if (!Array.isArray(description)) {
+    return description ? <Text style={[styles.bodyText, { color: colors.textSecondary, marginTop: spacing.sm }]}>{description}</Text> : null;
+  }
+  return (
+    <View style={{ marginTop: spacing.xs, gap: 3 }}>
+      {description.map((step, i) => (
+        <View key={i} style={styles.bulletRow}>
+          <View style={[styles.bulletDot, { backgroundColor: colors.textMuted }]} />
+          <Text style={[styles.bodyText, { color: colors.textSecondary, flex: 1 }]}>{cleanBulletText(step)}</Text>
+        </View>
+      ))}
     </View>
   );
 }
@@ -582,6 +680,50 @@ function Tag({ colors, icon, label }: { colors: any; icon: any; label: string })
     <View style={[styles.tag, { backgroundColor: colors.surfaceRaised }]}>
       <Ionicons name={icon} size={12} color={colors.textMuted} />
       <Text style={[styles.tagText, { color: colors.textSecondary }]}>{label}</Text>
+    </View>
+  );
+}
+// Teacher-reported progress, independent of what's actually planned per
+// class - ticking "Class 2" just means "I taught it," not "everything tagged
+// [2] happened exactly as written."
+// Real tabs, not just a label: selecting "Class 2" filters the stage list
+// below to only what's tagged for it - opening a class shows just what to
+// cover in it, not the whole lesson with a small tag buried in it.
+function ClassTabBar({
+  totalSessions,
+  selected,
+  completedSessions,
+  onSelect,
+  colors,
+}: {
+  totalSessions: number;
+  selected: number;
+  completedSessions: Set<number>;
+  onSelect: (session: number) => void;
+  colors: any;
+}) {
+  return (
+    <View style={styles.sessionChecklist}>
+      {Array.from({ length: totalSessions }, (_, i) => i + 1).map((session) => {
+        const active = session === selected;
+        const done = completedSessions.has(session);
+        return (
+          <Pressable
+            key={session}
+            style={[styles.sessionChip, { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border }]}
+            onPress={() => onSelect(session)}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: active }}
+          >
+            <Ionicons
+              name={done ? "checkmark-circle" : "ellipse-outline"}
+              size={14}
+              color={active ? colors.accentOn : done ? colors.accent : colors.textMuted}
+            />
+            <Text style={[styles.sessionChipText, { color: active ? colors.accentOn : colors.textSecondary }]}>Class {session}</Text>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
@@ -606,21 +748,32 @@ const styles = StyleSheet.create({
   link: { fontSize: 13, fontFamily: typography.semiBold },
   checkRow: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm, marginTop: spacing.sm },
   checkIcon: { width: 22, height: 22, borderRadius: radius.pill, alignItems: "center", justifyContent: "center", marginTop: 1 },
+  assessmentIndexText: { fontSize: 11, fontFamily: typography.bold },
+  objectivePreviewText: { flex: 1, flexDirection: "row", alignItems: "center", gap: 6 },
   bodyText: { fontSize: 14, lineHeight: 20, fontFamily: typography.fontFamily },
   itemTitle: { fontSize: 14, fontFamily: typography.semiBold, marginBottom: 2 },
   sectionHint: { fontSize: 13, marginBottom: spacing.sm },
+  sessionChecklist: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs, marginBottom: spacing.sm },
+  sessionChip: { flexDirection: "row", alignItems: "center", gap: 5, borderWidth: 1, borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 7 },
+  sessionChipText: { fontSize: 12, fontFamily: typography.semiBold },
+  markTaughtRow: { flexDirection: "row", alignItems: "center", gap: 8, borderRadius: radius.md, paddingHorizontal: 14, paddingVertical: 11, marginBottom: spacing.md },
+  markTaughtText: { fontSize: 13, fontFamily: typography.semiBold },
   tagRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs, marginTop: spacing.sm },
   tag: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill },
   tagText: { fontSize: 11, fontFamily: typography.medium },
   stageCard: { borderWidth: 1, borderRadius: 20, padding: spacing.lg, marginBottom: spacing.lg },
-  stageHeadingRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  stageHeadingRow: { flexDirection: "row", alignItems: "center", gap: spacing.xs, flexWrap: "wrap" },
   stageDot: { width: 10, height: 10, borderRadius: 5 },
-  stageName: { flex: 1, fontSize: 15, fontFamily: typography.bold },
+  stageName: { fontSize: 15, fontFamily: typography.bold, marginRight: "auto" },
   sourceRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.sm },
   bloomTile: { flexDirection: "row", alignItems: "center", gap: 5, alignSelf: "flex-start", marginBottom: spacing.sm, borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 5 },
+  bloomTileInline: { alignSelf: "auto", marginBottom: 0 },
   bloomTileText: { fontSize: 11, fontFamily: typography.bold, letterSpacing: 0.4 },
   input: { borderWidth: 1, borderRadius: radius.sm, paddingHorizontal: 10, paddingVertical: 8, fontSize: 13 },
   multilineInput: { borderWidth: 1, borderRadius: radius.sm, paddingHorizontal: 10, paddingVertical: 8, fontSize: 13, minHeight: 60, textAlignVertical: "top" },
+  editorHint: { fontSize: 11, fontFamily: typography.medium, marginTop: spacing.xs, marginBottom: 4 },
+  bulletRow: { flexDirection: "row", alignItems: "flex-start", gap: 4 },
+  bulletDot: { width: 3, height: 3, borderRadius: 1.5, marginTop: 8 },
   addButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: 1.5, borderStyle: "dashed", borderRadius: radius.md, paddingVertical: 12, marginTop: spacing.xs },
   addButtonText: { fontSize: 14, fontFamily: typography.semiBold },
 });

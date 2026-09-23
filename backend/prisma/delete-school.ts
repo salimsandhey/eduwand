@@ -114,6 +114,8 @@ async function deleteSchool(schoolId: string) {
     await tx.observation.deleteMany({ where: { topic: { schoolId } } });
     await tx.contextSource.deleteMany({ where: { topic: { schoolId } } });
     await tx.attainmentReport.deleteMany({ where: { topic: { schoolId } } });
+    await tx.contextResearchJob.deleteMany({ where: { topic: { schoolId } } });
+    await tx.savedVideo.deleteMany({ where: { topic: { schoolId } } });
     await tx.communicationMessage.deleteMany({ where: { schoolId } });
 
     // --- Assignment Lab ---
@@ -146,6 +148,8 @@ async function deleteSchool(schoolId: string) {
     await tx.researchReport.deleteMany({ where: { schoolId } });
 
     // --- Class structure ---
+    await tx.timetableSlot.deleteMany({ where: { schoolId } });
+    await tx.calendarTask.deleteMany({ where: { schoolId } });
     await tx.classSectionTeacher.deleteMany({ where: { classSection: { academicYear: { schoolId } } } });
     await tx.classSection.deleteMany({ where: { academicYear: { schoolId } } });
     await tx.academicYear.deleteMany({ where: { schoolId } });

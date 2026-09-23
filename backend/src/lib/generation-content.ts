@@ -12,7 +12,11 @@ export interface LessonPlanStage {
   stage: string;
   durationMinutes: number;
   summary: string;
-  activities: { title: string; description: string; materials: string[] }[];
+  // New generations return a short array of steps; older rows (permanent,
+  // never rewritten) still have one prose string - both parse and flatten
+  // fine below (see describeActivity).
+  activities: { title: string; description: string | string[]; materials: string[] }[];
+  sessions?: number[];
 }
 
 export interface LessonPlanContent {
@@ -26,15 +30,18 @@ export interface LessonPlanContent {
   stages?: LessonPlanStage[];
   // Legacy shape (pre-5E-restructure generations only).
   lessonFlow?: { label: string; durationMinutes: number }[];
-  activities?: { title: string; description: string; durationMinutes: number; materials: string[] }[];
+  activities?: { title: string; description: string | string[]; durationMinutes: number; materials: string[] }[];
   assessment: string;
 }
 
 export interface CustomActivityContent {
   type: "custom_activity_report";
-  objective: string;
-  activities: { title: string; description: string; durationMinutes: number; materials: string[] }[];
-  reportFormat: string;
+  // Legacy (pre-Learning Stage picker) generations only; new ones use
+  // `objectives` instead - see ai.ts's CustomActivityContent.
+  objective?: string;
+  objectives?: string[];
+  activities: { title: string; description: string | string[]; durationMinutes: number; materials: string[] }[];
+  reportFormat: string | string[];
 }
 
 export interface FlashcardsContent {
@@ -62,7 +69,9 @@ function isLessonPlan(v: any): boolean {
   return Array.isArray(v?.activities) && Array.isArray(v?.lessonFlow); // legacy shape
 }
 function isCustomActivity(v: any): boolean {
-  return typeof v?.objective === "string" && Array.isArray(v?.activities) && typeof v?.reportFormat === "string";
+  const hasObjective = typeof v?.objective === "string" || Array.isArray(v?.objectives);
+  const hasReportFormat = typeof v?.reportFormat === "string" || Array.isArray(v?.reportFormat);
+  return hasObjective && Array.isArray(v?.activities) && hasReportFormat;
 }
 function isFlashcards(v: any): boolean {
   return Array.isArray(v?.cards);
@@ -93,6 +102,10 @@ export function parseGenerationContent(outputType: string, raw: string): Structu
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 const BLOOMS_PREFIX = /^\[(Remember|Understand|Apply|Analyze|Evaluate|Create)\]\s*/i;
+
+function describeActivity(description: string | string[]): string {
+  return Array.isArray(description) ? description.join("; ") : description;
+}
 
 export interface GenerationForTaughtContent {
   outputType: string;
@@ -137,19 +150,21 @@ export function buildTaughtContentText(generations: GenerationForTaughtContent[]
         if (content.stages) {
           for (const stage of content.stages) {
             lines.push(`${stage.stage}: ${stage.summary}`);
-            lines.push(...stage.activities.map((a) => `${a.title}: ${a.description}`));
+            lines.push(...stage.activities.map((a) => `${a.title}: ${describeActivity(a.description)}`));
           }
         } else if (content.activities) {
-          lines.push(...content.activities.map((a) => `${a.title}: ${a.description}`));
+          lines.push(...content.activities.map((a) => `${a.title}: ${describeActivity(a.description)}`));
         }
         if (content.assessment) lines.push(`Assessment: ${content.assessment}`);
         break;
-      case "custom_activity_report":
-        addObjective(content.objective);
-        lines.push(`Objective: ${content.objective}`);
-        lines.push(...content.activities.map((a) => `${a.title}: ${a.description}`));
-        if (content.reportFormat) lines.push(`Report format: ${content.reportFormat}`);
+      case "custom_activity_report": {
+        const objectives = content.objectives ?? (content.objective ? [content.objective] : []);
+        objectives.forEach(addObjective);
+        lines.push(...objectives.map((o) => `Objective: ${o}`));
+        lines.push(...content.activities.map((a) => `${a.title}: ${describeActivity(a.description)}`));
+        if (content.reportFormat) lines.push(`Report format: ${describeActivity(content.reportFormat)}`);
         break;
+      }
       case "flashcards":
         lines.push(...content.cards.map((c) => `Q: ${c.front} A: ${c.back}`));
         break;

@@ -145,7 +145,7 @@ export function AnswerKeyReviewScreen({ route, navigation }: Props) {
           const isVerified = !!entry.teacherVerifiedAnswer;
           const isEditing = editingId === entry.id;
           return (
-            <View key={entry.id} style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+            <View key={entry.id} style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
               <View style={styles.cardHeader}>
                 <Text style={[styles.questionText, { color: colors.textPrimary }]}>
                   {entry.questionIndex + 1}. {question?.prompt ?? "Question"}

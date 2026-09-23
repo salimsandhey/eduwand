@@ -12,7 +12,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "tsx prisma/seed.ts",
     "backfill:teacher-credits": "tsx prisma/backfill-teacher-credits.ts",
-    "test": "node --import tsx --test src/lib/extraction.test.ts src/lib/context-extraction.test.ts src/lib/ai.test.ts src/lib/personalisation.test.ts src/lib/generation-content.test.ts",
+    "test": "node --import tsx --test src/lib/extraction.test.ts src/lib/context-extraction.test.ts src/lib/ai.test.ts src/lib/personalisation.test.ts src/lib/generation-content.test.ts src/lib/assistant.test.ts",
     "eval:extraction": "tsx eval/run-extraction.ts",
     "eval:workbook": "tsx eval/build-workbook.ts",
     "eval:grounding": "tsx eval/run-grounding.ts",
@@ -24,6 +24,7 @@
     "@fastify/jwt": "^10.2.1",
     "@fastify/multipart": "^10.1.0",
     "@fastify/rate-limit": "^11.2.0",
+    "@fastify/websocket": "^11.3.1",
     "@prisma/client": "^6.19.3",
     "@types/pdfkit": "^0.17.6",
     "bcryptjs": "^2.4.3",
@@ -33,6 +34,7 @@
     "fastify": "^5.11.2",
     "fastify-plugin": "^5.0.1",
     "image-size": "^2.0.4",
+    "jsonrepair": "^3.15.0",
     "jszip": "^3.10.1",
     "mammoth": "^1.12.1",
     "pdf-parse": "^2.4.5",
@@ -43,10 +45,14 @@
     "@resvg/resvg-js": "^2.6.2",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20.14.15",
+    "@types/ws": "^8.18.1",
     "exceljs": "^4.4.0",
     "ionicons": "^8.1.0",
     "prisma": "^6.19.3",
     "tsx": "^4.19.1",
     "typescript": "^5.5.4"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
   }
 }

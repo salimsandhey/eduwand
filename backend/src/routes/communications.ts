@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
+import { publish } from "../lib/realtime";
 
 interface SendToStudentBody {
   studentStubId: string;
@@ -66,6 +67,7 @@ export async function communicationRoutes(app: FastifyInstance) {
       },
     });
 
+    publish([`user:${request.user.sub}`, `user:${student.id}`], { type: "message", message });
     return reply.code(201).send({ data: message, meta: {} });
   });
 
@@ -94,6 +96,7 @@ export async function communicationRoutes(app: FastifyInstance) {
       },
     });
 
+    publish([`user:${request.user.sub}`, `class:${classSection.id}`], { type: "message", message });
     return reply.code(201).send({ data: message, meta: {} });
   });
 

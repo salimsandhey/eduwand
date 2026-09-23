@@ -146,12 +146,12 @@ export function EditEnquiryScreen({ route, navigation }: Props) {
   return (
     <Screen edges={["bottom"]}>
       <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Profile photo (optional)</Text>
           <ProfilePhotoPicker value={photoPick} onChange={setPhotoPick} />
         </View>
 
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Student details</Text>
 
           <Text style={[styles.label, { color: colors.textSecondary }]}>Student name (optional)</Text>
@@ -172,7 +172,7 @@ export function EditEnquiryScreen({ route, navigation }: Props) {
           <DatePicker value={studentDateOfBirth} onChange={setStudentDateOfBirth} placeholder="Select date of birth" />
         </View>
 
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Lead details</Text>
 
           <Text style={[styles.label, { color: colors.textSecondary }]}>Contact name</Text>
@@ -242,7 +242,7 @@ export function EditEnquiryScreen({ route, navigation }: Props) {
           </View>
         </View>
 
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Preferences & Context</Text>
 
           <Text style={[styles.label, { color: colors.textSecondary }]}>Lead source</Text>

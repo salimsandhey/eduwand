@@ -13,6 +13,8 @@ interface StudentFormState {
   guardianName: string;
   guardianContact: string;
   feeStatus: string;
+  // Text input, kept as a string while editing - "" means "not assigned".
+  seatNumber: string;
 }
 
 const EMPTY_FORM: StudentFormState = {
@@ -22,6 +24,7 @@ const EMPTY_FORM: StudentFormState = {
   guardianName: "",
   guardianContact: "",
   feeStatus: "pending",
+  seatNumber: "",
 };
 
 function sectionLabel(s: ClassSection): string {
@@ -103,6 +106,7 @@ export function SchoolStudentsTab() {
       guardianName: s.guardianName,
       guardianContact: s.guardianContact,
       feeStatus: s.feeStatus,
+      seatNumber: s.seatNumber != null ? String(s.seatNumber) : "",
     });
     setFormError(null);
     setEditingId(s.id);
@@ -122,6 +126,13 @@ export function SchoolStudentsTab() {
       setFormError("Full name, date of birth, class section, guardian name, and guardian contact are all required.");
       return;
     }
+    const trimmedSeat = form.seatNumber.trim();
+    const seatNumber = trimmedSeat === "" ? null : Number(trimmedSeat);
+    if (seatNumber !== null && (!Number.isInteger(seatNumber) || seatNumber < 1 || seatNumber > 40)) {
+      setFormError("Clicker number must be a whole number from 1 to 40, or left blank.");
+      return;
+    }
+
     setIsSaving(true);
     setFormError(null);
     try {
@@ -133,6 +144,7 @@ export function SchoolStudentsTab() {
           guardianName: form.guardianName.trim(),
           guardianContact: form.guardianContact.trim(),
           feeStatus: form.feeStatus,
+          seatNumber,
         });
       } else {
         await api.createStudent(accessToken, id, {
@@ -212,6 +224,7 @@ export function SchoolStudentsTab() {
               <th style={styles.th}>Guardian</th>
               <th style={styles.th}>Guardian phone</th>
               <th style={styles.th}>Fee status</th>
+              <th style={styles.th}>Clicker #</th>
               <th style={styles.th}>Source</th>
               <th style={styles.th}></th>
             </tr>
@@ -224,6 +237,7 @@ export function SchoolStudentsTab() {
                 <td style={styles.td}>{s.guardianName}</td>
                 <td style={styles.td}>{s.guardianContact}</td>
                 <td style={{ ...styles.td, textTransform: "capitalize" }}>{s.feeStatus}</td>
+                <td style={styles.td}>{s.seatNumber ?? "—"}</td>
                 <td style={styles.td}>{s.sourceEnquiryId ? "Admissions" : "Added directly"}</td>
                 <td style={styles.td}>
                   <button style={styles.smallButton} onClick={() => openEdit(s)}>
@@ -296,6 +310,20 @@ export function SchoolStudentsTab() {
                 placeholder="Used for the student's OTP login"
               />
             </div>
+            {showForm === "edit" ? (
+              <div style={styles.field}>
+                <label style={styles.label}>Clicker # (for live quick checks)</label>
+                <input
+                  style={styles.input}
+                  type="number"
+                  min={1}
+                  max={40}
+                  value={form.seatNumber}
+                  onChange={(e) => setForm((f) => ({ ...f, seatNumber: e.target.value }))}
+                  placeholder="Not assigned"
+                />
+              </div>
+            ) : null}
           </div>
           <p style={styles.hint}>
             The guardian's phone number is what the student (or their guardian) uses to log in - a wrong number here

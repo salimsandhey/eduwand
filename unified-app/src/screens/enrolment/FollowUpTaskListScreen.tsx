@@ -19,6 +19,8 @@ import { TypewriterText } from "../../components/TypewriterText";
 import { api, FollowUpTask } from "../../api/client";
 import { decorativeAssets } from "../../theme/decorativeAssets";
 import { useTabBarScrollHandler } from "../../navigation/TabBarScrollContext";
+import { useTabBarClearance } from "../../navigation/useTabBarClearance";
+import { softCardShadow } from "../../theme/tokens";
 
 type QueueFilter = "today" | "overdue" | "upcoming" | "all";
 type Tone = "overdue" | "today" | "upcoming";
@@ -123,6 +125,7 @@ function TaskTile({
 export function FollowUpTaskListScreen() {
   const { accessToken } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
+  const tabBarClearance = useTabBarClearance(18);
   const navigation = useNavigation<any>();
   const handleTabBarScroll = useTabBarScrollHandler();
   const [tasks, setTasks] = useState<FollowUpTask[]>([]);
@@ -247,7 +250,7 @@ export function FollowUpTaskListScreen() {
   return (
     <Screen>
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: tabBarClearance }]}
         showsVerticalScrollIndicator={false}
         onScroll={handleTabBarScroll}
         scrollEventThrottle={16}
@@ -326,7 +329,7 @@ export function FollowUpTaskListScreen() {
         </ScrollView>
 
         {buckets.pending.length === 0 ? (
-          <View style={[styles.emptyCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <View style={[styles.emptyCard, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
             <Image source={decorativeAssets.checkCircle} style={styles.emptyGraphic} resizeMode="contain" />
             <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>All clear</Text>
             <Text style={[styles.emptyText, { color: colors.textMuted }]}>No pending follow-ups right now.</Text>
@@ -897,7 +900,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   emptyCard: {
-    borderWidth: 1,
+    ...softCardShadow,
     borderRadius: 20,
     padding: 24,
     alignItems: "center",

@@ -1,277 +1,279 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
+import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
+import { spacing } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { api, ClassSection, StudentStub, CommunicationMessage } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
 
+type Props = NativeStackScreenProps<RootStackParamList, "CommunicationHub">;
 type Section = "student" | "class" | "weekly";
 
-export function CommunicationHubScreen() {
+const TABS: { key: Section; label: string }[] = [
+  { key: "student", label: "Students" },
+  { key: "class", label: "Classes" },
+  { key: "weekly", label: "Weekly updates" },
+];
+
+function classLabel(section: { className: string; sectionName: string } | undefined): string {
+  if (!section) return "";
+  return `${capitalizeFirst(section.className)} ${capitalizeFirst(section.sectionName)}`;
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase() || "?";
+}
+
+export function CommunicationHubScreen({ navigation }: Props) {
   const { accessToken } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
 
   const [section, setSection] = useState<Section>("student");
   const [classSections, setClassSections] = useState<ClassSection[]>([]);
   const [students, setStudents] = useState<StudentStub[]>([]);
-  const [classSectionId, setClassSectionId] = useState<string | null>(null);
-  const [studentId, setStudentId] = useState<string | null>(null);
-  const [thread, setThread] = useState<CommunicationMessage[]>([]);
-  const [classMessages, setClassMessages] = useState<CommunicationMessage[]>([]);
   const [pendingUpdates, setPendingUpdates] = useState<CommunicationMessage[]>([]);
-  const [draft, setDraft] = useState("");
-  const [isSending, setIsSending] = useState(false);
+  const [classFilter, setClassFilter] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     if (!accessToken) return;
-    api
-      .listClassSections(accessToken)
-      .then((sections) => {
-        setClassSections(sections);
-        if (sections.length > 0) setClassSectionId(sections[0].id);
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load classes"));
-  }, [accessToken]);
-
-  useEffect(() => {
-    if (!accessToken || !classSectionId) return;
-    api
-      .listStudents(accessToken, classSectionId)
-      .then((res) => {
-        const list = res.data ?? [];
-        setStudents(list);
-        setStudentId(list[0]?.id ?? null);
-      })
-      .catch(() => {});
-  }, [accessToken, classSectionId]);
-
-  const loadThread = useCallback(async () => {
-    if (!accessToken || !studentId) return;
+    setError(null);
     try {
-      setThread(await api.listCommunicationsWithStudent(accessToken, studentId));
+      const [sections, roster, pending] = await Promise.all([
+        api.listClassSections(accessToken),
+        api.listStudents(accessToken),
+        api.listPendingParentUpdates(accessToken),
+      ]);
+      setClassSections(sections);
+      setStudents(roster.data ?? []);
+      setPendingUpdates(pending);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load thread");
-    }
-  }, [accessToken, studentId]);
-
-  const loadClassMessages = useCallback(async () => {
-    if (!accessToken || !classSectionId) return;
-    try {
-      setClassMessages(await api.listCommunicationsForClass(accessToken, classSectionId));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load class messages");
-    }
-  }, [accessToken, classSectionId]);
-
-  const loadPending = useCallback(async () => {
-    if (!accessToken) return;
-    try {
-      setPendingUpdates(await api.listPendingParentUpdates(accessToken));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load pending updates");
+      setError(err instanceof Error ? err.message : "Failed to load messages");
+    } finally {
+      setIsLoading(false);
     }
   }, [accessToken]);
 
   useFocusEffect(
     useCallback(() => {
-      if (section === "student") loadThread();
-      if (section === "class") loadClassMessages();
-      if (section === "weekly") loadPending();
-    }, [section, loadThread, loadClassMessages, loadPending])
+      load();
+    }, [load])
   );
 
-  async function send() {
-    if (!accessToken || !draft.trim()) return;
-    setIsSending(true);
-    setError(null);
-    try {
-      if (section === "student" && studentId) {
-        await api.sendCommunicationToStudent(accessToken, { studentStubId: studentId, body: draft.trim() });
-        setDraft("");
-        loadThread();
-      } else if (section === "class" && classSectionId) {
-        await api.sendCommunicationToClass(accessToken, { classSectionId, body: draft.trim() });
-        setDraft("");
-        loadClassMessages();
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to send");
-    } finally {
-      setIsSending(false);
-    }
-  }
+  const filteredStudents = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return students.filter((s) => {
+      if (classFilter && s.classSectionId !== classFilter) return false;
+      return !q || s.fullName.toLowerCase().includes(q);
+    });
+  }, [students, classFilter, search]);
 
   async function hold(id: string) {
     if (!accessToken) return;
     setError(null);
     try {
       await api.holdParentUpdate(accessToken, id);
-      loadPending();
+      setPendingUpdates(await api.listPendingParentUpdates(accessToken));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to hold update");
     }
   }
 
-  return (
-    <Screen>
-      <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text style={[styles.title, { color: colors.textPrimary }]}>Communication Hub</Text>
+  function renderRow(key: string, avatar: React.ReactNode, title: string, caption: string, onPress: () => void) {
+    return (
+      <Pressable
+        key={key}
+        onPress={onPress}
+        style={({ pressed }) => [styles.row, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow, pressed && { opacity: pressedOpacity }]}
+        accessibilityRole="button"
+        accessibilityLabel={`Open chat with ${title}`}
+      >
+        <View style={[styles.avatar, { backgroundColor: colors.accentSoft }]}>{avatar}</View>
+        <View style={styles.rowText}>
+          <Text style={[styles.rowTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+            {title}
+          </Text>
+          <Text style={[styles.rowCaption, { color: colors.textMuted }]} numberOfLines={1}>
+            {caption}
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+      </Pressable>
+    );
+  }
 
-        <View style={styles.tabRow}>
-          {(["student", "class", "weekly"] as Section[]).map((s) => {
-            const active = section === s;
-            const label = s === "student" ? "To student" : s === "class" ? "To class" : "Weekly updates";
+  function renderStudents() {
+    return (
+      <>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll} contentContainerStyle={styles.filterContent}>
+          {[{ id: null as string | null, label: "All classes" }, ...classSections.map((c) => ({ id: c.id as string | null, label: classLabel(c) }))].map((c) => {
+            const active = classFilter === c.id;
             return (
               <Pressable
-                key={s}
-                style={({ pressed }) => [
-                  styles.tab,
-                  { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border },
-                  pressed && { opacity: pressedOpacity },
-                ]}
-                onPress={() => setSection(s)}
+                key={c.id ?? "all"}
+                onPress={() => setClassFilter(c.id)}
+                style={[styles.chip, { backgroundColor: active ? colors.accent : colors.surfaceAccent }]}
                 accessibilityRole="button"
               >
-                <Text style={[styles.tabText, { color: active ? colors.accentOn : colors.textSecondary }]}>{label}</Text>
+                <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textPrimary }]}>{c.label}</Text>
               </Pressable>
             );
           })}
+        </ScrollView>
+        <View style={styles.pad}>
+          <TextInput
+            style={[styles.search, { color: colors.textPrimary, borderColor: colors.border, backgroundColor: colors.surface }]}
+            placeholder="Search students"
+            placeholderTextColor={colors.textMuted}
+            value={search}
+            onChangeText={setSearch}
+          />
         </View>
+        <View style={styles.list}>
+          {filteredStudents.length === 0 ? (
+            <Text style={[styles.empty, { color: colors.textMuted }]}>No students found.</Text>
+          ) : (
+            filteredStudents.map((s) => {
+              const label = classLabel(classSections.find((c) => c.id === s.classSectionId) ?? s.classSection);
+              return renderRow(
+                s.id,
+                <Text style={[styles.avatarText, { color: colors.accent }]}>{initials(s.fullName)}</Text>,
+                capitalizeFirst(s.fullName),
+                label,
+                () => navigation.navigate("CommunicationChat", { mode: "student", studentId: s.id, studentName: s.fullName, classLabel: label })
+              );
+            })
+          )}
+        </View>
+      </>
+    );
+  }
 
-        {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
-
-        {section !== "weekly" ? (
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
-            <Text style={[styles.label, { color: colors.textSecondary }]}>Class</Text>
-            <View style={styles.chipRow}>
-              {classSections.map((cs) => {
-                const active = classSectionId === cs.id;
-                return (
-                  <Pressable
-                    key={cs.id}
-                    style={({ pressed }) => [
-                      styles.chip,
-                      { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border },
-                      pressed && { opacity: pressedOpacity },
-                    ]}
-                    onPress={() => setClassSectionId(cs.id)}
-                    accessibilityRole="button"
-                  >
-                    <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>
-                      {capitalizeFirst(cs.className)} {capitalizeFirst(cs.sectionName)}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-
-            {section === "student" ? (
-              <>
-                <Text style={[styles.label, { color: colors.textSecondary }]}>Student</Text>
-                <View style={styles.chipRow}>
-                  {students.map((s) => {
-                    const active = studentId === s.id;
-                    return (
-                      <Pressable
-                        key={s.id}
-                        style={({ pressed }) => [
-                          styles.chip,
-                          { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border },
-                          pressed && { opacity: pressedOpacity },
-                        ]}
-                        onPress={() => setStudentId(s.id)}
-                        accessibilityRole="button"
-                      >
-                        <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{capitalizeFirst(s.fullName)}</Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-
-                {thread.map((m) => (
-                  <View key={m.id} style={[styles.messageBubble, m.channel === "student_to_teacher" ? { alignSelf: "flex-start", backgroundColor: colors.surfaceRaised } : { alignSelf: "flex-end", backgroundColor: colors.accent + "20" }]}>
-                    <Text style={[styles.messageText, { color: colors.textPrimary }]}>{m.body}</Text>
-                    <Text style={[styles.messageMeta, { color: colors.textMuted }]}>{new Date(m.createdAt).toLocaleString()}</Text>
-                  </View>
-                ))}
-              </>
-            ) : (
-              classMessages.map((m) => (
-                <View key={m.id} style={[styles.messageBubble, { backgroundColor: colors.surfaceRaised }]}>
-                  <Text style={[styles.messageText, { color: colors.textPrimary }]}>{m.body}</Text>
-                  <Text style={[styles.messageMeta, { color: colors.textMuted }]}>{new Date(m.createdAt).toLocaleString()}</Text>
-                </View>
-              ))
-            )}
-
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
-              value={draft}
-              onChangeText={setDraft}
-              placeholder="Write a message..."
-              placeholderTextColor={colors.textMuted}
-              multiline
-            />
-            <Pressable
-              style={({ pressed }) => [styles.sendButton, { backgroundColor: colors.accent }, (isSending || !draft.trim() || pressed) && { opacity: pressedOpacity }]}
-              onPress={send}
-              disabled={isSending || !draft.trim()}
-              accessibilityRole="button"
-            >
-              {isSending ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.sendButtonText, { color: colors.accentOn }]}>Send</Text>}
-            </Pressable>
-          </View>
+  function renderClasses() {
+    return (
+      <View style={[styles.list, { marginTop: spacing.md }]}>
+        {classSections.length === 0 ? (
+          <Text style={[styles.empty, { color: colors.textMuted }]}>No classes yet.</Text>
         ) : (
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
-            <Text style={[styles.meta, { color: colors.textMuted, marginBottom: 8 }]}>
-              Automatic weekly parent updates are assembled here but not yet sent - the delivery channel (SMS/email) hasn't been confirmed.
-              Review and hold any you don't want to send once that's wired up.
-            </Text>
-            {pendingUpdates.length === 0 ? (
-              <Text style={[styles.meta, { color: colors.textMuted }]}>No pending updates.</Text>
-            ) : (
-              pendingUpdates.map((m) => (
-                <View key={m.id} style={[styles.listRow, { borderColor: colors.border }]}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.messageText, { color: colors.textPrimary }]}>{m.body}</Text>
-                    <Text style={[styles.messageMeta, { color: colors.textMuted }]}>{new Date(m.createdAt).toLocaleDateString()}</Text>
-                  </View>
-                  <Pressable onPress={() => hold(m.id)} accessibilityRole="button">
-                    <Ionicons name="pause-circle-outline" size={22} color={colors.danger} />
-                  </Pressable>
-                </View>
-              ))
-            )}
-          </View>
+          classSections.map((c) => {
+            const count = students.filter((s) => s.classSectionId === c.id).length;
+            return renderRow(
+              c.id,
+              <Ionicons name="people" size={20} color={colors.accent} />,
+              classLabel(c),
+              `${count} student${count === 1 ? "" : "s"} · Send an announcement`,
+              () => navigation.navigate("CommunicationChat", { mode: "class", classSectionId: c.id, classLabel: classLabel(c) })
+            );
+          })
         )}
-      </ScrollView>
+      </View>
+    );
+  }
+
+  function renderWeekly() {
+    return (
+      <View style={[styles.list, { marginTop: spacing.md }]}>
+        <View style={[styles.notice, { backgroundColor: colors.surfaceAccent }]}>
+          <Ionicons name="information-circle-outline" size={18} color={colors.accent} />
+          <Text style={[styles.noticeText, { color: colors.textSecondary }]}>
+            Weekly parent updates are assembled automatically but not sent yet - the delivery channel (SMS/email) hasn't been confirmed. Hold any you don't want sent.
+          </Text>
+        </View>
+        {pendingUpdates.length === 0 ? (
+          <Text style={[styles.empty, { color: colors.textMuted }]}>No pending updates.</Text>
+        ) : (
+          pendingUpdates.map((m) => (
+            <View key={m.id} style={[styles.row, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
+              <View style={styles.rowText}>
+                <Text style={[styles.updateBody, { color: colors.textPrimary }]}>{m.body}</Text>
+                <Text style={[styles.rowCaption, { color: colors.textMuted }]}>{new Date(m.createdAt).toLocaleDateString()}</Text>
+              </View>
+              <Pressable onPress={() => hold(m.id)} hitSlop={10} accessibilityRole="button" accessibilityLabel="Hold this update">
+                <Ionicons name="pause-circle-outline" size={24} color={colors.danger} />
+              </Pressable>
+            </View>
+          ))
+        )}
+      </View>
+    );
+  }
+
+  return (
+    <Screen edges={["top", "bottom"]}>
+      <View style={styles.topBar}>
+        <Pressable
+          onPress={() => navigation.goBack()}
+          style={({ pressed }) => [styles.backButton, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="arrow-back" size={22} color={colors.textPrimary} />
+        </Pressable>
+        <Text style={[styles.title, { color: colors.textPrimary }]}>Messages</Text>
+      </View>
+
+      <View style={[styles.tabRow, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+        {TABS.map((t) => {
+          const active = section === t.key;
+          return (
+            <Pressable
+              key={t.key}
+              style={({ pressed }) => [styles.tab, active && { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]}
+              onPress={() => setSection(t.key)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+            >
+              <Text style={[styles.tabText, { color: active ? colors.accentOn : colors.textSecondary }]}>{t.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
+
+      {isLoading ? (
+        <ActivityIndicator color={colors.accent} style={{ marginTop: 40 }} />
+      ) : (
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          {section === "student" ? renderStudents() : section === "class" ? renderClasses() : renderWeekly()}
+        </ScrollView>
+      )}
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  content: { padding: 16, paddingBottom: 40 },
-  title: { fontSize: 24, fontWeight: "800", letterSpacing: -0.5, marginBottom: 12 },
-  tabRow: { flexDirection: "row", gap: 8, marginBottom: 16 },
-  tab: { flex: 1, borderWidth: 1, borderRadius: 10, paddingVertical: 10, alignItems: "center" },
+  topBar: { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingHorizontal: spacing.lg, paddingTop: spacing.md },
+  backButton: { width: 40, height: 40, borderRadius: 20, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  title: { fontSize: 20, fontWeight: "800", flex: 1 },
+  tabRow: { flexDirection: "row", marginHorizontal: spacing.lg, marginTop: 14, padding: 4, borderRadius: 14, borderWidth: 1, gap: 4 },
+  tab: { flex: 1, borderRadius: 10, paddingVertical: 9, alignItems: "center" },
   tabText: { fontSize: 12, fontWeight: "700" },
-  error: { textAlign: "center", marginBottom: 12 },
-  card: { borderWidth: 1, borderRadius: 16, padding: 16 },
-  label: { fontSize: 12, fontWeight: "700", marginBottom: 6, marginTop: 4 },
-  meta: { fontSize: 12, lineHeight: 17 },
-  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 4 },
-  chip: { borderWidth: 1, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 7 },
+  error: { marginHorizontal: spacing.lg, marginTop: 10, fontSize: 13 },
+  content: { paddingBottom: 40 },
+  filterScroll: { marginTop: 14, flexGrow: 0 },
+  filterContent: { paddingHorizontal: spacing.lg, gap: 8 },
+  chip: { borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8 },
   chipText: { fontSize: 12, fontWeight: "700" },
-  messageBubble: { borderRadius: 12, padding: 10, marginTop: 10, maxWidth: "85%" },
-  messageText: { fontSize: 13 },
-  messageMeta: { fontSize: 10, marginTop: 4 },
-  listRow: { flexDirection: "row", alignItems: "center", gap: 8, borderTopWidth: 1, paddingTop: 10, marginTop: 10 },
-  input: { borderWidth: 1, borderRadius: 8, padding: 10, minHeight: 60, fontSize: 13, marginTop: 14 },
-  sendButton: { borderRadius: 10, height: 44, alignItems: "center", justifyContent: "center", marginTop: 10 },
-  sendButtonText: { fontSize: 13, fontWeight: "700" },
+  pad: { paddingHorizontal: spacing.lg, marginTop: 10 },
+  search: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14 },
+  list: { paddingHorizontal: spacing.lg, paddingTop: 12, gap: 8 },
+  row: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderWidth: 1, borderRadius: 16, padding: spacing.md },
+  avatar: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center" },
+  avatarText: { fontSize: 14, fontWeight: "800" },
+  rowText: { flex: 1 },
+  rowTitle: { fontSize: 15, fontWeight: "700" },
+  rowCaption: { fontSize: 12, marginTop: 2 },
+  updateBody: { fontSize: 13, lineHeight: 19 },
+  empty: { textAlign: "center", marginTop: 30, fontSize: 13 },
+  notice: { flexDirection: "row", gap: 8, borderRadius: 12, padding: spacing.md, alignItems: "flex-start" },
+  noticeText: { flex: 1, fontSize: 12, lineHeight: 17 },
 });

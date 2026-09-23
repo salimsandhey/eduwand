@@ -155,7 +155,7 @@ export function AiGlowTestButton() {
           styles.button,
           {
             backgroundColor: currentConfig.bgColor,
-            borderColor: currentConfig.borderColor,
+            borderWidth: 0,
           },
           cardShadow,
           pressed && { opacity: pressedOpacity },

@@ -8,6 +8,10 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, AssignmentQuestion } from "../../api/client";
+import { MatchingQuestion, SequencingQuestion } from "../assignments/MatchAndSequenceQuestions";
+
+const CHOICE_TYPES = new Set(["mcq", "true_false"]);
+const STRUCTURED_TYPES = new Set(["match_following", "sequencing"]);
 
 type Props = NativeStackScreenProps<RootStackParamList, "StudentAssignmentSubmit">;
 
@@ -24,9 +28,9 @@ export function StudentAssignmentSubmitScreen({ route, navigation }: Props) {
 
   const parsedQuestions: AssignmentQuestion[] = questions;
   // A photo covers handwritten working for free-text questions - it can't
-  // reliably capture which multiple-choice option was picked, so don't offer
-  // it when there's nothing but MCQ to photograph.
-  const allowsPhoto = parsedQuestions.some((q) => q.type !== "mcq");
+  // capture a multiple-choice pick, a true/false pick, a match, or a tapped
+  // order, so don't offer it unless there's at least one free-text question.
+  const allowsPhoto = parsedQuestions.some((q) => !q.type || (!CHOICE_TYPES.has(q.type) && !STRUCTURED_TYPES.has(q.type)));
 
   async function pickPhoto() {
     const result = await DocumentPicker.getDocumentAsync({ type: "image/*", copyToCacheDirectory: true });
@@ -75,14 +79,14 @@ export function StudentAssignmentSubmitScreen({ route, navigation }: Props) {
       <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <Text style={[styles.title, { color: colors.textPrimary }]}>{title}</Text>
 
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           <Text style={[styles.label, { color: colors.textSecondary }]}>Answer online</Text>
           {parsedQuestions.map((q, i) => (
             <View key={q.id} style={{ marginTop: 10 }}>
               <Text style={[styles.questionText, { color: colors.textSecondary }]}>
                 {i + 1}. {q.prompt}
               </Text>
-              {q.type === "mcq" ? (
+              {q.type && CHOICE_TYPES.has(q.type) ? (
                 <View style={styles.optionList}>
                   {(q.options ?? []).map((option, idx) => {
                     const selected = (answers[q.id] ?? "") === option;
@@ -108,6 +112,26 @@ export function StudentAssignmentSubmitScreen({ route, navigation }: Props) {
                     );
                   })}
                 </View>
+              ) : q.type === "match_following" && q.pairs?.length ? (
+                <MatchingQuestion
+                  pairs={q.pairs}
+                  value={answers[q.id] ?? ""}
+                  onChange={(value) => {
+                    setPhoto(null);
+                    setAnswers((prev) => ({ ...prev, [q.id]: value }));
+                  }}
+                  colors={colors}
+                />
+              ) : q.type === "sequencing" && q.items?.length ? (
+                <SequencingQuestion
+                  items={q.items}
+                  value={answers[q.id] ?? ""}
+                  onChange={(value) => {
+                    setPhoto(null);
+                    setAnswers((prev) => ({ ...prev, [q.id]: value }));
+                  }}
+                  colors={colors}
+                />
               ) : (
                 <TextInput
                   style={[styles.answerInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
@@ -116,7 +140,7 @@ export function StudentAssignmentSubmitScreen({ route, navigation }: Props) {
                     setPhoto(null);
                     setAnswers((prev) => ({ ...prev, [q.id]: text }));
                   }}
-                  placeholder="Your answer"
+                  placeholder={q.type === "very_short" ? "One word or short phrase" : q.type === "fill_blank" ? "Fill in the blank" : "Your answer"}
                   placeholderTextColor={colors.textMuted}
                   multiline
                 />
@@ -126,7 +150,7 @@ export function StudentAssignmentSubmitScreen({ route, navigation }: Props) {
         </View>
 
         {allowsPhoto ? (
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
             <Text style={[styles.label, { color: colors.textSecondary }]}>Or upload a photo instead</Text>
             <Text style={[styles.meta, { color: colors.textMuted, marginBottom: 8 }]}>
               Use this if a question needs handwritten working - covers the whole assignment in one photo.

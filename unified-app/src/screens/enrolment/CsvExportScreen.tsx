@@ -161,7 +161,7 @@ export function CsvExportScreen() {
         </Animated.View>
 
         {}
-        <View style={[styles.scheduleCard, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        <View style={[styles.scheduleCard, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           <View style={styles.scheduleRow}>
             <View style={{ flex: 1 }}>
               <Text style={[styles.scheduleTitle, { color: colors.textPrimary }]}>Automatic export</Text>
@@ -220,7 +220,7 @@ export function CsvExportScreen() {
                   styles.row,
                   {
                     backgroundColor: colors.surface,
-                    borderColor: colors.border,
+                    borderWidth: 0,
                     borderLeftColor: isSuccess ? colors.accent : colors.danger,
                   },
                   cardShadow,

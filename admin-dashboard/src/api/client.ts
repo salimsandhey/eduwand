@@ -180,6 +180,29 @@ export interface ClassSection {
   teacherAssignments: ClassSectionTeacherAssignment[];
 }
 
+// weekday is ISO: 1=Mon ... 7=Sun. startTime/endTime are 24h "HH:mm".
+export interface TimetableSlot {
+  id: string;
+  teacherUserId: string;
+  classSectionId: string;
+  subject: string;
+  weekday: number;
+  startTime: string;
+  endTime: string;
+  room: string | null;
+  classSection: { className: string; sectionName: string };
+}
+
+export interface TimetableSlotInput {
+  teacherUserId: string;
+  classSectionId: string;
+  subject: string;
+  weekday: number;
+  startTime: string;
+  endTime: string;
+  room?: string | null;
+}
+
 export interface Student {
   id: string;
   schoolId: string;
@@ -191,6 +214,9 @@ export interface Student {
   guardianContact: string;
   admissionDate: string;
   feeStatus: string;
+  // The physical clicker DEVICE_ID this student answers with in a live
+  // Present session - null if not assigned one.
+  seatNumber: number | null;
 }
 
 export interface CreateStudentInput {
@@ -210,6 +236,7 @@ export interface UpdateStudentInput {
   guardianName?: string;
   guardianContact?: string;
   feeStatus?: string;
+  seatNumber?: number | null;
 }
 
 export interface AcademicYear {
@@ -479,6 +506,21 @@ export interface PlatformSetting {
   updatedAt: string;
 }
 
+// key is one of: privacy_policy, terms_of_service, about, contact - see
+// ContentPage in schema.prisma. Reads are public; writes need platform_admin.
+export interface ContentPage {
+  id: string;
+  key: string;
+  title: string;
+  bodyMarkdown: string;
+  // Only meaningful for "contact" today ({ email, phone, whatsapp?, address,
+  // hours? }) - every client renders those as cards instead of the markdown
+  // body when present.
+  fields: Record<string, string> | null;
+  version: number;
+  updatedAt: string;
+}
+
 // reason is one of: plan_grant, admin_topup, ai_usage
 export interface CreditLedgerEntry {
   id: string;
@@ -623,6 +665,90 @@ export function publicSubmitClassJoinRequest(
   });
 }
 
+// Public, unauthenticated - used by the /present/:code Display and Control
+// pages. A classroom device never logs in; the short-lived code (from the
+// teacher's "Present on a screen" action in the app) stands in for auth,
+// same trust model as the join code above.
+export interface PresentQuestion {
+  id: string;
+  prompt: string;
+  options: string[];
+  correctOptionIndex: number;
+}
+
+export interface PresentResponse {
+  questionId: string;
+  studentStubId: string;
+  // Null on a doubt response ("not sure") - see isDoubt.
+  selectedOptionIndex: number | null;
+  isCorrect: boolean | null;
+  isDoubt: boolean;
+}
+
+export interface PresentRosterEntry {
+  studentStubId: string;
+  fullName: string;
+  seatNumber: number | null;
+}
+
+// What the Control page gets: full roster identity plus exactly what each
+// student chose - this is what the teacher taps from, so it has to know who
+// is who. Requested with ?role=control; never sent to the Display page.
+export interface PresentControlState {
+  assessmentId: string;
+  title: string;
+  status: string;
+  questions: PresentQuestion[];
+  currentQuestionIndex: number;
+  currentQuestionRevealed: boolean;
+  responses: PresentResponse[];
+  roster: PresentRosterEntry[];
+}
+
+// What the Display (projector/classroom-screen) page gets: aggregate counts
+// for the current question and a per-seat answered flag - never a name,
+// never which option a student picked. A real payload-level guarantee, not
+// just a UI choice - the backend never sends the identified shape here.
+export interface PresentDisplayState {
+  assessmentId: string;
+  title: string;
+  status: string;
+  questions: PresentQuestion[];
+  currentQuestionIndex: number;
+  currentQuestionRevealed: boolean;
+  totalStudents: number;
+  answeredCount: number;
+  counts: { correct: number; incorrect: number; doubt: number };
+  seats: { seatNumber: number | null; answered: boolean }[];
+}
+
+export function publicGetPresentState(code: string, role: "control" | "display"): Promise<PresentControlState | PresentDisplayState> {
+  return request(`/present/${code}?role=${role}`);
+}
+
+export function publicRecordPresentResponse(
+  code: string,
+  input: { questionId: string; studentStubId: string; selectedOptionIndex?: number; isDoubt?: boolean }
+) {
+  return request<PresentControlState>(`/present/${code}/responses`, { method: "POST", body: JSON.stringify(input) });
+}
+
+export function publicAdvancePresentQuestion(code: string, direction: "next" | "prev") {
+  return request<PresentControlState>(`/present/${code}/advance`, { method: "POST", body: JSON.stringify({ direction }) });
+}
+
+export function publicRevealPresentAnswer(code: string) {
+  return request<PresentControlState>(`/present/${code}/reveal`, { method: "POST" });
+}
+
+export function publicEndPresentSession(code: string) {
+  return request<{ ended: boolean }>(`/present/${code}/end`, { method: "POST" });
+}
+
+export function getPresentSocketUrl(code: string, role: "control" | "display"): string {
+  return `${API_URL.replace(/^http/, "ws")}/realtime?presentCode=${encodeURIComponent(code)}&role=${role}`;
+}
+
 export const api = {
   login: (email: string, password: string) =>
     request<AuthTokens>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
@@ -657,6 +783,12 @@ export const api = {
   listPlatformSettings: (token: string) => request<PlatformSetting[]>("/platform-settings", {}, token),
   updatePlatformSetting: (token: string, key: string, value: string) =>
     request<PlatformSetting>(`/platform-settings/${key}`, { method: "PUT", body: JSON.stringify({ value }) }, token),
+
+  // Public - no token needed, works for a logged-out reviewer or App Store crawler.
+  listContentPages: () => request<ContentPage[]>("/content-pages"),
+  getContentPage: (key: string) => request<ContentPage>(`/content-pages/${key}`),
+  updateContentPage: (token: string, key: string, input: { title?: string; bodyMarkdown: string; fields?: Record<string, string> | null }) =>
+    request<ContentPage>(`/content-pages/${key}`, { method: "PUT", body: JSON.stringify(input) }, token),
 
   getTeacherCredits: (token: string, teacherUserId: string) =>
     request<CreditAccountSummary>(`/teachers/${teacherUserId}/credits`, {}, token),
@@ -776,6 +908,15 @@ export const api = {
     if (input.secondaryColor) formData.append("secondaryColor", input.secondaryColor);
     return requestMultipart<SchoolBranding>(`/schools/${schoolId}/branding`, formData, token);
   },
+
+  listTimetableSlots: (token: string, schoolId: string, teacherUserId: string) =>
+    request<TimetableSlot[]>(`/schools/${schoolId}/timetable-slots${toQueryString({ teacherUserId })}`, {}, token),
+  createTimetableSlot: (token: string, schoolId: string, input: TimetableSlotInput) =>
+    request<TimetableSlot>(`/schools/${schoolId}/timetable-slots`, { method: "POST", body: JSON.stringify(input) }, token),
+  updateTimetableSlot: (token: string, schoolId: string, slotId: string, input: Partial<TimetableSlotInput>) =>
+    request<TimetableSlot>(`/schools/${schoolId}/timetable-slots/${slotId}`, { method: "PATCH", body: JSON.stringify(input) }, token),
+  deleteTimetableSlot: (token: string, schoolId: string, slotId: string) =>
+    request<{ id: string }>(`/schools/${schoolId}/timetable-slots/${slotId}`, { method: "DELETE" }, token),
 
   listSubjectsForSchool: (token: string, schoolId: string) =>
     request<Subject[]>(`/schools/${schoolId}/subjects`, {}, token),

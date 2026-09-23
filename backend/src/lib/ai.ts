@@ -2,6 +2,8 @@ import { prisma } from "./prisma";
 import { storage } from "./storage";
 import { MAX_EXTRACTED_CHARS } from "./extraction";
 import { getFeatureCost, deductCredits } from "./credits";
+import type { MediaItem } from "./media";
+import { jsonrepair } from "jsonrepair";
 
 export const MODEL_SONNET = "claude-sonnet";
 export const MODEL_HAIKU = "claude-haiku";
@@ -23,7 +25,14 @@ export interface LessonPlanStage {
   stage: string;
   durationMinutes: number;
   summary: string;
-  activities: { title: string; description: string; materials: string[] }[];
+  // A short array of steps (rendered as bullets in LessonPlanView.tsx) - see
+  // the schema instruction in DEFAULT_OUTPUT_TYPE_INSTRUCTIONS below.
+  activities: { title: string; description: string[]; materials: string[] }[];
+  // Which class period(s) (1-indexed, matching Generation.classCount) this
+  // stage happens in - one 5E arc spread across several classes, not a fresh
+  // 5E cycle repeated in each. Omitted when the plan is a single class
+  // (classCount <= 1); a long stage can span more than one period.
+  sessions?: number[];
 }
 
 export interface LessonPlanContent {
@@ -38,9 +47,25 @@ export interface LessonPlanContent {
 
 export interface CustomActivityContent {
   type: "custom_activity_report";
-  objective: string;
-  activities: { title: string; description: string; durationMinutes: number; materials: string[] }[];
-  reportFormat: string;
+  // Legacy (pre-Learning Stage picker) generations only - a single prose
+  // objective with no Bloom's tag guarantee. New generations use `objectives`
+  // below instead. Both optional so either shape parses.
+  objective?: string;
+  // One or more objectives, each labelled with its Learning Stage in square
+  // brackets (same convention as LessonPlanContent.objectives) - constrained
+  // to whichever stage(s) the teacher picked, see learningStages below.
+  objectives?: string[];
+  activities: {
+    title: string;
+    // A short array of steps (rendered as bullets), same convention as
+    // LessonPlanStage.activities - see the schema instruction below.
+    description: string[];
+    durationMinutes: number;
+    materials: string[];
+  }[];
+  // What to record after running this: 2-3 short bullets (attempted /
+  // observed / to reinforce next class), not one paragraph.
+  reportFormat: string[];
 }
 
 // Client feedback: activity report outputs were "random" because the model
@@ -57,6 +82,29 @@ export const ACTIVITY_GROUP_SIZE_LABELS: Record<ActivityGroupSize, string> = {
   small_group: "Small groups - 2-4 students per group",
   large_group: "Large groups - the whole class split into a few big teams",
 };
+
+// School.board is only a label unless the prompt says what it means, so each
+// supported board gets concrete instructions. Kept in step with BOARDS in
+// lib/boards.ts; an unknown board falls back to no extra guidance.
+const BOARD_GUIDANCE: Record<string, string> = {
+  CBSE:
+    "Align with the CBSE syllabus and the NCERT textbook for this class: use NCERT terminology, definitions and chapter " +
+    "framing, and favour competency-based, application-oriented questions and examples over rote recall.",
+  ICSE:
+    "Align with the CISCE (ICSE/ISC) syllabus: be detailed and precise, with exact definitions and terminology, " +
+    "explanations that go into more depth than a summary, and descriptive, reasoned answers.",
+  IB:
+    "Align with the IB approach: inquiry-driven and concept-based, connecting ideas to real-world and global contexts, " +
+    "building approaches-to-learning skills, and phrasing questions and tasks with IB command terms " +
+    "(e.g. explain, compare, evaluate, justify) rather than plain recall.",
+};
+
+function boardGuidance(board: string): string {
+  const guidance = BOARD_GUIDANCE[board];
+  return guidance
+    ? `Board guidance: ${guidance} If this conflicts with the teacher's own context material or format instructions, those take priority.`
+    : "";
+}
 
 // A deliberately broad list (per the client's ask to "spend more time adding
 // these inputs") covering the range of what a classroom may or may not have,
@@ -76,6 +124,14 @@ export const ACTIVITY_RESOURCE_OPTIONS = [
 ] as const;
 export type ActivityResourceKey = (typeof ACTIVITY_RESOURCE_OPTIONS)[number]["key"];
 const ACTIVITY_RESOURCE_LABELS: Record<string, string> = Object.fromEntries(ACTIVITY_RESOURCE_OPTIONS.map((r) => [r.key, r.label]));
+
+// The six Bloom's Taxonomy stages, shown to teachers as "Learning Stage" -
+// same concept, renamed label (never show "Bloom's Level" in the product).
+// Only meaningful for custom_activity_report today; kept here (not scoped to
+// that type) since it's also the exact set extractBloom/BloomTile already
+// recognize on the mobile side.
+export const LEARNING_STAGE_OPTIONS = ["Remember", "Understand", "Apply", "Analyze", "Evaluate", "Create"] as const;
+export type LearningStage = (typeof LEARNING_STAGE_OPTIONS)[number];
 
 export interface FlashcardsContent {
   type: "flashcards";
@@ -101,7 +157,14 @@ export type PresentationTemplate = "detailed" | "instructional" | "school_format
 // write this, colors always come from the school's branding (or an override
 // for one generation - see overridePrimaryColor/overrideSecondaryColor).
 export type PresentationColorScheme = "indigo" | "coral" | "forest" | "slate";
-export type PresentationSlideLayout = "title" | "bullets" | "stat" | "quote" | "divider" | "stat-grid" | "timeline" | "icon-grid";
+export type PresentationSlideLayout = "title" | "bullets" | "stat" | "quote" | "divider" | "stat-grid" | "timeline" | "icon-grid" | "image";
+
+// An image or PDF page the teacher chose to show as-is (see lib/media.ts).
+// `id` is what a presentation slide's mediaId points at.
+export interface MediaCatalogEntry {
+  id: string;
+  description: string;
+}
 
 export interface PresentationContent {
   type: "presentation";
@@ -119,6 +182,9 @@ export interface PresentationContent {
   // Set in code - "Prepared by {teacher} - {school}", rendered as a small
   // footer watermark on every slide. Never generated by the model.
   footerLabel?: string | null;
+  // Set in code: the images / PDF pages shown as-is in "image" slides. Each
+  // image slide's mediaId points at an entry here.
+  media?: MediaItem[];
   slides: {
     // Optional so pre-layout generations keep parsing - readers default to
     // "bullets" when absent/unrecognized.
@@ -133,6 +199,8 @@ export interface PresentationContent {
     // Legacy only ("more_visual" decks predating the photo removal) - no
     // longer set on new generations, kept so those old rows still render.
     imageUrl?: string;
+    // Only on layout "image": which entry of the deck's `media` this slide shows.
+    mediaId?: string;
     // Used by "stat-grid" (title = the number, description = its label),
     // "timeline" (title = step name, tag = duration like "1 Week",
     // description = the step's paragraph), and "icon-grid" (title = card
@@ -164,6 +232,13 @@ export interface GenerationInput {
   // Only meaningful when outputType is "custom_activity_report".
   activityGroupSize?: ActivityGroupSize;
   activityResources?: string[];
+  // Learning Stage(s) the teacher constrained this report's objectives to -
+  // empty/omitted means the AI picks freely, same as before this existed.
+  learningStages?: string[];
+  // Images / PDF pages the teacher picked to be shown as-is next to the
+  // generated content. The model never sees the pixels - only these short
+  // descriptions - and is told where/how to place them.
+  mediaCatalog?: MediaCatalogEntry[];
 }
 
 export interface AnswerKeyQuestionInput {
@@ -173,7 +248,19 @@ export interface AnswerKeyQuestionInput {
   marks: number;
 }
 
-export type AssignmentQuestionType = "short_answer" | "mcq";
+// true_false is stored exactly like mcq (options: ["True","False"],
+// correctOptionIndex) so it settles through the same deterministic path -
+// see settleMcqQuestions. fill_blank/very_short/short_answer share one data
+// shape (prompt + modelAnswer) and differ only in phrasing/prompting; they
+// all go to the AI grader like short_answer always has.
+export type AssignmentQuestionType =
+  | "mcq"
+  | "true_false"
+  | "fill_blank"
+  | "very_short"
+  | "short_answer"
+  | "match_following"
+  | "sequencing";
 
 export interface AssignmentGenInput {
   // Plain-text summary of what was taught for this topic (assembled from the
@@ -182,8 +269,10 @@ export interface AssignmentGenInput {
   objectives: string[];
   questionCount: number;
   difficultyMix: { easy: number; medium: number; hard: number };
-  // "mixed" lets the model choose per question; the others force one type.
-  questionTypes: "short_answer" | "mcq" | "mixed";
+  // Which format(s) to use - empty means "the model may use any of them".
+  // A single entry forces every question to that type; several lets the
+  // model mix among just those (never a type outside this list).
+  questionTypes: AssignmentQuestionType[];
   focusPrompt: string | null;
   subject: string;
   board: string;
@@ -195,10 +284,20 @@ export interface GeneratedAssignmentQuestion {
   prompt: string;
   type: AssignmentQuestionType;
   difficulty: "easy" | "medium" | "hard";
-  // Present only when type === "mcq": 3-5 options, exactly one correct.
+  // mcq / true_false only: 2-5 options (true_false is always exactly
+  // ["True", "False"]), correctOptionIndex is 0-based into options.
   options?: string[];
   correctOptionIndex?: number;
-  // The model answer (for mcq, the correct option's text). Seeds the answer key.
+  // match_following only: each pair's left/right correspond to each other -
+  // the app shuffles the right column for display, this order is the answer key.
+  pairs?: { left: string; right: string }[];
+  // sequencing only: the steps/items already in their correct order - the
+  // app shuffles them for display, this order is the answer key.
+  items?: string[];
+  // The model answer / grading reference: for mcq/true_false, the correct
+  // option's text; for match_following, a readable "left - right" summary;
+  // for sequencing, the items joined in order; otherwise the expected
+  // written answer. Seeds the answer key.
   modelAnswer: string;
 }
 
@@ -230,7 +329,7 @@ export interface ContextResearchInput {
   board: string;
 }
 
-export type ResearchCandidateType = "pdf" | "video" | "presentation" | "article";
+export type ResearchCandidateType = "pdf" | "video" | "presentation" | "article" | "image";
 
 export interface ResearchCandidateDraft {
   title: string;
@@ -259,7 +358,8 @@ export interface AssessmentInsightInput {
   subject: string;
   board: string;
   bands: { level_1: number; level_2: number; level_3: number };
-  itemAnalysis: { prompt: string; correctRate: number | null }[];
+  itemAnalysis: { prompt: string; correctRate: number | null; doubtCount: number }[];
+  totalDoubts: number;
 }
 
 // Scales a difficulty ratio (e.g. {easy:2, medium:2, hard:1}) up/down to sum
@@ -308,9 +408,26 @@ function normaliseOption(value: string): string {
     .toLowerCase();
 }
 
-// Settles every multiple-choice question deterministically (exact option
-// match) so they never reach the grading model, and returns the remaining
-// short-answer questions for the model / heuristic to grade.
+// A match_following/sequencing answer is submitted as a CSV of original
+// indices - e.g. "2,0,1" for match_following means "I paired left[0] with
+// pairs[2]'s right, left[1] with pairs[0]'s right, left[2] with pairs[1]'s
+// right"; for sequencing, "I tapped items[2] first, then items[0], then
+// items[1]". Since the stored pairs/items are already in correct
+// correspondence/order, the correct answer is trivially "0,1,2,...N-1" -
+// grading is just comparing position-by-position. Mirrored in
+// unified-app's MatchingQuestion/SequencingQuestion (the two write this
+// same format when the student submits).
+function parseIndexList(value: string): number[] {
+  return value
+    .split(",")
+    .map((n) => parseInt(n.trim(), 10))
+    .filter((n) => Number.isInteger(n));
+}
+
+// Settles every deterministically-gradeable question - multiple-choice and
+// true/false by exact option match, match_following/sequencing by comparing
+// submitted order to the stored (already-correct) order - so only genuinely
+// open-ended questions ever reach the grading model.
 export function settleMcqQuestions(
   questions: GradingQuestion[],
   answers: Record<string, string>,
@@ -321,39 +438,80 @@ export function settleMcqQuestions(
   const shortAnswerQuestions: GradingQuestion[] = [];
 
   for (const q of questions) {
+    const marks = marksById.get(q.id) ?? 1;
+    const given = (answers[q.id] ?? "").trim();
+    const answered = given.length > 0;
+
     const isMcq =
-      q.type === "mcq" &&
+      (q.type === "mcq" || q.type === "true_false") &&
       Array.isArray(q.options) &&
       q.options.length > 0 &&
       typeof q.correctOptionIndex === "number" &&
       q.correctOptionIndex >= 0 &&
       q.correctOptionIndex < q.options.length;
-
-    if (!isMcq) {
-      shortAnswerQuestions.push(q);
+    if (isMcq) {
+      const correctText = String(q.options![q.correctOptionIndex!] ?? "");
+      const correct = answered && normaliseOption(given) === normaliseOption(correctText);
+      mcqDetails.push({
+        questionId: q.id,
+        correct: answered ? correct : false,
+        marksAwarded: correct ? marks : 0,
+        note: !answered ? "No option selected." : correct ? "Correct option selected." : `Incorrect option selected ("${given}").`,
+      });
       continue;
     }
 
-    const correctText = String(q.options![q.correctOptionIndex!] ?? "");
-    const given = (answers[q.id] ?? "").trim();
-    const answered = given.length > 0;
-    const correct = answered && normaliseOption(given) === normaliseOption(correctText);
-    const marks = marksById.get(q.id) ?? 1;
+    const isMatching = q.type === "match_following" && Array.isArray(q.pairs) && q.pairs.length >= 2;
+    const isSequencing = q.type === "sequencing" && Array.isArray(q.items) && q.items.length >= 2;
+    if (isMatching || isSequencing) {
+      const total = isMatching ? q.pairs!.length : q.items!.length;
+      const submitted = answered ? parseIndexList(given) : [];
+      const correctCount = submitted.length === total ? submitted.filter((n, i) => n === i).length : 0;
+      const allCorrect = answered && correctCount === total;
+      const marksAwarded = Math.round(((marks * correctCount) / total) * 100) / 100;
+      mcqDetails.push({
+        questionId: q.id,
+        correct: allCorrect,
+        marksAwarded,
+        note: !answered
+          ? isMatching
+            ? "No pairs matched."
+            : "No order submitted."
+          : isMatching
+          ? `${correctCount} of ${total} pairs matched correctly.`
+          : `${correctCount} of ${total} items in the correct position.`,
+      });
+      continue;
+    }
 
-    mcqDetails.push({
-      questionId: q.id,
-      correct: answered ? correct : false,
-      marksAwarded: correct ? marks : 0,
-      note: !answered
-        ? "No option selected."
-        : correct
-        ? "Correct option selected."
-        : `Incorrect option selected ("${given}").`,
-    });
+    shortAnswerQuestions.push(q);
   }
 
   return { mcqDetails, shortAnswerQuestions };
 }
+
+export const ALL_QUESTION_TYPES: AssignmentQuestionType[] = [
+  "mcq",
+  "true_false",
+  "fill_blank",
+  "very_short",
+  "short_answer",
+  "match_following",
+  "sequencing",
+];
+
+// Mirrored in unified-app's AssignmentAiSetupScreen.tsx for the format
+// picker (kept in sync manually, same pattern as the other small duplicated
+// tables in this codebase - the mobile app can't import this backend file).
+export const QUESTION_TYPE_LABELS: Record<AssignmentQuestionType, string> = {
+  mcq: "Multiple choice (single correct)",
+  true_false: "True / False",
+  fill_blank: "Fill in the blanks",
+  very_short: "Very short / one-word answer",
+  short_answer: "Short answer",
+  match_following: "Match the following",
+  sequencing: "Sequencing / ordering",
+};
 
 // Offline fallback for generateAssignmentFromTopic: builds plausible-shaped
 // questions from the selected objectives (or generic prompts) so the flow
@@ -366,79 +524,114 @@ export function heuristicAssignmentQuestions(input: AssignmentGenInput): Generat
     input.objectives.length > 0
       ? input.objectives
       : [`the key ideas of ${input.subject}`, `applying ${input.subject} to an example`, `a common mistake in ${input.subject}`];
+  const allowedTypes = input.questionTypes.length > 0 ? input.questionTypes : ALL_QUESTION_TYPES;
 
   return Array.from({ length: count }, (_, i) => {
     const seed = seeds[i % seeds.length];
-    const wantMcq = input.questionTypes === "mcq" || (input.questionTypes === "mixed" && i % 2 === 1);
+    const type = allowedTypes[i % allowedTypes.length];
     const difficulty = difficulties[i];
 
-    if (wantMcq) {
-      const options = ["Option A", "Option B", "Option C", "Option D"];
-      return {
-        prompt: `Which statement best relates to ${seed}?`,
-        type: "mcq" as const,
-        difficulty,
-        options,
-        correctOptionIndex: 0,
-        modelAnswer: `${options[0]} — teacher review required.`,
-      };
+    switch (type) {
+      case "mcq": {
+        const options = ["Option A", "Option B", "Option C", "Option D"];
+        return { prompt: `Which statement best relates to ${seed}?`, type, difficulty, options, correctOptionIndex: 0, modelAnswer: `${options[0]} — teacher review required.` };
+      }
+      case "true_false":
+        return { prompt: `True or false: ${seed} is directly relevant to this topic.`, type, difficulty, options: ["True", "False"], correctOptionIndex: 0, modelAnswer: "True — teacher review required." };
+      case "fill_blank":
+        return { prompt: `Fill in the blank: ${seed} is an example of ___.`, type, difficulty, modelAnswer: "Teacher review required before use." };
+      case "very_short":
+        return { prompt: `In one word or phrase, name the key idea behind ${seed}.`, type, difficulty, modelAnswer: "Teacher review required before use." };
+      case "match_following": {
+        const pairs = [
+          { left: `${seed} - term 1`, right: "Definition 1" },
+          { left: `${seed} - term 2`, right: "Definition 2" },
+          { left: `${seed} - term 3`, right: "Definition 3" },
+        ];
+        return { prompt: `Match each item on the left to its correct definition on the right, based on ${seed}.`, type, difficulty, pairs, modelAnswer: pairs.map((p) => `${p.left} - ${p.right}`).join("; ") };
+      }
+      case "sequencing": {
+        const items = [`First step of ${seed}`, `Second step of ${seed}`, `Third step of ${seed}`];
+        return { prompt: `Arrange these steps of ${seed} in the correct order.`, type, difficulty, items, modelAnswer: items.join(" -> ") };
+      }
+      case "short_answer":
+      default:
+        return { prompt: `Explain ${seed}. Give an example in your answer.`, type: "short_answer" as const, difficulty, modelAnswer: `Draft model answer covering ${seed}. Teacher review required before use.` };
     }
-
-    return {
-      prompt: `Explain ${seed}. Give an example in your answer.`,
-      type: "short_answer" as const,
-      difficulty,
-      modelAnswer: `Draft model answer covering ${seed}. Teacher review required before use.`,
-    };
   });
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // Cleans a model's raw question rows into well-formed GeneratedAssignmentQuestion
-// objects: enforces the requested type mode, valid options + correct index for
-// MCQ, a difficulty per the requested order, and a non-empty model answer.
+// objects: enforces the requested type(s), valid shape per type (options for
+// mcq/true_false, pairs for match_following, items for sequencing), a
+// difficulty per the requested order, and a non-empty model answer. A row
+// that claims a structured type but doesn't actually have that type's data
+// (e.g. "match_following" with under 2 pairs) falls back to short_answer
+// rather than being dropped or shown broken.
 export function normaliseGeneratedQuestions(
   rows: any[],
   difficultyByIndex: ("easy" | "medium" | "hard")[],
-  mode: "short_answer" | "mcq" | "mixed"
+  allowedTypes: AssignmentQuestionType[]
 ): GeneratedAssignmentQuestion[] {
+  const allowed = allowedTypes.length > 0 ? allowedTypes : ALL_QUESTION_TYPES;
+  const forcedType = allowedTypes.length === 1 ? allowedTypes[0] : null;
   const out: GeneratedAssignmentQuestion[] = [];
+
   rows.forEach((row, i) => {
     const prompt = typeof row?.prompt === "string" ? row.prompt.trim() : "";
     if (!prompt) return;
 
     const difficulty = difficultyByIndex[i] ?? "medium";
-    const rawOptions = Array.isArray(row?.options)
-      ? row.options.map((o: any) => String(o ?? "").trim()).filter(Boolean)
-      : [];
-    const wantMcq =
-      mode === "mcq" || (mode === "mixed" && row?.type === "mcq" && rawOptions.length >= 2);
+    const modelAnswerRaw = String(row?.modelAnswer ?? "").trim();
+    const type: AssignmentQuestionType = forcedType ?? (allowed.includes(row?.type) ? row.type : allowed[0]);
 
-    if (wantMcq && rawOptions.length >= 2) {
-      const options = rawOptions.slice(0, 5);
-      let correctOptionIndex = Number.isInteger(row?.correctOptionIndex) ? row.correctOptionIndex : 0;
-      if (correctOptionIndex < 0 || correctOptionIndex >= options.length) {
-        const byText = options.findIndex(
-          (o: string) => o.toLowerCase() === String(row?.modelAnswer ?? "").trim().toLowerCase()
-        );
-        correctOptionIndex = byText >= 0 ? byText : 0;
+    if (type === "mcq" || type === "true_false") {
+      const rawOptions =
+        type === "true_false"
+          ? ["True", "False"]
+          : Array.isArray(row?.options)
+          ? row.options.map((o: any) => String(o ?? "").trim()).filter(Boolean)
+          : [];
+      if (rawOptions.length >= 2) {
+        const options = rawOptions.slice(0, 5);
+        let correctOptionIndex = Number.isInteger(row?.correctOptionIndex) ? row.correctOptionIndex : 0;
+        if (correctOptionIndex < 0 || correctOptionIndex >= options.length) {
+          const byText = options.findIndex((o: string) => o.toLowerCase() === modelAnswerRaw.toLowerCase());
+          correctOptionIndex = byText >= 0 ? byText : 0;
+        }
+        out.push({ prompt, type, difficulty, options, correctOptionIndex, modelAnswer: modelAnswerRaw || options[correctOptionIndex] });
+        return;
       }
-      out.push({
-        prompt,
-        type: "mcq",
-        difficulty,
-        options,
-        correctOptionIndex,
-        modelAnswer: String(row?.modelAnswer ?? "").trim() || options[correctOptionIndex],
-      });
-      return;
+      // Not enough options to be a real mcq/true_false - fall through to short_answer below.
     }
 
+    if (type === "match_following") {
+      const pairs = Array.isArray(row?.pairs)
+        ? row.pairs
+            .map((p: any) => ({ left: String(p?.left ?? "").trim(), right: String(p?.right ?? "").trim() }))
+            .filter((p: { left: string; right: string }) => p.left && p.right)
+        : [];
+      if (pairs.length >= 2) {
+        out.push({ prompt, type, difficulty, pairs, modelAnswer: modelAnswerRaw || pairs.map((p: { left: string; right: string }) => `${p.left} - ${p.right}`).join("; ") });
+        return;
+      }
+    }
+
+    if (type === "sequencing") {
+      const items = Array.isArray(row?.items) ? row.items.map((it: any) => String(it ?? "").trim()).filter(Boolean) : [];
+      if (items.length >= 2) {
+        out.push({ prompt, type, difficulty, items, modelAnswer: modelAnswerRaw || items.join(" -> ") });
+        return;
+      }
+    }
+
+    // fill_blank / very_short / short_answer, and the structured-type fallbacks above.
     out.push({
       prompt,
-      type: "short_answer",
+      type: type === "mcq" || type === "true_false" || type === "match_following" || type === "sequencing" ? "short_answer" : type,
       difficulty,
-      modelAnswer: String(row?.modelAnswer ?? "").trim() || "Teacher review required before use.",
+      modelAnswer: modelAnswerRaw || "Teacher review required before use.",
     });
   });
   return out;
@@ -458,12 +651,14 @@ function orderQuestionDetails(
 export interface GradingQuestion {
   id: string;
   prompt: string;
-  // Set for AI-generated multiple-choice questions - when present with
-  // options, the question is settled by exact option match and never sent to
-  // the model (see settleMcqQuestions).
+  // mcq/true_false (options+correctOptionIndex), match_following (pairs) and
+  // sequencing (items, already in correct order) all settle deterministically
+  // and never reach the grading model - see settleMcqQuestions.
   type?: string;
   options?: string[];
   correctOptionIndex?: number;
+  pairs?: { left: string; right: string }[];
+  items?: string[];
 }
 
 // A teacher-verified answer key entry, when one exists, is passed into
@@ -490,6 +685,29 @@ export interface QuestionGradeDetail {
   correct: boolean | null;
   marksAwarded: number | null;
   note: string;
+}
+
+export type AssistantPart =
+  | { text: string }
+  | { functionCall: { name: string; args: Record<string, unknown> } }
+  | { functionResponse: { name: string; response: Record<string, unknown> } };
+
+export interface AssistantContent {
+  role: "user" | "model";
+  parts: AssistantPart[];
+}
+
+export interface AssistantToolDeclaration {
+  name: string;
+  description: string;
+  // JSON-schema object; omit for a tool with no arguments.
+  parameters?: { type: "object"; properties: Record<string, unknown>; required?: string[] };
+}
+
+export interface AssistantStepInput {
+  contents: AssistantContent[];
+  systemPrompt: string;
+  tools: AssistantToolDeclaration[];
 }
 
 export interface AiProvider {
@@ -538,6 +756,9 @@ export interface AiProvider {
   // divs, not <nav>/<footer>), so the AI extracts just the substantive
   // content instead of a DOM-heuristics library.
   cleanScrapedArticleText(input: CleanArticleTextInput): Promise<{ text: string; model: string }>;
+  // One model turn of the in-app assistant (backend/src/lib/assistant-engine.ts
+  // owns the tool loop - this only does a single request/response).
+  assistantStep(input: AssistantStepInput): Promise<{ parts: AssistantPart[]; model: string }>;
 }
 
 class StubAiProvider implements AiProvider {
@@ -661,9 +882,9 @@ class StubAiProvider implements AiProvider {
     };
   }
 
-  async generateAssessmentRecommendation({ bands }: AssessmentInsightInput) {
+  async generateAssessmentRecommendation({ bands, totalDoubts }: AssessmentInsightInput) {
     const graded = bands.level_1 + bands.level_2 + bands.level_3;
-    const recommendation =
+    let recommendation =
       graded === 0
         ? "No responses recorded yet."
         : bands.level_3 > graded / 2
@@ -671,6 +892,7 @@ class StubAiProvider implements AiProvider {
           : bands.level_3 > 0
             ? "A small group needs individual follow-up before the next lesson on this topic."
             : "Class-wide understanding looks solid — safe to move to the next topic.";
+    if (totalDoubts > 0) recommendation += ` ${totalDoubts} doubt${totalDoubts === 1 ? " was" : "s were"} raised during the quiz — worth revisiting in class.`;
     return { recommendation, model: "stub" };
   }
 
@@ -741,6 +963,7 @@ class StubAiProvider implements AiProvider {
     customPrompt,
     classLabel,
     presentationTemplate,
+    learningStages,
   }: GenerationInput) {
     const audience = classLabel ? `${classLabel} students` : "students";
     const custom = customPrompt ? ` Custom instructions: ${customPrompt}` : "";
@@ -771,23 +994,40 @@ class StubAiProvider implements AiProvider {
           ],
         };
         break;
-      case "custom_activity_report":
+      case "custom_activity_report": {
+        const stage = learningStages?.[0] ?? "Apply";
         content = {
           type: "custom_activity_report",
-          objective: `[Apply] ${audience} demonstrate understanding of ${topicName}.${custom}`,
+          objectives: [`[${stage}] ${audience} demonstrate understanding of ${topicName}.${custom}`],
           activities: [
             {
               title: `${topicName} in practice`,
-              description: `A ${minutesPerClass}-minute in-class task applying ${topicName}.`,
+              description: [`Set up a ${minutesPerClass}-minute in-class task applying ${topicName}`, "Circulate and check in with each group"],
               durationMinutes,
               materials: [],
             },
           ],
-          reportFormat: "What was attempted, what was observed, what to reinforce next class.",
+          reportFormat: ["What was attempted", "What was observed", "What to reinforce next class"],
         };
         break;
+      }
       case "lesson_plan":
       default: {
+        // One 5E arc for the whole topic, spread across `classCount` classes -
+        // not a fresh cycle per class. Each stage's [start, end) minutes range
+        // (stages partition [0, durationMinutes) with no gaps, by construction
+        // below) determines which class period(s) it falls in.
+        const assignSessions = <T extends { durationMinutes: number }>(stages: T[]): (T & { sessions?: number[] })[] => {
+          if (classCount <= 1) return stages;
+          let cursor = 0;
+          return stages.map((stage) => {
+            const start = cursor;
+            cursor += stage.durationMinutes;
+            const first = Math.min(classCount, Math.floor(start / minutesPerClass) + 1);
+            const last = Math.min(classCount, Math.max(first, Math.ceil(cursor / minutesPerClass)));
+            return { ...stage, sessions: Array.from({ length: last - first + 1 }, (_, i) => first + i) };
+          });
+        };
         const objectives = [
           `[Understand] Understand the core principles of ${topicName}`,
           `[Apply] Apply ${topicName} concepts to examples appropriate for ${board}`,
@@ -803,13 +1043,17 @@ class StubAiProvider implements AiProvider {
           overview: `${audience} explore ${topicName} through guided and independent practice.${custom}`,
           durationMinutes,
           objectives,
-          stages: [
+          stages: assignSessions([
             {
               stage: "Engage",
               durationMinutes: engageMinutes,
               summary: `Hook ${audience} and surface what they already know about ${topicName}.`,
               activities: [
-                { title: "Warm-up", description: `Ask ${audience} what they already know about ${topicName}`, materials: [] },
+                {
+                  title: "Warm-up",
+                  description: [`Ask ${audience} what they already know about ${topicName}`, "Collect a few answers on the board before moving on"],
+                  materials: [],
+                },
               ],
             },
             {
@@ -817,7 +1061,11 @@ class StubAiProvider implements AiProvider {
               durationMinutes: exploreMinutes,
               summary: `${audience} investigate ${topicName} hands-on before it's formally explained.`,
               activities: [
-                { title: "Guided exploration", description: `Small groups work through a ${topicName} example together`, materials: ["Whiteboard or projector"] },
+                {
+                  title: "Guided exploration",
+                  description: [`Split into small groups`, `Work through a ${topicName} example together`, "Note down what the group notices"],
+                  materials: ["Whiteboard or projector"],
+                },
               ],
             },
             {
@@ -825,7 +1073,11 @@ class StubAiProvider implements AiProvider {
               durationMinutes: explainMinutes,
               summary: `Introduce the core concepts of ${topicName} with guided notes.`,
               activities: [
-                { title: "Direct instruction", description: `Explain ${topicName} concepts, tying back to what came up during exploration`, materials: ["Whiteboard or projector"] },
+                {
+                  title: "Direct instruction",
+                  description: [`Explain the core ${topicName} concepts`, "Tie the explanation back to what came up during exploration"],
+                  materials: ["Whiteboard or projector"],
+                },
               ],
             },
             {
@@ -833,7 +1085,7 @@ class StubAiProvider implements AiProvider {
               durationMinutes: elaborateMinutes,
               summary: `${audience} apply ${topicName} to a new, slightly harder example.`,
               activities: [
-                { title: "Independent practice", description: "Work through examples applying the concept just taught", materials: [] },
+                { title: "Independent practice", description: ["Work through examples applying the concept just taught"], materials: [] },
               ],
             },
             {
@@ -841,16 +1093,17 @@ class StubAiProvider implements AiProvider {
               durationMinutes: evaluateMinutes,
               summary: "Quick check of whether the lesson's objectives were met.",
               activities: [
-                { title: "Exit ticket", description: "Short check for understanding before class ends", materials: [] },
+                { title: "Exit ticket", description: ["Short check for understanding before class ends"], materials: [] },
               ],
             },
-          ],
+          ]),
           // One check per objective, not one exit-ticket question covering all
           // of them - Layer 3 eval judges consistently marked a single question
-          // down for leaving most objectives unassessed.
+          // down for leaving most objectives unassessed. Real newlines so the
+          // markdown renderer in LessonPlanView actually shows it as a list.
           assessment: objectives
             .map((o, i) => `${i + 1}. Check: ${o.replace(/^\[[^\]]+\]\s*/, "")}`)
-            .join(" "),
+            .join("\n"),
         };
         break;
       }
@@ -893,6 +1146,14 @@ class StubAiProvider implements AiProvider {
     // "manual override" text-edit path if it's noisy.
     return { text: rawText, model: "stub" };
   }
+
+  async assistantStep({ contents }: AssistantStepInput) {
+    // Deterministic and offline: acknowledges the last thing the user said.
+    // Never requests a tool, so tests and no-API-key dev runs stay predictable.
+    const lastUser = [...contents].reverse().find((c) => c.role === "user");
+    const lastText = lastUser?.parts.map((p) => ("text" in p ? p.text : "")).join(" ").trim() ?? "";
+    return { parts: [{ text: `(stub assistant) You said: "${lastText}"` }], model: "stub" };
+  }
 }
 
 export const stubProvider = new StubAiProvider();
@@ -922,17 +1183,29 @@ export const DEFAULT_OUTPUT_TYPE_INSTRUCTIONS: Record<GenerationOutputType, stri
     '"objectives": string[] (each labelled with its Bloom\'s Taxonomy level in square brackets, e.g. "[Understand] ..."), ' +
     '"stages": {"stage": "Engage"|"Explore"|"Explain"|"Elaborate"|"Evaluate", "durationMinutes": number, ' +
     '"summary": string (one sentence on the purpose of this stage), ' +
-    '"activities": {"title": string, "description": string, "materials": string[]}[]}[] ' +
+    '"activities": {"title": string, "description": string[] (2-4 short, concrete steps of the activity, ' +
+    'in the order a teacher would run them - each its own bullet, not one long sentence), ' +
+    '"materials": string[]}[], ' +
+    '"sessions": number[] (OMIT this field entirely when the lesson is a single class; when it spans more ' +
+    'than one class, the 1-indexed class period(s) - out of the total given - this stage happens in, e.g. ' +
+    '[1] or [2, 3] for a stage that runs long)}[] ' +
     '(the 5E model - all 5 stages present, in that exact order, durations summing to durationMinutes; ' +
-    'put each activity under the ONE stage it actually happens in, never repeat an activity across stages), ' +
+    'put each activity under the ONE stage it actually happens in, never repeat an activity across stages; ' +
+    'this is ONE 5E arc for the whole topic, spread across the classes - never a fresh 5E cycle repeated ' +
+    'in each class), ' +
     '"assessment": string (how understanding is checked - MUST include one distinct question or task ' +
     'for EACH objective listed above, not a single question covering only some of them; format as a ' +
-    'short numbered list, one line per objective, in the same order as the objectives)}',
+    'markdown numbered list ("1. ...", one item per line with a real newline between items), one line ' +
+    'per objective, in the same order as the objectives)}',
   custom_activity_report:
     'Respond with ONLY a JSON object of this exact shape (no prose, no markdown fences): ' +
-    '{"objective": string (labelled with its Bloom\'s Taxonomy level in square brackets), ' +
-    '"activities": {"title": string, "description": string, "durationMinutes": number, "materials": string[]}[] (sized to fit the given minutes per class), ' +
-    '"reportFormat": string (what the teacher should record afterwards: what was attempted, what was observed, what to reinforce next class)}',
+    '{"objectives": string[] (one or more, each labelled with its Bloom\'s Taxonomy level in square brackets, ' +
+    'e.g. "[Understand] ..." - see "Learning stage(s) to target" below if given), ' +
+    '"activities": {"title": string, "description": string[] (2-4 short, concrete steps of the activity, in the ' +
+    'order a teacher would run them - each its own bullet, not one long sentence), "durationMinutes": number, ' +
+    '"materials": string[]}[] (sized to fit the given minutes per class; between them, cover every objective above), ' +
+    '"reportFormat": string[] (2-3 short bullets on what the teacher should record afterwards - what was attempted, ' +
+    'what was observed, what to reinforce next class)}',
   flashcards:
     'Respond with ONLY a JSON object of this exact shape (no prose, no markdown fences): ' +
     '{"cards": {"front": string, "back": string, "keyTerms": string[]}[]} with at least 8 cards covering the ' +
@@ -957,6 +1230,33 @@ export const DEFAULT_OUTPUT_TYPE_INSTRUCTIONS: Record<GenerationOutputType, stri
     "heading, items[].description = its explanation). Every slide needs 1-2 sentences of presenter speaker " +
     'notes in "notes" - what the teacher should say while showing it, not a repeat of the bullets.',
 };
+
+// Tells the model about images / PDF pages the teacher chose to show as-is.
+// The point is to spend generation on the parts that need writing and reuse
+// the teacher's own material for the rest - so the model is told not to
+// re-describe or duplicate what those items already show.
+function mediaCatalogInstructions(outputType: GenerationOutputType, catalog: MediaCatalogEntry[] | undefined): string {
+  if (!catalog || catalog.length === 0) return "";
+  const list = catalog.map((entry) => `- ${entry.id}: ${entry.description}`).join("\n");
+  if (outputType === "presentation") {
+    return (
+      "The teacher has chosen these images / PDF pages to be shown as-is inside the deck:\n" +
+      `${list}\n` +
+      'Show each one on its own slide with layout "image": set mediaId to its id (e.g. "m1"), give the slide a short ' +
+      "title (a caption of a few words), and use bullets only for at most two short supporting lines, or an empty array. " +
+      "Place each where it best supports the teaching flow, use every item exactly once, and never invent a mediaId that " +
+      "is not in the list. Do not re-describe what an item shows in the other slides - refer to it in the speaker notes " +
+      "instead."
+    );
+  }
+  return (
+    "The teacher is attaching these images / PDF pages to the material as-is; they will be shown alongside it:\n" +
+    `${list}\n` +
+    "You may point the reader to them by name where it helps (for example: see the attached diagram), but do not try to " +
+    "reproduce or describe their content at length, do not change the required JSON shape because of them, and never " +
+    "put a double-quote character inside a text value when mentioning them."
+  );
+}
 
 async function getPromptInstructions(outputType: GenerationOutputType): Promise<string> {
   const override = await prisma.aiPromptTemplate.findUnique({ where: { outputType } });
@@ -1002,10 +1302,11 @@ const PRESENTATION_RESPONSE_SCHEMA = {
       items: {
         type: "object",
         properties: {
-          layout: { type: "string", enum: ["title", "bullets", "stat", "quote", "divider", "stat-grid", "timeline", "icon-grid"] },
+          layout: { type: "string", enum: ["title", "bullets", "stat", "quote", "divider", "stat-grid", "timeline", "icon-grid", "image"] },
           title: { type: "string" },
           bullets: { type: "array", items: { type: "string" } },
           notes: { type: "string" },
+          mediaId: { type: "string" },
           items: {
             type: "array",
             items: {
@@ -1037,6 +1338,18 @@ function normalizeUrlForMatch(rawUrl: string): string {
     return `${host}${path}`;
   } catch {
     return rawUrl.trim().toLowerCase();
+  }
+}
+
+// Strict parse first; if the model's JSON is slightly malformed (missing
+// closing brace/bracket, trailing comma, stray text around it), repair it
+// rather than failing the whole generation. Throws if it is beyond repair.
+function parseModelJson(raw: string): unknown {
+  const cleaned = stripJsonFence(raw);
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    return JSON.parse(jsonrepair(cleaned));
   }
 }
 
@@ -1169,14 +1482,21 @@ class GeminiAiProvider implements AiProvider {
   }
 
   async generateAssessmentRecommendation(input: AssessmentInsightInput) {
-    const { topicName, subject, board, bands, itemAnalysis } = input;
+    const { topicName, subject, board, bands, itemAnalysis, totalDoubts } = input;
     const prompt = [
       `A teacher just ran a quick in-class quiz checking understanding of "${topicName}" (${subject}, ${board}).`,
       `Performance bands: ${bands.level_1} scored above 80%, ${bands.level_2} scored 50-80%, ${bands.level_3} scored below 50%.`,
       itemAnalysis.length > 0
         ? "Per-question correct rate:\n" +
-          itemAnalysis.map((q) => `- "${q.prompt}": ${q.correctRate === null ? "not yet known" : `${Math.round(q.correctRate * 100)}% correct`}`).join("\n")
+          itemAnalysis
+            .map(
+              (q) =>
+                `- "${q.prompt}": ${q.correctRate === null ? "not yet known" : `${Math.round(q.correctRate * 100)}% correct`}` +
+                (q.doubtCount > 0 ? `, ${q.doubtCount} student(s) raised doubt on it` : "")
+            )
+            .join("\n")
         : "",
+      totalDoubts > 0 ? `${totalDoubts} doubt(s) were raised across the quiz in total (students pressed "not sure" instead of answering).` : "",
       "",
       'Respond with ONLY a JSON object of this exact shape (no prose, no markdown fences): ' +
         '{"recommendation": string (2-3 sentences, addressed to the teacher, naming the specific weakest ' +
@@ -1353,15 +1673,15 @@ class GeminiAiProvider implements AiProvider {
   async generateAssignmentFromTopic(input: AssignmentGenInput) {
     const count = Math.max(1, Math.min(20, Math.round(input.questionCount) || 1));
     const mix = expandDifficultyMix(input.difficultyMix, count);
+    const allowedTypes = input.questionTypes.length > 0 ? input.questionTypes : ALL_QUESTION_TYPES;
     const typeInstruction =
-      input.questionTypes === "mcq"
-        ? "Every question MUST be multiple-choice."
-        : input.questionTypes === "short_answer"
-        ? "Every question MUST be short-answer (no options)."
-        : "Use a mix of short-answer and multiple-choice questions.";
+      allowedTypes.length === 1
+        ? `Every question MUST be of type "${allowedTypes[0]}" (${QUESTION_TYPE_LABELS[allowedTypes[0]]}).`
+        : `Use a mix of these question types, never any other: ${allowedTypes.map((t) => `"${t}" (${QUESTION_TYPE_LABELS[t]})`).join(", ")}.`;
 
     const prompt = [
       `You are an experienced ${input.board} curriculum teacher writing an assignment for ${input.classLabel} students in ${input.subject}.`,
+      boardGuidance(input.board),
       `Write exactly ${count} question(s). Difficulty for each, in order: ${mix.join(", ")}.`,
       typeInstruction,
       input.objectives.length > 0
@@ -1377,9 +1697,14 @@ class GeminiAiProvider implements AiProvider {
         : "",
       "",
       'Respond with ONLY a JSON object of this exact shape (no prose, no markdown fences): ' +
-        '{"questions": {"prompt": string, "type": "short_answer"|"mcq", "difficulty": "easy"|"medium"|"hard", ' +
-        '"options": string[] (3-5 items, ONLY for type "mcq"), "correctOptionIndex": number (0-based into options, ONLY for "mcq"), ' +
-        '"modelAnswer": string (for "mcq" this is the exact text of the correct option)}[]} ' +
+        '{"questions": {"prompt": string, "type": "mcq"|"true_false"|"fill_blank"|"very_short"|"short_answer"|"match_following"|"sequencing", ' +
+        '"difficulty": "easy"|"medium"|"hard", ' +
+        '"options": string[] (ONLY for "mcq": 3-5 items; for "true_false": omit, it is always exactly [true, false]), ' +
+        '"correctOptionIndex": number (0-based into options, ONLY for "mcq"/"true_false"), ' +
+        '"pairs": {"left": string, "right": string}[] (ONLY for "match_following": 3-5 correct pairs - the app shuffles the right column for the student), ' +
+        '"items": string[] (ONLY for "sequencing": 3-5 steps already in their correct order - the app shuffles them for the student), ' +
+        '"modelAnswer": string (for "mcq"/"true_false" the exact correct option text; for "fill_blank" the exact word/phrase that fills the blank - phrase the prompt with a literal "___" for the blank; ' +
+        'for "very_short" one word or a very short phrase; for "match_following"/"sequencing" a readable summary of the correct answer; otherwise the expected written answer)}[]} ' +
         `- exactly ${count} entries, in the difficulty order given above.`,
     ]
       .filter(Boolean)
@@ -1584,6 +1909,8 @@ class GeminiAiProvider implements AiProvider {
     presentationTemplate,
     activityGroupSize,
     activityResources,
+    learningStages,
+    mediaCatalog,
   }: GenerationInput): Promise<{ content: string; model: string }> {
     const audience = classLabel ? `${classLabel} students` : "students";
     const instructions = await getPromptInstructions(outputType);
@@ -1592,6 +1919,7 @@ class GeminiAiProvider implements AiProvider {
       `Topic: ${topicName}`,
       `Subject: ${subject}`,
       `Board: ${board}`,
+      boardGuidance(board),
       // Only lesson plans and custom activity reports actually size content
       // around these (explicit durationMinutes / "fit the given minutes"
       // instructions) - presentations and flashcards have no rule tied to
@@ -1600,6 +1928,12 @@ class GeminiAiProvider implements AiProvider {
       // inputs for the same two output types - see GenerationSetupScreen.tsx).
       outputType !== "presentation" && outputType !== "flashcards" ? `Classes covered: ${classCount}` : "",
       outputType !== "presentation" && outputType !== "flashcards" ? `Minutes per class: ${minutesPerClass}` : "",
+      outputType === "lesson_plan" && classCount > 1
+        ? `This lesson spans ${classCount} separate class periods, so every stage needs a "sessions" array ` +
+          `(1 to ${classCount}) saying which period(s) it happens in. Every period from 1 to ${classCount} ` +
+          "must be covered by at least one stage, assigned in chronological order (stage order = teaching " +
+          "order), with each period's stages roughly filling its minutes-per-class."
+        : "",
       `Output language: ${language}`,
       outputType === "presentation"
         ? `Write at a level, and with examples, genuinely appropriate for ${audience} studying ${subject} under ${board} - ` +
@@ -1622,9 +1956,15 @@ class GeminiAiProvider implements AiProvider {
           : "Classroom resources available: none specified - assume only a whiteboard/blackboard is available. Do not require " +
             "printing, a projector, computers, or any other special equipment."
         : "",
+      outputType === "custom_activity_report" && learningStages && learningStages.length > 0
+        ? `Learning stage(s) to target: ${learningStages.join(", ")}. Every objective's square-bracket tag must be one of ` +
+          `these - do not use any other Bloom's Taxonomy level, and cover each of these stages at least once if there is ` +
+          "more than one."
+        : "",
       "",
       instructions,
       outputType === "presentation" ? PRESENTATION_TEMPLATE_INSTRUCTIONS[presentationTemplate ?? "detailed"] : "",
+      mediaCatalogInstructions(outputType, mediaCatalog),
       "",
       "Return raw JSON only - no preamble, no closing remarks, no markdown code fences around it.",
       // Presentations and flashcards are excluded - neither shape has a real
@@ -1655,38 +1995,75 @@ class GeminiAiProvider implements AiProvider {
     // Presentations get an enforced response schema - layout variety and
     // speaker notes are new and easy for prose-only instructions to drift on;
     // every other output type stays on today's prose-instructed JSON.
+    // Every other type is still instructed in prose, but asking for JSON mode
+    // steers the model to a plain JSON body instead of prose around it.
     const generationConfig =
-      outputType === "presentation" ? { responseMimeType: "application/json", responseSchema: PRESENTATION_RESPONSE_SCHEMA } : undefined;
+      outputType === "presentation"
+        ? { responseMimeType: "application/json", responseSchema: PRESENTATION_RESPONSE_SCHEMA }
+        : { responseMimeType: "application/json" };
 
-    const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], ...(generationConfig ? { generationConfig } : {}) }),
-    });
-
-    if (!response.ok) {
-      const errBody = await response.text().catch(() => "");
-      throw new Error(`Gemini API request failed (${response.status}): ${errBody}`);
-    }
-
-    const data = (await response.json()) as {
-      candidates?: { content?: { parts?: { text?: string }[] } }[];
-    };
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) {
-      throw new Error("Gemini API returned no generated text");
-    }
-
+    // The model occasionally writes structurally broken JSON (a missing closing
+    // brace after a list, say) even in JSON mode - on roughly a third of
+    // lesson plans / flashcard sets in testing. Small slips are repaired
+    // locally for free; if that isn't enough the call is repeated once, so a
+    // teacher isn't shown a failed generation for what is a transient glitch.
+    const MAX_ATTEMPTS = 2;
     let parsed: unknown;
-    try {
-      parsed = JSON.parse(stripJsonFence(text));
-    } catch {
-      throw new Error(`Gemini returned non-JSON content for outputType "${outputType}": ${text.slice(0, 200)}`);
+    let lastFailure = "";
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], ...(generationConfig ? { generationConfig } : {}) }),
+      });
+
+      if (!response.ok) {
+        const errBody = await response.text().catch(() => "");
+        throw new Error(`Gemini API request failed (${response.status}): ${errBody}`);
+      }
+
+      const data = (await response.json()) as {
+        candidates?: { finishReason?: string; content?: { parts?: { text?: string; thought?: boolean }[] } }[];
+      };
+      // A long reply can come back split across several parts (and a thinking
+      // model may put its reasoning in a separate, flagged part) - reading only
+      // the first one could cut the JSON off mid-way.
+      const candidate = data.candidates?.[0];
+      const text = candidate?.content?.parts
+        ?.filter((part) => !part.thought)
+        .map((part) => part.text ?? "")
+        .join("");
+      if (!text) {
+        throw new Error(`Gemini API returned no generated text${candidate?.finishReason ? ` (finishReason ${candidate.finishReason})` : ""}`);
+      }
+
+      try {
+        parsed = parseModelJson(text);
+        break;
+      } catch {
+        lastFailure =
+          `Gemini returned non-JSON content for outputType "${outputType}" (finishReason ${candidate?.finishReason ?? "unknown"}, ` +
+          `${text.length} chars): ${text.slice(0, 200)} ... ${text.slice(-120)}`;
+        console.error(`[ai] attempt ${attempt}/${MAX_ATTEMPTS}: ${lastFailure}`);
+      }
     }
+    if (parsed === undefined) throw new Error(lastFailure);
 
     if (Array.isArray(parsed)) {
       if (outputType === "flashcards") parsed = { cards: parsed };
       else if (outputType === "presentation") parsed = { slides: parsed };
+      // The model often returns just the list of activities; wrap it in the
+      // shape the app expects rather than handing back something the viewer
+      // can't read (and that nothing, e.g. attached media, can be added to).
+      else if (outputType === "custom_activity_report") parsed = { objective: `Activities for ${topicName}`, activities: parsed, reportFormat: "" };
+      else if (outputType === "lesson_plan") {
+        // Sometimes the plan itself comes back wrapped in a list next to an
+        // extra object (e.g. a school-format "reviewed by" block). Keep the
+        // real plan and fold the extras into it.
+        const objects = (parsed as unknown[]).filter((o): o is Record<string, unknown> => !!o && typeof o === "object" && !Array.isArray(o));
+        const plan = objects.find((o) => Array.isArray(o.stages) || Array.isArray(o.objectives));
+        if (plan) parsed = Object.assign({}, ...objects.filter((o) => o !== plan), plan);
+      }
     }
     // Set in code, not trusted to the model's own JSON - "5e" is the only
     // structure today; a future second structure would pass its id through
@@ -1702,6 +2079,38 @@ class GeminiAiProvider implements AiProvider {
     }
 
     return { content: JSON.stringify(parsed), model: MODEL_GEMINI_FLASH };
+  }
+
+  async assistantStep({ contents, systemPrompt, tools }: AssistantStepInput) {
+    const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents,
+        ...(tools.length
+          ? {
+              tools: [
+                {
+                  functionDeclarations: tools.map((t) => ({
+                    name: t.name,
+                    description: t.description,
+                    ...(t.parameters && Object.keys(t.parameters.properties).length ? { parameters: t.parameters } : {}),
+                  })),
+                },
+              ],
+            }
+          : {}),
+      }),
+    });
+    if (!response.ok) throw new Error(`Gemini request failed (${response.status})`);
+    const data = (await response.json()) as { candidates?: { content?: { parts?: AssistantPart[] } }[] };
+    // Returned parts are passed straight back into the next request's contents,
+    // untouched - Gemini may attach extra fields (e.g. thought signatures) that
+    // must be echoed for a function-calling turn to stay valid.
+    const parts = data.candidates?.[0]?.content?.parts ?? [];
+    if (!parts.length) throw new Error("Gemini returned no content");
+    return { parts, model: MODEL_GEMINI_FLASH };
   }
 }
 

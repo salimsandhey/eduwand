@@ -243,21 +243,21 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
             </Text>
           </View>
 
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
             <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Student</Text>
             <ReviewRow label="Full name" value={fullName} colors={colors} />
             <ReviewRow label="Date of birth" value={dateOfBirth} colors={colors} />
             <ReviewRow label="Class / section" value={selectedClassSection ? `${capitalizeFirst(selectedClassSection.className)} ${capitalizeFirst(selectedClassSection.sectionName)}` : "—"} colors={colors} />
           </View>
 
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
             <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Guardian</Text>
             <ReviewRow label="Name" value={guardianName} colors={colors} />
             <ReviewRow label="Contact" value={guardianContact} colors={colors} />
             <ReviewRow label="Admission date" value={admissionDate} colors={colors} />
           </View>
 
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
             <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Documents</Text>
             <DocumentChecklist documents={documents} checklist={checklist} onUpload={uploadChecklistDocument} readOnly />
           </View>
@@ -292,7 +292,7 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
         </View>
 
         {step === "student" ? (
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
             <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Student Details</Text>
 
             <Text style={[styles.label, { color: colors.textSecondary }]}>Full name</Text>
@@ -355,7 +355,7 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
         ) : null}
 
         {step === "guardian" ? (
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
             <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Guardian Details</Text>
 
             <Text style={[styles.label, { color: colors.textSecondary }]}>Guardian name</Text>
@@ -403,7 +403,7 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
         ) : null}
 
         {step === "details" && detailFields.length > 0 ? (
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
             <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Additional Details</Text>
             <DynamicFormFields fields={detailFields} values={dynamicValues} onChange={setDynamicValue} />
 
@@ -412,7 +412,7 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
         ) : null}
 
         {step === "documents" ? (
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
             <View style={styles.docHeaderRow}>
               <Text style={[styles.cardTitle, { color: colors.textPrimary, marginBottom: 0 }]}>Documents</Text>
               <Text style={[styles.docCompletionText, { color: colors.textMuted }]}>
@@ -428,7 +428,7 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
 
         {step === "review" ? (
           <>
-            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+            <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
               <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Review</Text>
 
               <Text style={[styles.reviewSectionLabel, { color: colors.textMuted }]}>Student</Text>

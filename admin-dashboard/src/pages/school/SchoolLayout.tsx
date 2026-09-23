@@ -179,6 +179,14 @@ export function SchoolLayout() {
             Subjects
           </NavLink>
         ) : null}
+        {canManageAcademics ? (
+          <NavLink
+            to={`/schools/${id}/timetable`}
+            style={({ isActive }) => ({ ...styles.tabLink, ...(isActive ? styles.tabLinkActive : {}) })}
+          >
+            Timetable
+          </NavLink>
+        ) : null}
       </nav>
 
       <Outlet context={context} />

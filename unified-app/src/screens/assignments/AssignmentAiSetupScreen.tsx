@@ -7,16 +7,25 @@ import { useAuth } from "../../context/AuthContext";
 import { useAiGenerating } from "../../context/AiAssistantGlowContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
-import { api, AssignmentDraftOptions, QuestionDifficulty } from "../../api/client";
+import { api, AssignmentDraftOptions, QuestionDifficulty, QuestionType } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
 
 type Props = NativeStackScreenProps<RootStackParamList, "AssignmentAiSetup">;
 
-const QUESTION_COUNTS = [3, 5, 8, 10];
-const QUESTION_TYPE_OPTIONS: { key: "short_answer" | "mcq" | "mixed"; label: string }[] = [
-  { key: "short_answer", label: "Short answer" },
+// 20 is the backend's own hard ceiling (see MAX_QUESTIONS in
+// AssignmentDraftReviewScreen.tsx and the generation route's own clamp).
+const QUESTION_COUNTS = [3, 5, 8, 10, 12, 15, 20];
+// Mirrors backend/src/lib/ai.ts's QUESTION_TYPE_LABELS (kept in sync
+// manually, same pattern as the other small duplicated tables in this
+// codebase - the mobile app can't import the backend file).
+const QUESTION_TYPE_OPTIONS: { key: QuestionType; label: string }[] = [
   { key: "mcq", label: "Multiple choice" },
-  { key: "mixed", label: "Mixed" },
+  { key: "true_false", label: "True / False" },
+  { key: "fill_blank", label: "Fill in the blanks" },
+  { key: "very_short", label: "Very short / one word" },
+  { key: "short_answer", label: "Short answer" },
+  { key: "match_following", label: "Match the following" },
+  { key: "sequencing", label: "Sequencing / ordering" },
 ];
 const DIFFICULTIES: { key: QuestionDifficulty; label: string }[] = [
   { key: "easy", label: "Easy" },
@@ -35,7 +44,8 @@ export function AssignmentAiSetupScreen({ route, navigation }: Props) {
 
   const [questionCount, setQuestionCount] = useState(5);
   const [mix, setMix] = useState<Record<QuestionDifficulty, number>>({ easy: 1, medium: 1, hard: 1 });
-  const [questionTypes, setQuestionTypes] = useState<"short_answer" | "mcq" | "mixed">("short_answer");
+  // Empty = the AI may use any format.
+  const [questionTypes, setQuestionTypes] = useState<QuestionType[]>([]);
   const [selectedObjectives, setSelectedObjectives] = useState<string[]>([]);
   const [focusPrompt, setFocusPrompt] = useState("");
 
@@ -52,12 +62,46 @@ export function AssignmentAiSetupScreen({ route, navigation }: Props) {
       .finally(() => setIsLoadingOptions(false));
   }, [accessToken, topicId]);
 
+  // "+" is a no-op once the split already accounts for every question - the
+  // stepper itself must never let the total exceed questionCount, not just
+  // flag it after the fact (see mixMatches/the disabled Generate button).
   function adjustMix(key: QuestionDifficulty, delta: number) {
-    setMix((prev) => ({ ...prev, [key]: Math.max(0, Math.min(9, prev[key] + delta)) }));
+    setMix((prev) => {
+      if (delta > 0 && prev.easy + prev.medium + prev.hard >= questionCount) return prev;
+      return { ...prev, [key]: Math.max(0, prev[key] + delta) };
+    });
   }
+
+  // Keeps the split honest: it's a breakdown OF the total, not a separate
+  // number a teacher can leave mismatched (see backend's matching check on
+  // POST /topics/:id/assignment-draft). Picking a new count rescales
+  // whatever ratio the current mix implies, proportionally, so a teacher's
+  // relative easy/medium/hard preference survives switching counts.
+  function selectQuestionCount(count: number) {
+    setQuestionCount(count);
+    setMix((prev) => {
+      const total = prev.easy + prev.medium + prev.hard;
+      if (total === 0) return { easy: 0, medium: count, hard: 0 };
+      const scaled = {
+        easy: Math.round((prev.easy / total) * count),
+        medium: Math.round((prev.medium / total) * count),
+        hard: Math.round((prev.hard / total) * count),
+      };
+      const drift = count - (scaled.easy + scaled.medium + scaled.hard);
+      scaled.medium += drift;
+      return scaled;
+    });
+  }
+
+  const mixTotal = mix.easy + mix.medium + mix.hard;
+  const mixMatches = mixTotal === questionCount;
 
   function toggleObjective(objective: string) {
     setSelectedObjectives((prev) => (prev.includes(objective) ? prev.filter((o) => o !== objective) : [...prev, objective]));
+  }
+
+  function toggleQuestionType(key: QuestionType) {
+    setQuestionTypes((prev) => (prev.includes(key) ? prev.filter((t) => t !== key) : [...prev, key]));
   }
 
   async function generate() {
@@ -140,7 +184,7 @@ export function AssignmentAiSetupScreen({ route, navigation }: Props) {
       ) : (
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
           <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+            <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
               <Text style={[styles.label, { color: colors.textSecondary }]}>How many questions?</Text>
               <View style={styles.chipRow}>
                 {QUESTION_COUNTS.map((count) => {
@@ -153,7 +197,7 @@ export function AssignmentAiSetupScreen({ route, navigation }: Props) {
                         { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border },
                         pressed && { opacity: pressedOpacity },
                       ]}
-                      onPress={() => setQuestionCount(count)}
+                      onPress={() => selectQuestionCount(count)}
                       accessibilityRole="button"
                     >
                       <Text style={[styles.chipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{count}</Text>
@@ -162,7 +206,12 @@ export function AssignmentAiSetupScreen({ route, navigation }: Props) {
                 })}
               </View>
 
-              <Text style={[styles.label, { color: colors.textSecondary }]}>Difficulty mix</Text>
+              <View style={styles.mixHeadingRow}>
+                <Text style={[styles.label, { color: colors.textSecondary, marginTop: 0, marginBottom: 0 }]}>Difficulty mix</Text>
+                <Text style={[styles.mixTotalText, { color: mixMatches ? colors.textMuted : colors.danger }]}>
+                  {mixTotal} of {questionCount} assigned
+                </Text>
+              </View>
               <View style={styles.mixRow}>
                 {DIFFICULTIES.map(({ key, label }) => (
                   <View key={key} style={[styles.mixStepper, { borderColor: colors.border, backgroundColor: colors.surfaceRaised }]}>
@@ -172,18 +221,21 @@ export function AssignmentAiSetupScreen({ route, navigation }: Props) {
                         <Ionicons name="remove-circle-outline" size={20} color={colors.accent} />
                       </Pressable>
                       <Text style={[styles.mixValue, { color: colors.textPrimary }]}>{mix[key]}</Text>
-                      <Pressable onPress={() => adjustMix(key, 1)} hitSlop={8} accessibilityRole="button" accessibilityLabel={`More ${label}`}>
-                        <Ionicons name="add-circle-outline" size={20} color={colors.accent} />
+                      <Pressable onPress={() => adjustMix(key, 1)} disabled={mixTotal >= questionCount} hitSlop={8} accessibilityRole="button" accessibilityLabel={`More ${label}`}>
+                        <Ionicons name="add-circle-outline" size={20} color={mixTotal >= questionCount ? colors.textMuted : colors.accent} />
                       </Pressable>
                     </View>
                   </View>
                 ))}
               </View>
 
-              <Text style={[styles.label, { color: colors.textSecondary }]}>Question type</Text>
+              <Text style={[styles.label, { color: colors.textSecondary }]}>Question format</Text>
+              <Text style={[styles.meta, { color: colors.textMuted, marginBottom: 8 }]}>
+                Pick one or more. Leave all unselected to let the AI choose.
+              </Text>
               <View style={styles.chipRow}>
                 {QUESTION_TYPE_OPTIONS.map(({ key, label }) => {
-                  const active = questionTypes === key;
+                  const active = questionTypes.includes(key);
                   return (
                     <Pressable
                       key={key}
@@ -192,7 +244,7 @@ export function AssignmentAiSetupScreen({ route, navigation }: Props) {
                         { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border },
                         pressed && { opacity: pressedOpacity },
                       ]}
-                      onPress={() => setQuestionTypes(key)}
+                      onPress={() => toggleQuestionType(key)}
                       accessibilityRole="button"
                       accessibilityState={{ selected: active }}
                     >
@@ -204,7 +256,7 @@ export function AssignmentAiSetupScreen({ route, navigation }: Props) {
             </View>
 
             {options && options.objectives.length > 0 ? (
-              <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+              <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
                 <Text style={[styles.label, { color: colors.textSecondary, marginTop: 0 }]}>
                   Learning objectives to assess (optional)
                 </Text>
@@ -236,7 +288,7 @@ export function AssignmentAiSetupScreen({ route, navigation }: Props) {
               </View>
             ) : null}
 
-            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+            <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
               <Text style={[styles.label, { color: colors.textSecondary, marginTop: 0 }]}>Anything specific to include? (optional)</Text>
               <TextInput
                 style={[styles.focusInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
@@ -252,9 +304,13 @@ export function AssignmentAiSetupScreen({ route, navigation }: Props) {
             {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
             <Pressable
-              style={({ pressed }) => [styles.primaryButton, { backgroundColor: colors.accent }, (isGenerating || pressed) && { opacity: pressedOpacity }]}
+              style={({ pressed }) => [
+                styles.primaryButton,
+                { backgroundColor: colors.accent },
+                (isGenerating || !mixMatches || pressed) && { opacity: pressedOpacity },
+              ]}
               onPress={generate}
-              disabled={isGenerating}
+              disabled={isGenerating || !mixMatches}
               accessibilityRole="button"
             >
               {isGenerating ? (
@@ -296,6 +352,8 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 13, fontWeight: "700" },
   objectiveChip: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, maxWidth: "100%" },
   objectiveChipText: { fontSize: 12, fontWeight: "600" },
+  mixHeadingRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 14, marginBottom: 8 },
+  mixTotalText: { fontSize: 11, fontWeight: "700" },
   mixRow: { flexDirection: "row", gap: 8 },
   mixStepper: { flex: 1, borderWidth: 1, borderRadius: 12, padding: 10, alignItems: "center", gap: 6 },
   mixLabel: { fontSize: 11, fontWeight: "700" },

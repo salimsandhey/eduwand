@@ -1,9 +1,47 @@
+import fs from "fs";
+import path from "path";
 import bcrypt from "bcryptjs";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../src/lib/prisma";
 import { seedDefaultPipelineStages } from "../src/lib/pipeline-stages";
 
+// Platform-wide legal/about pages (see ContentPage in schema.prisma). Seeded
+// from prisma/content-pages/*.md so the initial copy lives in a reviewable
+// file, not a giant string literal here - update: {} means re-running the
+// seed never overwrites an edit a platform_admin made through the dashboard.
+const CONTENT_PAGES: { key: string; title: string; fields?: Record<string, string> }[] = [
+  { key: "privacy_policy", title: "Privacy Policy" },
+  { key: "terms_of_service", title: "Terms of Service" },
+  { key: "about", title: "About EduWand" },
+  {
+    key: "contact",
+    title: "Contact Us",
+    // Rendered as tappable icon cards (ContactScreen.tsx / web ContactCards),
+    // not as markdown - see ContentPage.fields in schema.prisma.
+    fields: {
+      email: "support@eduwand.com",
+      phone: "+91 22 4000 1234",
+      whatsapp: "+91 22 4000 1234",
+      address: "Mumbai, Maharashtra, India",
+      hours: "Mon-Sat, 9am-6pm IST",
+    },
+  },
+];
+
+async function seedContentPages() {
+  for (const page of CONTENT_PAGES) {
+    const bodyMarkdown = fs.readFileSync(path.join(__dirname, "content-pages", `${page.key}.md`), "utf8");
+    await prisma.contentPage.upsert({
+      where: { key: page.key },
+      update: {},
+      create: { key: page.key, title: page.title, bodyMarkdown, fields: page.fields as Prisma.InputJsonValue },
+    });
+  }
+}
+
 async function main() {
+  await seedContentPages();
+
   const passwordHash = await bcrypt.hash("Admin@123", 10);
 
   // Individual-teacher onboarding + credits/billing
@@ -219,7 +257,6 @@ async function main() {
       classSectionId: classSection.id,
       subject: "Science",
       name: "Photosynthesis",
-      board: "CBSE",
       status: "active",
     },
   });
@@ -396,7 +433,6 @@ async function main() {
       classSectionId: classSection.id,
       subject: "Biology",
       name: "Cell Structure",
-      board: "CBSE",
       status: "active",
     },
   });
@@ -411,7 +447,6 @@ async function main() {
       classSectionId: classSection.id,
       subject: "Biology",
       name: "Human Body Systems",
-      board: "CBSE",
       status: "active",
     },
   });

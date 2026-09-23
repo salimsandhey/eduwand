@@ -5,6 +5,47 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000/api/v1
 // since it's a different app/host.
 const ADMIN_URL = process.env.EXPO_PUBLIC_ADMIN_URL ?? "http://localhost:5173";
 
+// admin-dashboard hosts the classroom Display/Control pages for a live quick
+// check (see present.ts) - same reasoning as getClassJoinLink above.
+export function getPresentDisplayLink(code: string): string {
+  return `${ADMIN_URL}/present/${code}`;
+}
+export function getPresentControlLink(code: string): string {
+  return `${ADMIN_URL}/present/${code}/control`;
+}
+export function getPresentSocketUrl(code: string): string {
+  return `${API_URL.replace(/^http/, "ws")}/realtime?presentCode=${encodeURIComponent(code)}`;
+}
+
+// The safe/anonymous shape (see backend's present.ts displayState()) - never
+// a student's name or which option they picked, only aggregate counts and a
+// per-seat answered flag. This is what the teacher's own phone shows itself
+// (a live ticker) - it never needs identified data, so it always gets the
+// same redacted view the projector does.
+export interface PresentState {
+  assessmentId: string;
+  title: string;
+  status: string;
+  questions: { id: string; prompt: string; options: string[]; correctOptionIndex: number }[];
+  currentQuestionIndex: number;
+  currentQuestionRevealed: boolean;
+  totalStudents: number;
+  answeredCount: number;
+  counts: { correct: number; incorrect: number; doubt: number };
+  seats: { seatNumber: number | null; answered: boolean }[];
+}
+
+// Public, unauthenticated - lets the teacher's own phone show a live
+// "X of N answered" ticker for a session they started, without a token
+// (same present.ts endpoints the classroom Display/Control pages use).
+export function presentGetState(code: string): Promise<PresentState> {
+  return request<PresentState>(`/present/${code}`);
+}
+
+export function getRealtimeUrl(token: string): string {
+  return `${API_URL.replace(/^http/, "ws")}/realtime?token=${encodeURIComponent(token)}`;
+}
+
 export function getClassJoinLink(joinCode: string): string {
   return `${ADMIN_URL}/join/${joinCode}`;
 }
@@ -175,6 +216,9 @@ export interface CurrentUser {
   // screen behaviors specific to solo-teacher accounts. null for roles with
   // no school (e.g. platform_admin) or the student branch of /auth/me.
   accountType: string | null;
+  // The school's board - the single source of truth for the whole app. null
+  // for roles with no school or the student branch of /auth/me.
+  board: string | null;
   hasSeenOnboardingTour: boolean;
 }
 
@@ -275,6 +319,45 @@ export interface CommunicationMessage {
   createdAt: string;
 }
 
+export interface AssistantLink {
+  label: string;
+  screen: string;
+  params?: Record<string, unknown>;
+}
+
+export type AssistantActionStatus = "pending" | "confirmed" | "cancelled" | "failed";
+
+export interface AssistantAction {
+  id: string;
+  summary: string;
+  status: AssistantActionStatus;
+  resultText: string | null;
+  resultLink: AssistantLink | null;
+}
+
+export interface AssistantMessage {
+  id: string;
+  from: "user" | "assistant";
+  text: string;
+  links: AssistantLink[];
+  createdAt: string;
+  action: AssistantAction | null;
+}
+
+// key is one of: privacy_policy, terms_of_service, about, contact.
+export interface ContentPage {
+  id: string;
+  key: string;
+  title: string;
+  bodyMarkdown: string;
+  // Only meaningful for "contact" today ({ email, phone, whatsapp?, address,
+  // hours? }) - ContactScreen renders these as tappable cards instead of the
+  // markdown body. null/absent for every other key.
+  fields: Record<string, string> | null;
+  version: number;
+  updatedAt: string;
+}
+
 export interface StudentAttainmentRow {
   studentStubId: string;
   fullName: string;
@@ -324,6 +407,11 @@ export interface AttainmentReportRecord {
     photoUrl: string | null;
     recordedAt: string;
   }[];
+  // "Objective based analysis" + "Learning stage" segments - which
+  // objectives/stages this topic's lesson plans and activity reports
+  // actually address. Coverage, not performance - see attainment-reports.ts.
+  objectiveCoverage: { objective: string; stage: string | null; outputType: string }[];
+  stageCoverage: { stage: string; count: number }[];
 }
 
 export interface SubjectAttainmentReport {
@@ -573,6 +661,53 @@ export interface ClassSection {
   joinCode: string;
 }
 
+// weekday is ISO: 1=Mon ... 7=Sun. startTime/endTime are 24h "HH:mm".
+export interface TimetableSlot {
+  id: string;
+  teacherUserId: string;
+  classSectionId: string;
+  subject: string;
+  weekday: number;
+  startTime: string;
+  endTime: string;
+  room: string | null;
+  classSection: { className: string; sectionName: string };
+}
+
+export interface TimetableSlotInput {
+  teacherUserId: string;
+  classSectionId: string;
+  subject: string;
+  weekday: number;
+  startTime: string;
+  endTime: string;
+  room?: string | null;
+}
+
+export interface CalendarPeriod {
+  id: string;
+  startTime: string;
+  endTime: string;
+  subject: string;
+  room: string | null;
+  className: string;
+  sectionName: string;
+}
+
+export interface CalendarTask {
+  id: string;
+  title: string;
+  notes: string | null;
+  dueTime: string | null;
+  isDone: boolean;
+}
+
+export interface CalendarDay {
+  date: string;
+  periods: CalendarPeriod[];
+  tasks: CalendarTask[];
+}
+
 // appliesTo is one of: generation, attainment_report
 export interface SchoolFormatTemplate {
   id: string;
@@ -691,7 +826,6 @@ export interface Topic {
   classSectionId: string;
   subject: string;
   name: string;
-  board: string;
   status: "active" | "archived";
   updatedAt: string;
   classSection?: { className: string; sectionName: string };
@@ -709,6 +843,8 @@ export interface ContextSource {
   extractionStatus: "pending" | "extracted" | "failed_no_text";
   extractedText: string | null;
   extractionError: string | null;
+  // Credit line for images / PDFs found by AI research (null for uploads).
+  attribution: string | null;
 }
 
 export interface GenerationSourceSelection {
@@ -717,7 +853,7 @@ export interface GenerationSourceSelection {
   pageTo?: number;
 }
 
-export type ResearchCandidateType = "pdf" | "video" | "presentation" | "article";
+export type ResearchCandidateType = "pdf" | "video" | "presentation" | "article" | "image";
 
 export interface ResearchCandidate {
   id: string;
@@ -727,6 +863,15 @@ export interface ResearchCandidate {
   snippet: string;
   status: "pending" | "approved" | "dismissed";
   contextSourceId?: string;
+  // Image candidates only.
+  thumbnailUrl?: string;
+  attribution?: string;
+  sourcePageUrl?: string;
+  // Video candidates only - reference videos to watch, never used as AI
+  // context. videoId drives the in-app embedded player.
+  videoId?: string;
+  channelTitle?: string;
+  duration?: string;
 }
 
 export interface ContextResearchJob {
@@ -736,6 +881,20 @@ export interface ContextResearchJob {
   stage: "searching" | "reviewing" | "done";
   candidates: ResearchCandidate[];
   errorMessage: string | null;
+}
+
+// A reference video the teacher chose to keep for a topic - browse-only,
+// never fed to the AI. Shown on the Topic screen, not just within one AI
+// Research session.
+export interface SavedVideo {
+  id: string;
+  topicId: string;
+  videoId: string;
+  title: string;
+  channelTitle: string;
+  thumbnailUrl: string;
+  duration: string;
+  createdAt: string;
 }
 
 export interface Observation {
@@ -766,9 +925,18 @@ export interface Generation {
   generationStatus: "pending" | "succeeded" | "failed";
   shareStatus: "draft" | "published";
   publishedAt: string | null;
+  // When shareStatus is "published": true means the whole class can see it;
+  // false means only sharedStudentStubIds can, from the audience picker on
+  // "Share with students".
+  sharedWithAll: boolean;
+  sharedStudentStubIds: string[];
   generatedAt: string;
   contextSources: ContextSource[];
-  topic?: { name: string; subject: string; board: string; classSection: { className: string; sectionName: string } };
+  topic?: { name: string; subject: string; classSection: { className: string; sectionName: string } };
+  // Which class periods (1-indexed) the teacher has ticked off as taught -
+  // only meaningful when classCount > 1. See stages[].sessions in the
+  // lesson_plan content and POST /generations/:id/session-progress.
+  completedSessions: number[];
 }
 
 export interface TopicDetail extends Topic {
@@ -780,16 +948,25 @@ export interface TopicDetail extends Topic {
 }
 
 export type QuestionDifficulty = "easy" | "medium" | "hard";
-export type QuestionType = "short_answer" | "mcq";
+// true_false is stored like mcq (options: ["True","False"], correctOptionIndex).
+// fill_blank/very_short/short_answer are all a plain text-answer box - they
+// differ only in phrasing/grading strictness, not in shape.
+export type QuestionType = "mcq" | "true_false" | "fill_blank" | "very_short" | "short_answer" | "match_following" | "sequencing";
 
 export interface AssignmentQuestion {
   id: string;
   prompt: string;
   type?: QuestionType;
   difficulty?: QuestionDifficulty;
-  // mcq only: 2-5 options, correctOptionIndex is 0-based into options.
+  // mcq / true_false only: 2-5 options, correctOptionIndex is 0-based into options.
   options?: string[];
   correctOptionIndex?: number;
+  // match_following only: correct left/right pairs - the answering screen
+  // shuffles the right column for display.
+  pairs?: { left: string; right: string }[];
+  // sequencing only: steps already in their correct order - the answering
+  // screen shuffles them for display.
+  items?: string[];
 }
 
 export interface AssignmentDraftOptions {
@@ -803,7 +980,8 @@ export interface CreateAssignmentDraftInput {
   questionCount: number;
   difficultyMix: { easy: number; medium: number; hard: number };
   objectives?: string[];
-  questionTypes?: "short_answer" | "mcq" | "mixed";
+  // Empty/omitted = the AI may use any format.
+  questionTypes?: QuestionType[];
   focusPrompt?: string;
 }
 
@@ -816,6 +994,10 @@ export interface Assignment {
   status: "draft" | "published";
   publishedAt: string | null;
   createdAt: string;
+  // The setup the teacher chose when generating this with AI - null for a
+  // manually created assignment. questionCount is the total they decided on;
+  // the review screen uses it to stop "+ Add question" silently growing past it.
+  aiGenParams: { questionCount: number } | null;
 }
 
 export type PersonalisationStatus = "pending" | "approved" | "overridden" | "opted_out";
@@ -913,8 +1095,10 @@ export interface AssessmentResponseRecord {
   id: string;
   questionId: string;
   studentStubId: string;
-  selectedOptionIndex: number;
-  isCorrect: boolean;
+  // Null on a doubt response ("not sure") - see isDoubt.
+  selectedOptionIndex: number | null;
+  isCorrect: boolean | null;
+  isDoubt: boolean;
 }
 
 export interface Assessment {
@@ -930,13 +1114,18 @@ export interface Assessment {
   resultsReleasedAt: string | null;
   createdAt: string;
   responses: AssessmentResponseRecord[];
+  // Set while a "present on a screen" session (present.ts) is running; null
+  // once it hasn't been started yet or has been ended.
+  presentCode: string | null;
+  presentCodeExpiresAt: string | null;
 }
 
 export interface AssessmentInsight {
   respondentCount: number;
   totalQuestions: number;
   bands: Record<"level_1" | "level_2" | "level_3", { studentStubId: string; fullName: string }[]>;
-  itemAnalysis: { questionId: string; prompt: string; correctCount: number; totalCount: number; correctRate: number | null }[];
+  itemAnalysis: { questionId: string; prompt: string; correctCount: number; totalCount: number; correctRate: number | null; doubtCount: number }[];
+  totalDoubts: number;
   recommendation: string;
 }
 
@@ -976,6 +1165,23 @@ export interface TeacherDashboardActivityItem {
   topicId: string | null;
   label: string;
   timestamp: string;
+}
+
+// Ranked "needs your attention" items for the teacher home ticker. `action`
+// says what tapping it should open; the app maps it to its own screens.
+export type TeacherNudgeAction =
+  | { kind: "assignment"; assignmentId: string }
+  | { kind: "topic"; topicId: string }
+  | { kind: "day" }
+  | { kind: "getting_started" };
+
+export interface TeacherNudge {
+  id: string;
+  type: "submissions" | "day" | "assign_test" | "share_lessons" | "onboarding";
+  label: string;
+  text: string;
+  people?: string[];
+  action: TeacherNudgeAction;
 }
 
 export interface TeacherDashboardSummary {
@@ -1234,6 +1440,23 @@ export const api = {
     request<FollowUpTask>(`/follow-up-tasks/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
 
   listClassSections: (token: string) => request<ClassSection[]>("/class-sections", {}, token),
+  getCalendarAgenda: (token: string, from: string, to: string) =>
+    request<{ days: CalendarDay[] }>(`/calendar/agenda${toQueryString({ from, to })}`, {}, token),
+  getMyTimetable: (token: string) => request<TimetableSlot[]>("/calendar/timetable", {}, token),
+  createCalendarTask: (token: string, input: { title: string; taskDate: string; dueTime?: string | null }) =>
+    request<CalendarTask & { taskDate: string }>("/calendar/tasks", { method: "POST", body: JSON.stringify(input) }, token),
+  updateCalendarTask: (token: string, id: string, input: { isDone?: boolean; title?: string }) =>
+    request<CalendarTask & { taskDate: string }>(`/calendar/tasks/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
+  deleteCalendarTask: (token: string, id: string) => request<{ id: string }>(`/calendar/tasks/${id}`, { method: "DELETE" }, token),
+  // Individual teachers manage their own timetable through the same school
+  // endpoints the admin dashboard uses - the backend treats them as admin of
+  // their personal school only.
+  createTimetableSlot: (token: string, schoolId: string, input: TimetableSlotInput) =>
+    request<TimetableSlot>(`/schools/${schoolId}/timetable-slots`, { method: "POST", body: JSON.stringify(input) }, token),
+  updateTimetableSlot: (token: string, schoolId: string, slotId: string, input: Partial<TimetableSlotInput>) =>
+    request<TimetableSlot>(`/schools/${schoolId}/timetable-slots/${slotId}`, { method: "PATCH", body: JSON.stringify(input) }, token),
+  deleteTimetableSlot: (token: string, schoolId: string, slotId: string) =>
+    request<{ id: string }>(`/schools/${schoolId}/timetable-slots/${slotId}`, { method: "DELETE" }, token),
   listAcademicYears: (token: string) => request<AcademicYear[]>("/academic-years", {}, token),
   startNewAcademicYear: (
     token: string,
@@ -1348,7 +1571,7 @@ export const api = {
 
   listTopics: (token: string, params: { classSectionId?: string; subject?: string } = {}) =>
     request<Topic[]>(`/topics${toQueryString(params)}`, {}, token),
-  createTopic: (token: string, input: { classSectionId: string; subject: string; name: string; board: string }) =>
+  createTopic: (token: string, input: { classSectionId: string; subject: string; name: string }) =>
     request<Topic>("/topics", { method: "POST", body: JSON.stringify(input) }, token),
   getTopic: (token: string, id: string) => request<TopicDetail>(`/topics/${id}`, {}, token),
   addTopicContextUrl: (token: string, topicId: string, input: { sourceType: "url" | "idream_k12"; sourceUrl?: string; idreamK12ReferenceId?: string }) =>
@@ -1358,6 +1581,9 @@ export const api = {
     formData.append("file", { uri: file.uri, name: file.name, type: file.mimeType } as unknown as Blob);
     return requestMultipart<ContextSource>(`/topics/${topicId}/context`, formData, token);
   },
+  // An image source, or one rendered page of a PDF source, as an inline image.
+  contextMediaUrl: (topicId: string, contextSourceId: string, token: string, opts: { page?: number; width?: number } = {}) =>
+    `${API_URL}/topics/${topicId}/context/${contextSourceId}/media?token=${encodeURIComponent(token)}${opts.page ? `&page=${opts.page}` : ""}${opts.width ? `&w=${opts.width}` : ""}`,
   contextSourceFileUrl: (topicId: string, contextSourceId: string, token: string) =>
     `${API_URL}/topics/${topicId}/context/${contextSourceId}/file?token=${encodeURIComponent(token)}`,
   updateTopicContextText: (token: string, topicId: string, contextSourceId: string, extractedText: string) =>
@@ -1391,6 +1617,11 @@ export const api = {
     request<ContextResearchJob>(`/topics/${topicId}/context/research`, { method: "POST" }, token),
   getContextResearchJob: (token: string, topicId: string, jobId: string) =>
     request<ContextResearchJob>(`/topics/${topicId}/context/research/${jobId}`, {}, token),
+  // null when nothing has ever been searched for this topic - lets the
+  // screen show the last run instead of always starting a fresh (quota-
+  // spending) search.
+  getLatestContextResearchJob: (token: string, topicId: string) =>
+    request<ContextResearchJob | null>(`/topics/${topicId}/context/research/latest`, {}, token),
   approveContextResearchCandidate: (token: string, topicId: string, jobId: string, candidateId: string) =>
     request<ContextResearchJob>(
       `/topics/${topicId}/context/research/${jobId}/candidates/${candidateId}/approve`,
@@ -1404,6 +1635,13 @@ export const api = {
       token
     ),
 
+  // Reference videos saved against a topic - browse-only, never fed to the AI.
+  listSavedVideos: (token: string, topicId: string) => request<SavedVideo[]>(`/topics/${topicId}/videos`, {}, token),
+  saveVideo: (token: string, topicId: string, input: { videoId: string; title: string; channelTitle: string; thumbnailUrl: string; duration?: string }) =>
+    request<SavedVideo>(`/topics/${topicId}/videos`, { method: "POST", body: JSON.stringify(input) }, token),
+  deleteSavedVideo: (token: string, topicId: string, savedVideoId: string) =>
+    request<{ id: string }>(`/topics/${topicId}/videos/${savedVideoId}`, { method: "DELETE" }, token),
+
   createGeneration: (
     token: string,
     topicId: string,
@@ -1414,6 +1652,11 @@ export const api = {
       language?: string;
       customPrompt?: string;
       sources?: GenerationSourceSelection[];
+      // Images / PDF pages to show as-is in the output instead of having the AI
+      // recreate them.
+      embeds?: GenerationSourceSelection[];
+      // Presentation only: build the deck purely from `embeds`, no AI call (free).
+      assembleOnly?: boolean;
       presentationTemplate?: PresentationTemplate;
       // Per-generation color tweak - overrides the school's saved branding
       // colors for this deck only. Omit to just use the saved branding as-is.
@@ -1422,6 +1665,7 @@ export const api = {
       // Only meaningful when outputType is "custom_activity_report".
       activityGroupSize?: ActivityGroupSize;
       activityResources?: string[];
+      learningStages?: string[];
     }
   ) => request<Generation>(`/topics/${topicId}/generations`, { method: "POST", body: JSON.stringify(input) }, token),
   getGeneration: (token: string, id: string) => request<Generation>(`/generations/${id}`, {}, token),
@@ -1432,7 +1676,10 @@ export const api = {
   editGeneration: (token: string, id: string, editedOutput: string) =>
     request<Generation>(`/generations/${id}`, { method: "PATCH", body: JSON.stringify({ editedOutput }) }, token),
   retryGeneration: (token: string, id: string) => request<Generation>(`/generations/${id}/retry`, { method: "POST" }, token),
-  publishGeneration: (token: string, id: string) => request<Generation>(`/generations/${id}/publish`, { method: "POST" }, token),
+  setSessionProgress: (token: string, id: string, session: number, completed: boolean) =>
+    request<Generation>(`/generations/${id}/session-progress`, { method: "POST", body: JSON.stringify({ session, completed }) }, token),
+  publishGeneration: (token: string, id: string, studentStubIds?: string[]) =>
+    request<Generation>(`/generations/${id}/publish`, { method: "POST", body: JSON.stringify({ studentStubIds }) }, token),
   unpublishGeneration: (token: string, id: string) => request<Generation>(`/generations/${id}/unpublish`, { method: "POST" }, token),
 
   createAssignment: (
@@ -1450,6 +1697,10 @@ export const api = {
     request<AssignmentDraftOptions>(`/topics/${topicId}/assignment-draft/options`, {}, token),
   createAssignmentDraft: (token: string, topicId: string, input: CreateAssignmentDraftInput) =>
     request<AssignmentDetail>(`/topics/${topicId}/assignment-draft`, { method: "POST", body: JSON.stringify(input) }, token),
+  // Same as createAssignmentDraft, but spans one or more topics in a class -
+  // reachable from the Assignment tab directly, not from inside a topic.
+  createMultiTopicAssignmentDraft: (token: string, classSectionId: string, input: CreateAssignmentDraftInput & { topicIds: string[] }) =>
+    request<AssignmentDetail>(`/class-sections/${classSectionId}/assignment-draft`, { method: "POST", body: JSON.stringify(input) }, token),
   regenerateAssignmentQuestion: (token: string, assignmentId: string, questionId: string, instruction?: string) =>
     request<AssignmentDetail>(
       `/assignments/${assignmentId}/questions/${questionId}/regenerate`,
@@ -1484,12 +1735,14 @@ export const api = {
     request<{ releasedCount: number }>(`/assignments/${assignmentId}/release-grades`, { method: "POST" }, token),
   getClassInsight: (token: string, assignmentId: string) =>
     request<ClassInsight>(`/assignments/${assignmentId}/class-insight`, {}, token),
+  getActiveAssessment: (token: string, generationId: string) => request<Assessment | null>(`/generations/${generationId}/active-assessment`, {}, token),
   generateAssessment: (token: string, generationId: string, input: { questionCount?: number } = {}) =>
     request<Assessment>(`/generations/${generationId}/assessments`, { method: "POST", body: JSON.stringify(input) }, token),
   getAssessment: (token: string, id: string) => request<Assessment>(`/assessments/${id}`, {}, token),
-  saveAssessmentResponses: (token: string, id: string, questionId: string, responses: { studentStubId: string; selectedOptionIndex: number }[]) =>
+  saveAssessmentResponses: (token: string, id: string, questionId: string, responses: { studentStubId: string; selectedOptionIndex?: number; isDoubt?: boolean }[]) =>
     request<Assessment>(`/assessments/${id}/responses`, { method: "POST", body: JSON.stringify({ questionId, responses }) }, token),
   completeAssessment: (token: string, id: string) => request<Assessment>(`/assessments/${id}/complete`, { method: "POST" }, token),
+  startPresentSession: (token: string, id: string) => request<{ code: string; expiresAt: string }>(`/assessments/${id}/present-session`, { method: "POST" }, token),
   getAssessmentInsight: (token: string, id: string) => request<AssessmentInsight>(`/assessments/${id}/insight`, {}, token),
   releaseAssessmentResults: (token: string, id: string) => request<Assessment>(`/assessments/${id}/release-results`, { method: "POST" }, token),
   listStudentAssessments: (token: string) => request<StudentAssessmentRecord[]>("/student/assessments", {}, token),
@@ -1507,6 +1760,10 @@ export const api = {
     request<StudentAnalytics>(`/analytics/ai/student/${studentStubId}`, {}, token),
   getTeacherDashboardSummary: (token: string) =>
     request<TeacherDashboardSummary>("/dashboard/teacher-summary", {}, token),
+  // date ("YYYY-MM-DD") and time ("HH:mm") are the device's local wall clock,
+  // which is what timetable periods are expressed in.
+  getTeacherNudges: (token: string, date: string, time: string) =>
+    request<TeacherNudge[]>(`/dashboard/teacher-nudges${toQueryString({ date, time })}`, {}, token),
   getEnrolmentFunnel: (token: string) =>
     request<EnrolmentFunnel>("/analytics/enrolment/funnel", {}, token),
   getEnrolmentBySource: (token: string) =>
@@ -1538,6 +1795,41 @@ export const api = {
     request<CommunicationMessage[]>("/communications/parent-weekly-update/pending", {}, token),
   holdParentUpdate: (token: string, id: string) =>
     request<CommunicationMessage>(`/communications/parent-weekly-update/${id}/hold`, { method: "POST" }, token),
+
+  getAssistantMessages: (token: string) => request<AssistantMessage[]>("/ai-assistant/messages", {}, token),
+  sendAssistantMessage: (token: string, text: string) =>
+    request<{ userMessage: AssistantMessage; replies: AssistantMessage[] }>(
+      "/ai-assistant/messages",
+      { method: "POST", body: JSON.stringify({ text }) },
+      token
+    ),
+  confirmAssistantAction: (token: string, actionId: string) =>
+    request<Pick<AssistantAction, "id" | "status" | "resultText" | "resultLink">>(
+      `/ai-assistant/actions/${actionId}/confirm`,
+      { method: "POST" },
+      token
+    ),
+  cancelAssistantAction: (token: string, actionId: string) =>
+    request<{ id: string; status: AssistantActionStatus }>(`/ai-assistant/actions/${actionId}/cancel`, { method: "POST" }, token),
+  clearAssistantMessages: (token: string) => request<{ cleared: boolean }>("/ai-assistant/messages", { method: "DELETE" }, token),
+
+  // Public - no token needed, works before login too (e.g. Getting Started, Legal screens).
+  getContentPage: (key: string) => request<ContentPage>(`/content-pages/${key}`),
+  // Used only to detect "is the server reachable" for the offline banner -
+  // no auth needed, and deliberately not routed through requestEnvelope's
+  // retry/refresh logic since a health check has nothing to refresh.
+  checkHealth: async (): Promise<boolean> => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+    try {
+      const response = await fetch(`${API_URL}/health`, { signal: controller.signal });
+      return response.ok;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timeout);
+    }
+  },
 
   getAttainmentReport: (token: string, topicId: string) =>
     request<AttainmentReportRecord>(`/topics/${topicId}/attainment-report`, {}, token),

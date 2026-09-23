@@ -2,7 +2,17 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { storage } from "../lib/storage";
-import { MAX_EXTRACTED_CHARS } from "../lib/extraction";
+import { MAX_EXTRACTED_CHARS, downloadRemoteFile } from "../lib/extraction";
+import {
+  MAX_IMAGE_BYTES,
+  MAX_PDF_BYTES,
+  clampPageWidth,
+  getCachedPage,
+  looksLikePdf,
+  readSourceFile,
+  renderPdfPages,
+  sniffImageMime,
+} from "../lib/media";
 import { runContextExtraction } from "../lib/context-extraction";
 import { runContextResearch, ResearchCandidate } from "../lib/context-research";
 import { markOnboardingTaskComplete } from "../lib/onboarding";
@@ -16,6 +26,16 @@ import {
 } from "../lib/context-limits";
 
 const VALID_SOURCE_TYPES = ["pdf", "docx", "pptx", "image", "url", "youtube", "idream_k12"];
+
+const IMAGE_EXTENSIONS: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
+
+class RemoteImportError extends Error {}
+class InvalidCandidateActionError extends Error {}
+
+function safeFilename(title: string, ext: string): string {
+  const base = title.replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-").slice(0, 60) || "research";
+  return `${base}.${ext}`;
+}
 
 const FILE_CONTENT_TYPES: Record<string, string> = {
   pdf: "application/pdf",
@@ -32,7 +52,6 @@ interface CreateTopicBody {
   classSectionId: string;
   subject: string;
   name: string;
-  board: string;
 }
 
 interface CreateContextSourceBody {
@@ -66,10 +85,10 @@ export async function topicRoutes(app: FastifyInstance) {
   app.post<{ Body: CreateTopicBody }>("/topics", { onRequest: scoped(app) }, async (request, reply) => {
     const body = request.body ?? ({} as CreateTopicBody);
 
-    if (!body.classSectionId || !body.subject || !body.name || !body.board) {
+    if (!body.classSectionId || !body.subject || !body.name) {
       return reply.code(400).send({
         data: null,
-        error: { code: "validation_error", message: "classSectionId, subject, name, and board are required" },
+        error: { code: "validation_error", message: "classSectionId, subject, and name are required" },
       });
     }
 
@@ -87,7 +106,6 @@ export async function topicRoutes(app: FastifyInstance) {
         classSectionId: body.classSectionId,
         subject: body.subject,
         name: body.name,
-        board: body.board,
         status: "active",
       },
     });
@@ -388,6 +406,19 @@ export async function topicRoutes(app: FastifyInstance) {
     return reply.code(202).send({ data: job, meta: {} });
   });
 
+  // Lets the app show the last research run instead of re-searching (and
+  // re-spending YouTube/Gemini quota) every time the AI Research screen is
+  // opened - it only starts a fresh job when the teacher explicitly asks to.
+  app.get<{ Params: { id: string } }>("/topics/:id/context/research/latest", { onRequest: scoped(app) }, async (request, reply) => {
+    const topic = await prisma.topic.findFirst({ where: { id: request.params.id, schoolId: request.schoolId } });
+    if (!topic) {
+      return reply.code(404).send({ data: null, error: { code: "not_found", message: "Topic not found" } });
+    }
+
+    const job = await prisma.contextResearchJob.findFirst({ where: { topicId: topic.id }, orderBy: { createdAt: "desc" } });
+    return { data: job, meta: {} };
+  });
+
   app.get<{ Params: { id: string; jobId: string } }>(
     "/topics/:id/context/research/:jobId",
     { onRequest: scoped(app) },
@@ -460,6 +491,23 @@ export async function topicRoutes(app: FastifyInstance) {
       try {
         return await updateResearchCandidate(request, reply, async (candidate) => {
           if (candidate.status === "approved") return candidate;
+
+          // Video candidates are reference material only (see lib/youtube-search.ts) -
+          // never turned into a ContextSource / fed to the AI. The app only offers
+          // Watch (in-app player, no server call) and Dismiss for these.
+          if (candidate.type === "video") {
+            throw new InvalidCandidateActionError("Videos are reference material only - watch them in the app instead of adding them as a source");
+          }
+
+          // PDFs and images are downloaded and stored as real files, so they
+          // can be page-picked, shown, and used as-is in generated content.
+          // A "pdf" candidate that turns out to be a web page (or can't be
+          // downloaded) falls through to being saved as a link, as before.
+          if (candidate.type === "image" || candidate.type === "pdf") {
+            const imported = await importRemoteFile(request.params.id, candidate);
+            if (imported) return { ...candidate, status: "approved", contextSourceId: imported.id };
+          }
+
           const sourceType = detectYoutubeUrl(candidate.url) ? "youtube" : "url";
           await assertContextSourceCapNotExceeded(request.params.id, sourceType);
           const extraction = await runContextExtraction({ sourceType, sourceUrl: candidate.url });
@@ -479,10 +527,68 @@ export async function topicRoutes(app: FastifyInstance) {
         if (err instanceof ContextSourceCapError) {
           return reply.code(400).send({ data: null, error: { code: err.code, message: err.message } });
         }
+        if (err instanceof RemoteImportError) {
+          return reply.code(422).send({ data: null, error: { code: "download_failed", message: err.message } });
+        }
+        if (err instanceof InvalidCandidateActionError) {
+          return reply.code(400).send({ data: null, error: { code: "validation_error", message: err.message } });
+        }
         throw err;
       }
     }
   );
+
+  // Downloads an approved research PDF/image, stores it, and creates the
+  // ContextSource. Returns null only for a "pdf" candidate that isn't really a
+  // PDF file (so the caller can save it as a link instead); a bad image is an
+  // error, since there is nothing useful to fall back to.
+  async function importRemoteFile(topicId: string, candidate: ResearchCandidate) {
+    const isImage = candidate.type === "image";
+    const sourceType = isImage ? "image" : "pdf";
+    await assertContextSourceCapNotExceeded(topicId, sourceType);
+
+    let downloaded: Awaited<ReturnType<typeof downloadRemoteFile>>;
+    try {
+      downloaded = await downloadRemoteFile(candidate.url, isImage ? MAX_IMAGE_BYTES : MAX_PDF_BYTES);
+    } catch (err) {
+      if (isImage) throw new RemoteImportError(`Couldn't download this image (${err instanceof Error ? err.message : "unknown error"})`);
+      return null;
+    }
+
+    let filename: string;
+    if (isImage) {
+      const mime = sniffImageMime(downloaded.buffer);
+      if (!mime) throw new RemoteImportError("That link isn't an image we can use (unsupported format)");
+      filename = safeFilename(candidate.title, IMAGE_EXTENSIONS[mime]);
+    } else {
+      if (!looksLikePdf(downloaded.buffer)) return null;
+      filename = safeFilename(candidate.title, "pdf");
+    }
+
+    const { location } = await storage.save(`context-sources/${topicId}/${Date.now()}-${filename}`, downloaded.buffer);
+    const extraction = await runContextExtraction({ sourceType, fileLocation: location, buffer: downloaded.buffer });
+
+    let host = "";
+    try {
+      host = new URL(downloaded.finalUrl).hostname;
+    } catch {
+      // keep empty - attribution just omits the site
+    }
+    return prisma.contextSource.create({
+      data: {
+        topicId,
+        sourceType,
+        fileLocation: location,
+        originalFilename: filename,
+        sourceUrl: candidate.sourcePageUrl ?? downloaded.finalUrl,
+        attribution: candidate.attribution ?? (host ? `From ${host}` : null),
+        pageCount: extraction.pageCount ?? null,
+        extractionStatus: extraction.extractionStatus,
+        extractedText: extraction.extractedText,
+        extractionError: extraction.extractionError,
+      },
+    });
+  }
 
   app.post<{ Params: { id: string; jobId: string; candidateId: string } }>(
     "/topics/:id/context/research/:jobId/candidates/:candidateId/dismiss",
@@ -531,6 +637,115 @@ export async function topicRoutes(app: FastifyInstance) {
       reply.header("Content-Disposition", `attachment; filename="${filename.replace(/"/g, "")}"`);
       reply.type(FILE_CONTENT_TYPES[ext] ?? "application/octet-stream");
       return reply.send(buffer);
+    }
+  );
+
+  // Serves an image source, or one rendered page of a PDF source, inline - the
+  // thing a slide/gallery <Image> points at. (The /file route above is the
+  // download-as-attachment one.)
+  app.get<{ Params: { topicId: string; contextSourceId: string }; Querystring: { page?: string; w?: string } }>(
+    "/topics/:topicId/context/:contextSourceId/media",
+    { onRequest: [authenticateFromHeaderOrToken, app.requireSchoolScope, requireRoles("teacher")] },
+    async (request, reply) => {
+      const source = await prisma.contextSource.findFirst({
+        where: { id: request.params.contextSourceId, topicId: request.params.topicId, topic: { schoolId: request.schoolId } },
+      });
+      if (!source || !source.fileLocation) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Media not found for this source" } });
+      }
+
+      reply.header("Cache-Control", "private, max-age=3600");
+
+      if (source.sourceType === "image") {
+        const buffer = await readSourceFile(source.fileLocation);
+        return reply.type(sniffImageMime(buffer) ?? "image/png").send(buffer);
+      }
+
+      if (source.sourceType === "pdf") {
+        const page = Number(request.query?.page ?? 1);
+        if (!Number.isInteger(page) || page < 1 || (source.pageCount != null && page > source.pageCount)) {
+          return reply.code(400).send({ data: null, error: { code: "validation_error", message: "page is out of range for this PDF" } });
+        }
+        const width = clampPageWidth(request.query?.w ? Number(request.query.w) : undefined);
+        const cached = getCachedPage(source.id, page, width);
+        if (cached) return reply.type("image/png").send(cached);
+
+        const pdf = await readSourceFile(source.fileLocation);
+        const pages = await renderPdfPages(source.id, pdf, [page], width);
+        const rendered = pages.get(page);
+        if (!rendered) {
+          return reply.code(404).send({ data: null, error: { code: "not_found", message: "That page could not be rendered" } });
+        }
+        return reply.type("image/png").send(rendered.data);
+      }
+
+      return reply.code(400).send({ data: null, error: { code: "validation_error", message: "Only image and PDF sources have media" } });
+    }
+  );
+
+  // Reference videos a teacher chose to keep for a topic (see prisma
+  // SavedVideo comment) - browse-only, never fed to the AI, kept separate
+  // from ContextSource/the research-job list so they don't disappear when a
+  // fresh research run replaces the candidates on screen.
+  interface SaveVideoBody {
+    videoId?: string;
+    title?: string;
+    channelTitle?: string;
+    thumbnailUrl?: string;
+    duration?: string;
+  }
+
+  app.get<{ Params: { id: string } }>("/topics/:id/videos", { onRequest: scoped(app) }, async (request, reply) => {
+    const topic = await prisma.topic.findFirst({ where: { id: request.params.id, schoolId: request.schoolId } });
+    if (!topic) {
+      return reply.code(404).send({ data: null, error: { code: "not_found", message: "Topic not found" } });
+    }
+    const videos = await prisma.savedVideo.findMany({ where: { topicId: topic.id }, orderBy: { createdAt: "desc" } });
+    return { data: videos, meta: {} };
+  });
+
+  app.post<{ Params: { id: string }; Body: SaveVideoBody }>("/topics/:id/videos", { onRequest: scoped(app) }, async (request, reply) => {
+    const topic = await prisma.topic.findFirst({ where: { id: request.params.id, schoolId: request.schoolId } });
+    if (!topic) {
+      return reply.code(404).send({ data: null, error: { code: "not_found", message: "Topic not found" } });
+    }
+    const body = request.body ?? {};
+    if (!body.videoId || !body.title || !body.channelTitle || !body.thumbnailUrl) {
+      return reply.code(400).send({
+        data: null,
+        error: { code: "validation_error", message: "videoId, title, channelTitle, and thumbnailUrl are required" },
+      });
+    }
+
+    // Upsert on the (topicId, videoId) unique constraint - tapping Save on an
+    // already-saved video is a no-op, not a duplicate/error.
+    const saved = await prisma.savedVideo.upsert({
+      where: { topicId_videoId: { topicId: topic.id, videoId: body.videoId } },
+      create: {
+        topicId: topic.id,
+        videoId: body.videoId,
+        title: body.title,
+        channelTitle: body.channelTitle,
+        thumbnailUrl: body.thumbnailUrl,
+        duration: body.duration ?? "",
+      },
+      update: {},
+    });
+    return reply.code(201).send({ data: saved, meta: {} });
+  });
+
+  app.delete<{ Params: { id: string; savedVideoId: string } }>(
+    "/topics/:id/videos/:savedVideoId",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const video = await prisma.savedVideo.findFirst({
+        where: { id: request.params.savedVideoId, topicId: request.params.id, topic: { schoolId: request.schoolId } },
+      });
+      if (!video) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Saved video not found" } });
+      }
+      await prisma.savedVideo.delete({ where: { id: video.id } });
+      return { data: { id: video.id }, meta: {} };
     }
   );
 

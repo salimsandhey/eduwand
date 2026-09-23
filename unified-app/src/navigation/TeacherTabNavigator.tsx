@@ -10,6 +10,7 @@ import { MoreStackNavigator } from "./MoreStackNavigator";
 import { FloatingTabBar } from "./FloatingTabBar";
 import { AiAssistChatModal } from "../components/AiAssistChatModal";
 import { decorativeAssets } from "../theme/decorativeAssets";
+import { TabBarScrollProvider } from "./TabBarScrollContext";
 
 const Tab = createBottomTabNavigator<TeacherTabParamList>();
 
@@ -25,7 +26,7 @@ export function TeacherTabNavigator() {
   const [showAiAssist, setShowAiAssist] = useState(false);
 
   return (
-    <>
+    <TabBarScrollProvider>
       <Tab.Navigator
         tabBar={(props) => (
           <FloatingTabBar
@@ -57,6 +58,6 @@ export function TeacherTabNavigator() {
         />
       </Tab.Navigator>
       <AiAssistChatModal visible={showAiAssist} onClose={() => setShowAiAssist(false)} />
-    </>
+    </TabBarScrollProvider>
   );
 }

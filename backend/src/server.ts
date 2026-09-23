@@ -50,6 +50,11 @@ import { teacherOnboardingRoutes } from "./routes/teacher-onboarding";
 import { planRoutes } from "./routes/plans";
 import { classChangeRequestRoutes } from "./routes/class-change-requests";
 import { classJoinRoutes } from "./routes/class-join";
+import { realtimeRoutes } from "./routes/realtime";
+import { presentRoutes } from "./routes/present";
+import { aiAssistantRoutes } from "./routes/ai-assistant";
+import { contentPageRoutes } from "./routes/content-pages";
+import { timetableRoutes } from "./routes/timetable";
 
 const app = Fastify({ logger: true });
 
@@ -103,6 +108,11 @@ app.register(teacherOnboardingRoutes, { prefix: "/api/v1" });
 app.register(planRoutes, { prefix: "/api/v1" });
 app.register(classChangeRequestRoutes, { prefix: "/api/v1" });
 app.register(classJoinRoutes, { prefix: "/api/v1" });
+app.register(realtimeRoutes, { prefix: "/api/v1" });
+app.register(presentRoutes, { prefix: "/api/v1" });
+app.register(aiAssistantRoutes, { prefix: "/api/v1" });
+app.register(contentPageRoutes, { prefix: "/api/v1" });
+app.register(timetableRoutes, { prefix: "/api/v1" });
 
 const port = Number(process.env.PORT) || 4000;
 

@@ -21,7 +21,8 @@
         "buildType": "app-bundle"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://eduwand.flipoo.in/api/v1"
+        "EXPO_PUBLIC_API_URL": "https://eduwand.flipoo.in/api/v1",
+        "EXPO_PUBLIC_ADMIN_URL": "https://eduwand.flipoo.in"
       }
     }
   },

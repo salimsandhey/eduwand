@@ -1,8 +1,11 @@
 import { FastifyInstance } from "fastify";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { PLATFORM_ADMIN_ROLE } from "../lib/roles";
 import { markOnboardingTaskComplete } from "../lib/onboarding";
+
+const MAX_SEAT_NUMBER = 40; // matches the reference clicker firmware/demo's cap
 
 interface ListQuery {
   classSectionId?: string;
@@ -39,6 +42,9 @@ interface UpdateStudentBody {
   guardianName?: string;
   guardianContact?: string;
   feeStatus?: string;
+  // The physical clicker's DEVICE_ID this student is assigned to, within
+  // their class - null clears the assignment. See clicker.ino / present.ts.
+  seatNumber?: number | null;
 }
 
 interface BulkReassignBody {
@@ -283,21 +289,35 @@ export async function studentRoutes(app: FastifyInstance) {
       if (body.guardianContact !== undefined && !body.guardianContact.trim()) {
         return reply.code(400).send({ data: null, error: { code: "validation_error", message: "guardianContact cannot be empty" } });
       }
+      if (body.seatNumber !== undefined && body.seatNumber !== null && (!Number.isInteger(body.seatNumber) || body.seatNumber < 1 || body.seatNumber > MAX_SEAT_NUMBER)) {
+        return reply.code(400).send({ data: null, error: { code: "validation_error", message: `seatNumber must be an integer from 1 to ${MAX_SEAT_NUMBER}, or null to clear it` } });
+      }
 
-      const updated = await prisma.studentStub.update({
-        where: { id: student.id },
-        data: {
-          ...(body.fullName !== undefined ? { fullName: body.fullName.trim() } : {}),
-          ...(body.dateOfBirth !== undefined ? { dateOfBirth: new Date(body.dateOfBirth) } : {}),
-          ...(body.classSectionId !== undefined ? { classSectionId: body.classSectionId } : {}),
-          ...(body.guardianName !== undefined ? { guardianName: body.guardianName.trim() } : {}),
-          ...(body.guardianContact !== undefined ? { guardianContact: body.guardianContact.trim() } : {}),
-          ...(body.feeStatus !== undefined ? { feeStatus: body.feeStatus } : {}),
-          updatedBy: request.user.sub,
-        },
-      });
+      try {
+        const updated = await prisma.studentStub.update({
+          where: { id: student.id },
+          data: {
+            ...(body.fullName !== undefined ? { fullName: body.fullName.trim() } : {}),
+            ...(body.dateOfBirth !== undefined ? { dateOfBirth: new Date(body.dateOfBirth) } : {}),
+            ...(body.classSectionId !== undefined ? { classSectionId: body.classSectionId } : {}),
+            ...(body.guardianName !== undefined ? { guardianName: body.guardianName.trim() } : {}),
+            ...(body.guardianContact !== undefined ? { guardianContact: body.guardianContact.trim() } : {}),
+            ...(body.feeStatus !== undefined ? { feeStatus: body.feeStatus } : {}),
+            ...(body.seatNumber !== undefined ? { seatNumber: body.seatNumber } : {}),
+            updatedBy: request.user.sub,
+          },
+        });
 
-      return { data: updated, meta: {} };
+        return { data: updated, meta: {} };
+      } catch (err) {
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+          return reply.code(400).send({
+            data: null,
+            error: { code: "seat_number_taken", message: "That clicker number is already assigned to another student in this class" },
+          });
+        }
+        throw err;
+      }
     }
   );
 

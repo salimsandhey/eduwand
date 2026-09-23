@@ -5,7 +5,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
-import { spacing } from "../../theme/tokens";
+import { spacing, softCardShadow } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { api } from "../../api/client";
 
@@ -142,7 +142,7 @@ export function CreateFirstClassScreen({ navigation }: Props) {
           <ActivityIndicator color={colors.accent} style={{ marginTop: 30 }} />
         ) : (
           <>
-            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+            <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
               <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Classes</Text>
               {classes.map((cls, index) => (
                 <View key={index} style={index > 0 ? styles.entryDivider : undefined}>
@@ -179,7 +179,7 @@ export function CreateFirstClassScreen({ navigation }: Props) {
               ) : null}
             </View>
 
-            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+            <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
               <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Subjects</Text>
               {subjects.map((subject, index) => (
                 <View key={index}>
@@ -258,8 +258,8 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
   card: {
+    ...softCardShadow,
     marginTop: 20,
-    borderWidth: 1,
     borderRadius: 16,
     padding: 16,
   },

@@ -5,6 +5,7 @@ import { requireRoles } from "../lib/rbac";
 import { aiProvider, logAiUsage, AssignmentGenInput } from "../lib/ai";
 import { hasSufficientCredits, getFeatureCost } from "../lib/credits";
 import { buildTaughtContentText } from "../lib/generation-content";
+import { getSchoolBoard } from "../lib/boards";
 
 interface StoredAssessmentQuestion {
   id: string;
@@ -19,12 +20,27 @@ interface CreateAssessmentBody {
 
 interface SaveResponsesBody {
   questionId: string;
-  responses: { studentStubId: string; selectedOptionIndex: number }[];
+  // Exactly one of selectedOptionIndex/isDoubt per entry - a student either
+  // picked an option or pressed "not sure" (see client's Step 6 doubt count).
+  responses: { studentStubId: string; selectedOptionIndex?: number; isDoubt?: boolean }[];
 }
 
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope, requireRoles("teacher")];
 
 export async function assessmentRoutes(app: FastifyInstance) {
+  // Lets the app resume an unfinished quick check instead of generating a new
+  // one (and spending credits again) after e.g. an accidental back-button
+  // press - GenerationReviewScreen checks this before calling the create
+  // route below. Only "capturing" (in progress) counts as resumable; a
+  // completed one doesn't block starting a fresh quick check.
+  app.get<{ Params: { id: string } }>("/generations/:id/active-assessment", { onRequest: scoped(app) }, async (request) => {
+    const assessment = await prisma.assessment.findFirst({
+      where: { generationId: request.params.id, schoolId: request.schoolId, status: "capturing" },
+      orderBy: { createdAt: "desc" },
+    });
+    return { data: assessment, meta: {} };
+  });
+
   // Generates a quick, MCQ-only quiz grounded in ONE specific lesson plan
   // generation - not "everything taught on the topic" like Assignment's
   // assignment-draft. Reuses the same generateAssignmentFromTopic AI method,
@@ -66,10 +82,10 @@ export async function assessmentRoutes(app: FastifyInstance) {
         objectives: taught.objectives,
         questionCount,
         difficultyMix: { easy: 0, medium: questionCount, hard: 0 },
-        questionTypes: "mcq",
+        questionTypes: ["mcq"],
         focusPrompt: null,
         subject: generation.topic.subject,
-        board: generation.topic.board,
+        board: await getSchoolBoard(request.schoolId),
         classLabel: `${generation.topic.classSection.className} ${generation.topic.classSection.sectionName}`,
         schoolFormatInstructions: formatTemplate?.templateBody ?? null,
       };
@@ -152,24 +168,27 @@ export async function assessmentRoutes(app: FastifyInstance) {
       if (!Array.isArray(body.responses) || body.responses.length === 0) {
         return reply.code(400).send({ data: null, error: { code: "validation_error", message: "responses is required" } });
       }
+      for (const r of body.responses) {
+        const hasOption = typeof r.selectedOptionIndex === "number";
+        if (!r.studentStubId || hasOption === !!r.isDoubt) {
+          return reply.code(400).send({
+            data: null,
+            error: { code: "validation_error", message: "Each response needs a studentStubId and exactly one of selectedOptionIndex or isDoubt" },
+          });
+        }
+      }
 
       await prisma.$transaction(
-        body.responses.map((r) =>
-          prisma.assessmentResponse.upsert({
+        body.responses.map((r) => {
+          const data = r.isDoubt
+            ? { selectedOptionIndex: null, isCorrect: null, isDoubt: true }
+            : { selectedOptionIndex: r.selectedOptionIndex, isCorrect: r.selectedOptionIndex === question.correctOptionIndex, isDoubt: false };
+          return prisma.assessmentResponse.upsert({
             where: { assessmentId_questionId_studentStubId: { assessmentId: assessment.id, questionId: question.id, studentStubId: r.studentStubId } },
-            create: {
-              assessmentId: assessment.id,
-              questionId: question.id,
-              studentStubId: r.studentStubId,
-              selectedOptionIndex: r.selectedOptionIndex,
-              isCorrect: r.selectedOptionIndex === question.correctOptionIndex,
-            },
-            update: {
-              selectedOptionIndex: r.selectedOptionIndex,
-              isCorrect: r.selectedOptionIndex === question.correctOptionIndex,
-            },
-          })
-        )
+            create: { assessmentId: assessment.id, questionId: question.id, studentStubId: r.studentStubId, ...data },
+            update: data,
+          });
+        })
       );
 
       const updated = await prisma.assessment.findUniqueOrThrow({ where: { id: assessment.id }, include: { responses: true } });
@@ -182,7 +201,12 @@ export async function assessmentRoutes(app: FastifyInstance) {
     if (!assessment) {
       return reply.code(404).send({ data: null, error: { code: "not_found", message: "Assessment not found" } });
     }
-    const updated = await prisma.assessment.update({ where: { id: assessment.id }, data: { status: "completed", completedAt: new Date() } });
+    // Also invalidates any live "present on a screen" session (present.ts) -
+    // finishing from the app should stop a projector/control page too.
+    const updated = await prisma.assessment.update({
+      where: { id: assessment.id },
+      data: { status: "completed", completedAt: new Date(), presentCode: null, presentCodeExpiresAt: null },
+    });
     return { data: updated, meta: {} };
   });
 
@@ -219,27 +243,33 @@ export async function assessmentRoutes(app: FastifyInstance) {
     }
 
     const respondentCount = byStudent.size;
+    // correctRate is over substantive (non-doubt) answers only - a doubt is
+    // "not sure," not a wrong answer, so it shouldn't drag the rate down.
     const itemAnalysis = questions.map((q) => {
-      const answers = assessment.responses.filter((r) => r.questionId === q.id);
+      const allForQuestion = assessment.responses.filter((r) => r.questionId === q.id);
+      const answers = allForQuestion.filter((r) => !r.isDoubt);
       return {
         questionId: q.id,
         prompt: q.prompt,
         correctCount: answers.filter((r) => r.isCorrect).length,
         totalCount: answers.length,
         correctRate: answers.length > 0 ? answers.filter((r) => r.isCorrect).length / answers.length : null,
+        doubtCount: allForQuestion.filter((r) => r.isDoubt).length,
       };
     });
+    const totalDoubts = assessment.responses.filter((r) => r.isDoubt).length;
 
     const { recommendation } = await aiProvider.generateAssessmentRecommendation({
       topicName: assessment.topic.name,
       subject: assessment.topic.subject,
-      board: assessment.topic.board,
+      board: await getSchoolBoard(request.schoolId),
       bands: { level_1: bands.level_1.length, level_2: bands.level_2.length, level_3: bands.level_3.length },
-      itemAnalysis: itemAnalysis.map((i) => ({ prompt: i.prompt, correctRate: i.correctRate })),
+      itemAnalysis: itemAnalysis.map((i) => ({ prompt: i.prompt, correctRate: i.correctRate, doubtCount: i.doubtCount })),
+      totalDoubts,
     });
 
     return {
-      data: { respondentCount, totalQuestions, bands, itemAnalysis, recommendation },
+      data: { respondentCount, totalQuestions, bands, itemAnalysis, totalDoubts, recommendation },
       meta: {},
     };
   });

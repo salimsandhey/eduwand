@@ -85,7 +85,7 @@ export function GettingStartedScreen({ navigation }: Props) {
           <Text style={[styles.error, { color: colors.danger }]}>{error}</Text>
         ) : (
           <>
-            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+            <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
               <View style={styles.cardHeaderRow}>
                 <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Profile completion</Text>
                 <Text style={[styles.cardPercent, { color: colors.accent }]}>{profilePercent}%</Text>
@@ -116,7 +116,7 @@ export function GettingStartedScreen({ navigation }: Props) {
               ) : null}
             </View>
 
-            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+            <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
               <View style={styles.cardHeaderRow}>
                 <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Starter tasks</Text>
                 <Text style={[styles.cardPercent, { color: colors.accent }]}>

@@ -12,6 +12,8 @@ import { Screen } from "../../components/Screen";
 import { api, StudentAssignmentView, StudentSubmissionStatus } from "../../api/client";
 import { decorativeAssets } from "../../theme/decorativeAssets";
 import { capitalizeFirst } from "../../utils/text";
+import { useTabBarClearance } from "../../navigation/useTabBarClearance";
+import { MadeWithLoveFooter } from "../../components/MadeWithLoveFooter";
 
 type Props = CompositeScreenProps<BottomTabScreenProps<StudentTabParamList, "Home">, NativeStackScreenProps<RootStackParamList>>;
 
@@ -28,8 +30,9 @@ function statusColor(status: StudentSubmissionStatus, colors: ReturnType<typeof 
 }
 
 export function StudentHomeScreen({ navigation }: Props) {
-  const { user, accessToken, logout } = useAuth();
+  const { user, accessToken } = useAuth();
   const { colors, cardShadow } = useTheme();
+  const tabBarClearance = useTabBarClearance();
   const [assignments, setAssignments] = useState<StudentAssignmentView[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -63,8 +66,8 @@ export function StudentHomeScreen({ navigation }: Props) {
               {assignments.length} assignment{assignments.length === 1 ? "" : "s"}
             </Text>
           </View>
-          <Pressable onPress={logout} hitSlop={10} accessibilityRole="button" accessibilityLabel="Log out">
-            <Ionicons name="log-out-outline" size={22} color={colors.textMuted} />
+          <Pressable onPress={() => navigation.navigate("StudentSettings")} hitSlop={10} accessibilityRole="button" accessibilityLabel="Settings">
+            <Ionicons name="settings-outline" size={22} color={colors.textMuted} />
           </Pressable>
         </View>
       </View>
@@ -77,7 +80,7 @@ export function StudentHomeScreen({ navigation }: Props) {
         <FlatList
           data={assignments}
           keyExtractor={(a) => a.id}
-          contentContainerStyle={styles.list}
+          contentContainerStyle={[styles.list, { paddingBottom: tabBarClearance }]}
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <Image source={decorativeAssets.book} style={styles.emptyGraphic} resizeMode="contain" />
@@ -100,7 +103,7 @@ export function StudentHomeScreen({ navigation }: Props) {
                 accessibilityRole={canSubmit ? "button" : undefined}
                 style={[
                   styles.card,
-                  { backgroundColor: colors.surface, borderColor: colors.border, borderLeftColor: colors.accent },
+                  { backgroundColor: colors.surface, borderWidth: 0, borderLeftColor: colors.accent },
                   cardShadow,
                 ]}
               >
@@ -138,6 +141,7 @@ export function StudentHomeScreen({ navigation }: Props) {
               </Pressable>
             );
           }}
+          ListFooterComponent={<MadeWithLoveFooter />}
         />
       )}
     </Screen>

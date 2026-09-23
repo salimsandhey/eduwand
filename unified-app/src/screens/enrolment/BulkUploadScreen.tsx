@@ -141,7 +141,7 @@ export function BulkUploadScreen() {
           </Text>
         </View>
 
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>1. Pick a CSV file</Text>
           <Text style={[styles.meta, { color: colors.textMuted }]}>
             Columns: contact_name, contact_phone, contact_email, source, grade_interest, consent_captured
@@ -163,7 +163,7 @@ export function BulkUploadScreen() {
         </View>
 
         {rows.length > 0 ? (
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
             <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>2. Review and upload</Text>
             <Text style={[styles.meta, { color: colors.textSecondary }]}>
               {rows.length} row{rows.length === 1 ? "" : "s"} parsed
@@ -192,7 +192,7 @@ export function BulkUploadScreen() {
         {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
         {result ? (
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
             <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Result</Text>
             <Text style={[styles.meta, { color: colors.textPrimary, fontWeight: "700" }]}>
               {result.createdCount} created

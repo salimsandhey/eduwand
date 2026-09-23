@@ -23,7 +23,7 @@ const SOURCE_TYPE_ICONS: Record<ContextSource["sourceType"], keyof typeof Ionico
 
 export function ImportContextScreen({ route, navigation }: Props) {
   const { topicId } = route.params;
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
 
   const [currentTopic, setCurrentTopic] = useState<TopicDetail | null>(null);
@@ -130,7 +130,7 @@ export function ImportContextScreen({ route, navigation }: Props) {
             topics.map((topic) => (
               <Pressable
                 key={topic.id}
-                style={({ pressed }) => [styles.row, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow, pressed && { opacity: pressedOpacity }]}
+                style={({ pressed }) => [styles.row, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow, pressed && { opacity: pressedOpacity }]}
                 onPress={() => openSourceTopic(topic)}
                 disabled={isLoadingSource}
                 accessibilityRole="button"
@@ -138,7 +138,7 @@ export function ImportContextScreen({ route, navigation }: Props) {
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.rowTitle, { color: colors.textPrimary }]} numberOfLines={1}>{capitalizeFirst(topic.name)}</Text>
                   <Text style={[styles.rowSubtitle, { color: colors.textMuted }]} numberOfLines={1}>
-                    {capitalizeFirst(topic.subject)} · {topic.board}
+                    {capitalizeFirst(topic.subject)}{user?.board ? ` · ${user.board}` : ""}
                     {topic.classSection ? ` · ${capitalizeFirst(topic.classSection.className)} ${capitalizeFirst(topic.classSection.sectionName)}` : ""}
                   </Text>
                 </View>
@@ -162,7 +162,7 @@ export function ImportContextScreen({ route, navigation }: Props) {
                 return (
                   <Pressable
                     key={source.id}
-                    style={({ pressed }) => [styles.row, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow, pressed && { opacity: pressedOpacity }]}
+                    style={({ pressed }) => [styles.row, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow, pressed && { opacity: pressedOpacity }]}
                     onPress={() => toggleSelected(source.id)}
                     accessibilityRole="button"
                     accessibilityState={{ selected }}

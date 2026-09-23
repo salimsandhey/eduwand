@@ -6,8 +6,9 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
-import { spacing } from "../../theme/tokens";
+import { spacing, softCardShadow } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
+import { SheetModal } from "../../components/SheetModal";
 import { DatePicker } from "../../components/DatePicker";
 import { api, ClassSection, StudentStub } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
@@ -234,7 +235,7 @@ export function StudentsScreen({ navigation }: Props) {
               <Pressable
                 key={student.id}
                 onPress={() => (selectionMode ? toggleSelected(student.id) : openEdit(student))}
-                style={[styles.row, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}
+                style={[styles.row, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}
               >
                 {selectionMode ? (
                   <Ionicons name={selected ? "checkbox" : "square-outline"} size={22} color={selected ? colors.accent : colors.textMuted} />
@@ -261,7 +262,7 @@ export function StudentsScreen({ navigation }: Props) {
           <Ionicons name="add" size={26} color={colors.accentOn} />
         </Pressable>
       ) : selectedIds.size > 0 ? (
-        <View style={[styles.selectionBar, { backgroundColor: colors.surface, borderColor: colors.border }, cardShadow]}>
+        <View style={[styles.selectionBar, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           <Text style={{ color: colors.textPrimary, fontWeight: "700" }}>{selectedIds.size} selected</Text>
           <Pressable
             onPress={() => {
@@ -276,93 +277,95 @@ export function StudentsScreen({ navigation }: Props) {
       ) : null}
 
       {/* Bulk assign class modal */}
-      <Modal visible={showBulkAssign} animationType="slide" transparent onRequestClose={() => setShowBulkAssign(false)}>
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
-            <View style={styles.sheetHeader}>
-              <Text style={[styles.sheetTitle, { color: colors.textPrimary }]}>Assign {selectedIds.size} student{selectedIds.size === 1 ? "" : "s"} to</Text>
-              <Pressable onPress={() => setShowBulkAssign(false)} hitSlop={8}>
-                <Ionicons name="close" size={22} color={colors.textMuted} />
-              </Pressable>
-            </View>
-            <ScrollView contentContainerStyle={{ gap: 8 }}>
-              {classSections.map((c) => (
-                <Pressable
-                  key={c.id}
-                  onPress={() => setBulkAssignClassId(c.id)}
-                  style={[styles.classOption, { backgroundColor: bulkAssignClassId === c.id ? colors.accentSoft : "transparent", borderColor: colors.border }]}
-                >
-                  <Text style={{ color: colors.textPrimary, fontWeight: "700" }}>{classLabel(c)}</Text>
-                  {bulkAssignClassId === c.id ? <Ionicons name="checkmark" size={18} color={colors.accent} /> : null}
-                </Pressable>
-              ))}
-            </ScrollView>
-            <Pressable
-              onPress={submitBulkAssign}
-              disabled={isBulkAssigning || !bulkAssignClassId}
-              style={[styles.saveButton, { backgroundColor: colors.accent }, isBulkAssigning && { opacity: 0.6 }]}
-            >
-              {isBulkAssigning ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.saveButtonText, { color: colors.accentOn }]}>Assign</Text>}
-            </Pressable>
-          </View>
+      <SheetModal
+        visible={showBulkAssign}
+        onClose={() => setShowBulkAssign(false)}
+        closeLabel="Close bulk assign"
+        maxHeightRatio={0.75}
+      >
+        <View style={styles.sheetHeader}>
+          <Text style={[styles.sheetTitle, { color: colors.textPrimary }]}>Assign {selectedIds.size} student{selectedIds.size === 1 ? "" : "s"} to</Text>
+          <Pressable onPress={() => setShowBulkAssign(false)} hitSlop={8}>
+            <Ionicons name="close" size={22} color={colors.textMuted} />
+          </Pressable>
         </View>
-      </Modal>
+        <ScrollView contentContainerStyle={{ gap: 8 }}>
+          {classSections.map((c) => (
+            <Pressable
+              key={c.id}
+              onPress={() => setBulkAssignClassId(c.id)}
+              style={[styles.classOption, { backgroundColor: bulkAssignClassId === c.id ? colors.accentSoft : "transparent", borderColor: colors.border }]}
+            >
+              <Text style={{ color: colors.textPrimary, fontWeight: "700" }}>{classLabel(c)}</Text>
+              {bulkAssignClassId === c.id ? <Ionicons name="checkmark" size={18} color={colors.accent} /> : null}
+            </Pressable>
+          ))}
+        </ScrollView>
+        <Pressable
+          onPress={submitBulkAssign}
+          disabled={isBulkAssigning || !bulkAssignClassId}
+          style={[styles.saveButton, { backgroundColor: colors.accent }, isBulkAssigning && { opacity: 0.6 }]}
+        >
+          {isBulkAssigning ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.saveButtonText, { color: colors.accentOn }]}>Assign</Text>}
+        </Pressable>
+      </SheetModal>
 
       {/* Edit student modal */}
-      <Modal visible={!!editingStudent} animationType="slide" transparent onRequestClose={() => setEditingStudent(null)}>
-        <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-          <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
-            <View style={styles.sheetHeader}>
-              <Text style={[styles.sheetTitle, { color: colors.textPrimary }]}>Edit student</Text>
-              <Pressable onPress={() => setEditingStudent(null)} hitSlop={8}>
-                <Ionicons name="close" size={22} color={colors.textMuted} />
-              </Pressable>
-            </View>
-            <ScrollView keyboardShouldPersistTaps="handled">
-              <Text style={[styles.label, { color: colors.textPrimary }]}>Full name</Text>
-              <TextInput
-                style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
-                value={editForm.fullName}
-                onChangeText={(v) => setEditForm((f) => ({ ...f, fullName: v }))}
-              />
-              <Text style={[styles.label, { color: colors.textPrimary }]}>Date of birth</Text>
-              <DatePicker value={editForm.dateOfBirth} onChange={(v) => setEditForm((f) => ({ ...f, dateOfBirth: v }))} />
-              <Text style={[styles.label, { color: colors.textPrimary }]}>Guardian name</Text>
-              <TextInput
-                style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
-                value={editForm.guardianName}
-                onChangeText={(v) => setEditForm((f) => ({ ...f, guardianName: v }))}
-              />
-              <Text style={[styles.label, { color: colors.textPrimary }]}>Guardian contact</Text>
-              <TextInput
-                style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
-                value={editForm.guardianContact}
-                onChangeText={(v) => setEditForm((f) => ({ ...f, guardianContact: v }))}
-                keyboardType="phone-pad"
-              />
-              <Text style={[styles.label, { color: colors.textPrimary }]}>Class</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-                {classSections.map((c) => (
-                  <Pressable
-                    key={c.id}
-                    onPress={() => setEditClassId(c.id)}
-                    style={[styles.filterChip, { backgroundColor: editClassId === c.id ? colors.accent : colors.surfaceAccent }]}
-                  >
-                    <Text style={{ color: editClassId === c.id ? colors.accentOn : colors.textPrimary, fontWeight: "700", fontSize: 12 }}>{classLabel(c)}</Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
+      <SheetModal
+        visible={!!editingStudent}
+        onClose={() => setEditingStudent(null)}
+        closeLabel="Close edit student"
+        maxHeightRatio={0.88}
+      >
+        <View style={styles.sheetHeader}>
+          <Text style={[styles.sheetTitle, { color: colors.textPrimary }]}>Edit student</Text>
+          <Pressable onPress={() => setEditingStudent(null)} hitSlop={8}>
+            <Ionicons name="close" size={22} color={colors.textMuted} />
+          </Pressable>
+        </View>
+        <ScrollView keyboardShouldPersistTaps="handled">
+          <Text style={[styles.label, { color: colors.textPrimary }]}>Full name</Text>
+          <TextInput
+            style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+            value={editForm.fullName}
+            onChangeText={(v) => setEditForm((f) => ({ ...f, fullName: v }))}
+          />
+          <Text style={[styles.label, { color: colors.textPrimary }]}>Date of birth</Text>
+          <DatePicker value={editForm.dateOfBirth} onChange={(v) => setEditForm((f) => ({ ...f, dateOfBirth: v }))} />
+          <Text style={[styles.label, { color: colors.textPrimary }]}>Guardian name</Text>
+          <TextInput
+            style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+            value={editForm.guardianName}
+            onChangeText={(v) => setEditForm((f) => ({ ...f, guardianName: v }))}
+          />
+          <Text style={[styles.label, { color: colors.textPrimary }]}>Guardian contact</Text>
+          <TextInput
+            style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+            value={editForm.guardianContact}
+            onChangeText={(v) => setEditForm((f) => ({ ...f, guardianContact: v }))}
+            keyboardType="phone-pad"
+          />
+          <Text style={[styles.label, { color: colors.textPrimary }]}>Class</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+            {classSections.map((c) => (
               <Pressable
-                onPress={saveEdit}
-                disabled={isSavingEdit}
-                style={[styles.saveButton, { backgroundColor: colors.accent }, isSavingEdit && { opacity: 0.6 }]}
+                key={c.id}
+                onPress={() => setEditClassId(c.id)}
+                style={[styles.filterChip, { backgroundColor: editClassId === c.id ? colors.accent : colors.surfaceAccent }]}
               >
-                {isSavingEdit ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.saveButtonText, { color: colors.accentOn }]}>Save changes</Text>}
+                <Text style={{ color: editClassId === c.id ? colors.accentOn : colors.textPrimary, fontWeight: "700", fontSize: 12 }}>{classLabel(c)}</Text>
               </Pressable>
-            </ScrollView>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
+            ))}
+          </ScrollView>
+          <Pressable
+            onPress={saveEdit}
+            disabled={isSavingEdit}
+            style={[styles.saveButton, { backgroundColor: colors.accent }, isSavingEdit && { opacity: 0.6 }]}
+          >
+            {isSavingEdit ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.saveButtonText, { color: colors.accentOn }]}>Save changes</Text>}
+          </Pressable>
+        </ScrollView>
+      </SheetModal>
     </Screen>
   );
 }
@@ -430,10 +433,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   row: {
+    ...softCardShadow,
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    borderWidth: 1,
     borderRadius: 14,
     padding: 14,
   },
@@ -456,6 +459,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   selectionBar: {
+    ...softCardShadow,
     position: "absolute",
     left: 16,
     right: 16,
@@ -463,7 +467,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    borderWidth: 1,
     borderRadius: 14,
     padding: 14,
   },

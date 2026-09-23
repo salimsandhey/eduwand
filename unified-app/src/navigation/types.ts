@@ -10,6 +10,7 @@ export type RootStackParamList = {
   BulkUpload: undefined;
   CreateAssignment: { topicId?: string; assignmentId?: string } | undefined;
   AssignmentAiSetup: { topicId: string };
+  AssignmentAiMultiSetup: undefined;
   AssignmentDraftReview: { assignmentId: string };
   AssignmentDetail: { assignmentId: string };
   LogSubmission: { assignmentId: string };
@@ -21,7 +22,9 @@ export type RootStackParamList = {
   GenerationReview: { generationId: string };
   ImportContext: { topicId: string };
   ContextResearch: { topicId: string };
+  AssessmentReady: { assessmentId: string };
   AssessmentCapture: { assessmentId: string };
+  PresentLaunch: { assessmentId: string };
   AssessmentInsight: { assessmentId: string };
   LessonWithAiTest: undefined;
   AnswerKeyReview: { assignmentId: string };
@@ -29,6 +32,9 @@ export type RootStackParamList = {
     | { topicId: string }
     | { classSectionId: string; subject: string; className: string; sectionName: string };
   CommunicationHub: undefined;
+  CommunicationChat:
+    | { mode: "student"; studentId: string; studentName: string; classLabel: string }
+    | { mode: "class"; classSectionId: string; classLabel: string };
   Notifications: undefined;
   Profile: undefined;
   HelpSupport: undefined;
@@ -44,6 +50,19 @@ export type RootStackParamList = {
   FormatTemplate: undefined;
   GettingStarted: undefined;
   Leaderboard: undefined;
+  Timetable: undefined;
+  // contentKey matches a ContentPage.key on the backend (privacy_policy,
+  // terms_of_service, about) - one screen renders whichever it's given.
+  // "contact" is NOT routed here - see Contact below.
+  LegalDocument: { contentKey: string; title: string };
+  // Purpose-built contact page (tappable email/phone/WhatsApp cards), reading
+  // structured ContentPage.fields for key "contact" - not the plain-markdown
+  // LegalDocument screen, since a contact page should look like one.
+  Contact: undefined;
+  // Students have no More/Profile tab (ProfileScreen calls /auth/me/*, which
+  // 403s for students - they sign in via phone+OTP, not an AppUser row) - this
+  // is their only way to reach Legal, Help & Support, and Log out.
+  StudentSettings: undefined;
 };
 
 export type EnrolmentTabParamList = {

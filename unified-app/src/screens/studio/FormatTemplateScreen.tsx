@@ -7,7 +7,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
-import { spacing } from "../../theme/tokens";
+import { spacing, softCardShadow } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { ColorPickerModal } from "../../components/ColorPickerModal";
 import { Toast } from "../../components/Toast";
@@ -296,8 +296,8 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
   card: {
+    ...softCardShadow,
     marginTop: 20,
-    borderWidth: 1,
     borderRadius: 16,
     padding: 16,
   },

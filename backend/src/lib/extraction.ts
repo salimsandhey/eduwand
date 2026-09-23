@@ -168,26 +168,73 @@ const NOT_FOUND_PHRASES = [
  * Non-HTML responses (a PDF, say) are trusted on status code alone since
  * there's no page text to sniff for "not found" phrasing.
  */
-export async function resolveReachableUrl(rawUrl: string): Promise<string | null> {
+export interface ReachableUrlResult {
+  finalUrl: string;
+  contentType: string;
+}
+
+export async function resolveReachableUrlDetailed(rawUrl: string): Promise<ReachableUrlResult | null> {
   try {
     const response = await fetchValidated(rawUrl);
     if (!response.ok) return null;
     const finalUrl = response.url || rawUrl;
+    const contentType = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
 
-    const contentType = response.headers.get("content-type") ?? "";
     if (!contentType.includes("text/html") && !contentType.includes("application/xhtml")) {
-      return finalUrl;
+      return { finalUrl, contentType };
     }
 
     const contentLength = response.headers.get("content-length");
-    if (contentLength && Number(contentLength) > URL_MAX_RESPONSE_BYTES) return finalUrl;
+    if (contentLength && Number(contentLength) > URL_MAX_RESPONSE_BYTES) return { finalUrl, contentType };
 
     const html = await response.text();
     const sample = html.slice(0, 5000).toLowerCase();
-    return NOT_FOUND_PHRASES.some((phrase) => sample.includes(phrase)) ? null : finalUrl;
+    return NOT_FOUND_PHRASES.some((phrase) => sample.includes(phrase)) ? null : { finalUrl, contentType };
   } catch {
     return null;
   }
+}
+
+const DOWNLOAD_TIMEOUT_MS = 30_000;
+
+// Downloads a remote file (a PDF or image found by AI research) with the same
+// private-address / redirect protection as URL extraction, plus a hard size
+// cap enforced while streaming - a Content-Length header can lie or be absent.
+export async function downloadRemoteFile(
+  rawUrl: string,
+  maxBytes: number
+): Promise<{ buffer: Buffer; contentType: string; finalUrl: string }> {
+  const response = await fetchValidated(rawUrl);
+  if (!response.ok) throw new Error(`Download failed (${response.status})`);
+
+  const declared = response.headers.get("content-length");
+  if (declared && Number(declared) > maxBytes) throw new Error("File is too large");
+  if (!response.body) throw new Error("Download returned no data");
+
+  const reader = response.body.getReader();
+  const stall = setTimeout(() => void reader.cancel().catch(() => {}), DOWNLOAD_TIMEOUT_MS);
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw new Error("File is too large");
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    clearTimeout(stall);
+  }
+
+  return {
+    buffer: Buffer.concat(chunks),
+    contentType: (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase(),
+    finalUrl: response.url || rawUrl,
+  };
 }
 
 function cleanExtractedText(raw: string): string {
