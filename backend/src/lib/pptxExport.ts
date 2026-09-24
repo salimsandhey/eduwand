@@ -219,17 +219,21 @@ async function renderSlide(pptx: PptxGenJS, content: PresentationContent["slides
   // the photo itself is simply not rendered any more, new exports never
   // include stock images.
   const rawLayout = content.layout as string | undefined;
-  const layout: PresentationSlideLayout = ((): PresentationSlideLayout => {
-    if (rawLayout === "title" || rawLayout === "bullets" || rawLayout === "stat" || rawLayout === "quote" ||
-        rawLayout === "divider" || rawLayout === "stat-grid" || rawLayout === "timeline" || rawLayout === "icon-grid" ||
-        rawLayout === "image") {
-      return rawLayout;
-    }
-    return "bullets";
-  })();
+  const KNOWN_LAYOUTS = new Set<string>([
+    "title", "bullets", "stat", "quote", "divider", "stat-grid", "timeline", "icon-grid", "image",
+    "big_statement", "definition", "compare_2col", "process_flow", "step", "card_grid", "table", "callout",
+    "recap_bridge", "closing_recap",
+  ]);
+  const layout: PresentationSlideLayout = (rawLayout && KNOWN_LAYOUTS.has(rawLayout) ? rawLayout : "bullets") as PresentationSlideLayout;
   const { tag: titleTag, text: title } = stripBloomTag(content.title || "");
   const bullets = content.bullets ?? [];
   const items = content.items ?? [];
+  const columns = content.columns ?? [];
+  const table = content.table;
+  const stepIndex = content.stepIndex;
+  const stepTotal = content.stepTotal;
+  const calloutIcon = content.calloutIcon ?? "!";
+  const calloutBody = content.calloutBody ?? "";
 
   if (content.notes) slide.addNotes(content.notes);
 
@@ -380,6 +384,143 @@ async function renderSlide(pptx: PptxGenJS, content: PresentationContent["slides
           slide.addText(card.description, { x: x + 0.15, y: y + 2.1, w: cardW - 0.3, h: cardH - 2.3, fontSize: 11, color: "D8D8E8", align: "center", fontFace: BODY_FONT, valign: "top" });
         }
       });
+      addChrome(slide, theme);
+      break;
+    }
+    case "big_statement": {
+      // Same centered-hero shape as "stat"/"quote" above, for the "hook"/"aim"
+      // roles - a question or one-sentence framing rather than a number/quote.
+      const fontSize = scaledFontSize(title, 40, 20, 100, 22);
+      slide.addText(title, { x: 1, y: 1.6, w: SLIDE_W - 2, h: 2.4, fontSize, bold: true, color: "FFFFFF", align: "center", valign: "middle", fontFace: HEADLINE_FONT, fit: "shrink" });
+      if (bullets[0]) {
+        slide.addText(bullets[0], { x: 1.5, y: 4.3, w: SLIDE_W - 3, h: 1, fontSize: 16, color: "E3E3F0", align: "center", fontFace: BODY_FONT });
+      }
+      addChrome(slide, theme);
+      break;
+    }
+    case "definition": {
+      // The "define" role - the term as a large headline, its meaning as the
+      // body text under it (not bulleted - it reads as one definition).
+      const tagH = addBloomTag(slide, titleTag, 0.7, 0.6, theme.accent);
+      slide.addText(title, { x: 0.7, y: 0.6 + tagH, w: SLIDE_W - 1.4, h: 1.1, fontSize: 34, bold: true, color: "FFFFFF", fontFace: HEADLINE_FONT });
+      slide.addText(bullets.join(" "), { x: 0.9, y: 1.9 + tagH, w: SLIDE_W - 1.8, h: SLIDE_H - 2.5 - tagH, fontSize: 18, color: "E3E3F0", fontFace: BODY_FONT, valign: "top" });
+      addChrome(slide, theme);
+      break;
+    }
+    case "compare_2col": {
+      const tagH = addBloomTag(slide, titleTag, 0.7, 0.35, theme.accent);
+      slide.addText(title, { x: 0.7, y: 0.35 + tagH, w: SLIDE_W - 1.4, h: 0.7, fontSize: 26, bold: true, color: "FFFFFF", fontFace: HEADLINE_FONT });
+      const cols = columns.slice(0, 2);
+      const gap = 0.4;
+      const colW = (SLIDE_W - 1.4 - gap * (cols.length - 1)) / Math.max(cols.length, 1);
+      const colY = 1.5 + tagH;
+      cols.forEach((col, i) => {
+        const x = 0.7 + i * (colW + gap);
+        slide.addText(col.heading, { x, y: colY, w: colW, h: 0.4, fontSize: 15, bold: true, color: theme.accent, fontFace: BODY_FONT });
+        slide.addText(
+          col.rows.map((r) => ({ text: r, options: { bullet: true, breakLine: true } })),
+          { x, y: colY + 0.5, w: colW, h: SLIDE_H - (colY + 0.5) - 0.5, fontSize: 14, color: "E3E3F0", fontFace: BODY_FONT }
+        );
+      });
+      addChrome(slide, theme);
+      break;
+    }
+    case "process_flow": {
+      const tagH = addBloomTag(slide, titleTag, 0.7, 0.3, theme.accent);
+      slide.addText(title, { x: 0.7, y: 0.3 + tagH, w: SLIDE_W - 1.4, h: 0.6, fontSize: 24, bold: true, color: "FFFFFF", fontFace: HEADLINE_FONT });
+      const steps = items.slice(0, 6);
+      const arrowW = 0.4;
+      const gap = 0.2;
+      const boxW = (SLIDE_W - 1.4 - gap * (steps.length - 1) - arrowW * Math.max(steps.length - 1, 0)) / Math.max(steps.length, 1);
+      const boxY = 2.5 + tagH;
+      const boxH = 1.6;
+      steps.forEach((step, i) => {
+        const x = 0.7 + i * (boxW + arrowW + gap);
+        slide.addShape("roundRect", { x, y: boxY, w: boxW, h: boxH, rectRadius: 0.08, fill: { color: theme.accent } });
+        slide.addText(step.title, { x: x + 0.1, y: boxY, w: boxW - 0.2, h: boxH, fontSize: 12, bold: true, color: "111111", align: "center", valign: "middle", fontFace: BODY_FONT });
+        if (i < steps.length - 1) {
+          slide.addText("→", { x: x + boxW, y: boxY, w: arrowW, h: boxH, fontSize: 20, bold: true, color: theme.accent, align: "center", valign: "middle", fontFace: BODY_FONT });
+        }
+      });
+      addChrome(slide, theme);
+      break;
+    }
+    case "step": {
+      if (stepIndex && stepTotal) {
+        slide.addText(`STEP ${stepIndex} OF ${stepTotal}`, { x: 0.7, y: 0.35, w: 4, h: 0.35, fontSize: 12, bold: true, color: theme.accent, fontFace: BODY_FONT });
+      }
+      slide.addText(String(stepIndex ?? ""), { x: 0.7, y: 0.85, w: 1.4, h: 1.4, fontSize: 60, bold: true, color: theme.accent, fontFace: HEADLINE_FONT });
+      slide.addText(title, { x: 2.3, y: 0.85, w: SLIDE_W - 3, h: 0.9, fontSize: 26, bold: true, color: "FFFFFF", fontFace: HEADLINE_FONT });
+      slide.addText(
+        bullets.map((b) => ({ text: b, options: { bullet: true, breakLine: true } })),
+        { x: 2.3, y: 1.85, w: SLIDE_W - 3, h: SLIDE_H - 2.4, fontSize: 16, color: "E3E3F0", fontFace: BODY_FONT }
+      );
+      addChrome(slide, theme);
+      break;
+    }
+    case "card_grid": {
+      // Same card-grid box style as "icon-grid" above, without the icon badge
+      // (used for "materials"/"check"/"must_know"/"answer_key" - plain term
+      // cards, not concept icons).
+      const tagH = addBloomTag(slide, titleTag, 0.7, 0.35, theme.accent);
+      slide.addText(title, { x: 0.7, y: 0.35 + tagH, w: SLIDE_W - 1.4, h: 0.6, fontSize: 24, bold: true, color: "FFFFFF", fontFace: HEADLINE_FONT });
+      const cards = items.slice(0, 6);
+      const cols = Math.min(cards.length, 4) || 1;
+      const rows = Math.ceil(cards.length / cols);
+      const gap = 0.3;
+      const cardW = (SLIDE_W - 1.4 - gap * (cols - 1)) / cols;
+      const cardH = Math.min(2.1, (SLIDE_H - (1.5 + tagH) - 0.5 - gap * (rows - 1)) / rows);
+      const startY = 1.5 + tagH;
+      cards.forEach((card, i) => {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        const x = 0.7 + col * (cardW + gap);
+        const y = startY + row * (cardH + gap);
+        slide.addShape("roundRect", { x, y, w: cardW, h: cardH, rectRadius: 0.1, fill: { color: "FFFFFF", transparency: 92 }, line: { color: theme.accent, width: 1 } });
+        slide.addText(card.title, { x: x + 0.15, y: y + 0.15, w: cardW - 0.3, h: 0.5, fontSize: 13, bold: true, color: theme.accent, fontFace: BODY_FONT });
+        if (card.description) {
+          slide.addText(card.description, { x: x + 0.15, y: y + 0.65, w: cardW - 0.3, h: cardH - 0.8, fontSize: 10, color: "E3E3F0", fontFace: BODY_FONT, valign: "top" });
+        }
+      });
+      addChrome(slide, theme);
+      break;
+    }
+    case "table": {
+      const tagH = addBloomTag(slide, titleTag, 0.7, 0.35, theme.accent);
+      slide.addText(title, { x: 0.7, y: 0.35 + tagH, w: SLIDE_W - 1.4, h: 0.6, fontSize: 24, bold: true, color: "FFFFFF", fontFace: HEADLINE_FONT });
+      if (table) {
+        const rows: PptxGenJS.TableRow[] = [
+          table.headers.map((h) => ({ text: h, options: { bold: true, color: "111111", fill: { color: theme.accent }, fontFace: BODY_FONT } })),
+          ...table.rows.map((r) => r.map((c) => ({ text: c, options: { color: "111111", fontFace: BODY_FONT } }))),
+        ];
+        slide.addTable(rows, { x: 0.7, y: 1.5 + tagH, w: SLIDE_W - 1.4, h: SLIDE_H - (1.5 + tagH) - 0.5, fontSize: 12, border: { type: "solid", color: theme.accent, pt: 0.5 }, fill: { color: "FFFFFF" } });
+      }
+      addChrome(slide, theme);
+      break;
+    }
+    case "callout": {
+      // The "safety" role's slide - a flagged warning, never removed by
+      // density (see fillPresentationContent's safetyNote instruction).
+      const badgeSize = 0.9;
+      slide.addShape("roundRect", { x: 0.7, y: 1.4, w: badgeSize, h: badgeSize, rectRadius: 0.15, fill: { color: theme.accent } });
+      slide.addText(calloutIcon, { x: 0.7, y: 1.4, w: badgeSize, h: badgeSize, fontSize: 34, bold: true, color: "111111", align: "center", valign: "middle", fontFace: BODY_FONT });
+      slide.addText(title, { x: 0.7 + badgeSize + 0.3, y: 1.3, w: SLIDE_W - 1.4 - badgeSize - 0.3, h: 0.6, fontSize: 24, bold: true, color: "FFFFFF", fontFace: HEADLINE_FONT });
+      slide.addText(calloutBody, { x: 0.7 + badgeSize + 0.3, y: 2.0, w: SLIDE_W - 1.4 - badgeSize - 0.3, h: SLIDE_H - 2.5, fontSize: 16, color: "E3E3F0", fontFace: BODY_FONT, valign: "top" });
+      addChrome(slide, theme);
+      break;
+    }
+    case "recap_bridge":
+    case "closing_recap": {
+      // Auto-inserted multi-class bridge, and the end-of-deck recap - both
+      // are a title + short bullet list, same visual weight as "bullets" but
+      // framed distinctly enough (via the title's own copy) not to need a
+      // different shape.
+      const tagH = addBloomTag(slide, titleTag, 0.7, 0.5, theme.accent);
+      slide.addText(title, { x: 0.7, y: 0.5 + tagH, w: SLIDE_W - 1.4, h: 1, fontSize: 30, bold: true, color: "FFFFFF", fontFace: HEADLINE_FONT });
+      slide.addText(
+        bullets.map((b) => ({ text: b, options: { bullet: true, breakLine: true } })),
+        { x: 0.9, y: 1.7 + tagH, w: SLIDE_W - 1.8, h: SLIDE_H - 2.3 - tagH, fontSize: 18, color: "E3E3F0", fontFace: BODY_FONT }
+      );
       addChrome(slide, theme);
       break;
     }

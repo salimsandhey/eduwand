@@ -21,6 +21,7 @@ import { hasSufficientCredits, getFeatureCost } from "../lib/credits";
 import { storage } from "../lib/storage";
 import { extractPdfPageRangeText } from "../lib/extraction";
 import { buildPresentationPptx } from "../lib/pptxExport";
+import { buildPresentationPdf } from "../lib/presentationPdfExport";
 import { getSchoolBoard } from "../lib/boards";
 import type { MediaItem } from "../lib/media";
 import { EmbedSelection, applyMedia, assemblePresentation, buildMediaItems, catalogFor, loadMediaAssets, mediaItemsFromContent } from "../lib/generation-media";
@@ -459,6 +460,37 @@ export async function generationRoutes(app: FastifyInstance) {
     const safeName = generation.topic.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase().slice(0, 60) || "presentation";
     reply.header("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
     reply.header("Content-Disposition", `attachment; filename="${safeName}.pptx"`);
+    return reply.send(buffer);
+  });
+
+  // Step 10's PDF export - "rendered from the in-app layout" (spec), same
+  // 14-layout content as the pptx export above, one page per slide.
+  app.get<{ Params: { id: string } }>("/generations/:id/export.pdf", { onRequest: scoped(app) }, async (request, reply) => {
+    const generation = await prisma.generation.findFirst({
+      where: { id: request.params.id, topic: { schoolId: request.schoolId } },
+      include: { topic: { select: { name: true } } },
+    });
+    if (!generation) {
+      return reply.code(404).send({ data: null, error: { code: "not_found", message: "Generation not found" } });
+    }
+    if (generation.outputType !== "presentation") {
+      return reply.code(400).send({ data: null, error: { code: "validation_error", message: "Only presentations can be exported to PDF" } });
+    }
+
+    let content: PresentationContent;
+    try {
+      content = JSON.parse(generation.editedOutput ?? generation.aiOutput);
+    } catch {
+      return reply.code(500).send({ data: null, error: { code: "invalid_content", message: "Stored presentation content is not valid JSON" } });
+    }
+    if (!Array.isArray(content.slides)) {
+      return reply.code(500).send({ data: null, error: { code: "invalid_content", message: "Stored presentation content has no slides" } });
+    }
+
+    const buffer = await buildPresentationPdf(content);
+    const safeName = generation.topic.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase().slice(0, 60) || "presentation";
+    reply.header("Content-Type", "application/pdf");
+    reply.header("Content-Disposition", `attachment; filename="${safeName}.pdf"`);
     return reply.send(buffer);
   });
 
