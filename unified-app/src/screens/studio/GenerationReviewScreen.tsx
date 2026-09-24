@@ -122,6 +122,7 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
   const [isGeneratingAssessment, setIsGeneratingAssessment] = useState(false);
   useAiGenerating(isRetrying || isGeneratingAssessment);
   const [isExportingPptx, setIsExportingPptx] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -294,6 +295,38 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
       setError(err instanceof Error ? err.message : "Failed to export presentation");
     } finally {
       setIsExportingPptx(false);
+    }
+  }
+
+  async function exportPdf() {
+    if (!accessToken || !generation) return;
+    setIsExportingPdf(true);
+    setError(null);
+    try {
+      const fileUri = `${FileSystem.cacheDirectory}${generation.id}.pdf`;
+      await FileSystem.downloadAsync(api.presentationExportPdfUrl(generation.id), fileUri, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(fileUri, { mimeType: "application/pdf", dialogTitle: "Share presentation", UTI: "com.adobe.pdf" });
+      } else {
+        setError(`Presentation saved to ${fileUri}`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to export presentation as PDF");
+    } finally {
+      setIsExportingPdf(false);
+    }
+  }
+
+  async function regeneratePresentationSlide(index: number) {
+    if (!accessToken || !generation) return;
+    try {
+      const updated = await api.regeneratePresentationSlide(accessToken, generation.id, index);
+      setGeneration(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not regenerate this slide");
     }
   }
 
@@ -480,7 +513,13 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
             ) : structuredContent.type === "flashcards" ? (
               <FlashcardsView content={structuredContent} editable={isEditing} onChange={handleStructuredChange} />
             ) : (
-              <PresentationView content={structuredContent} editable={isEditing} onChange={handleStructuredChange} mediaUrl={mediaUrlFor} />
+              <PresentationView
+                content={structuredContent}
+                editable={isEditing}
+                onChange={handleStructuredChange}
+                mediaUrl={mediaUrlFor}
+                onRegenerateSlide={regeneratePresentationSlide}
+              />
             )}
             {structuredContent.type !== "presentation" ? (
               <AttachedMedia items={getAttachedMedia(generation.editedOutput ?? generation.aiOutput)} urlFor={mediaUrlFor} />
@@ -579,6 +618,23 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
                 <>
                   <Ionicons name="download-outline" size={18} color={colors.textPrimary} />
                   <Text style={[styles.shareButtonText, { color: colors.textPrimary }]}>Export as PPTX</Text>
+                </>
+              )}
+            </Pressable>
+          ) : null}
+          {generation.outputType === "presentation" ? (
+            <Pressable
+              style={({ pressed }) => [styles.shareButton, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, marginBottom: spacing.sm }, (isExportingPdf || pressed) && { opacity: pressedOpacity }]}
+              onPress={exportPdf}
+              disabled={isExportingPdf}
+              accessibilityRole="button"
+            >
+              {isExportingPdf ? (
+                <ActivityIndicator color={colors.textPrimary} />
+              ) : (
+                <>
+                  <Ionicons name="document-outline" size={18} color={colors.textPrimary} />
+                  <Text style={[styles.shareButtonText, { color: colors.textPrimary }]}>Export as PDF</Text>
                 </>
               )}
             </Pressable>

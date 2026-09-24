@@ -17,6 +17,12 @@ interface Props {
   // Where to load an "image" slide's picture from (an uploaded image, or a
   // rendered PDF page) - supplied by the screen, which knows the topic + token.
   mediaUrl?: (item: MediaItem) => string;
+  // Regenerates just the slide at this index (step 9's "regenerate a single
+  // slide") - the actual API call/loading state live in the screen that owns
+  // generationId, this view stays a pure content-in/content-out component.
+  // Only offered on new-flow decks (slide.role is set); legacy decks have no
+  // matching backend endpoint to call.
+  onRegenerateSlide?: (index: number) => Promise<void>;
 }
 
 // What an "image" slide shows: the picture's URL and its credit line.
@@ -170,7 +176,7 @@ function useScaledSlideStyles(scale: number) {
   );
 }
 
-export function PresentationView({ content, editable, onChange, mediaUrl }: Props) {
+export function PresentationView({ content, editable, onChange, mediaUrl, onRegenerateSlide }: Props) {
   const { colors } = useTheme();
   const [presentingIndex, setPresentingIndex] = useState<number | null>(null);
   const mediaById = useMemo(() => new Map((content.media ?? []).map((item) => [item.id, item])), [content.media]);
@@ -214,6 +220,7 @@ export function PresentationView({ content, editable, onChange, mediaUrl }: Prop
             index={i}
             editable={editable}
             onRemove={editable && content.slides.length > 1 ? () => removeSlide(i) : undefined}
+            onRegenerate={editable && onRegenerateSlide && slide.role ? () => onRegenerateSlide(i) : undefined}
             renderView={() => (
               <View>
                 <View style={styles.editLayoutTag}>
@@ -421,6 +428,34 @@ function TileVisual({
     );
   }
 
+  if (layout === "card_grid" || layout === "process_flow") {
+    return (
+      <View style={styles.tileVisual}>
+        <View style={styles.tileGridRow}>
+          {items.slice(0, 3).map((item, ii) => (
+            <View key={ii} style={[styles.tileGridBox, { borderColor: scheme.accent }]}>
+              <Text style={[styles.tileGridBoxText, { color: scheme.accent }]} numberOfLines={1}>{item.title}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    );
+  }
+
+  if (layout === "table" && slide.table) {
+    return (
+      <View style={styles.tileVisual}>
+        <View style={styles.tileGridRow}>
+          {slide.table.headers.slice(0, 3).map((h, ii) => (
+            <View key={ii} style={[styles.tileGridBox, { borderColor: scheme.accent }]}>
+              <Text style={[styles.tileGridBoxText, { color: scheme.accent }]} numberOfLines={1}>{h}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    );
+  }
+
   // "bullets" (the default/fallback layout too) - a mini version of the
   // actual bullet list instead of one truncated caption line.
   const bullets = slide.bullets.slice(0, 3);
@@ -599,6 +634,183 @@ function SlideContent({
               </View>
               <Text style={[styles.iconGridTitle, ss.iconGridTitle, { color: scheme.text }]} numberOfLines={2}>{card.title}</Text>
               {card.description ? <Text style={[styles.iconGridDescription, ss.iconGridDescription, { color: scheme.mutedText }]} numberOfLines={4}>{card.description}</Text> : null}
+            </View>
+          ))}
+        </View>
+        {showLogo ? <Image source={{ uri: logoUrl! }} style={[styles.slideshowLogo, ss.slideshowLogo]} resizeMode="contain" /> : null}
+      </View>
+    );
+  }
+
+  if (layout === "big_statement") {
+    return (
+      <View style={[styles.slideCenterBox, ss.slideCenterBox]}>
+        <Text style={[styles.statText, ss.statText, { fontSize: sz(34, scale), color: scheme.text }]}>{title}</Text>
+        {slide.bullets[0] ? <Text style={[styles.statCaption, ss.statCaption, { color: scheme.mutedText }]}>{slide.bullets[0]}</Text> : null}
+        {showLogo ? <Image source={{ uri: logoUrl! }} style={[styles.slideshowLogo, ss.slideshowLogo]} resizeMode="contain" /> : null}
+      </View>
+    );
+  }
+
+  if (layout === "definition") {
+    return (
+      <View style={[styles.slidePageInner, ss.slidePageInner]}>
+        {bloomBadge}
+        <Text style={[styles.slideshowTitle, ss.slideshowTitle, { color: scheme.text }]}>{title}</Text>
+        <Text style={{ color: scheme.mutedText, fontSize: sz(14, scale), lineHeight: sz(20, scale) }}>{slide.bullets.join(" ")}</Text>
+        {showLogo ? <Image source={{ uri: logoUrl! }} style={[styles.slideshowLogo, ss.slideshowLogo]} resizeMode="contain" /> : null}
+      </View>
+    );
+  }
+
+  if (layout === "compare_2col") {
+    const columns = slide.columns ?? [];
+    return (
+      <View style={[styles.slidePageInner, ss.slidePageInner]}>
+        {bloomBadge}
+        <Text style={[styles.slideshowTitle, ss.slideshowTitle, { color: scheme.text }]}>{title}</Text>
+        <View style={styles.compare2colRow}>
+          {columns.map((col, ci) => (
+            <View key={ci} style={styles.compare2colCol}>
+              <Text style={{ color: scheme.accent, fontSize: sz(12, scale), fontFamily: typography.bold, marginBottom: sz(6, scale) }}>{col.heading}</Text>
+              {col.rows.map((row, ri) => (
+                <View key={ri} style={styles.slideshowBulletRow}>
+                  <View style={[styles.slideshowBulletDot, ss.slideshowBulletDot, { backgroundColor: scheme.accent }]} />
+                  <Text style={[styles.slideshowBulletText, ss.slideshowBulletText, { color: scheme.mutedText }]}>{row}</Text>
+                </View>
+              ))}
+            </View>
+          ))}
+        </View>
+        {showLogo ? <Image source={{ uri: logoUrl! }} style={[styles.slideshowLogo, ss.slideshowLogo]} resizeMode="contain" /> : null}
+      </View>
+    );
+  }
+
+  if (layout === "process_flow") {
+    const steps = items.slice(0, 6);
+    return (
+      <View style={[styles.slidePageInner, ss.slidePageInner]}>
+        {bloomBadge}
+        <Text style={[styles.slideshowTitle, ss.slideshowTitle, { color: scheme.text }]}>{title}</Text>
+        <View style={styles.processFlowRow}>
+          {steps.map((step, ii) => (
+            <View key={ii} style={styles.processFlowStep}>
+              <View style={[styles.processFlowBox, { backgroundColor: scheme.accent }]}>
+                <Text style={{ color: "#111111", fontSize: sz(10, scale), fontFamily: typography.bold, textAlign: "center" }} numberOfLines={3}>{step.title}</Text>
+              </View>
+              {ii < steps.length - 1 ? <Text style={{ color: scheme.accent, fontSize: sz(16, scale), marginHorizontal: sz(4, scale) }}>{"→"}</Text> : null}
+            </View>
+          ))}
+        </View>
+        {showLogo ? <Image source={{ uri: logoUrl! }} style={[styles.slideshowLogo, ss.slideshowLogo]} resizeMode="contain" /> : null}
+      </View>
+    );
+  }
+
+  if (layout === "step") {
+    return (
+      <View style={[styles.slidePageInner, ss.slidePageInner]}>
+        {slide.stepIndex && slide.stepTotal ? (
+          <Text style={{ color: scheme.accent, fontSize: sz(11, scale), fontFamily: typography.bold, marginBottom: sz(6, scale) }}>
+            STEP {slide.stepIndex} OF {slide.stepTotal}
+          </Text>
+        ) : null}
+        <View style={{ flexDirection: "row", alignItems: "flex-start", gap: sz(16, scale) }}>
+          <Text style={{ color: scheme.accent, fontSize: sz(44, scale), fontFamily: typography.bold }}>{slide.stepIndex ?? ""}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.slideshowTitle, ss.slideshowTitle, { color: scheme.text, marginBottom: sz(8, scale) }]}>{title}</Text>
+            <View style={[styles.slideshowBulletList, ss.slideshowBulletList]}>
+              {slide.bullets.map((b, bi) => (
+                <View key={bi} style={styles.slideshowBulletRow}>
+                  <View style={[styles.slideshowBulletDot, ss.slideshowBulletDot, { backgroundColor: scheme.accent }]} />
+                  <Text style={[styles.slideshowBulletText, ss.slideshowBulletText, { color: scheme.mutedText }]}>{b}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        </View>
+        {showLogo ? <Image source={{ uri: logoUrl! }} style={[styles.slideshowLogo, ss.slideshowLogo]} resizeMode="contain" /> : null}
+      </View>
+    );
+  }
+
+  if (layout === "card_grid") {
+    // Same card-grid box style as "icon-grid" above, without the icon badge -
+    // plain term cards for "materials"/"check"/"must_know"/"answer_key".
+    const cards = items.slice(0, 6);
+    return (
+      <View style={[styles.slidePageInner, ss.slidePageInner]}>
+        {bloomBadge}
+        <Text style={[styles.slideshowTitle, ss.slideshowTitle, { color: scheme.text }]}>{title}</Text>
+        <View style={[styles.iconGridRow, ss.iconGridRow]}>
+          {cards.map((card, ii) => (
+            <View key={ii} style={[styles.iconGridCard, ss.iconGridCard, { borderColor: scheme.accent }]}>
+              <Text style={[styles.iconGridTitle, ss.iconGridTitle, { color: scheme.accent }]} numberOfLines={2}>{card.title}</Text>
+              {card.description ? <Text style={[styles.iconGridDescription, ss.iconGridDescription, { color: scheme.mutedText }]} numberOfLines={4}>{card.description}</Text> : null}
+            </View>
+          ))}
+        </View>
+        {showLogo ? <Image source={{ uri: logoUrl! }} style={[styles.slideshowLogo, ss.slideshowLogo]} resizeMode="contain" /> : null}
+      </View>
+    );
+  }
+
+  if (layout === "table") {
+    const t = slide.table;
+    return (
+      <View style={[styles.slidePageInner, ss.slidePageInner]}>
+        {bloomBadge}
+        <Text style={[styles.slideshowTitle, ss.slideshowTitle, { color: scheme.text }]}>{title}</Text>
+        {t ? (
+          <View style={{ alignSelf: "stretch" }}>
+            <View style={[styles.tableRow, { backgroundColor: scheme.accent }]}>
+              {t.headers.map((h, hi) => (
+                <Text key={hi} style={{ flex: 1, color: "#111111", fontSize: sz(11, scale), fontFamily: typography.bold, padding: sz(6, scale) }}>{h}</Text>
+              ))}
+            </View>
+            {t.rows.map((row, ri) => (
+              <View key={ri} style={[styles.tableRow, { borderBottomColor: scheme.accent, borderBottomWidth: 1 }]}>
+                {row.map((cell, ci) => (
+                  <Text key={ci} style={{ flex: 1, color: scheme.mutedText, fontSize: sz(10, scale), padding: sz(6, scale) }}>{cell}</Text>
+                ))}
+              </View>
+            ))}
+          </View>
+        ) : null}
+        {showLogo ? <Image source={{ uri: logoUrl! }} style={[styles.slideshowLogo, ss.slideshowLogo]} resizeMode="contain" /> : null}
+      </View>
+    );
+  }
+
+  if (layout === "callout") {
+    // The "safety" role's slide - a flagged warning, never removed by
+    // density (see backend's fillPresentationContent safetyNote).
+    return (
+      <View style={[styles.slidePageInner, ss.slidePageInner, { flexDirection: "row", alignItems: "flex-start", gap: sz(14, scale) }]}>
+        <View style={{ width: sz(40, scale), height: sz(40, scale), borderRadius: sz(10, scale), backgroundColor: scheme.accent, alignItems: "center", justifyContent: "center" }}>
+          <Text style={{ color: "#111111", fontSize: sz(18, scale), fontFamily: typography.bold }}>{slide.calloutIcon ?? "!"}</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.slideshowTitle, ss.slideshowTitle, { color: scheme.text }]}>{title}</Text>
+          <Text style={{ color: scheme.mutedText, fontSize: sz(13, scale), lineHeight: sz(19, scale) }}>{slide.calloutBody ?? ""}</Text>
+        </View>
+      </View>
+    );
+  }
+
+  if (layout === "recap_bridge" || layout === "closing_recap") {
+    // Auto-inserted multi-class bridge, and the end-of-deck recap - both are
+    // a title + short bullet list, same visual weight as "bullets".
+    return (
+      <View style={[styles.slidePageInner, ss.slidePageInner]}>
+        {bloomBadge}
+        <Text style={[styles.slideshowTitle, ss.slideshowTitle, { color: scheme.text }]}>{title}</Text>
+        <View style={[styles.slideshowBulletList, ss.slideshowBulletList]}>
+          {slide.bullets.map((b, bi) => (
+            <View key={bi} style={styles.slideshowBulletRow}>
+              <View style={[styles.slideshowBulletDot, ss.slideshowBulletDot, { backgroundColor: scheme.accent }]} />
+              <Text style={[styles.slideshowBulletText, ss.slideshowBulletText, { color: scheme.mutedText }]}>{b}</Text>
             </View>
           ))}
         </View>
@@ -876,6 +1088,18 @@ const styles = StyleSheet.create({
   imageSplitRow: { flex: 1, flexDirection: "row" },
   imageSplitImage: { width: "50%", height: "100%" },
   imageSplitText: { width: "50%", height: "100%", justifyContent: "center", paddingHorizontal: 18, paddingVertical: 18 },
+
+  // compare_2col layout
+  compare2colRow: { flexDirection: "row", gap: 20, marginTop: 4, alignSelf: "stretch" },
+  compare2colCol: { flex: 1 },
+
+  // process_flow layout
+  processFlowRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 4, marginTop: 12, alignSelf: "stretch" },
+  processFlowStep: { flexDirection: "row", alignItems: "center" },
+  processFlowBox: { width: 70, height: 56, borderRadius: 8, alignItems: "center", justifyContent: "center", padding: 4 },
+
+  // table layout
+  tableRow: { flexDirection: "row", alignSelf: "stretch" },
   stepBadgeLarge: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 5, marginBottom: 12, alignSelf: "flex-start" },
   stepBadgeLargeText: { fontSize: 10, fontFamily: typography.bold, color: "#111111", letterSpacing: 0.4 },
   bloomBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4, marginBottom: 8, alignSelf: "flex-start" },

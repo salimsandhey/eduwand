@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { View, Text, Pressable, StyleSheet } from "react-native";
+import { View, Text, Pressable, StyleSheet, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../../../theme/ThemeContext";
 import { radius, spacing, typography } from "../../../theme/tokens";
@@ -10,11 +10,26 @@ interface NumberedEditCardProps {
   renderView: () => React.ReactNode;
   renderEditor: (done: () => void, cancel: () => void) => React.ReactNode;
   onRemove?: () => void;
+  // Presentation slides only, for now - regenerates just this item's content
+  // in place (same taught content/options as the original generation), so
+  // one bad slide doesn't force rebuilding the whole deck.
+  onRegenerate?: () => void | Promise<void>;
 }
 
-export function NumberedEditCard({ index, editable, renderView, renderEditor, onRemove }: NumberedEditCardProps) {
+export function NumberedEditCard({ index, editable, renderView, renderEditor, onRemove, onRegenerate }: NumberedEditCardProps) {
   const { colors, cardShadow, pressedOpacity } = useTheme();
   const [isEditing, setIsEditing] = useState(false);
+  const [isRegenerating, setIsRegenerating] = useState(false);
+
+  async function handleRegenerate() {
+    if (!onRegenerate || isRegenerating) return;
+    setIsRegenerating(true);
+    try {
+      await onRegenerate();
+    } finally {
+      setIsRegenerating(false);
+    }
+  }
 
   return (
     <View
@@ -49,6 +64,22 @@ export function NumberedEditCard({ index, editable, renderView, renderEditor, on
               >
                 <Ionicons name="pencil" size={16} color={colors.accent} />
               </Pressable>
+              {onRegenerate ? (
+                <Pressable
+                  onPress={handleRegenerate}
+                  disabled={isRegenerating}
+                  hitSlop={8}
+                  style={({ pressed }) => (pressed || isRegenerating) && { opacity: pressedOpacity }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Regenerate this slide"
+                >
+                  {isRegenerating ? (
+                    <ActivityIndicator size="small" color={colors.accent} />
+                  ) : (
+                    <Ionicons name="refresh" size={16} color={colors.accent} />
+                  )}
+                </Pressable>
+              ) : null}
               {onRemove ? (
                 <Pressable
                   onPress={onRemove}
