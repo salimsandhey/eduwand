@@ -7,11 +7,16 @@ import {
   GenerationOutputType,
   PresentationTemplate,
   PresentationContent,
+  PresentationReason,
+  PresentationDensity,
+  PresentationOutlineEntry,
+  MODEL_GEMINI_FLASH,
   ActivityGroupSize,
   ACTIVITY_GROUP_SIZE_LABELS,
   ACTIVITY_RESOURCE_OPTIONS,
   LEARNING_STAGE_OPTIONS,
 } from "../lib/ai";
+import { buildRoleSequence, slidesPerClassRange } from "../lib/presentationPlan";
 import { hasSufficientCredits, getFeatureCost } from "../lib/credits";
 import { storage } from "../lib/storage";
 import { extractPdfPageRangeText } from "../lib/extraction";
@@ -203,6 +208,17 @@ export async function generationRoutes(app: FastifyInstance) {
         return reply.code(400).send({
           data: null,
           error: { code: "validation_error", message: `outputType must be one of ${VALID_OUTPUT_TYPES.join(", ")}` },
+        });
+      }
+      // New presentations go through the reason/density/outline flow below
+      // (POST /topics/:id/presentation-outline) - this route stays reachable
+      // for presentations only via `retry` (old rows) or assembleOnly (a
+      // deck built purely from the teacher's own images, no structure/
+      // density concept to retrofit).
+      if (body.outputType === "presentation" && !body.assembleOnly) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "use_presentation_flow", message: "Use POST /topics/:id/presentation-outline to start a new presentation." },
         });
       }
       const mode = body.mode ?? "generate";
@@ -690,4 +706,311 @@ export async function generationRoutes(app: FastifyInstance) {
     });
     return { data: updated, meta: {} };
   });
+
+  // ===== Presentation flow (steps 4-9 of PPT guidelines.pdf) =====
+
+  const VALID_PRESENTATION_REASONS: PresentationReason[] = ["concept_deck", "activity_walkthrough", "revision_deck"];
+  const VALID_PRESENTATION_DENSITIES: PresentationDensity[] = ["light", "balanced", "dense"];
+
+  interface CreatePresentationOutlineBody {
+    presentationReason: string;
+    presentationDensity: string;
+    presentationClasses: number;
+    totalSlides: number;
+    customPrompt?: string;
+    sources?: SourceSelection[];
+    // Deliberately no `embeds` field here (unlike the legacy CreateGenerationBody) -
+    // the new flow never places an uploaded PDF's page image on a slide
+    // (copyright rule: never extract images/figures/diagrams from an
+    // uploaded PDF into a slide). A teacher's own photos may still go on
+    // other output types via the legacy embeds path, which this flow
+    // doesn't touch.
+  }
+
+  // Step 4-8: teacher picks reason/classes/slides/density, system returns a
+  // fast, content-free outline (roles + titles + one-liners) for review.
+  app.post<{ Params: { id: string }; Body: CreatePresentationOutlineBody }>(
+    "/topics/:id/presentation-outline",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const body = request.body ?? ({} as CreatePresentationOutlineBody);
+
+      if (!VALID_PRESENTATION_REASONS.includes(body.presentationReason as PresentationReason)) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: `presentationReason must be one of ${VALID_PRESENTATION_REASONS.join(", ")}` },
+        });
+      }
+      if (!VALID_PRESENTATION_DENSITIES.includes(body.presentationDensity as PresentationDensity)) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: `presentationDensity must be one of ${VALID_PRESENTATION_DENSITIES.join(", ")}` },
+        });
+      }
+      const classes = body.presentationClasses ?? 1;
+      if (!Number.isInteger(classes) || classes < 1 || classes > 3) {
+        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "presentationClasses must be between 1 and 3" } });
+      }
+      const range = slidesPerClassRange(classes);
+      const bandMin = range.min * classes;
+      const bandMax = range.max * classes;
+      if (!body.totalSlides || body.totalSlides < bandMin || body.totalSlides > bandMax) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: `totalSlides must be between ${bandMin} and ${bandMax} for ${classes} class(es)` },
+        });
+      }
+
+      const topic = await prisma.topic.findFirst({
+        where: { id: request.params.id, schoolId: request.schoolId },
+        include: { classSection: true, contextSources: true },
+      });
+      if (!topic) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Topic not found" } });
+      }
+
+      if (!(await hasSufficientCredits(request.user.sub, await getFeatureCost("generation")))) {
+        return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to generate this content" } });
+      }
+
+      const { contextText } = await resolveSelectedContextText(topic.contextSources, body.sources ?? []);
+      const roleSequence = buildRoleSequence({
+        reason: body.presentationReason as PresentationReason,
+        totalSlides: body.totalSlides,
+        classes,
+      });
+      // Grade is read straight off the class section name (spec: "Complexity
+      // level - The grade on the class record") - className is free text
+      // like "Class 7", used as-is; no separate grade field exists on
+      // ClassSection.
+      const gradeLevel = topic.classSection.className;
+
+      const start = Date.now();
+      let outline: PresentationOutlineEntry[];
+      try {
+        outline = await aiProvider.generatePresentationOutline({
+          topicName: topic.name,
+          subject: topic.subject,
+          board: await getSchoolBoard(request.schoolId),
+          gradeLevel,
+          roleSequence,
+          contextText,
+          language: "English",
+          customPrompt: body.customPrompt ?? null,
+        });
+      } catch (err) {
+        app.log.error(err, "Presentation outline generation failed");
+        return reply.code(500).send({ data: null, error: { code: "generation_failed", message: "Could not generate the outline. Please try again." } });
+      }
+
+      const generation = await prisma.generation.create({
+        data: {
+          topicId: topic.id,
+          teacherUserId: request.user.sub,
+          outputType: "presentation",
+          mode: "plan",
+          presentationReason: body.presentationReason,
+          presentationDensity: body.presentationDensity,
+          presentationClasses: classes,
+          outline: outline as unknown as object,
+          aiOutput: "{}", // no slide content yet - non-null column, placeholder until confirm
+          modelUsed: MODEL_GEMINI_FLASH,
+          generationStatus: "outline",
+          customPrompt: body.customPrompt ?? null,
+          selectedSources: (body.sources ?? []) as unknown as object,
+        },
+        include: { contextSources: true },
+      });
+
+      await logAiUsage({
+        schoolId: request.schoolId,
+        teacherUserId: request.user.sub,
+        feature: "generation",
+        model: MODEL_GEMINI_FLASH,
+        durationMs: Date.now() - start,
+      });
+
+      return reply.code(201).send({ data: generation, meta: {} });
+    }
+  );
+
+  interface UpdatePresentationOutlineBody {
+    outline: PresentationOutlineEntry[];
+  }
+
+  // Step 8: teacher cuts/reorders the outline before content-fill.
+  app.patch<{ Params: { id: string }; Body: UpdatePresentationOutlineBody }>(
+    "/generations/:id/presentation-outline",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const generation = await prisma.generation.findFirst({ where: { id: request.params.id, topic: { schoolId: request.schoolId } } });
+      if (!generation) return reply.code(404).send({ data: null, error: { code: "not_found", message: "Generation not found" } });
+      if (generation.generationStatus !== "outline") {
+        return reply.code(400).send({ data: null, error: { code: "invalid_state", message: "This presentation's outline has already been confirmed" } });
+      }
+      const outline = request.body?.outline ?? [];
+      if (outline.length === 0) {
+        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "outline must have at least one slide" } });
+      }
+      const updated = await prisma.generation.update({
+        where: { id: generation.id },
+        data: { outline: outline as unknown as object },
+      });
+      return reply.send({ data: updated, meta: {} });
+    }
+  );
+
+  // Step 9: fills body content for the (possibly edited) outline - the
+  // slower pass, run only once the teacher has committed to the slide list.
+  app.post<{ Params: { id: string } }>(
+    "/generations/:id/presentation-confirm",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const generation = await prisma.generation.findFirst({
+        where: { id: request.params.id, topic: { schoolId: request.schoolId } },
+        include: { topic: { include: { classSection: true, contextSources: true } } },
+      });
+      if (!generation) return reply.code(404).send({ data: null, error: { code: "not_found", message: "Generation not found" } });
+      if (generation.generationStatus !== "outline") {
+        return reply.code(400).send({ data: null, error: { code: "invalid_state", message: "This presentation has already been generated" } });
+      }
+      const outline = (generation.outline as unknown as PresentationOutlineEntry[]) ?? [];
+
+      if (!(await hasSufficientCredits(request.user.sub, await getFeatureCost("generation")))) {
+        return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to generate this content" } });
+      }
+
+      const selectedSources = (generation.selectedSources as unknown as SourceSelection[]) ?? [];
+      const { contextText } = await resolveSelectedContextText(generation.topic.contextSources, selectedSources);
+
+      const start = Date.now();
+      let slides: PresentationContent["slides"];
+      try {
+        slides = await aiProvider.fillPresentationContent({
+          topicName: generation.topic.name,
+          subject: generation.topic.subject,
+          board: await getSchoolBoard(request.schoolId),
+          gradeLevel: generation.topic.classSection.className,
+          outline,
+          density: (generation.presentationDensity as PresentationDensity) ?? "balanced",
+          reason: generation.presentationReason as PresentationReason,
+          contextText,
+          language: "English",
+          customPrompt: generation.customPrompt,
+        });
+      } catch (err) {
+        app.log.error(err, "Presentation content-fill failed");
+        return reply.code(500).send({ data: null, error: { code: "generation_failed", message: "Could not generate the deck. Please try again." } });
+      }
+
+      // Multi-class decks: recap_bridge slides need real content from the
+      // PREVIOUS class's slides, not a fresh AI call (spec: "Both are
+      // generated from slides already in the deck, so they cost almost
+      // nothing").
+      for (let i = 0; i < slides.length; i += 1) {
+        if (slides[i].role === "recap_bridge") {
+          const previousClassIndex = (slides[i].classIndex ?? 0) - 1;
+          const previousClassSlides = slides.filter((s, idx) => idx < i && s.classIndex === previousClassIndex);
+          const coveredPoints = previousClassSlides.flatMap((s) => s.bullets ?? []).slice(0, 3);
+          if (coveredPoints.length > 0) slides[i] = { ...slides[i], bullets: coveredPoints };
+        }
+      }
+
+      const content = await applyPresentationTemplateExtras({
+        content: JSON.stringify({ type: "presentation", slides }),
+        outputType: "presentation",
+        schoolId: request.schoolId,
+        teacherUserId: request.user.sub,
+      });
+
+      const updated = await prisma.generation.update({
+        where: { id: generation.id },
+        data: { aiOutput: content, generationStatus: "succeeded", mode: "generate" },
+        include: { contextSources: true, topic: { select: { name: true, subject: true, classSection: { select: { className: true, sectionName: true } } } } },
+      });
+
+      await logAiUsage({
+        schoolId: request.schoolId,
+        teacherUserId: request.user.sub,
+        feature: "generation",
+        model: MODEL_GEMINI_FLASH,
+        durationMs: Date.now() - start,
+      });
+
+      return reply.send({ data: updated, meta: {} });
+    }
+  );
+
+  // Step 9's "regenerate a single slide" - same pattern already established
+  // for assignment questions (POST /assignments/:id/questions/:questionId/regenerate).
+  app.post<{ Params: { id: string; index: string } }>(
+    "/generations/:id/slides/:index/regenerate",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const generation = await prisma.generation.findFirst({
+        where: { id: request.params.id, topic: { schoolId: request.schoolId } },
+        include: { topic: { include: { classSection: true, contextSources: true } } },
+      });
+      if (!generation || generation.outputType !== "presentation" || generation.generationStatus !== "succeeded") {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Presentation not found" } });
+      }
+      const index = Number(request.params.index);
+      let content: PresentationContent;
+      try {
+        content = JSON.parse(generation.editedOutput ?? generation.aiOutput);
+      } catch {
+        return reply.code(500).send({ data: null, error: { code: "invalid_content", message: "Stored presentation content is not valid JSON" } });
+      }
+      const target = content.slides?.[index];
+      if (!target) {
+        return reply.code(400).send({ data: null, error: { code: "validation_error", message: `No slide at index ${index}` } });
+      }
+      if (!generation.presentationReason) {
+        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "This presentation predates the regenerate-single-slide flow" } });
+      }
+
+      if (!(await hasSufficientCredits(request.user.sub, await getFeatureCost("generation")))) {
+        return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to regenerate this slide" } });
+      }
+
+      const selectedSources = (generation.selectedSources as unknown as SourceSelection[]) ?? [];
+      const { contextText } = await resolveSelectedContextText(generation.topic.contextSources, selectedSources);
+
+      const start = Date.now();
+      let filled: PresentationContent["slides"];
+      try {
+        filled = await aiProvider.fillPresentationContent({
+          topicName: generation.topic.name,
+          subject: generation.topic.subject,
+          board: await getSchoolBoard(request.schoolId),
+          gradeLevel: generation.topic.classSection.className,
+          outline: [{ role: target.role!, classIndex: target.classIndex ?? 0, title: target.title, oneLiner: "" }],
+          density: (generation.presentationDensity as PresentationDensity) ?? "balanced",
+          reason: generation.presentationReason as PresentationReason,
+          contextText,
+          language: "English",
+        });
+      } catch (err) {
+        app.log.error(err, "Slide regeneration failed");
+        return reply.code(500).send({ data: null, error: { code: "generation_failed", message: "Could not regenerate this slide. Please try again." } });
+      }
+
+      content.slides[index] = filled[0];
+      const updated = await prisma.generation.update({
+        where: { id: generation.id },
+        data: { aiOutput: JSON.stringify(content), editedOutput: null },
+        include: { contextSources: true, topic: { select: { name: true, subject: true, classSection: { select: { className: true, sectionName: true } } } } },
+      });
+
+      await logAiUsage({
+        schoolId: request.schoolId,
+        teacherUserId: request.user.sub,
+        feature: "generation",
+        model: MODEL_GEMINI_FLASH,
+        durationMs: Date.now() - start,
+      });
+
+      return reply.send({ data: updated, meta: {} });
+    }
+  );
 }
