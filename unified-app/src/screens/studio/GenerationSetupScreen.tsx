@@ -178,6 +178,14 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
     : null;
 
   function selectOutput(item: (typeof OUTPUT_TYPES)[number]) {
+    // Presentations no longer configure inline on this screen - the new
+    // flow (reason -> classes/slides -> density -> outline review) takes
+    // over immediately, same as spec step 4 ("Selects Presentation - Loads
+    // the presentation flow"). Every other output type is unchanged.
+    if (item.key === "presentation") {
+      navigation.navigate("PresentationReason", { topicId });
+      return;
+    }
     setOutputType(item.key);
   }
 
@@ -274,9 +282,6 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
       const generation = await api.createGeneration(accessToken, topicId, {
         outputType, classCount, minutesPerClass, language, customPrompt: combinedPrompt || undefined, sources,
         ...(embeds.length > 0 ? { embeds, ...(assembleOnly ? { assembleOnly: true } : {}) } : {}),
-        ...(outputType === "presentation"
-          ? { presentationTemplate, ...(colorOverride ? { overridePrimaryColor: colorOverride.primary, overrideSecondaryColor: colorOverride.secondary } : {}) }
-          : {}),
         ...(outputType === "custom_activity_report" ? { activityGroupSize, activityResources, learningStages } : {}),
       });
       navigation.replace("GenerationReview", { generationId: generation.id });
@@ -331,116 +336,6 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
             </Pressable>;
           })}
         </ScrollView>
-
-        {outputType === "presentation" ? (
-          <View style={styles.presentationStyleSection}>
-            <Text style={[styles.sectionHeading, { color: colors.textPrimary, marginTop: 0 }]}>Style</Text>
-            <View style={styles.presentationTemplateRow}>
-              {PRESENTATION_TEMPLATES.map((t) => {
-                const active = presentationTemplate === t.key;
-                return (
-                  <Pressable
-                    key={t.key}
-                    style={({ pressed }) => [styles.presentationTemplateChip, { backgroundColor: active ? colors.accent : colors.surface, borderColor: active ? colors.accent : colors.border }, pressed && { opacity: pressedOpacity }]}
-                    onPress={() => setPresentationTemplate(t.key)}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: active }}
-                  >
-                    <Text style={[styles.presentationTemplateLabel, { color: active ? colors.accentOn : colors.textPrimary }]}>{t.label}</Text>
-                    <Text style={[styles.presentationTemplateCaption, { color: active ? colors.accentOn : colors.textMuted }]}>{t.caption}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-
-            {hasBranding ? (
-              <View style={[styles.brandingColorBlock, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
-                <View style={styles.brandingColorHeaderRow}>
-                  <Pressable style={styles.brandingColorDotsRow} onPress={() => setColorPickerOpen((v) => !v)} accessibilityRole="button">
-                    <View style={[styles.brandingColorDot, { backgroundColor: effectivePrimary }]} />
-                    <View style={[styles.brandingColorDot, { backgroundColor: effectiveSecondary }]} />
-                    <Text style={[styles.brandingToggleLabel, { color: colors.textPrimary }]}>
-                      {colorOverride ? "Colors (edited for this deck)" : "School branding colors"}
-                    </Text>
-                    <Ionicons name={colorPickerOpen ? "chevron-up" : "chevron-down"} size={14} color={colors.textMuted} />
-                  </Pressable>
-                  {canConfigureBranding ? (
-                    <Pressable
-                      onPress={() => navigation.navigate("FormatTemplate")}
-                      style={({ pressed }) => [styles.brandingEditButton, { backgroundColor: colors.backgroundMuted }, pressed && { opacity: pressedOpacity }]}
-                      accessibilityRole="button"
-                      accessibilityLabel="Edit saved school branding"
-                      hitSlop={8}
-                    >
-                      <Ionicons name="create-outline" size={14} color={colors.textMuted} />
-                    </Pressable>
-                  ) : null}
-                </View>
-
-                {colorPickerOpen ? (
-                  <View style={styles.brandingColorPicker}>
-                    <Text style={[styles.fieldLabelSmall, { color: colors.textMuted }]}>Primary</Text>
-                    <View style={styles.colorSwatchRow}>
-                      {BRAND_COLOR_PALETTE.map((c) => (
-                        <Pressable
-                          key={c}
-                          style={({ pressed }) => [styles.colorSwatch, { backgroundColor: c, borderColor: effectivePrimary === c ? colors.textPrimary : "transparent" }, pressed && { opacity: pressedOpacity }]}
-                          onPress={() => setColorOverride({ primary: c, secondary: effectiveSecondary })}
-                          accessibilityRole="button"
-                        >
-                          {effectivePrimary === c ? <Ionicons name="checkmark" size={16} color="#FFFFFF" /> : null}
-                        </Pressable>
-                      ))}
-                      <Pressable
-                        onPress={() => setColorPickerTarget("primary")}
-                        style={({ pressed }) => [styles.customSwatch, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
-                        accessibilityRole="button"
-                        accessibilityLabel="Choose a custom primary color"
-                      >
-                        <Ionicons name="color-palette-outline" size={16} color={colors.textMuted} />
-                      </Pressable>
-                    </View>
-                    <Text style={[styles.fieldLabelSmall, { color: colors.textMuted, marginTop: 10 }]}>Secondary</Text>
-                    <View style={styles.colorSwatchRow}>
-                      {BRAND_COLOR_PALETTE.map((c) => (
-                        <Pressable
-                          key={c}
-                          style={({ pressed }) => [styles.colorSwatch, { backgroundColor: c, borderColor: effectiveSecondary === c ? colors.textPrimary : "transparent" }, pressed && { opacity: pressedOpacity }]}
-                          onPress={() => setColorOverride({ primary: effectivePrimary, secondary: c })}
-                          accessibilityRole="button"
-                        >
-                          {effectiveSecondary === c ? <Ionicons name="checkmark" size={16} color="#FFFFFF" /> : null}
-                        </Pressable>
-                      ))}
-                      <Pressable
-                        onPress={() => setColorPickerTarget("secondary")}
-                        style={({ pressed }) => [styles.customSwatch, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
-                        accessibilityRole="button"
-                        accessibilityLabel="Choose a custom secondary color"
-                      >
-                        <Ionicons name="color-palette-outline" size={16} color={colors.textMuted} />
-                      </Pressable>
-                    </View>
-                    {colorOverride ? (
-                      <Pressable onPress={() => setColorOverride(null)} accessibilityRole="button">
-                        <Text style={[styles.resetColorsLink, { color: colors.accent }]}>Reset to school branding</Text>
-                      </Pressable>
-                    ) : null}
-                  </View>
-                ) : null}
-              </View>
-            ) : canConfigureBranding ? (
-              <Pressable
-                style={({ pressed }) => [styles.brandingSetupRow, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
-                onPress={() => navigation.navigate("FormatTemplate")}
-                accessibilityRole="button"
-              >
-                <Ionicons name="color-palette-outline" size={16} color={colors.accent} />
-                <Text style={[styles.brandingSetupText, { color: colors.accent }]}>Set up your school's branding</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        ) : null}
 
         {outputType === "custom_activity_report" ? (
           <View style={styles.presentationStyleSection}>
