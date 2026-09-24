@@ -963,6 +963,25 @@ model Generation {
   // activity report's objectives to. Empty means "let the AI choose freely",
   // same default-open behavior as before this existed.
   learningStages         String[]              @default([]) @map("learning_stages")
+  // Presentation only (outputType === "presentation"). "reason" drives the
+  // fixed slide-role sequence (see ai.ts's ROLE_SEQUENCES); "density" is the
+  // one text-volume lever, ignored by "revision_deck" which always runs
+  // dense. Both null for every other outputType and for presentations
+  // generated before this flow existed (those fall back to the legacy
+  // 8-layout free-form deck, rendered via PresentationView.tsx's legacy path).
+  presentationReason     String?               @map("presentation_reason")
+  presentationDensity    String?               @map("presentation_density")
+  // Number of class periods this deck is split across (max 3) - distinct
+  // from classCount above, which lesson_plan/custom_activity_report also use
+  // for a different purpose (minutes-per-class scheduling, not slide count).
+  // Presentation-only; null means "not this flow" (legacy deck, single class).
+  presentationClasses    Int?                  @map("presentation_classes")
+  // Step 8's outline: [{ role, classIndex, title, oneLiner }], written by the
+  // outline pass and read/reordered/trimmed by the teacher before the
+  // content-fill pass overwrites aiOutput with the full PresentationContent
+  // JSON. Null once content-fill has run (or for any non-presentation /
+  // legacy row).
+  outline                Json?                 @map("outline")
   aiOutput               String                @map("ai_output")
   editedOutput           String?               @map("edited_output")
   schoolFormatTemplateId String?               @map("school_format_template_id") @db.Uuid
