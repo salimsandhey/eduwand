@@ -63,15 +63,16 @@ function displayTitle(rawTitle: string, isInstructional: boolean): string {
 // they were built). Everything else falls back to plain bullets. Matches the
 // same fallback in backend/src/lib/pptxExport.ts so a fresh export looks
 // like this preview (for anything still in the current layout set).
+const KNOWN_LAYOUTS = new Set<string>([
+  "title", "bullets", "stat", "quote", "divider", "stat-grid", "timeline", "icon-grid", "image",
+  "big_statement", "definition", "compare_2col", "process_flow", "step", "card_grid", "table", "callout",
+  "recap_bridge", "closing_recap",
+]);
+
 function resolveLayout(slide: PresentationContent["slides"][number]): RenderLayout {
   const raw = slide.layout as string | undefined;
   if (raw === "image-left" || raw === "image-right") return raw;
-  if (
-    raw === "title" || raw === "bullets" || raw === "stat" || raw === "quote" || raw === "divider" ||
-    raw === "stat-grid" || raw === "timeline" || raw === "icon-grid" || raw === "image"
-  ) {
-    return raw;
-  }
+  if (raw && KNOWN_LAYOUTS.has(raw)) return raw as RenderLayout;
   return slide.imageUrl ? "image-right" : "bullets";
 }
 
@@ -87,6 +88,16 @@ const LAYOUT_ICONS: Record<RenderLayout, keyof typeof Ionicons.glyphMap> = {
   "stat-grid": "grid-outline",
   timeline: "git-commit-outline",
   "icon-grid": "apps-outline",
+  big_statement: "flash-outline",
+  definition: "book-outline",
+  compare_2col: "swap-horizontal-outline",
+  process_flow: "arrow-forward-circle-outline",
+  step: "footsteps-outline",
+  card_grid: "grid-outline",
+  table: "list-outline",
+  callout: "warning-outline",
+  recap_bridge: "arrow-undo-outline",
+  closing_recap: "checkmark-done-outline",
 };
 
 // Every size inside the full-screen slideshow is computed from this instead

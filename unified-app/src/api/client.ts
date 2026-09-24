@@ -965,6 +965,26 @@ export type PresentationTemplate = "detailed" | "instructional" | "school_format
 export type ActivityGroupSize = "individual" | "small_group" | "large_group";
 export type PresentationColorScheme = "indigo" | "coral" | "forest" | "slate";
 
+// The reason IS the structure (spec: the teacher picks what she's doing in
+// class, not a format). Internal names only - PRESENTATION_REASON_LABELS in
+// screens/studio/generation/content.ts is what she actually sees, mirrored
+// manually from backend/src/lib/ai.ts (mobile can't import that file - same
+// "small duplicated table" convention already used elsewhere in this app).
+export type PresentationReason = "concept_deck" | "activity_walkthrough" | "revision_deck";
+export type PresentationDensity = "light" | "balanced" | "dense";
+export type PresentationSlideRole =
+  | "title" | "hook" | "define" | "explain_core" | "worked_example" | "check" | "recap"
+  | "aim" | "materials" | "safety" | "step" | "record" | "expected_result" | "conclusion"
+  | "whats_covered" | "must_know" | "common_mistakes" | "rapid_fire" | "answer_key"
+  | "section_divider" | "recap_bridge";
+
+export interface PresentationOutlineEntry {
+  role: PresentationSlideRole;
+  classIndex: number;
+  title: string;
+  oneLiner: string;
+}
+
 export interface Generation {
   id: string;
   topicId: string;
@@ -977,7 +997,9 @@ export interface Generation {
   aiOutput: string;
   editedOutput: string | null;
   modelUsed: string;
-  generationStatus: "pending" | "succeeded" | "failed";
+  // "outline": the new presentation flow's step 8 - roles/titles/one-liners
+  // only, aiOutput is a placeholder until presentation-confirm fills it in.
+  generationStatus: "pending" | "outline" | "succeeded" | "failed";
   shareStatus: "draft" | "published";
   publishedAt: string | null;
   // When shareStatus is "published": true means the whole class can see it;
@@ -992,6 +1014,15 @@ export interface Generation {
   // only meaningful when classCount > 1. See stages[].sessions in the
   // lesson_plan content and POST /generations/:id/session-progress.
   completedSessions: number[];
+  // Presentation flow only - null for every other outputType and for
+  // presentations generated before this flow existed (those still render via
+  // PresentationView.tsx's legacy layout fallback).
+  presentationReason?: PresentationReason | null;
+  presentationDensity?: PresentationDensity | null;
+  presentationClasses?: number | null;
+  // Set only while generationStatus is "outline" - the step 8 outline the
+  // teacher reviews/edits before content-fill.
+  outline?: PresentationOutlineEntry[] | null;
 }
 
 export interface TopicDetail extends Topic {
@@ -1738,6 +1769,29 @@ export const api = {
   ) => request<Generation>(`/topics/${topicId}/generations`, { method: "POST", body: JSON.stringify(input) }, token),
   getGeneration: (token: string, id: string) => request<Generation>(`/generations/${id}`, {}, token),
   presentationExportUrl: (id: string) => `${API_URL}/generations/${id}/export.pptx`,
+  presentationExportPdfUrl: (id: string) => `${API_URL}/generations/${id}/export.pdf`,
+
+  // New presentation flow (steps 4-9) - see PresentationReasonScreen /
+  // PresentationClassesScreen / PresentationDensityScreen /
+  // PresentationOutlineReviewScreen.
+  createPresentationOutline: (
+    token: string,
+    topicId: string,
+    input: {
+      presentationReason: PresentationReason;
+      presentationDensity: PresentationDensity;
+      presentationClasses: number;
+      totalSlides: number;
+      customPrompt?: string;
+      sources?: GenerationSourceSelection[];
+    }
+  ) => request<Generation>(`/topics/${topicId}/presentation-outline`, { method: "POST", body: JSON.stringify(input) }, token),
+  updatePresentationOutline: (token: string, generationId: string, outline: PresentationOutlineEntry[]) =>
+    request<Generation>(`/generations/${generationId}/presentation-outline`, { method: "PATCH", body: JSON.stringify({ outline }) }, token),
+  confirmPresentationOutline: (token: string, generationId: string) =>
+    request<Generation>(`/generations/${generationId}/presentation-confirm`, { method: "POST" }, token),
+  regeneratePresentationSlide: (token: string, generationId: string, slideIndex: number) =>
+    request<Generation>(`/generations/${generationId}/slides/${slideIndex}/regenerate`, { method: "POST" }, token),
   attainmentReportPdfUrl: (topicId: string) => `${API_URL}/topics/${topicId}/attainment-report/pdf`,
   subjectAttainmentReportPdfUrl: (classSectionId: string, subject: string) =>
     `${API_URL}/attainment-reports/roll-up/pdf?classSectionId=${encodeURIComponent(classSectionId)}&subject=${encodeURIComponent(subject)}`,

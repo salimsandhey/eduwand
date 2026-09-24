@@ -60,7 +60,41 @@ export interface FlashcardsContent {
 export type PresentationTemplate = "detailed" | "instructional" | "school_format" | "more_visual";
 // Legacy-only fallback (pre branding-sourced colors).
 export type PresentationColorScheme = "indigo" | "coral" | "forest" | "slate";
-export type PresentationSlideLayout = "title" | "bullets" | "stat" | "quote" | "divider" | "stat-grid" | "timeline" | "icon-grid" | "image";
+
+// New presentation flow (PPT guidelines.pdf) - mirrored manually from
+// backend/src/lib/ai.ts, same "small duplicated table" convention already
+// used elsewhere in this app (mobile can't import a backend file).
+export type PresentationReason = "concept_deck" | "activity_walkthrough" | "revision_deck";
+export type PresentationDensity = "light" | "balanced" | "dense";
+export type PresentationSlideRole =
+  | "title" | "hook" | "define" | "explain_core" | "worked_example" | "check" | "recap"
+  | "aim" | "materials" | "safety" | "step" | "record" | "expected_result" | "conclusion"
+  | "whats_covered" | "must_know" | "common_mistakes" | "rapid_fire" | "answer_key"
+  | "section_divider" | "recap_bridge";
+
+export const PRESENTATION_REASON_LABELS: Record<PresentationReason, { label: string; caption: string }> = {
+  concept_deck: { label: "Teaching this for the first time", caption: "A new chapter or sub-topic. The default." },
+  activity_walkthrough: { label: "Running an activity or experiment", caption: "Practicals, lab work, classroom activities" },
+  revision_deck: { label: "Revising before a test", caption: "End of chapter, pre-exam recap" },
+};
+export const PRESENTATION_DENSITY_LABELS: Record<PresentationDensity, { label: string; caption: string }> = {
+  light: { label: "Light", caption: "Headline points only" },
+  balanced: { label: "Balanced", caption: "The default - enough to teach from" },
+  dense: { label: "Dense", caption: "Full detail, reference-ready" },
+};
+
+// Spec step 6's live per-class slide-count band - mirrored from
+// backend/src/lib/presentationPlan.ts's slidesPerClassRange.
+export function slidesPerClassRange(classes: number): { min: number; max: number } {
+  if (classes <= 1) return { min: 8, max: 12 };
+  if (classes === 2) return { min: 7, max: 10 };
+  return { min: 5, max: 8 };
+}
+
+export type PresentationSlideLayout =
+  | "title" | "bullets" | "stat" | "quote" | "divider" | "stat-grid" | "timeline" | "icon-grid" | "image"
+  | "big_statement" | "definition" | "compare_2col" | "process_flow" | "step" | "card_grid" | "table" | "callout"
+  | "recap_bridge" | "closing_recap";
 
 // An image, or one page of a PDF, the teacher chose to show as-is in generated
 // content (see backend/src/lib/media.ts). Loaded from the topic's source via
@@ -103,15 +137,30 @@ export interface PresentationContent {
     // Optional - old generations predate this field; readers default to
     // "bullets" (or "image-right" when imageUrl is present) when absent.
     layout?: PresentationSlideLayout;
+    // Which role this slide fills (new flow only - absent on legacy rows).
+    role?: PresentationSlideRole;
+    // 0-indexed class period this slide belongs to (new flow, multi-class
+    // decks only).
+    classIndex?: number;
     title: string;
     bullets: string[];
     notes?: string;
     // Legacy only - no longer set on new generations (no more stock photos),
     // kept so old "more_visual" rows with a saved photo still render.
     imageUrl?: string;
-    // Used by "stat-grid", "timeline", and "icon-grid" - see the matching
-    // comment in backend/src/lib/ai.ts's PresentationContent.
+    // Used by "stat-grid", "timeline", "icon-grid", and "card_grid" - see the
+    // matching comment in backend/src/lib/ai.ts's PresentationContent.
     items?: { title: string; description?: string; tag?: string }[];
+    // "compare_2col": two labelled columns of short lines.
+    columns?: { heading: string; rows: string[] }[];
+    // "table": a simple grid - header row + data rows.
+    table?: { headers: string[]; rows: string[][] };
+    // "step": one action per slide with a progress indicator.
+    stepIndex?: number;
+    stepTotal?: number;
+    // "callout": a flagged warning/note (used by the "safety" role).
+    calloutIcon?: string;
+    calloutBody?: string;
   }[];
 }
 
