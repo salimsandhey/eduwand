@@ -17,6 +17,7 @@ import {
   LEARNING_STAGE_OPTIONS,
 } from "../lib/ai";
 import { buildRoleSequence, slidesPerClassRange } from "../lib/presentationPlan";
+import { findVerbatimOverlap } from "../lib/overlapCheck";
 import { hasSufficientCredits, getFeatureCost } from "../lib/credits";
 import { storage } from "../lib/storage";
 import { extractPdfPageRangeText } from "../lib/extraction";
@@ -945,6 +946,17 @@ export async function generationRoutes(app: FastifyInstance) {
           const previousClassSlides = slides.filter((s, idx) => idx < i && s.classIndex === previousClassIndex);
           const coveredPoints = previousClassSlides.flatMap((s) => s.bullets ?? []).slice(0, 3);
           if (coveredPoints.length > 0) slides[i] = { ...slides[i], bullets: coveredPoints };
+        }
+      }
+
+      // Copyright compliance: flag (never silently block - a false positive
+      // on common phrasing would make the flow unusably flaky) any slide text
+      // that near-verbatim matches a long run of the source material.
+      if (contextText) {
+        const allText = slides.flatMap((s) => [s.title, ...(s.bullets ?? [])]);
+        const overlaps = findVerbatimOverlap(contextText, allText);
+        if (overlaps.length > 0) {
+          app.log.warn({ generationId: generation.id, overlaps }, "Verbatim overlap detected between source context and generated presentation text");
         }
       }
 

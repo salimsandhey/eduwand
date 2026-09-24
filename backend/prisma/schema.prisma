@@ -109,6 +109,7 @@ model School {
   classChangeRequests   ClassChangeRequest[]
   timetableSlots        TimetableSlot[]
   calendarTasks         CalendarTask[]
+  contextUploadLogs     ContextUploadLog[]
 
   @@map("school")
 }
@@ -300,6 +301,7 @@ model AppUser {
   classSectionAssignments    ClassSectionTeacher[]
   timetableSlots             TimetableSlot[]
   calendarTasks              CalendarTask[]
+  contextUploadLogs          ContextUploadLog[]
   roleGrants                UserRoleGrant[]
   interviews                 InterviewRecord[]           @relation("InterviewConductedBy")
   approvals                  EnquiryApproval[]           @relation("ApprovalDecidedBy")
@@ -831,6 +833,13 @@ model ContextSource {
   extractionStatus     String   @default("pending") @map("extraction_status")
   extractedText        String?  @map("extracted_text")
   extractionError      String?  @map("extraction_error")
+  // Copyright compliance - set once at extraction time from whatever
+  // citation metadata is available (filename / detected title, page range
+  // used). Kept forever; fileLocation/extractedText are purged 24h after
+  // upload (see lib/contextRetention.ts) so this is what survives to show
+  // "what this generation was grounded on" afterward. Independent of
+  // `attribution` above (AI-Research-found sources, not teacher uploads).
+  citation             String?
   createdAt            DateTime @default(now()) @map("created_at")
 
   // Which generations this source's extracted text actually fed - lets the
@@ -840,6 +849,24 @@ model ContextSource {
 
   @@index([topicId])
   @@map("context_source")
+}
+
+// Copyright compliance - "Keep an upload log of file name, teacher and
+// timestamp. Metadata only, never content." Deliberately separate from
+// ContextSource (which holds - temporarily - the actual file/text) so this
+// log survives ContextSource's 24h content purge untouched, for takedown
+// response purposes.
+model ContextUploadLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  schoolId      String   @map("school_id") @db.Uuid
+  school        School   @relation(fields: [schoolId], references: [id])
+  teacherUserId String   @map("teacher_user_id") @db.Uuid
+  teacher       AppUser  @relation(fields: [teacherUserId], references: [id])
+  fileName      String   @map("file_name")
+  uploadedAt    DateTime @default(now()) @map("uploaded_at")
+
+  @@index([schoolId])
+  @@map("context_upload_log")
 }
 
 // AI Research mode: a NotebookLM-style workaround to the (unintegrated)

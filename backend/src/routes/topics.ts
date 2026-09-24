@@ -216,8 +216,19 @@ export async function topicRoutes(app: FastifyInstance) {
           extractionStatus: extraction.extractionStatus,
           extractedText: extraction.extractedText,
           extractionError: extraction.extractionError,
+          citation: originalFilename,
         },
       });
+
+      // Copyright compliance - metadata-only log of what was uploaded, who by
+      // and when (spec: "Keep an upload log of file name, teacher and
+      // timestamp. Metadata only, never content") - only for a real teacher
+      // file upload, not a URL/idream_k12 reference or an AI-Research find.
+      if (isMultipart && originalFilename) {
+        await prisma.contextUploadLog.create({
+          data: { schoolId: request.schoolId, teacherUserId: request.user.sub, fileName: originalFilename },
+        });
+      }
 
       return reply.code(201).send({ data: contextSource, meta: {} });
     }

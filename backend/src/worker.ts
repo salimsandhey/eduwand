@@ -2,6 +2,7 @@ import "dotenv/config";
 import { prisma } from "./lib/prisma";
 import { sendFollowUpTask } from "./lib/follow-up";
 import { runCsvExport } from "./lib/exports";
+import { deleteExpiredContextSources } from "./lib/contextRetention";
 
 const TICK_MS = 60_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -78,11 +79,24 @@ async function processScheduledExports() {
   }
 }
 
+// Copyright compliance - uploaded context files/text are purged 24h after
+// upload (see lib/contextRetention.ts). Runs every tick (60s), same as every
+// other worker job - cheap no-op query when nothing has expired yet.
+async function processContextRetention() {
+  try {
+    const purged = await deleteExpiredContextSources();
+    if (purged > 0) console.log(`[worker] purged ${purged} expired context source(s)`);
+  } catch (err) {
+    console.error("[worker] context retention purge failed", err);
+  }
+}
+
 async function tick() {
   await processDueFollowUps();
   await processAutoFollowUps();
   await processEscalations();
   await processScheduledExports();
+  await processContextRetention();
 }
 
 console.log(`[worker] started, ticking every ${TICK_MS}ms`);
