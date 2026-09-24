@@ -374,7 +374,8 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
           <Text style={[styles.failedText, { color: colors.textPrimary }]}>Generation failed</Text>
           <Text style={[styles.meta, { color: colors.textMuted, textAlign: "center", marginBottom: 16 }]}>Your inputs were preserved. Try again below.</Text>
           <Pressable style={({ pressed }) => [styles.retryButton, { backgroundColor: colors.accent }, (isRetrying || pressed) && { opacity: pressedOpacity }]} onPress={retry} disabled={isRetrying} accessibilityRole="button">
-            {isRetrying ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.retryButtonText, { color: colors.accentOn }]}>Retry</Text>}
+            {/* No spinner while retrying - the AI generating overlay covers the screen. */}
+            <Text style={[styles.retryButtonText, { color: colors.accentOn }]}>Retry</Text>
           </Pressable>
         </View>
       </Screen>
@@ -589,14 +590,9 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
               disabled={isGeneratingAssessment}
               accessibilityRole="button"
             >
-              {isGeneratingAssessment ? (
-                <ActivityIndicator color={colors.textPrimary} />
-              ) : (
-                <>
-                  <Ionicons name="flash-outline" size={18} color={colors.textPrimary} />
-                  <Text style={[styles.shareButtonText, { color: colors.textPrimary }]}>Quick check</Text>
-                </>
-              )}
+              {/* No spinner while generating - the AI generating overlay covers the screen. */}
+              <Ionicons name="flash-outline" size={18} color={colors.textPrimary} />
+              <Text style={[styles.shareButtonText, { color: colors.textPrimary }]}>Quick check</Text>
             </Pressable>
           ) : null}
           {/* Presentations are export/present-only - decks are meant to be

@@ -2,79 +2,44 @@ import React, { createContext, useContext, useState, useCallback, useMemo, useRe
 
 export type AIAssistantState = "off" | "idle" | "listening" | "thinking" | "speaking";
 
-const STATE_CYCLE: AIAssistantState[] = ["off", "idle", "listening", "thinking", "speaking"];
-
+// The generating animation (AiGeneratingOverlay + edge glow) is driven only by
+// real AI work: each running task registers an id via useAiGenerating(), and
+// the animation shows while at least one is active.
 interface AiAssistantGlowContextType {
   aiState: AIAssistantState;
-  setAiState: (state: AIAssistantState) => void;
-  cycleAiState: () => void;
   isGlowActive: boolean;
-  startGlow: (taskId?: string) => void;
-  stopGlow: (taskId?: string) => void;
-  toggleGlow: () => void;
+  startGlow: (taskId: string) => void;
+  stopGlow: (taskId: string) => void;
 }
 
 const AiAssistantGlowContext = createContext<AiAssistantGlowContextType | null>(null);
 
 export function AiAssistantGlowProvider({ children }: { children: React.ReactNode }) {
-  const [manualState, setManualState] = useState<AIAssistantState>("off");
   const [activeTasks, setActiveTasks] = useState<Set<string>>(new Set());
 
-  const startGlow = useCallback((taskId?: string) => {
-    if (taskId) {
-      setActiveTasks((prev) => {
-        const next = new Set(prev);
-        next.add(taskId);
-        return next;
-      });
-    } else {
-      setManualState("listening");
-    }
+  const startGlow = useCallback((taskId: string) => {
+    setActiveTasks((prev) => {
+      const next = new Set(prev);
+      next.add(taskId);
+      return next;
+    });
   }, []);
 
-  const stopGlow = useCallback((taskId?: string) => {
-    if (taskId) {
-      setActiveTasks((prev) => {
-        if (!prev.has(taskId)) return prev;
-        const next = new Set(prev);
-        next.delete(taskId);
-        return next;
-      });
-    } else {
-      setManualState("off");
-      setActiveTasks(new Set());
-    }
+  const stopGlow = useCallback((taskId: string) => {
+    setActiveTasks((prev) => {
+      if (!prev.has(taskId)) return prev;
+      const next = new Set(prev);
+      next.delete(taskId);
+      return next;
+    });
   }, []);
 
-  const toggleGlow = useCallback(() => {
-    setManualState((prev) => (prev === "off" ? "listening" : "off"));
-  }, []);
-
-  const cycleAiState = useCallback(() => {
-    setManualState((prev) => (prev === "off" ? "listening" : "off"));
-  }, []);
-
-  const isGlowActive = manualState !== "off" || activeTasks.size > 0;
+  const isGlowActive = activeTasks.size > 0;
   const aiState: AIAssistantState = isGlowActive ? "listening" : "off";
 
-  const setAiState = useCallback((state: AIAssistantState) => {
-    setManualState(state);
-    if (state === "off") {
-      setActiveTasks(new Set());
-    }
-  }, []);
-
   const value = useMemo(
-    () => ({
-      aiState,
-      setAiState,
-      cycleAiState,
-      isGlowActive,
-      startGlow,
-      stopGlow,
-      toggleGlow,
-    }),
-    [aiState, cycleAiState, isGlowActive, setAiState, startGlow, stopGlow, toggleGlow]
+    () => ({ aiState, isGlowActive, startGlow, stopGlow }),
+    [aiState, isGlowActive, startGlow, stopGlow]
   );
 
   return (

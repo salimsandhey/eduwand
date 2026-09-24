@@ -9,6 +9,7 @@ import { useTheme } from "../../theme/ThemeContext";
 import { spacing } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { api, TeacherOnboardingTasksResult } from "../../api/client";
+import { avatarSetForRole, avatarSourceFor } from "../../theme/avatars";
 
 // Teacher "getting started" checklist - profile completion + the fixed set
 // of starter tasks (mirrors backend/src/lib/onboarding.ts). Tasks are marked
@@ -55,7 +56,7 @@ export function GettingStartedScreen({ navigation }: Props) {
     () => [
       { label: "Full name", done: !!user?.fullName },
       { label: "Phone number", done: !!user?.phone },
-      { label: "Profile photo", done: !!user?.photoMimeType || !!user?.avatarKey },
+      { label: "Profile photo", done: !!user?.photoMimeType || !!avatarSourceFor(user?.avatarKey, avatarSetForRole(user?.role)) },
     ],
     [user]
   );
@@ -150,7 +151,7 @@ export function GettingStartedScreen({ navigation }: Props) {
 
             <Pressable
               onPress={() => navigation.navigate("Leaderboard")}
-              style={({ pressed }) => [styles.linkRow, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+              style={({ pressed }) => [styles.linkRow, { backgroundColor: colors.surface }, cardShadow, pressed && { opacity: pressedOpacity }]}
               accessibilityRole="button"
             >
               <Ionicons name="trophy-outline" size={18} color={colors.accent} />
@@ -186,6 +187,6 @@ const styles = StyleSheet.create({
   badgeCard: { width: "47%", borderWidth: 1, borderRadius: 14, padding: 12, gap: 6 },
   badgeLabel: { fontSize: 12, fontWeight: "700" },
   badgeUnlocked: { fontSize: 11, fontWeight: "700" },
-  linkRow: { marginTop: 20, flexDirection: "row", alignItems: "center", gap: 10, borderWidth: 1, borderRadius: 14, padding: 14 },
+  linkRow: { marginTop: 20, flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 14, padding: 14 },
   linkText: { flex: 1, fontSize: 14, fontWeight: "700" },
 });

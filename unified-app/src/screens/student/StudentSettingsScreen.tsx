@@ -5,6 +5,8 @@ import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
+import { StudentAvatar } from "../../components/StudentAvatar";
+import { api } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
 
 type Props = NativeStackScreenProps<RootStackParamList, "StudentSettings">;
@@ -15,8 +17,8 @@ type Props = NativeStackScreenProps<RootStackParamList, "StudentSettings">;
 // upload, no self-delete. Just who they're signed in as, the pages every
 // account needs, and a way to sign out.
 export function StudentSettingsScreen({ navigation }: Props) {
-  const { user, logout } = useAuth();
-  const { colors, pressedOpacity } = useTheme();
+  const { user, accessToken, logout } = useAuth();
+  const { colors, cardShadow, pressedOpacity } = useTheme();
 
   function confirmLogout() {
     Alert.alert("Log out?", "You'll need your phone number and a new code to sign back in.", [
@@ -28,10 +30,8 @@ export function StudentSettingsScreen({ navigation }: Props) {
   return (
     <Screen edges={["bottom"]}>
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
-        <View style={[styles.card, styles.profileCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <View style={[styles.avatar, { backgroundColor: colors.accentSoft }]}>
-            <Text style={[styles.avatarText, { color: colors.accent }]}>{(user?.fullName ?? "?").slice(0, 1).toUpperCase()}</Text>
-          </View>
+        <View style={[styles.card, styles.profileCard, { backgroundColor: colors.surface }, cardShadow]}>
+          {user ? <StudentAvatar studentId={user.id} picture={user} size={44} photoUrl={accessToken ? api.myPhotoUrl(accessToken) : null} /> : null}
           <View style={{ flex: 1 }}>
             <Text style={[styles.name, { color: colors.textPrimary }]} numberOfLines={1}>
               {user?.fullName ? capitalizeFirst(user.fullName) : "Student"}
@@ -40,14 +40,14 @@ export function StudentSettingsScreen({ navigation }: Props) {
           </View>
         </View>
 
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <View style={[styles.card, { backgroundColor: colors.surface }, cardShadow]}>
           <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>Legal</Text>
           <SettingsRow label="Privacy Policy" onPress={() => navigation.navigate("LegalDocument", { contentKey: "privacy_policy", title: "Privacy Policy" })} colors={colors} pressedOpacity={pressedOpacity} />
           <SettingsRow label="Terms of Service" onPress={() => navigation.navigate("LegalDocument", { contentKey: "terms_of_service", title: "Terms of Service" })} colors={colors} pressedOpacity={pressedOpacity} />
           <SettingsRow label="About EduWand" onPress={() => navigation.navigate("LegalDocument", { contentKey: "about", title: "About EduWand" })} colors={colors} pressedOpacity={pressedOpacity} last />
         </View>
 
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <View style={[styles.card, { backgroundColor: colors.surface }, cardShadow]}>
           <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>Support</Text>
           <SettingsRow label="Contact Us" onPress={() => navigation.navigate("Contact")} colors={colors} pressedOpacity={pressedOpacity} />
           <SettingsRow label="Help & Support" onPress={() => navigation.navigate("HelpSupport")} colors={colors} pressedOpacity={pressedOpacity} last />
@@ -99,10 +99,8 @@ function SettingsRow({
 
 const styles = StyleSheet.create({
   container: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 60, gap: 16 },
-  card: { borderWidth: 1, borderRadius: 20, padding: 16 },
+  card: { borderRadius: 20, padding: 16 },
   profileCard: { flexDirection: "row", alignItems: "center", gap: 12 },
-  avatar: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
-  avatarText: { fontSize: 17, fontWeight: "800" },
   name: { fontSize: 16, fontWeight: "800" },
   phone: { marginTop: 2, fontSize: 12, fontWeight: "500" },
   sectionTitle: { fontSize: 11, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 },

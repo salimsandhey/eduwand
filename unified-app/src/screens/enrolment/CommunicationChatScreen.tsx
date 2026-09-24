@@ -10,16 +10,14 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { spacing } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
+import { StudentAvatar } from "../../components/StudentAvatar";
 import { api, CommunicationMessage } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
 import { useRealtimeMessages } from "../../hooks/useRealtimeMessages";
 
 type Props = NativeStackScreenProps<RootStackParamList, "CommunicationChat">;
 
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase() || "?";
-}
+const AVATAR_SIZE = 40;
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -137,13 +135,17 @@ export function CommunicationChatScreen({ navigation, route }: Props) {
         >
           <Ionicons name="arrow-back" size={22} color={colors.textPrimary} />
         </Pressable>
-        <View style={[styles.avatar, { backgroundColor: colors.accentSoft }]}>
-          {isClass ? (
+        {params.mode === "student" ? (
+          <StudentAvatar
+            studentId={params.studentId}
+            picture={{ avatarKey: params.studentAvatarKey, photoMimeType: params.studentPhotoMimeType }}
+            size={AVATAR_SIZE}
+          />
+        ) : (
+          <View style={[styles.avatar, { backgroundColor: colors.accentSoft }]}>
             <Ionicons name="people" size={20} color={colors.accent} />
-          ) : (
-            <Text style={[styles.avatarText, { color: colors.accent }]}>{initials(title)}</Text>
-          )}
-        </View>
+          </View>
+        )}
         <View style={styles.titleBlock}>
           <Text style={[styles.title, { color: colors.textPrimary }]} numberOfLines={1}>
             {title}
@@ -253,7 +255,6 @@ const styles = StyleSheet.create({
   },
   backButton: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
   avatar: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
-  avatarText: { fontSize: 14, fontWeight: "800" },
   titleBlock: { flex: 1 },
   title: { fontSize: 16, fontWeight: "800" },
   subtitle: { fontSize: 12, marginTop: 1 },

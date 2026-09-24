@@ -499,6 +499,20 @@ export interface UpdatePlanInput {
   isDefault?: boolean;
 }
 
+// Backend AiFeature row - what one AI action costs teachers and how the
+// mobile Credits screen names it. icon is an Ionicons glyph name.
+export interface AiFeature {
+  id: string;
+  key: string;
+  label: string;
+  description: string;
+  icon: string;
+  cost: number;
+  showOnCredits: boolean;
+  sortOrder: number;
+  updatedAt: string;
+}
+
 export interface PlatformSetting {
   id: string;
   key: string;
@@ -783,6 +797,12 @@ export const api = {
   listPlatformSettings: (token: string) => request<PlatformSetting[]>("/platform-settings", {}, token),
   updatePlatformSetting: (token: string, key: string, value: string) =>
     request<PlatformSetting>(`/platform-settings/${key}`, { method: "PUT", body: JSON.stringify({ value }) }, token),
+  listAiFeatures: (token: string) => request<AiFeature[]>("/ai-features", {}, token),
+  updateAiFeature: (
+    token: string,
+    key: string,
+    input: Partial<Pick<AiFeature, "label" | "description" | "cost" | "showOnCredits" | "sortOrder">>
+  ) => request<AiFeature>(`/ai-features/${key}`, { method: "PATCH", body: JSON.stringify(input) }, token),
 
   // Public - no token needed, works for a logged-out reviewer or App Store crawler.
   listContentPages: () => request<ContentPage[]>("/content-pages"),

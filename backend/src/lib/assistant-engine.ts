@@ -4,6 +4,11 @@ import { aiProvider, AssistantContent, AssistantPart } from "./ai";
 import { AssistantRole, buildAssistantContext, formatIst, loadAssistantIdentity } from "./assistant-context";
 import { AssistantLink, ToolCtx, ToolError, findTool, toolsForRole } from "./assistant-tools";
 
+// The assistant's product name - how the model introduces itself and how
+// user-facing assistant errors name it. Mirrors AI_ASSISTANT_NAME in
+// unified-app/src/constants/brand.ts - keep both in sync.
+export const ASSISTANT_NAME = "AIWand";
+
 const MAX_STEPS = 6;
 const MAX_ACTIONS_PER_TURN = 3;
 const MAX_LINKS = 4;
@@ -25,7 +30,8 @@ const ROLE_GUIDE: Record<AssistantRole, string> = {
 
 function buildSystemPrompt(role: AssistantRole, identity: { fullName: string; schoolName: string }, contextBullets: string): string {
   return [
-    `You are the in-app assistant for ${identity.schoolName}, inside the EduWand mobile app. You are talking to ${identity.fullName}.`,
+    `You are ${ASSISTANT_NAME}, the in-app AI assistant for ${identity.schoolName}, inside the EduWand mobile app. You are talking to ${identity.fullName}.`,
+    `Your name is ${ASSISTANT_NAME}. Use it when you introduce yourself or are asked who you are; never call yourself Gemini, a Google model, or any other name.`,
     ROLE_GUIDE[role],
     "",
     `Current date and time: ${formatIst(new Date())} (India Standard Time, UTC+05:30). Resolve words like "today", "tomorrow", "next Monday" against this and send ISO 8601 times with the +05:30 offset.`,

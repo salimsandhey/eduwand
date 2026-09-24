@@ -13,14 +13,16 @@ interface NumberedEditCardProps {
 }
 
 export function NumberedEditCard({ index, editable, renderView, renderEditor, onRemove }: NumberedEditCardProps) {
-  const { colors, pressedOpacity } = useTheme();
+  const { colors, cardShadow, pressedOpacity } = useTheme();
   const [isEditing, setIsEditing] = useState(false);
 
   return (
     <View
       style={[
         styles.card,
-        { backgroundColor: colors.surface, borderColor: isEditing ? colors.accent : colors.border },
+        { backgroundColor: colors.surface },
+        cardShadow,
+        isEditing && { borderWidth: 1, borderColor: colors.accent },
       ]}
     >
       {isEditing ? (
@@ -95,7 +97,7 @@ export function EditActionRow({ onCancel, onDone, doneLabel = "Done" }: EditActi
 }
 
 const styles = StyleSheet.create({
-  card: { borderWidth: 1, borderRadius: 18, padding: spacing.md, marginBottom: spacing.sm },
+  card: { borderRadius: 18, padding: spacing.md, marginBottom: spacing.sm },
   row: { flexDirection: "row", alignItems: "flex-start", gap: 11 },
   badge: {
     width: 34,

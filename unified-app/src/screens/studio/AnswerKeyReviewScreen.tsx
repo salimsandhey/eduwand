@@ -112,7 +112,7 @@ export function AnswerKeyReviewScreen({ route, navigation }: Props) {
         </View>
 
         {entries.length > 0 ? (
-          <View style={[styles.statsCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View style={[styles.statsCard, { backgroundColor: colors.surface }, cardShadow]}>
             <View style={styles.stat}>
               <Text style={[styles.statLabel, { color: colors.textMuted }]}>QUESTIONS</Text>
               <Text style={[styles.statValue, { color: colors.textPrimary }]}>{entries.length}</Text>
@@ -134,7 +134,8 @@ export function AnswerKeyReviewScreen({ route, navigation }: Props) {
             disabled={isGenerating}
             accessibilityRole="button"
           >
-            {isGenerating ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.generateButtonText, { color: colors.accentOn }]}>Generate draft answer key</Text>}
+            {/* No spinner while generating - the AI generating overlay covers the screen. */}
+            <Text style={[styles.generateButtonText, { color: colors.accentOn }]}>Generate draft answer key</Text>
           </Pressable>
         ) : null}
 
@@ -220,7 +221,7 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 13, marginTop: 4, fontWeight: "500" },
   aiBadge: { alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 5, borderRadius: 16, paddingHorizontal: 10, paddingVertical: 6, marginBottom: 14 },
   aiBadgeText: { fontSize: 11, fontWeight: "700" },
-  statsCard: { flexDirection: "row", borderWidth: 1, borderRadius: 16, padding: 14, marginBottom: 16 },
+  statsCard: { flexDirection: "row", borderRadius: 16, padding: 14, marginBottom: 16 },
   stat: { flex: 1 },
   statDivider: { width: 1, marginHorizontal: 12 },
   statLabel: { fontSize: 10, fontWeight: "800", letterSpacing: 0.6 },

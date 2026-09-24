@@ -313,14 +313,9 @@ export function AssignmentAiSetupScreen({ route, navigation }: Props) {
               disabled={isGenerating || !mixMatches}
               accessibilityRole="button"
             >
-              {isGenerating ? (
-                <ActivityIndicator color={colors.accentOn} />
-              ) : (
-                <>
-                  <Ionicons name="sparkles" size={18} color={colors.accentOn} />
-                  <Text style={[styles.primaryButtonText, { color: colors.accentOn }]}>Generate questions</Text>
-                </>
-              )}
+              {/* No spinner while generating - the AI generating overlay covers the screen. */}
+              <Ionicons name="sparkles" size={18} color={colors.accentOn} />
+              <Text style={[styles.primaryButtonText, { color: colors.accentOn }]}>Generate questions</Text>
             </Pressable>
             <Pressable
               style={({ pressed }) => [styles.linkButton, pressed && { opacity: pressedOpacity }]}

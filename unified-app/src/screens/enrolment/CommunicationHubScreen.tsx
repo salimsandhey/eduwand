@@ -8,6 +8,7 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { spacing } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
+import { StudentAvatar } from "../../components/StudentAvatar";
 import { api, ClassSection, StudentStub, CommunicationMessage } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
 
@@ -25,10 +26,7 @@ function classLabel(section: { className: string; sectionName: string } | undefi
   return `${capitalizeFirst(section.className)} ${capitalizeFirst(section.sectionName)}`;
 }
 
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase() || "?";
-}
+const AVATAR_SIZE = 42;
 
 export function CommunicationHubScreen({ navigation }: Props) {
   const { accessToken } = useAuth();
@@ -96,7 +94,7 @@ export function CommunicationHubScreen({ navigation }: Props) {
         accessibilityRole="button"
         accessibilityLabel={`Open chat with ${title}`}
       >
-        <View style={[styles.avatar, { backgroundColor: colors.accentSoft }]}>{avatar}</View>
+        {avatar}
         <View style={styles.rowText}>
           <Text style={[styles.rowTitle, { color: colors.textPrimary }]} numberOfLines={1}>
             {title}
@@ -145,10 +143,18 @@ export function CommunicationHubScreen({ navigation }: Props) {
               const label = classLabel(classSections.find((c) => c.id === s.classSectionId) ?? s.classSection);
               return renderRow(
                 s.id,
-                <Text style={[styles.avatarText, { color: colors.accent }]}>{initials(s.fullName)}</Text>,
+                <StudentAvatar studentId={s.id} picture={s} size={AVATAR_SIZE} />,
                 capitalizeFirst(s.fullName),
                 label,
-                () => navigation.navigate("CommunicationChat", { mode: "student", studentId: s.id, studentName: s.fullName, classLabel: label })
+                () =>
+                  navigation.navigate("CommunicationChat", {
+                    mode: "student",
+                    studentId: s.id,
+                    studentName: s.fullName,
+                    classLabel: label,
+                    studentAvatarKey: s.avatarKey ?? null,
+                    studentPhotoMimeType: s.photoMimeType ?? null,
+                  })
               );
             })
           )}
@@ -167,7 +173,9 @@ export function CommunicationHubScreen({ navigation }: Props) {
             const count = students.filter((s) => s.classSectionId === c.id).length;
             return renderRow(
               c.id,
-              <Ionicons name="people" size={20} color={colors.accent} />,
+              <View style={[styles.avatar, { backgroundColor: colors.accentSoft }]}>
+                <Ionicons name="people" size={20} color={colors.accent} />
+              </View>,
               classLabel(c),
               `${count} student${count === 1 ? "" : "s"} · Send an announcement`,
               () => navigation.navigate("CommunicationChat", { mode: "class", classSectionId: c.id, classLabel: classLabel(c) })
@@ -268,7 +276,6 @@ const styles = StyleSheet.create({
   list: { paddingHorizontal: spacing.lg, paddingTop: 12, gap: 8 },
   row: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderWidth: 1, borderRadius: 16, padding: spacing.md },
   avatar: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center" },
-  avatarText: { fontSize: 14, fontWeight: "800" },
   rowText: { flex: 1 },
   rowTitle: { fontSize: 15, fontWeight: "700" },
   rowCaption: { fontSize: 12, marginTop: 2 },

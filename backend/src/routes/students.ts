@@ -1,6 +1,7 @@
-import { FastifyInstance } from "fastify";
+import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { storage } from "../lib/storage";
 import { requireRoles } from "../lib/rbac";
 import { PLATFORM_ADMIN_ROLE } from "../lib/roles";
 import { markOnboardingTaskComplete } from "../lib/onboarding";
@@ -64,6 +65,16 @@ const manageScoped = (app: FastifyInstance) => [
   app.requireSchoolScope,
   requireRoles("front_desk", "admin", "principal", "leadership", "teacher", PLATFORM_ADMIN_ROLE),
 ];
+
+function authenticateFromHeaderOrQuery(app: FastifyInstance) {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!request.headers.authorization) {
+      const token = (request.query as { token?: string } | undefined)?.token;
+      if (token) request.headers.authorization = `Bearer ${token}`;
+    }
+    await app.authenticate(request, reply);
+  };
+}
 
 async function resolveClassSectionForCaller(
   schoolId: string,
@@ -154,6 +165,34 @@ export async function studentRoutes(app: FastifyInstance) {
       }
 
       return { data: student, meta: {} };
+    }
+  );
+
+  // The student's own uploaded profile photo (they set it on their Profile tab
+  // - see auth-me.ts), for staff screens that list students. <Image> can't
+  // send an Authorization header, so ?token= is accepted too. A teacher only
+  // sees photos of students in classes they teach, same as GET /students/:id.
+  app.get<{ Params: { id: string } }>(
+    "/students/:id/photo",
+    { onRequest: [authenticateFromHeaderOrQuery(app), app.requireSchoolScope] },
+    async (request, reply) => {
+      const student = await prisma.studentStub.findFirst({
+        where: { id: request.params.id, schoolId: request.schoolId },
+        select: { classSectionId: true, photoLocation: true, photoMimeType: true },
+      });
+      // A student may only read their own photo; a teacher only their classes'.
+      const allowed =
+        !!student &&
+        (request.user.role === "student"
+          ? request.user.sub === request.params.id
+          : request.user.role !== "teacher" || !!(await resolveClassSectionForCaller(request.schoolId!, student.classSectionId, request.user)));
+      if (!student || !allowed || !student.photoLocation || !student.photoMimeType) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "No photo uploaded for this student" } });
+      }
+
+      const buffer = await storage.readBuffer(student.photoLocation);
+      reply.type(student.photoMimeType);
+      return reply.send(buffer);
     }
   );
 

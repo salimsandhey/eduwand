@@ -2,13 +2,13 @@ import { FastifyInstance } from "fastify";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { AssistantRole, resolveAssistantRole } from "../lib/assistant-context";
-import { runAssistantTurn } from "../lib/assistant-engine";
+import { ASSISTANT_NAME, runAssistantTurn } from "../lib/assistant-engine";
 import { AssistantLink, ToolCtx, ToolError, findWriteTool } from "../lib/assistant-tools";
 
 const HISTORY_LIMIT = 20;
 const LIST_LIMIT = 100;
 const MAX_TEXT = 2000;
-const FALLBACK_REPLY = "Sorry, I couldn't reach the assistant right now - please try again.";
+const FALLBACK_REPLY = `Sorry, ${ASSISTANT_NAME} couldn't respond right now - please try again.`;
 
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope];
 
@@ -35,7 +35,7 @@ function serialize(message: MessageRow) {
 
 const forbidden = {
   data: null,
-  error: { code: "forbidden", message: "The assistant is available to teachers, students, counsellors and front desk in the mobile app." },
+  error: { code: "forbidden", message: `${ASSISTANT_NAME} is available to teachers, students, counsellors and front desk in the mobile app.` },
 };
 
 export async function aiAssistantRoutes(app: FastifyInstance) {

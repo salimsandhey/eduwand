@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { prisma } from "../lib/prisma";
+import { loadStudentMe } from "../lib/student-me";
 import { AppJwtPayload } from "../types/fastify-jwt";
 import { messageProvider } from "../lib/messaging";
 import { generateOtpCode, hashOtpCode, compareOtpCode, OTP_TTL_MS, MAX_OTP_ATTEMPTS } from "../lib/otp";
@@ -122,32 +123,7 @@ export async function authRoutes(app: FastifyInstance) {
 
   app.get("/auth/me", { onRequest: [app.authenticate] }, async (request) => {
     if (request.user.role === "student") {
-      const student = await prisma.studentStub.findUnique({
-        where: { id: request.user.sub },
-        select: { id: true, fullName: true, schoolId: true, classSectionId: true },
-      });
-      if (!student) {
-        return { data: null, meta: {} };
-      }
-      return {
-        data: {
-          id: student.id,
-          fullName: student.fullName,
-          email: "",
-          phone: null,
-          role: "student",
-          schoolId: student.schoolId,
-          trustId: null,
-          status: "active",
-          classSectionId: student.classSectionId,
-          photoMimeType: null,
-          avatarKey: null,
-          accountType: null,
-          board: null,
-          hasSeenOnboardingTour: true,
-        },
-        meta: {},
-      };
+      return { data: await loadStudentMe(request.user.sub), meta: {} };
     }
 
     const user = await prisma.appUser.findUnique({
@@ -164,6 +140,7 @@ export async function authRoutes(app: FastifyInstance) {
         photoMimeType: true,
         avatarKey: true,
         hasSeenOnboardingTour: true,
+        hasDismissedProfilePrompt: true,
         school: { select: { accountType: true, board: true } },
       },
     });

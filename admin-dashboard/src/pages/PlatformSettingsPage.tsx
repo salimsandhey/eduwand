@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api/client";
-import type { Plan, PlatformSetting } from "../api/client";
+import type { AiFeature, Plan, PlatformSetting } from "../api/client";
 import { Card } from "../components/Card";
 import { PageHeader } from "../components/PageHeader";
 
@@ -18,8 +18,10 @@ export function PlatformSettingsPage() {
 
   const [settings, setSettings] = useState<PlatformSetting[] | null>(null);
   const [plans, setPlans] = useState<Plan[] | null>(null);
+  const [aiFeatures, setAiFeatures] = useState<AiFeature[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [savingFeatureKey, setSavingFeatureKey] = useState<string | null>(null);
   const [savingPlanId, setSavingPlanId] = useState<string | null>(null);
 
   const [newPlanName, setNewPlanName] = useState("");
@@ -31,9 +33,14 @@ export function PlatformSettingsPage() {
     if (!accessToken) return;
     setError(null);
     try {
-      const [settingsRes, plansRes] = await Promise.all([api.listPlatformSettings(accessToken), api.listPlans(accessToken)]);
+      const [settingsRes, plansRes, featuresRes] = await Promise.all([
+        api.listPlatformSettings(accessToken),
+        api.listPlans(accessToken),
+        api.listAiFeatures(accessToken),
+      ]);
       setSettings(settingsRes);
       setPlans(plansRes);
+      setAiFeatures(featuresRes);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load platform settings");
     }
@@ -54,6 +61,32 @@ export function PlatformSettingsPage() {
     } finally {
       setSavingKey(null);
     }
+  }
+
+  // Saves on blur/toggle like the plan table above; skips a no-op edit so
+  // tabbing through the table doesn't fire a request per cell.
+  async function updateAiFeature(feature: AiFeature, input: Parameters<typeof api.updateAiFeature>[2]) {
+    if (!accessToken) return;
+    const changed = Object.entries(input).some(([field, value]) => feature[field as keyof AiFeature] !== value);
+    if (!changed) return;
+    setSavingFeatureKey(feature.key);
+    try {
+      await api.updateAiFeature(accessToken, feature.key, input);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update AI feature");
+    } finally {
+      setSavingFeatureKey(null);
+    }
+  }
+
+  function updateAiFeatureCost(feature: AiFeature, value: string) {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      setError("Cost must be a whole number of 0 or more");
+      return;
+    }
+    updateAiFeature(feature, { cost: parsed });
   }
 
   async function makeDefault(plan: Plan) {
@@ -181,6 +214,78 @@ export function PlatformSettingsPage() {
         <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 12, marginBottom: 0 }}>
           The default plan's credits are granted to every new individual-teacher signup and every institutional teacher
           seat whose trust has no plan explicitly assigned.
+        </p>
+      </Card>
+
+      <Card title="AI feature costs">
+        {!aiFeatures ? (
+          <p style={{ color: "var(--text-muted)" }}>Loading…</p>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  <th style={styles.th}>Feature</th>
+                  <th style={styles.th}>Name shown to teachers</th>
+                  <th style={styles.th}>Description</th>
+                  <th style={styles.th}>Credits per use</th>
+                  <th style={styles.th}>On Credits screen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {aiFeatures.map((feature) => {
+                  const disabled = savingFeatureKey === feature.key;
+                  return (
+                    <tr key={feature.key}>
+                      <td style={{ ...styles.td, fontFamily: "monospace", color: "var(--text-muted)" }}>{feature.key}</td>
+                      <td style={styles.td}>
+                        <input
+                          key={`${feature.key}-label-${feature.updatedAt}`}
+                          style={styles.labelInput}
+                          defaultValue={feature.label}
+                          disabled={disabled}
+                          onBlur={(e) => e.target.value.trim() && updateAiFeature(feature, { label: e.target.value.trim() })}
+                        />
+                      </td>
+                      <td style={styles.td}>
+                        <input
+                          key={`${feature.key}-description-${feature.updatedAt}`}
+                          style={{ ...styles.labelInput, minWidth: 260 }}
+                          defaultValue={feature.description}
+                          disabled={disabled}
+                          onBlur={(e) => updateAiFeature(feature, { description: e.target.value.trim() })}
+                        />
+                      </td>
+                      <td style={styles.td}>
+                        <input
+                          key={`${feature.key}-cost-${feature.updatedAt}`}
+                          style={{ ...styles.labelInput, minWidth: 90, width: 90 }}
+                          type="number"
+                          min={0}
+                          step={1}
+                          defaultValue={feature.cost}
+                          disabled={disabled}
+                          onBlur={(e) => updateAiFeatureCost(feature, e.target.value)}
+                        />
+                      </td>
+                      <td style={styles.td}>
+                        <input
+                          type="checkbox"
+                          checked={feature.showOnCredits}
+                          disabled={disabled}
+                          onChange={(e) => updateAiFeature(feature, { showOnCredits: e.target.checked })}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 12, marginBottom: 0 }}>
+          A cost change applies to every teacher's next AI action and is recorded in the audit log. Features shown on the
+          Credits screen appear under "Your balance covers" in the mobile app.
         </p>
       </Card>
 

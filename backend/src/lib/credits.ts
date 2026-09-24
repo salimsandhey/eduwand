@@ -48,24 +48,16 @@ export async function grantInitialCredits(tx: Tx, teacherUserId: string, trustId
   });
 }
 
-// Flat cost per AI feature (not token-metered - see the plan doc). Keyed by
-// the same `feature` string every route already passes to logAiUsage().
-// Admin-tunable later via a PlatformSetting override; hardcoded map is the
-// v1 source of truth so there's always a defined cost even before any
-// override exists.
-const AI_FEATURE_COSTS: Record<string, number> = {
-  lesson_plan: 40,
-  research_report: 40,
-  generation: 40,
-  assignment_generation: 60,
-  assessment_generation: 30,
-  personalisation_suggestion: 20,
-  grading: 15,
-};
-const DEFAULT_FEATURE_COST = 30;
+// Flat cost per AI feature (not token-metered - see the plan doc), read from
+// the AiFeature table (platform_admin-editable). Keyed by the same `feature`
+// string every route passes to logAiUsage(). The fallback only applies to a
+// feature key with no row at all - a code path added without its migration
+// row - so it's charged something rather than nothing.
+const UNKNOWN_FEATURE_COST = 30;
 
-export function getFeatureCost(feature: string): number {
-  return AI_FEATURE_COSTS[feature] ?? DEFAULT_FEATURE_COST;
+export async function getFeatureCost(feature: string): Promise<number> {
+  const row = await prisma.aiFeature.findUnique({ where: { key: feature }, select: { cost: true } });
+  return row?.cost ?? UNKNOWN_FEATURE_COST;
 }
 
 // Pre-flight check - call BEFORE the actual AI provider call so a route can

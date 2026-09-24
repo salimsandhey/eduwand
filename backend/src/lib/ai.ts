@@ -2142,7 +2142,7 @@ export async function logAiUsage(params: {
   // Docs/superpowers/plans/2026-09-09-individual-teacher-onboarding-and-
   // credits.md.
   if (status === "success") {
-    const cost = getFeatureCost(params.feature);
+    const cost = await getFeatureCost(params.feature);
     await deductCredits(params.teacherUserId, cost, { feature: params.feature, aiUsageLogId: log.id });
   }
 }

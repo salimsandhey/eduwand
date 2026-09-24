@@ -207,7 +207,7 @@ export async function submissionRoutes(app: FastifyInstance) {
       marks: k.marks,
     }));
 
-    if (!(await hasSufficientCredits(request.user.sub, getFeatureCost("grading")))) {
+    if (!(await hasSufficientCredits(request.user.sub, await getFeatureCost("grading")))) {
       return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to grade this submission" } });
     }
 

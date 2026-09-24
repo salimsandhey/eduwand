@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { View } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import { BlurTargetView } from "expo-blur";
 import { useFonts } from "expo-font";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -12,6 +14,7 @@ import { AppNavigator } from "./src/navigation/AppNavigator";
 import { applyGlobalTypography } from "./src/theme/globalTypography";
 import { AnimatedSplashScreen } from "./src/components/AnimatedSplashScreen";
 import { AiAssistantGlowOverlay } from "./src/components/ai/AiAssistantGlowOverlay";
+import { AiGeneratingOverlay } from "./src/components/ai/AiGeneratingOverlay";
 import { WelcomeMascotProvider, useWelcomeMascot } from "./src/context/WelcomeMascotContext";
 import { MascotWelcomeOverlay } from "./src/components/MascotWelcomeOverlay";
 import { OfflineBanner } from "./src/components/OfflineBanner";
@@ -24,26 +27,38 @@ function Root() {
   const { mode } = useTheme();
   const [splashDone, setSplashDone] = useState(false);
   const { startWelcome, welcomeCount } = useWelcomeMascot();
+  const blurTargetRef = useRef<View>(null);
 
   useEffect(() => {
     lockPortrait();
   }, []);
 
-  const hasTriggeredRef = useRef(false);
+  // Once per signed-in account, every role alike. Cleared on logout, so
+  // logging in as someone else (e.g. a student after a teacher) in the same
+  // app session still gets the intro - a one-shot boolean skipped it.
+  const welcomedUserIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (splashDone && user && !hasTriggeredRef.current) {
-      hasTriggeredRef.current = true;
+    if (!user) {
+      welcomedUserIdRef.current = null;
+      return;
+    }
+    if (splashDone && welcomedUserIdRef.current !== user.id) {
+      welcomedUserIdRef.current = user.id;
       startWelcome();
     }
   }, [splashDone, user, startWelcome]);
 
   return (
     <SplashDoneProvider done={splashDone}>
-      {!isRestoring && (user ? <AppNavigator /> : <AuthScreen />)}
+      {/* The AI generating overlay blurs this (Android only blurs a BlurTargetView). */}
+      <BlurTargetView ref={blurTargetRef} style={{ flex: 1 }}>
+        {!isRestoring && (user ? <AppNavigator /> : <AuthScreen />)}
+      </BlurTargetView>
       {!splashDone && (
         <AnimatedSplashScreen ready={!isRestoring} onFinish={() => setSplashDone(true)} />
       )}
       {splashDone && !!user && <MascotWelcomeOverlay key={welcomeCount} />}
+      <AiGeneratingOverlay blurTarget={blurTargetRef} />
       <AiAssistantGlowOverlay />
       {splashDone && <OfflineBanner />}
       <StatusBar style={mode === "dark" ? "light" : "dark"} />

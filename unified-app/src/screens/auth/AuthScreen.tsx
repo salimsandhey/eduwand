@@ -19,6 +19,7 @@ import { getCardShadow, lightColors, PRESSED_OPACITY, typography, softCardShadow
 import { Screen } from "../../components/Screen";
 import { brandAssets } from "../../theme/brandAssets";
 import { BlinkingMascot } from "../../components/BlinkingMascot";
+import { StudentAvatar } from "../../components/StudentAvatar";
 import { capitalizeFirst } from "../../utils/text";
 import { BOARDS } from "../../constants/boards";
 
@@ -95,6 +96,9 @@ export function AuthScreen() {
   const [digits, setDigits] = useState<string[]>(Array(CODE_LENGTH).fill(""));
   const [devOtp, setDevOtp] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<StudentOtpMatch[]>([]);
+  // verify-otp's selection token - the only credential the "which child?"
+  // picker has for loading each student's uploaded photo.
+  const [pickerToken, setPickerToken] = useState<string | null>(null);
   const [resendCooldown, setResendCooldown] = useState(0);
   const codeInputs = useRef<Array<TextInput | null>>([]);
 
@@ -302,6 +306,7 @@ export function AuthScreen() {
       return;
     }
     setCandidates(students);
+    setPickerToken(selectionToken);
     setStudentStep("select");
   }
 
@@ -513,7 +518,7 @@ export function AuthScreen() {
                   ) : null}
 
                   {staffMode === "forgot-request" ? (
-                    <View style={[styles.formContainer, styles.authCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                    <View style={[styles.formContainer, styles.authCard, { backgroundColor: colors.surface }]}>
                       <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Email</Text>
                       <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                         <Ionicons name="mail-outline" size={20} color={colors.accent} style={styles.inputIcon} />
@@ -551,7 +556,7 @@ export function AuthScreen() {
                   ) : null}
 
                   {staffMode === "forgot-reset" ? (
-                    <View style={[styles.formContainer, styles.authCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                    <View style={[styles.formContainer, styles.authCard, { backgroundColor: colors.surface }]}>
                       <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Reset code</Text>
                       <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                         <Ionicons name="key-outline" size={20} color={colors.accent} style={styles.inputIcon} />
@@ -608,7 +613,7 @@ export function AuthScreen() {
                   ) : null}
 
                   {staffMode === "signup" ? (
-                    <View style={[styles.formContainer, styles.authCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                    <View style={[styles.formContainer, styles.authCard, { backgroundColor: colors.surface }]}>
                       <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Full name</Text>
                       <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                         <Ionicons name="person-outline" size={20} color={colors.accent} style={styles.inputIcon} />
@@ -774,8 +779,14 @@ export function AuthScreen() {
                   {studentStep === "select" ? (
                     <View style={styles.form}>
                       {candidates.map((student) => (
-                        <Pressable key={student.id} onPress={() => selectStudent(student.id)} disabled={isLoading} style={({ pressed }) => [styles.studentRow, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: PRESSED_OPACITY }]}>
-                          <View style={[styles.studentAvatar, { backgroundColor: colors.accentSoft }]}><Text style={[styles.studentAvatarText, { color: colors.accent }]}>{student.fullName.slice(0, 1).toUpperCase()}</Text></View>
+                        <Pressable key={student.id} onPress={() => selectStudent(student.id)} disabled={isLoading} style={({ pressed }) => [styles.studentRow, { backgroundColor: colors.surface }, softCardShadow, pressed && { opacity: PRESSED_OPACITY }]}>
+                          <StudentAvatar
+                            studentId={student.id}
+                            picture={student}
+                            size={44}
+                            photoUrl={pickerToken ? api.studentPickerPhotoUrl(pickerToken, student.id) : null}
+                            style={styles.studentAvatar}
+                          />
                           <Text style={[styles.studentName, { color: colors.textPrimary }]}>{capitalizeFirst(student.fullName)}</Text>
                           <Ionicons name="chevron-forward" size={18} color={colors.accent} />
                         </Pressable>
@@ -913,14 +924,9 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   authCard: {
-    borderWidth: 1,
+    ...softCardShadow,
     borderRadius: 24,
     padding: 16,
-    shadowColor: "#7C005A",
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.09,
-    shadowRadius: 22,
-    elevation: 5,
   },
   formContainer: {
     marginBottom: 20,
@@ -1091,9 +1097,8 @@ const styles = StyleSheet.create({
   resendText: { fontFamily: typography.semiBold, fontSize: 13 },
   devChip: { alignSelf: "center", flexDirection: "row", alignItems: "center", gap: 6, marginTop: 18, borderWidth: 1, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 8 },
   devChipText: { fontFamily: typography.semiBold, fontSize: 11 },
-  studentRow: { minHeight: 76, flexDirection: "row", alignItems: "center", borderWidth: 1, borderRadius: 16, paddingHorizontal: 14, marginBottom: 10 },
-  studentAvatar: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", marginRight: 12 },
-  studentAvatarText: { fontFamily: typography.bold, fontSize: 17 },
+  studentRow: { minHeight: 76, flexDirection: "row", alignItems: "center", borderRadius: 16, paddingHorizontal: 14, marginBottom: 10 },
+  studentAvatar: { marginRight: 12 },
   studentName: { flex: 1, fontFamily: typography.semiBold, fontSize: 15 },
   loading: { marginTop: 12 },
 });

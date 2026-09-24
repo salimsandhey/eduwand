@@ -8,6 +8,7 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { spacing, softCardShadow } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
+import { StudentAvatar } from "../../components/StudentAvatar";
 import { SheetModal } from "../../components/SheetModal";
 import { DatePicker } from "../../components/DatePicker";
 import { api, ClassSection, StudentStub } from "../../api/client";
@@ -240,6 +241,7 @@ export function StudentsScreen({ navigation }: Props) {
                 {selectionMode ? (
                   <Ionicons name={selected ? "checkbox" : "square-outline"} size={22} color={selected ? colors.accent : colors.textMuted} />
                 ) : null}
+                <StudentAvatar studentId={student.id} picture={student} size={40} />
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.rowName, { color: colors.textPrimary }]}>{student.fullName}</Text>
                   <Text style={[styles.rowMeta, { color: colors.textMuted }]}>

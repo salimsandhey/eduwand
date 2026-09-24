@@ -321,7 +321,7 @@ export function LessonPlanView({ content, editable, onChange, sources, topicId, 
           {content.stages.map((stg, si) => {
             if (totalSessions > 1 && !stg.sessions?.includes(selectedSession)) return null;
             return (
-            <View key={si} style={[styles.stageCard, { backgroundColor: colors.surface, borderColor: colors.border }, stageIsComplete(stg) && { opacity: 0.6 }]}>
+            <View key={si} style={[styles.stageCard, { backgroundColor: colors.surface }, cardShadow, stageIsComplete(stg) && { opacity: 0.6 }]}>
               <View style={styles.stageHeadingRow}>
                 <View style={[styles.stageDot, { backgroundColor: FLOW_COLORS[si % FLOW_COLORS.length] }]} />
                 <Text style={[styles.stageName, { color: colors.textPrimary }]}>{stg.stage}</Text>
@@ -669,8 +669,8 @@ function ActivityDescription({ description, colors }: { description: string | st
   );
 }
 
-function Card({ colors, children }: { colors: any; cardShadow: any; children: React.ReactNode }) {
-  return <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>{children}</View>;
+function Card({ colors, cardShadow, children }: { colors: any; cardShadow: any; children: React.ReactNode }) {
+  return <View style={[styles.card, { backgroundColor: colors.surface }, cardShadow]}>{children}</View>;
 }
 function CardLabel({ colors, children }: { colors: any; children: React.ReactNode }) {
   return <Text style={[styles.cardLabel, { color: colors.textPrimary }]}>{children}</Text>;
@@ -742,7 +742,7 @@ const styles = StyleSheet.create({
   stepNumber: { width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center" },
   stepNumberText: { fontSize: 12, fontFamily: typography.bold },
   stepLabel: { fontSize: 10, fontFamily: typography.medium },
-  card: { borderWidth: 1, borderRadius: 20, padding: spacing.lg + 4, marginBottom: spacing.lg },
+  card: { borderRadius: 20, padding: spacing.lg + 4, marginBottom: spacing.lg },
   cardHeadingRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.sm },
   cardLabel: { fontSize: 16, fontFamily: typography.bold, marginBottom: spacing.sm },
   link: { fontSize: 13, fontFamily: typography.semiBold },
@@ -761,7 +761,7 @@ const styles = StyleSheet.create({
   tagRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs, marginTop: spacing.sm },
   tag: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill },
   tagText: { fontSize: 11, fontFamily: typography.medium },
-  stageCard: { borderWidth: 1, borderRadius: 20, padding: spacing.lg, marginBottom: spacing.lg },
+  stageCard: { borderRadius: 20, padding: spacing.lg, marginBottom: spacing.lg },
   stageHeadingRow: { flexDirection: "row", alignItems: "center", gap: spacing.xs, flexWrap: "wrap" },
   stageDot: { width: 10, height: 10, borderRadius: 5 },
   stageName: { fontSize: 15, fontFamily: typography.bold, marginRight: "auto" },

@@ -313,6 +313,100 @@ export async function studentPortalRoutes(app: FastifyInstance) {
     return { data: messages, meta: {} };
   });
 
+  // Who the student is talking to on the Messages screen: their class and the
+  // teachers on it, plus anyone else who has messaged them (a teacher since
+  // moved off the class) so older bubbles still show a name.
+  app.get("/student/communications/context", { onRequest: scoped(app) }, async (request, reply) => {
+    const student = await prisma.studentStub.findFirst({
+      where: { id: request.user.sub, schoolId: request.schoolId },
+      include: {
+        classSection: {
+          include: {
+            teacherAssignments: {
+              include: { teacher: { select: { id: true, fullName: true, avatarKey: true, photoMimeType: true } } },
+              orderBy: { createdAt: "asc" },
+            },
+          },
+        },
+      },
+    });
+    if (!student) {
+      return reply.code(404).send({ data: null, error: { code: "not_found", message: "Student not found" } });
+    }
+
+    const classTeachers = student.classSection.teacherAssignments.map(({ teacher }) => teacher);
+    const senderIds = await prisma.communicationMessage.findMany({
+      where: {
+        schoolId: request.schoolId,
+        senderUserId: { not: null, notIn: classTeachers.map((t) => t.id) },
+        OR: [
+          { channel: "teacher_to_student", recipientStudentStubId: student.id },
+          { channel: "teacher_to_class", recipientClassSectionId: student.classSectionId },
+        ],
+      },
+      distinct: ["senderUserId"],
+      select: { senderUserId: true },
+    });
+    const pastSenders = senderIds.length
+      ? await prisma.appUser.findMany({
+          where: { id: { in: senderIds.map((m) => m.senderUserId as string) } },
+          select: { id: true, fullName: true, avatarKey: true },
+        })
+      : [];
+
+    return {
+      data: {
+        className: student.classSection.className,
+        sectionName: student.classSection.sectionName,
+        teachers: [
+          ...classTeachers.map((t) => ({ id: t.id, fullName: t.fullName, avatarKey: t.avatarKey, hasPhoto: !!t.photoMimeType, isClassTeacher: true })),
+          // Photos stay private to a student's current teachers.
+          ...pastSenders.map((t) => ({ id: t.id, fullName: t.fullName, avatarKey: t.avatarKey, hasPhoto: false, isClassTeacher: false })),
+        ],
+      },
+      meta: {},
+    };
+  });
+
+  // A current class teacher's profile photo. <Image source={{ uri }}> can't
+  // send an Authorization header, so this also accepts ?token= (same as
+  // /auth/me/photo).
+  app.get<{ Params: { teacherId: string } }>(
+    "/student/teachers/:teacherId/photo",
+    {
+      onRequest: [
+        async (request, reply) => {
+          if (!request.headers.authorization) {
+            const token = (request.query as { token?: string } | undefined)?.token;
+            if (token) request.headers.authorization = `Bearer ${token}`;
+          }
+          await app.authenticate(request, reply);
+        },
+        app.requireSchoolScope,
+        requireRoles("student"),
+      ],
+    },
+    async (request, reply) => {
+      const student = await prisma.studentStub.findFirst({
+        where: { id: request.user.sub, schoolId: request.schoolId },
+        select: { classSectionId: true },
+      });
+      const assignment = student
+        ? await prisma.classSectionTeacher.findFirst({
+            where: { classSectionId: student.classSectionId, teacherUserId: request.params.teacherId },
+            include: { teacher: { select: { photoLocation: true, photoMimeType: true } } },
+          })
+        : null;
+      const teacher = assignment?.teacher;
+      if (!teacher?.photoLocation || !teacher.photoMimeType) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "No photo" } });
+      }
+      const buffer = await storage.readBuffer(teacher.photoLocation);
+      reply.type(teacher.photoMimeType);
+      return reply.send(buffer);
+    }
+  );
+
   app.post<{ Body: { body: string } }>("/student/communications", { onRequest: scoped(app) }, async (request, reply) => {
     const body = request.body ?? ({} as { body: string });
     if (!body.body || !body.body.trim()) {

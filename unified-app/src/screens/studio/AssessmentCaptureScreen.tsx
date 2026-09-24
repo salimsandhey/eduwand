@@ -177,7 +177,7 @@ export function AssessmentCaptureScreen({ route, navigation }: Props) {
         {students.map((s) => {
           const selected = selections[s.id];
           return (
-            <View key={s.id} style={[styles.studentRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View key={s.id} style={[styles.studentRow, { backgroundColor: colors.surface }, cardShadow]}>
               <Text style={[styles.studentName, { color: colors.textPrimary }]} numberOfLines={1}>{s.fullName}</Text>
               <View style={styles.optionButtonsRow}>
                 {question.options.map((_, i) => {
@@ -253,7 +253,7 @@ const styles = StyleSheet.create({
   optionLegendText: { flex: 1, fontSize: 12, fontWeight: "500" },
   error: { textAlign: "center", marginTop: 8, fontSize: 13, paddingHorizontal: 20 },
   rosterList: { paddingHorizontal: 20, paddingTop: 14, paddingBottom: 20, gap: 8 },
-  studentRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: 1, borderRadius: 13, paddingVertical: 10, paddingHorizontal: 12, minHeight: 54 },
+  studentRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderRadius: 13, paddingVertical: 10, paddingHorizontal: 12, minHeight: 54 },
   studentName: { flex: 1, fontSize: 14, fontWeight: "700", marginRight: 8 },
   optionButtonsRow: { flexDirection: "row", gap: 6 },
   optionButton: { width: 34, height: 34, borderRadius: 17, borderWidth: 1, alignItems: "center", justifyContent: "center" },

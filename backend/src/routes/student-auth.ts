@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 import { messageProvider } from "../lib/messaging";
+import { storage } from "../lib/storage";
 import { hashOtpCode, compareOtpCode, OTP_TTL_MS, MAX_OTP_ATTEMPTS } from "../lib/otp";
 
 const ACCESS_TOKEN_EXPIRY = "15m";
@@ -103,7 +104,7 @@ export async function studentAuthRoutes(app: FastifyInstance) {
 
     const students = await prisma.studentStub.findMany({
       where: { guardianContact: phone },
-      select: { id: true, fullName: true, schoolId: true, classSectionId: true },
+      select: { id: true, fullName: true, schoolId: true, classSectionId: true, avatarKey: true, photoMimeType: true },
       orderBy: { fullName: "asc" },
     });
 
@@ -120,6 +121,35 @@ export async function studentAuthRoutes(app: FastifyInstance) {
     );
 
     return { data: { selectionToken, students }, meta: {} };
+  });
+
+  // Profile photo for the "which child?" picker shown between verify-otp and
+  // select - nobody is signed in yet, so it takes the selection token (as
+  // ?token=, since <Image> can't send headers) and only serves students
+  // linked to the phone number that token was issued for.
+  app.get<{ Params: { id: string }; Querystring: { token?: string } }>("/auth/student/photo/:id", async (request, reply) => {
+    let phone: string | undefined;
+    try {
+      const decoded = app.jwt.verify<{ type: string; phone?: string }>(request.query.token ?? "");
+      if (decoded.type === "student_select") phone = decoded.phone;
+    } catch {
+      phone = undefined;
+    }
+    if (!phone) {
+      return reply.code(401).send({ data: null, error: { code: "unauthorized", message: "Invalid or expired selection token" } });
+    }
+
+    const student = await prisma.studentStub.findFirst({
+      where: { id: request.params.id, guardianContact: phone },
+      select: { photoLocation: true, photoMimeType: true },
+    });
+    if (!student?.photoLocation || !student.photoMimeType) {
+      return reply.code(404).send({ data: null, error: { code: "not_found", message: "No photo uploaded" } });
+    }
+
+    const buffer = await storage.readBuffer(student.photoLocation);
+    reply.type(student.photoMimeType);
+    return reply.send(buffer);
   });
 
   app.post<{ Body: SelectBody }>("/auth/student/select", async (request, reply) => {

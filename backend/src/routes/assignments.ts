@@ -184,7 +184,7 @@ export async function assignmentRoutes(app: FastifyInstance) {
       where: { id: request.params.id, schoolId: request.schoolId },
       include: {
         personalisationSuggestions: { include: { studentStub: { select: { id: true, fullName: true } } } },
-        submissions: { include: { grade: true, studentStub: { select: { id: true, fullName: true } } } },
+        submissions: { include: { grade: true, studentStub: { select: { id: true, fullName: true, avatarKey: true, photoMimeType: true } } } },
       },
     });
     if (!assignment) {
@@ -331,7 +331,7 @@ export async function assignmentRoutes(app: FastifyInstance) {
         const avgScore =
           pastGrades.length > 0 ? pastGrades.reduce((sum, g) => sum + (g.finalScore ?? 0), 0) / pastGrades.length : null;
 
-        if (!(await hasSufficientCredits(request.user.sub, getFeatureCost("personalisation_suggestion")))) {
+        if (!(await hasSufficientCredits(request.user.sub, await getFeatureCost("personalisation_suggestion")))) {
           skipped.push({ studentStubId: student.id, reason: "Insufficient credits" });
           continue;
         }
@@ -403,7 +403,7 @@ export async function assignmentRoutes(app: FastifyInstance) {
       return reply.code(404).send({ data: null, error: { code: "not_found", message: "Assignment not found" } });
     }
 
-    if (!(await hasSufficientCredits(request.user.sub, getFeatureCost("generation")))) {
+    if (!(await hasSufficientCredits(request.user.sub, await getFeatureCost("generation")))) {
       return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to generate this answer key" } });
     }
 
@@ -703,7 +703,7 @@ export async function assignmentRoutes(app: FastifyInstance) {
         schoolFormatInstructions: formatTemplate?.templateBody ?? null,
       };
 
-      if (!(await hasSufficientCredits(request.user.sub, getFeatureCost("assignment_generation")))) {
+      if (!(await hasSufficientCredits(request.user.sub, await getFeatureCost("assignment_generation")))) {
         return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to generate this assignment" } });
       }
 
@@ -867,7 +867,7 @@ export async function assignmentRoutes(app: FastifyInstance) {
         schoolFormatInstructions: formatTemplate?.templateBody ?? null,
       };
 
-      if (!(await hasSufficientCredits(request.user.sub, getFeatureCost("assignment_generation")))) {
+      if (!(await hasSufficientCredits(request.user.sub, await getFeatureCost("assignment_generation")))) {
         return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to generate this assignment" } });
       }
 
@@ -1015,7 +1015,7 @@ export async function assignmentRoutes(app: FastifyInstance) {
         schoolFormatInstructions: formatTemplate?.templateBody ?? null,
       };
 
-      if (!(await hasSufficientCredits(request.user.sub, getFeatureCost("assignment_generation")))) {
+      if (!(await hasSufficientCredits(request.user.sub, await getFeatureCost("assignment_generation")))) {
         return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to regenerate this question" } });
       }
 

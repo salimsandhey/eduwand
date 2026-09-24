@@ -164,7 +164,7 @@ export function AppNavigator() {
         <Stack.Screen
           name="StudentAssignmentSubmit"
           component={StudentAssignmentSubmitScreen}
-          options={{ title: "Submit Assignment" }}
+          options={{ headerShown: false }}
         />
         <Stack.Screen name="CreateFirstClass" component={CreateFirstClassScreen} options={{ headerShown: false }} />
         <Stack.Screen name="Credits" component={CreditsScreen} options={{ headerShown: false }} />

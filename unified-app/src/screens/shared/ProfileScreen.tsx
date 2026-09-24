@@ -1,13 +1,17 @@
-import { useMemo, useState } from "react";
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, Pressable, View } from "react-native";
+import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Alert, Animated, Easing, Image, ScrollView, StyleSheet, Text, TextInput, Pressable, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import { useNavigation } from "@react-navigation/native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
+import { SheetModal } from "../../components/SheetModal";
 import { ProfilePhotoPicker, PickedPhoto } from "../../components/ProfilePhotoPicker";
+import { useKeyboardOverlap } from "../../hooks/useKeyboardOverlap";
 import { api } from "../../api/client";
+import { avatarSetForRole, avatarSourceFor, resolveUserImageSource, userImageFillsFrame } from "../../theme/avatars";
+import { describeMissingProfileItems, getProfileCompletion } from "../../utils/profileCompletion";
 
 function formatRole(role: string) {
   return role.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
@@ -24,18 +28,22 @@ export function ProfileScreen() {
     removeProfilePhoto,
     deleteAccount,
   } = useAuth();
-  const { colors, pressedOpacity } = useTheme();
+  const { colors, cardShadow, pressedOpacity } = useTheme();
   const navigation = useNavigation<any>();
+  // The container sits inside <Screen edges={["bottom"]}>, above the navigation bar.
+  const keyboard = useKeyboardOverlap({ bottomInset: useSafeAreaInsets().bottom });
 
   const [fullName, setFullName] = useState(user?.fullName ?? "");
   const [phone, setPhone] = useState(user?.phone ?? "");
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileMsg, setProfileMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
 
+  const [showPhotoSheet, setShowPhotoSheet] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [photoVersion, setPhotoVersion] = useState(0);
   const [photoErr, setPhotoErr] = useState<string | null>(null);
 
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -44,6 +52,26 @@ export function ProfileScreen() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
   const [passwordMsg, setPasswordMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
+  // The form stays mounted and its height eases between 0 and its measured
+  // height, so it opens and closes smoothly instead of popping in and out.
+  const passwordProgress = useRef(new Animated.Value(0)).current;
+  const [passwordFormHeight, setPasswordFormHeight] = useState(0);
+
+  useEffect(() => {
+    Animated.timing(passwordProgress, {
+      toValue: showPasswordForm ? 1 : 0,
+      duration: showPasswordForm ? 300 : 240,
+      easing: Easing.inOut(Easing.cubic),
+      useNativeDriver: false,
+    }).start(({ finished }) => {
+      // Clear only once it's fully closed, so the fields don't visibly empty mid-collapse.
+      if (finished && !showPasswordForm) {
+        setCurrentPassword("");
+        setNewPassword("");
+        setConfirmPassword("");
+      }
+    });
+  }, [showPasswordForm, passwordProgress]);
 
   const [showDeleteForm, setShowDeleteForm] = useState(false);
   const [deletePassword, setDeletePassword] = useState("");
@@ -51,20 +79,30 @@ export function ProfileScreen() {
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [deleteErr, setDeleteErr] = useState<string | null>(null);
 
+  const avatarSet = avatarSetForRole(user?.role);
+
+  const profileCompletion = user ? getProfileCompletion(user) : null;
+  // Shown while incomplete. Captured once on open so that finishing the
+  // profile during this visit shows the "complete" state instead of the
+  // line vanishing out from under the user mid-edit.
+  const [showCompletion] = useState(() => !!profileCompletion && profileCompletion.percent < 100);
+
   const photoValue: PickedPhoto = useMemo(() => {
     if (!user) return { type: "none" };
     if (user.photoMimeType && accessToken) {
       return { type: "remote", uri: `${api.myPhotoUrl(accessToken)}&v=${photoVersion}` };
     }
-    if (user.avatarKey) return { type: "avatar", avatarKey: user.avatarKey };
+    // A saved key from another set (a teacher still on an old default icon)
+    // shows as "nothing picked", so the teacher only ever sees their own set.
+    if (user.avatarKey && avatarSourceFor(user.avatarKey, avatarSet)) return { type: "avatar", avatarKey: user.avatarKey };
     return { type: "none" };
-  }, [user, accessToken, photoVersion]);
+  }, [user, accessToken, photoVersion, avatarSet]);
 
   if (!user) return null;
 
   if (user.role === "student") {
     return (
-      <Screen>
+      <Screen edges={["bottom"]}>
         <View style={styles.center}>
           <Text style={[styles.centerText, { color: colors.textMuted }]}>
             Profile editing isn't available for student accounts.
@@ -74,7 +112,18 @@ export function ProfileScreen() {
     );
   }
 
+  const avatarSource = resolveUserImageSource({
+    id: user.id,
+    fullName: user.fullName,
+    role: user.role,
+    avatarKey: user.avatarKey,
+    hasPhoto: !!user.photoMimeType,
+    photoUrl: accessToken ? `${api.myPhotoUrl(accessToken)}&v=${photoVersion}` : null,
+  });
+  const avatarFills = userImageFillsFrame(user);
   const profileDirty = fullName.trim() !== (user.fullName ?? "") || phone.trim() !== (user.phone ?? "");
+  const canChangePassword = !!currentPassword && !!newPassword && !!confirmPassword && !savingPassword;
+  const isIndividualTeacher = user.role === "teacher" && user.accountType === "individual";
 
   async function handleSaveProfile() {
     setProfileMsg(null);
@@ -85,7 +134,7 @@ export function ProfileScreen() {
     setSavingProfile(true);
     try {
       await updateProfile({ fullName: fullName.trim(), phone: phone.trim() || null });
-      setProfileMsg({ tone: "ok", text: "Profile updated" });
+      setProfileMsg({ tone: "ok", text: "Changes saved" });
     } catch (err) {
       setProfileMsg({ tone: "err", text: err instanceof Error ? err.message : "Could not save profile" });
     } finally {
@@ -94,6 +143,7 @@ export function ProfileScreen() {
   }
 
   async function handlePhotoChange(next: PickedPhoto) {
+    setShowPhotoSheet(false);
     setPhotoErr(null);
     setPhotoBusy(true);
     try {
@@ -112,6 +162,10 @@ export function ProfileScreen() {
     }
   }
 
+  function closePasswordForm() {
+    setShowPasswordForm(false);
+  }
+
   async function handleChangePassword() {
     setPasswordMsg(null);
     if (newPassword.length < 8) {
@@ -125,10 +179,8 @@ export function ProfileScreen() {
     setSavingPassword(true);
     try {
       await changePassword(currentPassword, newPassword);
+      closePasswordForm();
       setPasswordMsg({ tone: "ok", text: "Password updated" });
-      setCurrentPassword("");
-      setNewPassword("");
-      setConfirmPassword("");
     } catch (err) {
       setPasswordMsg({ tone: "err", text: err instanceof Error ? err.message : "Could not change password" });
     } finally {
@@ -171,203 +223,277 @@ export function ProfileScreen() {
 
   return (
     <Screen edges={["bottom"]}>
-      <KeyboardAvoidingView style={styles.keyboardContainer} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" keyboardDismissMode="none">
-        <LinearGradient colors={[colors.surface, colors.surfaceAccent]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.profileHero, { borderWidth: 1, borderColor: colors.border }]}>
-          <View style={[styles.heroGlow, { backgroundColor: colors.accentSoft }]} />
-          <View style={[styles.heroGlow, styles.heroGlowSecondary, { backgroundColor: colors.accentSoft }]} />
-
-          <View style={styles.heroTopRow}>
-            <View style={styles.heroTopText}>
-              <Text style={[styles.heroEyebrow, { color: colors.accent }]}>ACCOUNT</Text>
-              <Text style={[styles.heroTitle, { color: colors.textPrimary }]}>Edit Profile</Text>
-              <Text style={[styles.heroSubtitle, { color: colors.textMuted }]}>Manage your photo, details, and security.</Text>
-            </View>
-            <View style={[styles.heroRoleChip, { backgroundColor: colors.accentSoft }]}>
-              <Ionicons name="shield-checkmark-outline" size={11} color={colors.accent} />
-              <Text style={[styles.heroRoleChipText, { color: colors.accent }]}>{formatRole(user.role)}</Text>
-            </View>
-          </View>
-
-          <View style={[styles.photoPickerWrap, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}><ProfilePhotoPicker value={photoValue} onChange={handlePhotoChange} /></View>
-          {photoBusy ? <ActivityIndicator color={colors.accent} style={{ marginTop: 10 }} /> : null}
-          {photoErr ? <Text style={[styles.msg, { color: colors.danger }]}>{photoErr}</Text> : null}
-        </LinearGradient>
-
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <View style={styles.sectionHeading}><View style={[styles.sectionIcon, { backgroundColor: colors.accentSoft }]}><Ionicons name="person-outline" size={17} color={colors.accent} /></View><View><Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Personal details</Text><Text style={[styles.cardCaption, { color: colors.textMuted }]}>Keep your contact information up to date.</Text></View></View>
-
-          <Text style={[styles.label, { color: colors.textSecondary }]}>Full name</Text>
-          <TextInput
-            style={inputStyle}
-            value={fullName}
-            onChangeText={setFullName}
-            placeholder="Your name"
-            placeholderTextColor={colors.textMuted}
-            autoCapitalize="words"
-          />
-
-          <Text style={[styles.label, { color: colors.textSecondary, marginTop: 12 }]}>Phone</Text>
-          <TextInput
-            style={inputStyle}
-            value={phone}
-            onChangeText={setPhone}
-            placeholder="Optional"
-            placeholderTextColor={colors.textMuted}
-            keyboardType="phone-pad"
-          />
-
-          {profileMsg ? (
-            <Text style={[styles.msg, { color: profileMsg.tone === "ok" ? colors.accent : colors.danger }]}>
-              {profileMsg.text}
-            </Text>
-          ) : null}
-
-          <Pressable
-            onPress={handleSaveProfile}
-            disabled={!profileDirty || savingProfile}
-            style={({ pressed }) => [
-              styles.button,
-              { backgroundColor: colors.accent },
-              (!profileDirty || savingProfile) && styles.buttonDisabled,
-              pressed && { opacity: pressedOpacity },
-            ]}
-            accessibilityRole="button"
-          >
-            {savingProfile ? (
-              <ActivityIndicator color={colors.accentOn} />
-            ) : (
-              <Text style={[styles.buttonText, { color: colors.accentOn }]}>Save changes</Text>
-            )}
-          </Pressable>
-        </View>
-
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <View style={styles.sectionHeading}><View style={[styles.sectionIcon, { backgroundColor: colors.accentSoft }]}><Ionicons name="shield-checkmark-outline" size={17} color={colors.accent} /></View><View><Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Account</Text><Text style={[styles.cardCaption, { color: colors.textMuted }]}>Managed by your school administrator.</Text></View></View>
-          <ReadOnlyRow label="Email" value={user.email} colors={colors} />
-          <ReadOnlyRow label="Role" value={formatRole(user.role)} colors={colors} />
-          <ReadOnlyRow label="Status" value={formatRole(user.status)} colors={colors} last />
-        </View>
-
-        {user.role === "teacher" && user.accountType === "individual" ? (
-          <Pressable
-            style={({ pressed }) => [styles.card, styles.linkCard, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
-            onPress={() => navigation.navigate("FormatTemplate")}
-            accessibilityRole="button"
-          >
-            <View style={[styles.sectionHeading, { marginBottom: 0, flex: 1 }]}><View style={[styles.sectionIcon, { backgroundColor: colors.accentSoft }]}><Ionicons name="options-outline" size={17} color={colors.accent} /></View><View style={{ flex: 1 }}><Text style={[styles.cardTitle, { color: colors.textPrimary }]}>School branding</Text><Text style={[styles.cardCaption, { color: colors.textMuted }]}>Logo, colors, and formatting used across your reports.</Text></View></View>
-            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-          </Pressable>
-        ) : null}
-
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <View style={styles.sectionHeading}><View style={[styles.sectionIcon, { backgroundColor: colors.accentSoft }]}><Ionicons name="lock-closed-outline" size={17} color={colors.accent} /></View><View><Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Security</Text><Text style={[styles.cardCaption, { color: colors.textMuted }]}>Choose a strong password you do not reuse.</Text></View></View>
-
-          <Text style={[styles.label, { color: colors.textSecondary }]}>Current password</Text>
-          <PasswordField value={currentPassword} onChangeText={setCurrentPassword} visible={showCurrentPassword} onToggleVisibility={() => setShowCurrentPassword((visible) => !visible)} placeholder="••••••••" inputStyle={inputStyle} />
-
-          <Text style={[styles.label, { color: colors.textSecondary, marginTop: 12 }]}>New password</Text>
-          <PasswordField value={newPassword} onChangeText={setNewPassword} visible={showNewPassword} onToggleVisibility={() => setShowNewPassword((visible) => !visible)} placeholder="At least 8 characters" inputStyle={inputStyle} />
-
-          <Text style={[styles.label, { color: colors.textSecondary, marginTop: 12 }]}>Confirm new password</Text>
-          <PasswordField value={confirmPassword} onChangeText={setConfirmPassword} visible={showConfirmPassword} onToggleVisibility={() => setShowConfirmPassword((visible) => !visible)} placeholder="Re-enter new password" inputStyle={inputStyle} />
-
-          {passwordMsg ? (
-            <Text style={[styles.msg, { color: passwordMsg.tone === "ok" ? colors.accent : colors.danger }]}>
-              {passwordMsg.text}
-            </Text>
-          ) : null}
-
-          <Pressable
-            onPress={handleChangePassword}
-            disabled={!currentPassword || !newPassword || !confirmPassword || savingPassword}
-            style={({ pressed }) => [
-              styles.button,
-              { backgroundColor: colors.accent },
-              (!currentPassword || !newPassword || !confirmPassword || savingPassword) && styles.buttonDisabled,
-              pressed && { opacity: pressedOpacity },
-            ]}
-            accessibilityRole="button"
-          >
-            {savingPassword ? (
-              <ActivityIndicator color={colors.accentOn} />
-            ) : (
-              <Text style={[styles.buttonText, { color: colors.accentOn }]}>Change password</Text>
-            )}
-          </Pressable>
-        </View>
-
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.danger + "33" }]}>
-          <View style={styles.sectionHeading}>
-            <View style={[styles.sectionIcon, { backgroundColor: colors.danger + "1A" }]}>
-              <Ionicons name="trash-outline" size={17} color={colors.danger} />
-            </View>
-            <View>
-              <Text style={[styles.cardTitle, { color: colors.danger }]}>Delete account</Text>
-              <Text style={[styles.cardCaption, { color: colors.textMuted }]}>
-                Permanently remove your login and personal details.
-              </Text>
-            </View>
-          </View>
-
-          {!showDeleteForm ? (
+      <View
+        ref={keyboard.ref}
+        onLayout={keyboard.onLayout}
+        collapsable={false}
+        style={[styles.flex, { paddingBottom: keyboard.keyboardVisible ? keyboard.overlap : 0 }]}
+      >
+        <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+          <View style={styles.header}>
             <Pressable
-              onPress={() => setShowDeleteForm(true)}
-              style={({ pressed }) => [styles.deleteToggleButton, { borderColor: colors.danger }, pressed && { opacity: pressedOpacity }]}
+              onPress={() => setShowPhotoSheet(true)}
+              disabled={photoBusy}
+              style={({ pressed }) => [styles.avatarButton, pressed && { opacity: pressedOpacity }]}
+              accessibilityRole="button"
+              accessibilityLabel="Change profile photo"
+            >
+              <View style={[styles.avatar, { backgroundColor: colors.surfaceRaised }]}>
+                {photoBusy ? (
+                  <ActivityIndicator color={colors.accent} />
+                ) : (
+                  <Image source={avatarSource} style={avatarFills ? styles.avatarFill : styles.avatarIcon} resizeMode={avatarFills ? "cover" : "contain"} />
+                )}
+              </View>
+              <View style={[styles.avatarBadge, { backgroundColor: colors.accent, borderColor: colors.background }]}>
+                <Ionicons name="camera" size={14} color={colors.accentOn} />
+              </View>
+            </Pressable>
+            <Text style={[styles.name, { color: colors.textPrimary }]} numberOfLines={1}>{user.fullName}</Text>
+            <Text style={[styles.role, { color: colors.textMuted }]}>{formatRole(user.role)}</Text>
+            {photoErr ? <Text style={[styles.msg, { color: colors.danger }]}>{photoErr}</Text> : null}
+          </View>
+
+          {showCompletion && profileCompletion ? (
+            <View style={styles.completion}>
+              <View style={styles.completionRow}>
+                <Text style={[styles.completionText, { color: colors.textSecondary }]}>
+                  {profileCompletion.percent >= 100
+                    ? "Your profile is complete"
+                    : `${describeMissingProfileItems(profileCompletion.missing)} to complete your profile`}
+                </Text>
+                <Text style={[styles.completionPercent, { color: colors.accent }]}>{profileCompletion.percent}%</Text>
+              </View>
+              <View style={[styles.track, { backgroundColor: colors.backgroundMuted }]}>
+                <View style={[styles.fill, { backgroundColor: colors.accent, width: `${profileCompletion.percent}%` }]} />
+              </View>
+            </View>
+          ) : null}
+
+          <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>Personal details</Text>
+          <View style={[styles.card, { backgroundColor: colors.surface }, cardShadow]}>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Full name</Text>
+            <TextInput
+              style={inputStyle}
+              value={fullName}
+              onChangeText={setFullName}
+              placeholder="Your name"
+              placeholderTextColor={colors.textMuted}
+              autoCapitalize="words"
+            />
+
+            <Text style={[styles.label, styles.labelSpaced, { color: colors.textSecondary }]}>Phone</Text>
+            <TextInput
+              style={inputStyle}
+              value={phone}
+              onChangeText={setPhone}
+              placeholder="Add your phone number"
+              placeholderTextColor={colors.textMuted}
+              keyboardType="phone-pad"
+            />
+
+            <Text style={[styles.label, styles.labelSpaced, { color: colors.textSecondary }]}>Email</Text>
+            <Text style={[styles.readOnly, { color: colors.textPrimary }]} numberOfLines={1}>{user.email}</Text>
+            <Text style={[styles.helper, { color: colors.textMuted }]}>Only your school admin can change this.</Text>
+
+            {profileMsg ? (
+              <Text style={[styles.msg, { color: profileMsg.tone === "ok" ? colors.accent : colors.danger }]}>{profileMsg.text}</Text>
+            ) : null}
+
+            <Pressable
+              onPress={handleSaveProfile}
+              disabled={!profileDirty || savingProfile}
+              style={({ pressed }) => [
+                styles.button,
+                { backgroundColor: colors.accent },
+                (!profileDirty || savingProfile) && styles.buttonDisabled,
+                pressed && { opacity: pressedOpacity },
+              ]}
               accessibilityRole="button"
             >
-              <Text style={[styles.deleteToggleText, { color: colors.danger }]}>Delete my account</Text>
+              {savingProfile ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.buttonText, { color: colors.accentOn }]}>Save changes</Text>}
             </Pressable>
-          ) : (
-            <>
-              <Text style={[styles.label, { color: colors.textSecondary }]}>Confirm your password</Text>
-              <PasswordField
-                value={deletePassword}
-                onChangeText={setDeletePassword}
-                visible={showDeletePassword}
-                onToggleVisibility={() => setShowDeletePassword((visible) => !visible)}
-                placeholder="••••••••"
-                inputStyle={inputStyle}
-              />
+          </View>
 
-              {deleteErr ? <Text style={[styles.msg, { color: colors.danger }]}>{deleteErr}</Text> : null}
+          <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>{isIndividualTeacher ? "Security & settings" : "Security"}</Text>
+          <View style={[styles.card, styles.listCard, { backgroundColor: colors.surface }, cardShadow]}>
+            <SettingsRow
+              icon="lock-closed-outline"
+              title="Change password"
+              expanded={showPasswordForm}
+              onPress={() => {
+                setPasswordMsg(null);
+                if (showPasswordForm) closePasswordForm();
+                else setShowPasswordForm(true);
+              }}
+            >
+              {passwordMsg && !showPasswordForm ? (
+                <Text style={[styles.rowMsg, { color: passwordMsg.tone === "ok" ? colors.accent : colors.danger }]}>{passwordMsg.text}</Text>
+              ) : null}
+            </SettingsRow>
 
+            <Animated.View
+              style={{
+                height: passwordProgress.interpolate({ inputRange: [0, 1], outputRange: [0, passwordFormHeight] }),
+                opacity: passwordProgress.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 0.3, 1] }),
+                overflow: "hidden",
+              }}
+              pointerEvents={showPasswordForm ? "auto" : "none"}
+              importantForAccessibility={showPasswordForm ? "auto" : "no-hide-descendants"}
+              accessibilityElementsHidden={!showPasswordForm}
+            >
+              <Animated.View
+                style={[styles.rowBody, { transform: [{ translateY: passwordProgress.interpolate({ inputRange: [0, 1], outputRange: [-8, 0] }) }] }]}
+                onLayout={(e) => setPasswordFormHeight(Math.ceil(e.nativeEvent.layout.height))}
+              >
+                <Text style={[styles.label, { color: colors.textSecondary }]}>Current password</Text>
+                <PasswordField value={currentPassword} onChangeText={setCurrentPassword} visible={showCurrentPassword} onToggleVisibility={() => setShowCurrentPassword((v) => !v)} placeholder="••••••••" inputStyle={inputStyle} />
+
+                <Text style={[styles.label, styles.labelSpaced, { color: colors.textSecondary }]}>New password</Text>
+                <PasswordField value={newPassword} onChangeText={setNewPassword} visible={showNewPassword} onToggleVisibility={() => setShowNewPassword((v) => !v)} placeholder="At least 8 characters" inputStyle={inputStyle} />
+
+                <Text style={[styles.label, styles.labelSpaced, { color: colors.textSecondary }]}>Confirm new password</Text>
+                <PasswordField value={confirmPassword} onChangeText={setConfirmPassword} visible={showConfirmPassword} onToggleVisibility={() => setShowConfirmPassword((v) => !v)} placeholder="Re-enter new password" inputStyle={inputStyle} />
+
+                {passwordMsg ? (
+                  <Text style={[styles.msg, { color: passwordMsg.tone === "ok" ? colors.accent : colors.danger }]}>{passwordMsg.text}</Text>
+                ) : null}
+
+                <Pressable
+                  onPress={handleChangePassword}
+                  disabled={!canChangePassword}
+                  style={({ pressed }) => [styles.button, { backgroundColor: colors.accent }, !canChangePassword && styles.buttonDisabled, pressed && { opacity: pressedOpacity }]}
+                  accessibilityRole="button"
+                >
+                  {savingPassword ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.buttonText, { color: colors.accentOn }]}>Update password</Text>}
+                </Pressable>
+              </Animated.View>
+            </Animated.View>
+
+            {isIndividualTeacher ? (
+              <View style={[styles.rowDivider, { borderTopColor: colors.border }]}>
+                <SettingsRow icon="options-outline" title="School branding" caption="Logo and colors on your slides and reports" onPress={() => navigation.navigate("FormatTemplate")} />
+              </View>
+            ) : null}
+          </View>
+
+          <View style={styles.dangerZone}>
+            {!showDeleteForm ? (
               <Pressable
-                onPress={confirmDeleteAccount}
-                disabled={deletingAccount || !deletePassword}
-                style={({ pressed }) => [
-                  styles.button,
-                  { backgroundColor: colors.danger },
-                  (deletingAccount || !deletePassword) && styles.buttonDisabled,
-                  pressed && { opacity: pressedOpacity },
-                ]}
+                onPress={() => setShowDeleteForm(true)}
+                style={({ pressed }) => [styles.deleteLink, pressed && { opacity: pressedOpacity }]}
                 accessibilityRole="button"
               >
-                {deletingAccount ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <Text style={[styles.buttonText, { color: "#FFFFFF" }]}>Permanently delete account</Text>
-                )}
+                <Text style={[styles.deleteLinkText, { color: colors.danger }]}>Delete account</Text>
               </Pressable>
+            ) : (
+              <View style={[styles.card, { backgroundColor: colors.surface }, cardShadow]}>
+                <Text style={[styles.deleteTitle, { color: colors.danger }]}>Delete account</Text>
+                <Text style={[styles.helper, styles.deleteText, { color: colors.textMuted }]}>
+                  This permanently removes your login and personal details. Enter your password to confirm.
+                </Text>
+                <PasswordField
+                  value={deletePassword}
+                  onChangeText={setDeletePassword}
+                  visible={showDeletePassword}
+                  onToggleVisibility={() => setShowDeletePassword((v) => !v)}
+                  placeholder="Your password"
+                  inputStyle={inputStyle}
+                />
 
-              <Pressable
-                onPress={() => {
-                  setShowDeleteForm(false);
-                  setDeletePassword("");
-                  setDeleteErr(null);
-                }}
-                disabled={deletingAccount}
-                style={styles.deleteCancelButton}
-                accessibilityRole="button"
-              >
-                <Text style={[styles.deleteCancelText, { color: colors.textMuted }]}>Cancel</Text>
-              </Pressable>
-            </>
-          )}
-        </View>
-      </ScrollView>
-      </KeyboardAvoidingView>
+                {deleteErr ? <Text style={[styles.msg, { color: colors.danger }]}>{deleteErr}</Text> : null}
+
+                <Pressable
+                  onPress={confirmDeleteAccount}
+                  disabled={deletingAccount || !deletePassword}
+                  style={({ pressed }) => [
+                    styles.button,
+                    { backgroundColor: colors.danger },
+                    (deletingAccount || !deletePassword) && styles.buttonDisabled,
+                    pressed && { opacity: pressedOpacity },
+                  ]}
+                  accessibilityRole="button"
+                >
+                  {deletingAccount ? <ActivityIndicator color="#FFFFFF" /> : <Text style={[styles.buttonText, { color: "#FFFFFF" }]}>Permanently delete account</Text>}
+                </Pressable>
+
+                <Pressable
+                  onPress={() => {
+                    setShowDeleteForm(false);
+                    setDeletePassword("");
+                    setDeleteErr(null);
+                  }}
+                  disabled={deletingAccount}
+                  style={styles.cancelButton}
+                  accessibilityRole="button"
+                >
+                  <Text style={[styles.cancelText, { color: colors.textMuted }]}>Cancel</Text>
+                </Pressable>
+              </View>
+            )}
+          </View>
+        </ScrollView>
+      </View>
+
+      <SheetModal visible={showPhotoSheet} onClose={() => setShowPhotoSheet(false)} closeLabel="Close photo options">
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sheetContent}>
+          <ProfilePhotoPicker value={photoValue} onChange={handlePhotoChange} avatarSet={avatarSet} />
+        </ScrollView>
+      </SheetModal>
     </Screen>
+  );
+}
+
+function SettingsRow({
+  icon,
+  title,
+  caption,
+  expanded,
+  onPress,
+  children,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  caption?: string;
+  expanded?: boolean;
+  onPress: () => void;
+  children?: ReactNode;
+}) {
+  const { colors, pressedOpacity } = useTheme();
+  const isToggle = expanded !== undefined;
+  const rotation = useRef(new Animated.Value(expanded ? 1 : 0)).current;
+
+  useEffect(() => {
+    if (!isToggle) return;
+    Animated.timing(rotation, {
+      toValue: expanded ? 1 : 0,
+      duration: 260,
+      easing: Easing.inOut(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [expanded, isToggle, rotation]);
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.settingsRow, pressed && { opacity: pressedOpacity }]}
+      accessibilityRole="button"
+      accessibilityState={expanded === undefined ? undefined : { expanded }}
+    >
+      <Ionicons name={icon} size={19} color={colors.textMuted} />
+      <View style={styles.flex}>
+        <Text style={[styles.rowTitle, { color: colors.textPrimary }]}>{title}</Text>
+        {caption ? <Text style={[styles.helper, { color: colors.textMuted }]}>{caption}</Text> : null}
+        {children}
+      </View>
+      {isToggle ? (
+        <Animated.View style={{ transform: [{ rotate: rotation.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "180deg"] }) }] }}>
+          <Ionicons name="chevron-down" size={18} color={colors.textMuted} />
+        </Animated.View>
+      ) : (
+        <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+      )}
+    </Pressable>
   );
 }
 
@@ -376,98 +502,51 @@ function PasswordField({ value, onChangeText, visible, onToggleVisibility, place
   return <View style={styles.passwordField}><TextInput style={[inputStyle, styles.passwordInput]} value={value} onChangeText={onChangeText} secureTextEntry={!visible} placeholder={placeholder} placeholderTextColor={colors.textMuted} autoCapitalize="none" autoCorrect={false} /><Pressable style={({ pressed }) => [styles.passwordToggle, pressed && { opacity: pressedOpacity }]} onPress={onToggleVisibility} hitSlop={8} accessibilityRole="button" accessibilityLabel={visible ? "Hide password" : "Show password"}><Ionicons name={visible ? "eye-off-outline" : "eye-outline"} size={19} color={colors.textMuted} /></Pressable></View>;
 }
 
-function ReadOnlyRow({
-  label,
-  value,
-  colors,
-  last,
-}: {
-  label: string;
-  value: string;
-  colors: ReturnType<typeof useTheme>["colors"];
-  last?: boolean;
-}) {
-  return (
-    <View style={[styles.roRow, !last && { borderBottomColor: colors.border, borderBottomWidth: StyleSheet.hairlineWidth }]}>
-      <Text style={[styles.roLabel, { color: colors.textMuted }]}>{label}</Text>
-      <Text style={[styles.roValue, { color: colors.textPrimary }]} numberOfLines={1}>
-        {value}
-      </Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  keyboardContainer: { flex: 1 },
-  container: { padding: 20, paddingBottom: 164, gap: 16, flexGrow: 1 },
+  flex: { flex: 1 },
+  container: { padding: 20, paddingBottom: 32, flexGrow: 1 },
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32 },
   centerText: { fontSize: 14, textAlign: "center", fontWeight: "500" },
-  profileHero: { minHeight: 232, borderRadius: 22, padding: 18, overflow: "hidden" },
-  heroGlow: { position: "absolute", width: 190, height: 190, borderRadius: 95, right: -55, top: -72, opacity: 0.7 },
-  heroGlowSecondary: { width: 150, height: 150, borderRadius: 75, right: undefined, left: -60, top: undefined, bottom: -70, opacity: 0.5 },
-  heroTopRow: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
-  heroTopText: { flex: 1 },
-  heroEyebrow: { fontSize: 10, fontWeight: "800", letterSpacing: 1.1 },
-  heroTitle: { marginTop: 3, fontSize: 27, lineHeight: 33, fontWeight: "800", letterSpacing: -0.7 },
-  heroSubtitle: { marginTop: 3, fontSize: 12, lineHeight: 17, fontWeight: "500" },
-  heroRoleChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    flexShrink: 0,
-  },
-  heroRoleChipText: { fontSize: 10, fontWeight: "800" },
-  photoPickerWrap: { marginTop: 18, borderRadius: 18, padding: 14, borderWidth: 1 },
-  card: { borderWidth: 1, borderRadius: 20, padding: 16 },
-  linkCard: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  sectionHeading: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 16 }, sectionIcon: { width: 34, height: 34, borderRadius: 11, alignItems: "center", justifyContent: "center" },
-  cardTitle: {
-    fontSize: 15,
-    fontWeight: "800",
-  },
-  cardCaption: { marginTop: 2, fontSize: 11, lineHeight: 15, fontWeight: "500" },
+  header: { alignItems: "center", paddingTop: 4, paddingBottom: 8 },
+  avatarButton: { position: "relative" },
+  avatar: { width: 96, height: 96, borderRadius: 48, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+  avatarFill: { width: "100%", height: "100%" },
+  avatarIcon: { width: 60, height: 60 },
+  avatarBadge: { position: "absolute", right: 0, bottom: 2, width: 30, height: 30, borderRadius: 15, borderWidth: 2, alignItems: "center", justifyContent: "center" },
+  name: { marginTop: 12, fontSize: 19, fontWeight: "800", letterSpacing: -0.3 },
+  role: { marginTop: 2, fontSize: 13, fontWeight: "500" },
+  completion: { marginTop: 16 },
+  completionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  completionText: { flex: 1, fontSize: 12, fontWeight: "600" },
+  completionPercent: { fontSize: 13, fontWeight: "800" },
+  track: { height: 5, borderRadius: 3, overflow: "hidden", marginTop: 8 },
+  fill: { height: "100%", borderRadius: 3 },
+  sectionTitle: { marginTop: 24, marginBottom: 8, marginLeft: 4, fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.4 },
+  card: { borderRadius: 20, padding: 16 },
+  listCard: { paddingVertical: 4 },
   label: { fontSize: 12, fontWeight: "700", marginBottom: 6 },
-  input: {
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    height: 44,
-    fontSize: 14,
-  },
+  labelSpaced: { marginTop: 14 },
+  input: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, height: 44, fontSize: 14 },
+  readOnly: { fontSize: 14, fontWeight: "600" },
+  helper: { marginTop: 2, fontSize: 11, lineHeight: 15, fontWeight: "500" },
   passwordField: { position: "relative" },
   passwordInput: { paddingRight: 46 },
   passwordToggle: { position: "absolute", width: 44, height: 44, right: 0, top: 0, alignItems: "center", justifyContent: "center" },
   msg: { fontSize: 12, fontWeight: "600", marginTop: 12 },
-  button: {
-    height: 46,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 16,
-  },
+  rowMsg: { fontSize: 11, fontWeight: "600", marginTop: 2 },
+  button: { height: 46, borderRadius: 12, alignItems: "center", justifyContent: "center", marginTop: 16 },
   buttonDisabled: { opacity: 0.45 },
   buttonText: { fontSize: 14, fontWeight: "800" },
-  deleteToggleButton: {
-    height: 46,
-    borderRadius: 12,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  deleteToggleText: { fontSize: 14, fontWeight: "800" },
-  deleteCancelButton: { alignItems: "center", marginTop: 12 },
-  deleteCancelText: { fontSize: 13, fontWeight: "600" },
-  roRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 16,
-    paddingVertical: 11,
-  },
-  roLabel: { fontSize: 13, fontWeight: "600" },
-  roValue: { fontSize: 13, fontWeight: "700", flexShrink: 1, textAlign: "right" },
+  settingsRow: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 52, paddingVertical: 10 },
+  rowTitle: { fontSize: 14, fontWeight: "700" },
+  rowBody: { paddingBottom: 14 },
+  rowDivider: { borderTopWidth: StyleSheet.hairlineWidth },
+  dangerZone: { marginTop: 24 },
+  deleteLink: { alignSelf: "center", paddingVertical: 10, paddingHorizontal: 16 },
+  deleteLinkText: { fontSize: 13, fontWeight: "700" },
+  deleteTitle: { fontSize: 15, fontWeight: "800" },
+  deleteText: { marginTop: 4, marginBottom: 12 },
+  cancelButton: { alignItems: "center", marginTop: 12 },
+  cancelText: { fontSize: 13, fontWeight: "600" },
+  sheetContent: { paddingTop: 4, paddingBottom: 8 },
 });

@@ -3,10 +3,13 @@ import bcrypt from "bcryptjs";
 import { prisma } from "../lib/prisma";
 import { storage } from "../lib/storage";
 import { recordAuditEvent } from "../lib/audit";
+import { loadStudentMe } from "../lib/student-me";
 
-// Self-service profile editing for staff (AppUser). Students (StudentStub) are
-// deliberately out of scope - they have no AppUser row and sign in with phone +
-// OTP, so every handler here rejects role === "student".
+// Self-service profile editing for staff (AppUser). Students (StudentStub)
+// have no AppUser row and sign in with phone + OTP, so most handlers here
+// reject role === "student" - the exception is the profile picture (photo /
+// preset avatar / remove), which students set on their own Profile tab and
+// which is stored on their StudentStub instead.
 //
 // Field policy: only personal / cosmetic fields are self-editable. Anything an
 // RBAC check, a tenancy scope, or the login lookup depends on (email, role,
@@ -24,6 +27,7 @@ const ME_SELECT = {
   photoMimeType: true,
   avatarKey: true,
   hasSeenOnboardingTour: true,
+  hasDismissedProfilePrompt: true,
   school: { select: { accountType: true } },
 } as const;
 
@@ -36,7 +40,36 @@ function flattenAccountType<T extends { school: { accountType: string } | null }
   return { ...rest, accountType: school?.accountType ?? null };
 }
 
-const VALID_AVATAR_KEYS = Array.from({ length: 10 }, (_, i) => `avatar-${String(i + 1).padStart(2, "0")}`);
+// Preset avatar sets bundled in unified-app (src/theme/avatars.ts - keep in
+// sync). Teachers and students each pick from their own illustrated set;
+// every other role still uses the original set.
+const DEFAULT_AVATAR_KEYS = Array.from({ length: 10 }, (_, i) => `avatar-${String(i + 1).padStart(2, "0")}`);
+const TEACHER_AVATAR_KEYS = Array.from({ length: 20 }, (_, i) => `teacher-avatar-${String(i + 1).padStart(2, "0")}`);
+const STUDENT_AVATAR_KEYS = Array.from({ length: 20 }, (_, i) => `student-avatar-${String(i + 1).padStart(2, "0")}`);
+
+function validAvatarKeysForRole(role: string): string[] {
+  if (role === "teacher") return TEACHER_AVATAR_KEYS;
+  if (role === "student") return STUDENT_AVATAR_KEYS;
+  return DEFAULT_AVATAR_KEYS;
+}
+
+function isStudent(request: FastifyRequest): boolean {
+  return request.user.role === "student";
+}
+
+// Writes a student's own picture fields and answers with the same shape as
+// GET /auth/me, so the app can drop the result straight into its user state.
+async function updateStudentPicture(
+  studentId: string,
+  data: { photoLocation: string | null; photoMimeType: string | null; avatarKey: string | null }
+) {
+  const existing = await prisma.studentStub.findUnique({ where: { id: studentId }, select: { photoLocation: true } });
+  if (existing?.photoLocation && existing.photoLocation !== data.photoLocation) {
+    await storage.remove(existing.photoLocation);
+  }
+  await prisma.studentStub.update({ where: { id: studentId }, data });
+  return loadStudentMe(studentId);
+}
 const MIN_PASSWORD_LENGTH = 8;
 
 interface UpdateMeBody {
@@ -267,8 +300,6 @@ export async function authMeRoutes(app: FastifyInstance) {
     "/auth/me/photo",
     { onRequest: [app.authenticate], config: { rateLimit: { max: 20, timeWindow: "1 minute" } } },
     async (request, reply) => {
-      if (rejectStudents(request, reply)) return;
-
       const file = await request.file();
       if (!file) {
         return reply.code(400).send({ data: null, error: { code: "validation_error", message: "A file is required" } });
@@ -278,6 +309,14 @@ export async function authMeRoutes(app: FastifyInstance) {
       }
 
       const buffer = await file.toBuffer();
+
+      if (isStudent(request)) {
+        const key = `${request.user.schoolId}/student-photos/${request.user.sub}/${Date.now()}-${file.filename}`;
+        const { location } = await storage.save(key, buffer);
+        const me = await updateStudentPicture(request.user.sub, { photoLocation: location, photoMimeType: file.mimetype, avatarKey: null });
+        return reply.code(201).send({ data: me, meta: {} });
+      }
+
       const key = `staff-photos/${request.user.sub}/${Date.now()}-${file.filename}`;
       const { location } = await storage.save(key, buffer);
 
@@ -303,14 +342,17 @@ export async function authMeRoutes(app: FastifyInstance) {
     "/auth/me/avatar",
     { onRequest: [app.authenticate], config: { rateLimit: { max: 30, timeWindow: "1 minute" } } },
     async (request, reply) => {
-      if (rejectStudents(request, reply)) return;
-
       const avatarKey = request.body?.avatarKey;
-      if (!avatarKey || !VALID_AVATAR_KEYS.includes(avatarKey)) {
+      const validAvatarKeys = validAvatarKeysForRole(request.user.role);
+      if (!avatarKey || !validAvatarKeys.includes(avatarKey)) {
         return reply.code(400).send({
           data: null,
-          error: { code: "validation_error", message: `avatarKey must be one of ${VALID_AVATAR_KEYS.join(", ")}` },
+          error: { code: "validation_error", message: `avatarKey must be one of ${validAvatarKeys.join(", ")}` },
         });
+      }
+
+      if (isStudent(request)) {
+        return { data: await updateStudentPicture(request.user.sub, { avatarKey, photoLocation: null, photoMimeType: null }), meta: {} };
       }
 
       const existing = await prisma.appUser.findUnique({
@@ -334,8 +376,10 @@ export async function authMeRoutes(app: FastifyInstance) {
   app.delete(
     "/auth/me/photo",
     { onRequest: [app.authenticate], config: { rateLimit: { max: 20, timeWindow: "1 minute" } } },
-    async (request, reply) => {
-      if (rejectStudents(request, reply)) return;
+    async (request) => {
+      if (isStudent(request)) {
+        return { data: await updateStudentPicture(request.user.sub, { photoLocation: null, photoMimeType: null, avatarKey: null }), meta: {} };
+      }
 
       const existing = await prisma.appUser.findUnique({
         where: { id: request.user.sub },
@@ -359,14 +403,10 @@ export async function authMeRoutes(app: FastifyInstance) {
     "/auth/me/photo",
     { onRequest: [authenticateFromHeaderOrQuery(app)] },
     async (request, reply) => {
-      if (request.user.role === "student") {
-        return reply.code(404).send({ data: null, error: { code: "not_found", message: "No photo" } });
-      }
-
-      const user = await prisma.appUser.findUnique({
-        where: { id: request.user.sub },
-        select: { photoLocation: true, photoMimeType: true },
-      });
+      const select = { photoLocation: true, photoMimeType: true } as const;
+      const user = isStudent(request)
+        ? await prisma.studentStub.findUnique({ where: { id: request.user.sub }, select })
+        : await prisma.appUser.findUnique({ where: { id: request.user.sub }, select });
       if (!user || !user.photoLocation || !user.photoMimeType) {
         return reply.code(404).send({ data: null, error: { code: "not_found", message: "No photo uploaded" } });
       }
@@ -386,5 +426,16 @@ export async function authMeRoutes(app: FastifyInstance) {
       data: { hasSeenOnboardingTour: true },
     });
     return { data: { hasSeenOnboardingTour: true }, meta: {} };
+  });
+
+  // "Complete your profile" prompt - called when the user taps Skip, so it
+  // never shows again for this account (on any device).
+  app.post("/auth/me/profile-prompt-dismissed", { onRequest: [app.authenticate] }, async (request, reply) => {
+    if (rejectStudents(request, reply)) return;
+    await prisma.appUser.update({
+      where: { id: request.user.sub },
+      data: { hasDismissedProfilePrompt: true },
+    });
+    return { data: { hasDismissedProfilePrompt: true }, meta: {} };
   });
 }

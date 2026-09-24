@@ -220,6 +220,8 @@ export interface CurrentUser {
   // for roles with no school or the student branch of /auth/me.
   board: string | null;
   hasSeenOnboardingTour: boolean;
+  // True once the user tapped Skip on the "Complete your profile" prompt.
+  hasDismissedProfilePrompt: boolean;
 }
 
 export interface TeacherOnboardingTask {
@@ -256,7 +258,7 @@ export interface UpdateProfileInput {
   phone?: string | null;
 }
 
-export interface StudentOtpMatch {
+export interface StudentOtpMatch extends StudentPicture {
   id: string;
   fullName: string;
   schoolId: string;
@@ -285,6 +287,9 @@ export interface StudentProfile {
   dateOfBirth: string;
   classSectionId: string;
   admissionDate: string;
+  guardianName: string;
+  guardianContact: string;
+  classSection: { className: string; sectionName: string };
 }
 
 export interface StudentSubmissionRecord {
@@ -317,6 +322,21 @@ export interface CommunicationMessage {
   deliveryStatus: "pending" | "sent" | "held";
   sentAt: string | null;
   createdAt: string;
+}
+
+export interface StudentMessagingTeacher {
+  id: string;
+  fullName: string;
+  avatarKey: string | null;
+  hasPhoto: boolean;
+  // False for someone who messaged the student but no longer teaches the class.
+  isClassTeacher: boolean;
+}
+
+export interface StudentMessagingContext {
+  className: string;
+  sectionName: string;
+  teachers: StudentMessagingTeacher[];
 }
 
 export interface AssistantLink {
@@ -358,7 +378,15 @@ export interface ContentPage {
   updatedAt: string;
 }
 
-export interface StudentAttainmentRow {
+// A student's profile picture, as every endpoint that lists students returns
+// it - render it with components/StudentAvatar. Optional because older stored
+// payloads (and older servers) don't carry it; missing = default silhouette.
+export interface StudentPicture {
+  avatarKey?: string | null;
+  photoMimeType?: string | null;
+}
+
+export interface StudentAttainmentRow extends StudentPicture {
   studentStubId: string;
   fullName: string;
   averageScore: number;
@@ -767,12 +795,39 @@ export interface CreditLedgerEntry {
   reason: string;
   balanceAfter: number;
   note: string | null;
+  // Full name of whoever granted an admin_topup; null for other reasons.
+  createdByName: string | null;
   createdAt: string;
+}
+
+// One row of the backend's AiFeature table - what an AI action costs and how
+// it's named. icon is an Ionicons glyph name.
+export interface AiFeatureInfo {
+  key: string;
+  label: string;
+  description: string;
+  icon: string;
+  cost: number;
+  showOnCredits: boolean;
+}
+
+// feature is an AiFeatureInfo.key (the note on an ai_usage ledger entry).
+export interface CreditUsageStats {
+  totalGranted: number;
+  totalSpent: number;
+  spentLast30Days: number;
+  averageDailySpend: number;
+  byFeature: { feature: string; credits: number; count: number }[];
+  // Last 14 days, oldest first, "YYYY-MM-DD" in the school's timezone.
+  daily: { date: string; credits: number }[];
 }
 
 export interface CreditAccountSummary {
   balance: number;
   ledgerEntries: CreditLedgerEntry[];
+  // Ordered by the teacher's own 30-day usage, then the admin-set order.
+  features: AiFeatureInfo[];
+  stats: CreditUsageStats;
 }
 
 // status is one of: pending, approved, rejected
@@ -789,7 +844,7 @@ export interface SubjectChangeRequest {
 }
 
 // status is one of: active, removed (soft delete only)
-export interface StudentStub {
+export interface StudentStub extends StudentPicture {
   id: string;
   fullName: string;
   dateOfBirth: string;
@@ -1018,7 +1073,7 @@ export interface SubmissionRecord {
   id: string;
   assignmentId: string;
   studentStubId: string;
-  studentStub?: { id: string; fullName: string };
+  studentStub?: { id: string; fullName: string } & StudentPicture;
   answers: Record<string, string>;
   submittedAt: string;
   grade?: GradeRecord | null;
@@ -1147,12 +1202,12 @@ export interface AssignmentDetail extends Assignment {
 export interface ClassAnalytics {
   classAverage: number | null;
   submissionCount: number;
-  students: { studentStubId: string; fullName: string; averageScore: number; submissionCount: number }[];
+  students: ({ studentStubId: string; fullName: string; averageScore: number; submissionCount: number } & StudentPicture)[];
   struggleAreas: { assignmentId: string; title: string; averageScore: number }[];
   weeklyTrend: { label: string; score: number | null }[];
 }
 
-export interface StudentAnalytics {
+export interface StudentAnalytics extends StudentPicture {
   studentStubId: string;
   fullName: string;
   averageScore: number | null;
@@ -1320,9 +1375,18 @@ export const api = {
     request<{ message: string }>("/auth/me/change-password", { method: "POST", body: JSON.stringify(input) }, token),
   markOnboardingTourSeen: (token: string) =>
     request<{ hasSeenOnboardingTour: boolean }>("/auth/me/onboarding-tour-seen", { method: "POST" }, token),
+  dismissProfilePrompt: (token: string) =>
+    request<{ hasDismissedProfilePrompt: boolean }>("/auth/me/profile-prompt-dismissed", { method: "POST" }, token),
   getOnboardingTasks: (token: string) => request<TeacherOnboardingTasksResult>("/me/onboarding-tasks", {}, token),
   getSchoolLeaderboard: (token: string) => request<SchoolLeaderboardResult>("/me/school-leaderboard", {}, token),
   myPhotoUrl: (token: string) => `${API_URL}/auth/me/photo?token=${encodeURIComponent(token)}`,
+  // Staff reading a student's uploaded photo (StudentAvatar picks this).
+  studentPhotoUrl: (token: string, studentStubId: string) =>
+    `${API_URL}/students/${studentStubId}/photo?token=${encodeURIComponent(token)}`,
+  // The login "which child?" picker, before anyone is signed in - takes the
+  // selection token from verify-otp instead of an access token.
+  studentPickerPhotoUrl: (selectionToken: string, studentStubId: string) =>
+    `${API_URL}/auth/student/photo/${studentStubId}?token=${encodeURIComponent(selectionToken)}`,
   uploadMyPhoto: (token: string, file: { uri: string; name: string; mimeType: string }) => {
     const formData = new FormData();
     formData.append("file", { uri: file.uri, name: file.name, type: file.mimeType } as unknown as Blob);
@@ -1376,6 +1440,10 @@ export const api = {
   listStudentSubmissions: (token: string) => request<StudentSubmissionRecord[]>("/student/submissions", {}, token),
   listStudentMaterials: (token: string) => request<StudentMaterial[]>("/student/materials", {}, token),
   listStudentCommunications: (token: string) => request<CommunicationMessage[]>("/student/communications", {}, token),
+  getStudentMessagingContext: (token: string) =>
+    request<StudentMessagingContext>("/student/communications/context", {}, token),
+  studentTeacherPhotoUrl: (token: string, teacherId: string) =>
+    `${API_URL}/student/teachers/${teacherId}/photo?token=${encodeURIComponent(token)}`,
   sendStudentCommunication: (token: string, body: string) =>
     request<CommunicationMessage>("/student/communications", { method: "POST", body: JSON.stringify({ body }) }, token),
 

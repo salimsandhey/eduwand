@@ -55,6 +55,7 @@ import { presentRoutes } from "./routes/present";
 import { aiAssistantRoutes } from "./routes/ai-assistant";
 import { contentPageRoutes } from "./routes/content-pages";
 import { timetableRoutes } from "./routes/timetable";
+import { aiFeatureRoutes } from "./routes/ai-features";
 
 const app = Fastify({ logger: true });
 
@@ -113,6 +114,7 @@ app.register(presentRoutes, { prefix: "/api/v1" });
 app.register(aiAssistantRoutes, { prefix: "/api/v1" });
 app.register(contentPageRoutes, { prefix: "/api/v1" });
 app.register(timetableRoutes, { prefix: "/api/v1" });
+app.register(aiFeatureRoutes, { prefix: "/api/v1" });
 
 const port = Number(process.env.PORT) || 4000;
 

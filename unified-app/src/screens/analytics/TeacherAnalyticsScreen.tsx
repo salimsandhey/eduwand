@@ -1,16 +1,19 @@
-import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, Share, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ActivityIndicator, Animated, Pressable, ScrollView, Share, StyleSheet, Text, View } from "react-native";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../../theme/ThemeContext";
 import { useAuth } from "../../context/AuthContext";
 import { Screen } from "../../components/Screen";
+import { StudentAvatar } from "../../components/StudentAvatar";
 import { api, ClassAnalytics, ClassSection, StudentAnalytics } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
 import { useTabBarClearance } from "../../navigation/useTabBarClearance";
 import { useTabBarScrollHandler } from "../../navigation/TabBarScrollContext";
 
 type AnalyticsTab = "class" | "students";
+// Side padding of the page - full-bleed rows offset by exactly this much.
+const PAGE_PADDING = 24;
 const BAND_COLORS = ["#18A957", "#7C3AED", "#F97316"];
 
 function scoreText(score: number | null) {
@@ -30,7 +33,7 @@ function weeklyTrendPercent(trend: ClassAnalytics["weeklyTrend"]): number | null
 
 export function TeacherAnalyticsScreen() {
   const navigation = useNavigation<any>();
-  const { colors, pressedOpacity } = useTheme();
+  const { colors, cardShadow, pressedOpacity } = useTheme();
   const tabBarClearance = useTabBarClearance();
   const handleTabBarScroll = useTabBarScrollHandler();
   const { accessToken } = useAuth();
@@ -128,7 +131,7 @@ export function TeacherAnalyticsScreen() {
         {isLoadingClasses ? <ActivityIndicator color={colors.accent} style={styles.loader} /> : null}
 
         {!isLoadingClasses && classSections.length === 0 ? (
-          <View style={[styles.emptyState, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+          <View style={[styles.emptyState, { backgroundColor: colors.surfaceRaised }, cardShadow]}>
             <Ionicons name="bar-chart-outline" size={22} color={colors.accent} />
             <Text style={[styles.emptyStateText, { color: colors.textMuted }]}>You don't have any classes assigned yet.</Text>
           </View>
@@ -137,33 +140,33 @@ export function TeacherAnalyticsScreen() {
         {isLoadingAnalytics ? <ActivityIndicator color={colors.accent} style={styles.loader} /> : null}
 
         {!isLoadingAnalytics && analytics ? <>
-          <View style={[styles.reportTabs, { backgroundColor: colors.backgroundMuted }]}>
-            <Pressable style={[styles.reportTab, activeTab === "class" && { backgroundColor: colors.accent }]} onPress={() => setActiveTab("class")} accessibilityRole="tab"><Text style={[styles.reportTabText, { color: activeTab === "class" ? colors.accentOn : colors.textMuted }]}>Class report</Text></Pressable>
-            <Pressable style={[styles.reportTab, activeTab === "students" && { backgroundColor: colors.accent }]} onPress={() => setActiveTab("students")} accessibilityRole="tab"><Text style={[styles.reportTabText, { color: activeTab === "students" ? colors.accentOn : colors.textMuted }]}>Student report</Text></Pressable>
-          </View>
+          <ReportTabs activeTab={activeTab} onChange={setActiveTab} colors={colors} />
 
           {activeTab === "class" ? <>
             <Text style={[styles.reportTitle, { color: colors.textPrimary }]}>{selectedClass ? `${capitalizeFirst(selectedClass.className)} ${capitalizeFirst(selectedClass.sectionName)}` : "Class report"}</Text>
             <Text style={[styles.reportMeta, { color: colors.textMuted }]}>Class-wide attainment overview</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.metricRow}>
+            {/* Full-bleed: breaks out of the page padding to span the screen edge to edge, with the
+                padding moved inside the scroll so the first card still lines up with the page and
+                card shadows have room to render instead of being clipped by the scroll view. */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.metricScroller} contentContainerStyle={styles.metricRow}>
               <Metric icon="people-outline" color="#7C3AED" value={String(analytics.students.length)} label="Students graded" colors={colors} />
               <Metric icon="analytics-outline" color="#18A957" value={scoreText(analytics.classAverage)} label="Average attainment" colors={colors} />
               <Metric icon="checkmark-done-outline" color="#F97316" value={String(analytics.submissionCount)} label="Graded work" colors={colors} />
             </ScrollView>
 
-            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={[styles.card, { backgroundColor: colors.surface }, cardShadow]}>
               <View style={styles.cardHeading}><Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Overall attainment</Text><Ionicons name="information-circle-outline" size={16} color={colors.textMuted} /></View>
               <View style={[styles.scoreRing, { borderColor: analytics.classAverage === null ? colors.border : colors.accent }]}><View style={[styles.scoreRingInner, { backgroundColor: colors.surfaceRaised }]}><Text style={[styles.scoreValue, { color: colors.textPrimary }]}>{scoreText(analytics.classAverage)}</Text><Text style={[styles.scoreLabel, { color: colors.textMuted }]}>Attainment</Text></View></View>
               <Text style={[styles.summary, { color: colors.textSecondary }]}>{analytics.classAverage === null ? "Scores will appear after submissions are graded." : "Use the score bands and focus areas below to plan your next lesson."}</Text>
               {bands ? <><ScoreBand color={BAND_COLORS[0]} label="Above 80%" value={bands.above80} colors={colors} /><ScoreBand color={BAND_COLORS[1]} label="60% - 80%" value={bands.between60And80} colors={colors} /><ScoreBand color={BAND_COLORS[2]} label="Below 60%" value={bands.below60} colors={colors} /></> : null}
             </View>
 
-            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={[styles.card, { backgroundColor: colors.surface }, cardShadow]}>
               <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Attainment by assignment</Text>
               {analytics.struggleAreas.length > 0 ? analytics.struggleAreas.map((area, index) => <View key={area.assignmentId} style={styles.barRow}><Text style={[styles.barLabel, { color: colors.textSecondary }]} numberOfLines={1}>{area.title}</Text><View style={[styles.barTrack, { backgroundColor: colors.backgroundMuted }]}><View style={[styles.barFill, { width: `${Math.max(0, Math.min(100, area.averageScore))}%`, backgroundColor: index === 0 ? "#F97316" : "#7C3AED" }]} /></View><Text style={[styles.barValue, { color: colors.textPrimary }]}>{Math.round(area.averageScore)}%</Text></View>) : <Text style={[styles.emptyText, { color: colors.textMuted }]}>No graded assignments yet.</Text>}
             </View>
 
-            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={[styles.card, { backgroundColor: colors.surface }, cardShadow]}>
               <View style={styles.chartHeading}>
                 <View><Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Learning momentum</Text><Text style={[styles.chartCaption, { color: colors.textMuted }]}>Average attainment, last 7 days</Text></View>
                 {trendPercent !== null ? (
@@ -189,9 +192,9 @@ export function TeacherAnalyticsScreen() {
             <View style={[styles.insightCard, { backgroundColor: colors.accentSoft }]}><View style={[styles.insightIcon, { backgroundColor: colors.surface }]}><Ionicons name="bulb-outline" size={19} color={colors.accent} /></View><View style={styles.insightCopy}><Text style={[styles.insightTitle, { color: colors.textPrimary }]}>Key insight</Text><Text style={[styles.insightText, { color: colors.textSecondary }]}>{weakestArea ? `${weakestArea.title} is the lowest-scoring assignment at ${Math.round(weakestArea.averageScore)}%. Consider a short recap before moving ahead.` : "Grade an assignment to unlock class-level teaching insights."}</Text>{weakestArea ? <Pressable style={({ pressed }) => [styles.insightChip, { backgroundColor: colors.surface, borderColor: colors.accentSoftAlt }, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.navigate("AssignmentDetail", { assignmentId: weakestArea.assignmentId })} accessibilityRole="button" accessibilityLabel={`Open ${weakestArea.title}`}><Text style={[styles.insightChipText, { color: colors.accent }]}>Focus area</Text><Ionicons name="arrow-forward" size={13} color={colors.accent} /></Pressable> : null}</View></View>
           </> : <>
             <Text style={[styles.studentHeading, { color: colors.textPrimary }]}>Student attainment</Text>
-            {analytics.students.length === 0 ? <Text style={[styles.emptyText, { color: colors.textMuted }]}>No graded submissions yet for this class.</Text> : analytics.students.map((student) => <Pressable key={student.studentStubId} style={({ pressed }) => [styles.studentRow, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]} onPress={() => viewStudent(student.studentStubId)} accessibilityRole="button"><View style={[styles.studentAvatar, { backgroundColor: colors.accentSoft }]}><Text style={[styles.studentAvatarText, { color: colors.accent }]}>{student.fullName.slice(0, 1).toUpperCase()}</Text></View><View style={styles.studentCopy}><Text style={[styles.studentName, { color: colors.textPrimary }]}>{capitalizeFirst(student.fullName)}</Text><Text style={[styles.studentMeta, { color: colors.textMuted }]}>{student.submissionCount} submission{student.submissionCount === 1 ? "" : "s"}</Text></View><Text style={[styles.studentScore, { color: student.averageScore < 60 ? colors.danger : colors.accent }]}>{Math.round(student.averageScore)}%</Text><Ionicons name="chevron-forward" size={16} color={colors.textMuted} /></Pressable>)}
+            {analytics.students.length === 0 ? <Text style={[styles.emptyText, { color: colors.textMuted }]}>No graded submissions yet for this class.</Text> : analytics.students.map((student) => <Pressable key={student.studentStubId} style={({ pressed }) => [styles.studentRow, { backgroundColor: colors.surface }, cardShadow, pressed && { opacity: pressedOpacity }]} onPress={() => viewStudent(student.studentStubId)} accessibilityRole="button"><StudentAvatar studentId={student.studentStubId} picture={student} size={36} /><View style={styles.studentCopy}><Text style={[styles.studentName, { color: colors.textPrimary }]}>{capitalizeFirst(student.fullName)}</Text><Text style={[styles.studentMeta, { color: colors.textMuted }]}>{student.submissionCount} submission{student.submissionCount === 1 ? "" : "s"}</Text></View><Text style={[styles.studentScore, { color: student.averageScore < 60 ? colors.danger : colors.accent }]}>{Math.round(student.averageScore)}%</Text><Ionicons name="chevron-forward" size={16} color={colors.textMuted} /></Pressable>)}
             {studentDetailLoading ? <ActivityIndicator color={colors.accent} style={styles.loader} /> : null}
-            {studentDetail ? <View style={[styles.detailCard, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}><View style={styles.detailHeading}><Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{capitalizeFirst(studentDetail.fullName)}</Text><Pressable onPress={() => setStudentDetail(null)} hitSlop={8}><Ionicons name="close" size={18} color={colors.textMuted} /></Pressable></View>{studentDetail.history.length === 0 ? <Text style={[styles.emptyText, { color: colors.textMuted }]}>No graded submissions yet.</Text> : studentDetail.history.map((history, index) => <View key={`${history.assignmentTitle}-${index}`} style={styles.historyRow}><Text style={[styles.historyTitle, { color: colors.textSecondary }]} numberOfLines={1}>{history.assignmentTitle}</Text><Text style={[styles.historyScore, { color: colors.textPrimary }]}>{scoreText(history.score)}</Text></View>)}</View> : null}
+            {studentDetail ? <View style={[styles.detailCard, { backgroundColor: colors.surfaceRaised }, cardShadow]}><View style={styles.detailHeading}><Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{capitalizeFirst(studentDetail.fullName)}</Text><Pressable onPress={() => setStudentDetail(null)} hitSlop={8}><Ionicons name="close" size={18} color={colors.textMuted} /></Pressable></View>{studentDetail.history.length === 0 ? <Text style={[styles.emptyText, { color: colors.textMuted }]}>No graded submissions yet.</Text> : studentDetail.history.map((history, index) => <View key={`${history.assignmentTitle}-${index}`} style={styles.historyRow}><Text style={[styles.historyTitle, { color: colors.textSecondary }]} numberOfLines={1}>{history.assignmentTitle}</Text><Text style={[styles.historyScore, { color: colors.textPrimary }]}>{scoreText(history.score)}</Text></View>)}</View> : null}
           </>}
         </> : null}
       </ScrollView>
@@ -199,8 +202,74 @@ export function TeacherAnalyticsScreen() {
   );
 }
 
+const REPORT_TABS: { key: AnalyticsTab; label: string }[] = [
+  { key: "class", label: "Class report" },
+  { key: "students", label: "Student report" },
+];
+const REPORT_TABS_PADDING = 4;
+
+// Segmented switch with a pill that slides between the two tabs (and label
+// colors that cross-fade with it) instead of jumping. JS-driven because it
+// animates a color alongside the position - it's two small views, so cheap.
+function ReportTabs({ activeTab, onChange, colors }: { activeTab: AnalyticsTab; onChange: (tab: AnalyticsTab) => void; colors: ReturnType<typeof useTheme>["colors"] }) {
+  const activeIndex = REPORT_TABS.findIndex((tab) => tab.key === activeTab);
+  const position = useRef(new Animated.Value(activeIndex)).current;
+  const [tabWidth, setTabWidth] = useState(0);
+
+  useEffect(() => {
+    Animated.spring(position, { toValue: activeIndex, tension: 170, friction: 22, useNativeDriver: false }).start();
+  }, [activeIndex, position]);
+
+  return (
+    <View
+      style={[styles.reportTabs, { backgroundColor: colors.backgroundMuted }]}
+      onLayout={(e) => setTabWidth((e.nativeEvent.layout.width - REPORT_TABS_PADDING * 2) / REPORT_TABS.length)}
+      accessibilityRole="tablist"
+    >
+      {tabWidth > 0 ? (
+        <Animated.View
+          style={[
+            styles.reportTabPill,
+            { width: tabWidth, backgroundColor: colors.accent, transform: [{ translateX: Animated.multiply(position, tabWidth) }] },
+          ]}
+        />
+      ) : null}
+      {REPORT_TABS.map((tab, index) => (
+        <Pressable
+          key={tab.key}
+          style={styles.reportTab}
+          onPress={() => onChange(tab.key)}
+          accessibilityRole="tab"
+          accessibilityState={{ selected: activeTab === tab.key }}
+        >
+          <Animated.Text
+            style={[
+              styles.reportTabText,
+              {
+                color:
+                  tabWidth > 0
+                    ? position.interpolate({
+                        inputRange: [index - 1, index, index + 1],
+                        outputRange: [colors.textMuted, colors.accentOn, colors.textMuted],
+                        extrapolate: "clamp",
+                      })
+                    : activeTab === tab.key
+                      ? colors.accentOn
+                      : colors.textMuted,
+              },
+            ]}
+          >
+            {tab.label}
+          </Animated.Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
 function Metric({ icon, color, value, label, colors }: { icon: keyof typeof Ionicons.glyphMap; color: string; value: string; label: string; colors: ReturnType<typeof useTheme>["colors"] }) {
-  return <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.border }]}><View style={[styles.metricIcon, { backgroundColor: `${color}14` }]}><Ionicons name={icon} size={17} color={color} /></View><Text style={[styles.metricValue, { color }]}>{value}</Text><Text style={[styles.metricLabel, { color: colors.textMuted }]}>{label}</Text></View>;
+  const { cardShadow } = useTheme();
+  return <View style={[styles.metricCard, { backgroundColor: colors.surface }, cardShadow]}><View style={[styles.metricIcon, { backgroundColor: `${color}14` }]}><Ionicons name={icon} size={17} color={color} /></View><Text style={[styles.metricValue, { color }]}>{value}</Text><Text style={[styles.metricLabel, { color: colors.textMuted }]}>{label}</Text></View>;
 }
 
 function ScoreBand({ color, label, value, colors }: { color: string; label: string; value: number; colors: ReturnType<typeof useTheme>["colors"] }) {
@@ -208,14 +277,14 @@ function ScoreBand({ color, label, value, colors }: { color: string; label: stri
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 }, content: { padding: 24, paddingBottom: 132 }, topRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, pageTitle: { fontSize: 25, fontWeight: "800", letterSpacing: -0.55 }, shareButton: { minHeight: 38, paddingHorizontal: 13, borderWidth: 1, borderRadius: 20, flexDirection: "row", alignItems: "center", gap: 6 }, shareButtonText: { fontSize: 12, fontWeight: "800" }, subtitle: { marginTop: 4, fontSize: 12, lineHeight: 18, fontWeight: "500" },
+  container: { flex: 1 }, content: { padding: PAGE_PADDING, paddingBottom: 132 }, topRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, pageTitle: { fontSize: 25, fontWeight: "800", letterSpacing: -0.55 }, shareButton: { minHeight: 38, paddingHorizontal: 13, borderWidth: 1, borderRadius: 20, flexDirection: "row", alignItems: "center", gap: 6 }, shareButtonText: { fontSize: 12, fontWeight: "800" }, subtitle: { marginTop: 4, fontSize: 12, lineHeight: 18, fontWeight: "500" },
   classPicker: { gap: 8, paddingTop: 18, paddingBottom: 20 }, classChip: { minHeight: 35, borderWidth: 1, borderRadius: 18, paddingHorizontal: 13, alignItems: "center", justifyContent: "center" }, classChipText: { fontSize: 12, fontWeight: "800" }, errorText: { marginTop: 12, fontSize: 12, fontWeight: "600" }, loader: { marginTop: 34 },
-  emptyState: { marginTop: 20, borderWidth: 1, borderRadius: 18, paddingVertical: 28, alignItems: "center", gap: 8 }, emptyStateText: { fontSize: 13, fontWeight: "600", textAlign: "center", paddingHorizontal: 20 },
-  reportTabs: { flexDirection: "row", padding: 4, borderRadius: 24, marginBottom: 26 }, reportTab: { flex: 1, minHeight: 37, borderRadius: 19, alignItems: "center", justifyContent: "center" }, reportTabText: { fontSize: 12, fontWeight: "800" }, reportTitle: { fontSize: 27, lineHeight: 33, fontWeight: "800", letterSpacing: -0.7 }, reportMeta: { marginTop: 3, fontSize: 13, fontWeight: "500" },
-  metricRow: { gap: 12, paddingTop: 20, paddingBottom: 31 }, metricCard: { width: 134, minHeight: 132, borderWidth: 1, borderRadius: 16, padding: 15 }, metricIcon: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center" }, metricValue: { marginTop: 13, fontSize: 24, lineHeight: 28, fontWeight: "800" }, metricLabel: { marginTop: 4, fontSize: 11, lineHeight: 15, fontWeight: "700" },
-  card: { borderWidth: 1, borderRadius: 22, padding: 20, marginBottom: 25 }, cardHeading: { flexDirection: "row", alignItems: "center", gap: 6 }, cardTitle: { fontSize: 16, lineHeight: 22, fontWeight: "800", letterSpacing: -0.2 }, scoreRing: { width: 128, height: 128, borderRadius: 64, borderWidth: 12, alignSelf: "center", alignItems: "center", justifyContent: "center", marginTop: 18, marginBottom: 19 }, scoreRingInner: { width: 90, height: 90, borderRadius: 45, alignItems: "center", justifyContent: "center" }, scoreValue: { fontSize: 26, lineHeight: 31, fontWeight: "800", letterSpacing: -0.6 }, scoreLabel: { marginTop: 1, fontSize: 10, fontWeight: "700" }, summary: { fontSize: 13, lineHeight: 21, fontWeight: "500", marginBottom: 17 }, bandRow: { flexDirection: "row", alignItems: "center", minHeight: 27 }, bandDot: { width: 8, height: 8, borderRadius: 4, marginRight: 9 }, bandLabel: { flex: 1, fontSize: 12, fontWeight: "500" }, bandValue: { fontSize: 12, fontWeight: "800" },
+  emptyState: { marginTop: 20, borderRadius: 18, paddingVertical: 28, alignItems: "center", gap: 8 }, emptyStateText: { fontSize: 13, fontWeight: "600", textAlign: "center", paddingHorizontal: 20 },
+  reportTabs: { flexDirection: "row", padding: REPORT_TABS_PADDING, borderRadius: 24, marginBottom: 26 }, reportTabPill: { position: "absolute", top: REPORT_TABS_PADDING, bottom: REPORT_TABS_PADDING, left: REPORT_TABS_PADDING, borderRadius: 19 }, reportTab: { flex: 1, minHeight: 37, borderRadius: 19, alignItems: "center", justifyContent: "center" }, reportTabText: { fontSize: 12, fontWeight: "800" }, reportTitle: { fontSize: 27, lineHeight: 33, fontWeight: "800", letterSpacing: -0.7 }, reportMeta: { marginTop: 3, fontSize: 13, fontWeight: "500" },
+  metricScroller: { marginHorizontal: -PAGE_PADDING, overflow: "visible" }, metricRow: { gap: 12, paddingHorizontal: PAGE_PADDING, paddingTop: 20, paddingBottom: 31 }, metricCard: { width: 134, minHeight: 132, borderRadius: 16, padding: 15 }, metricIcon: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center" }, metricValue: { marginTop: 13, fontSize: 24, lineHeight: 28, fontWeight: "800" }, metricLabel: { marginTop: 4, fontSize: 11, lineHeight: 15, fontWeight: "700" },
+  card: { borderRadius: 22, padding: 20, marginBottom: 25 }, cardHeading: { flexDirection: "row", alignItems: "center", gap: 6 }, cardTitle: { fontSize: 16, lineHeight: 22, fontWeight: "800", letterSpacing: -0.2 }, scoreRing: { width: 128, height: 128, borderRadius: 64, borderWidth: 12, alignSelf: "center", alignItems: "center", justifyContent: "center", marginTop: 18, marginBottom: 19 }, scoreRingInner: { width: 90, height: 90, borderRadius: 45, alignItems: "center", justifyContent: "center" }, scoreValue: { fontSize: 26, lineHeight: 31, fontWeight: "800", letterSpacing: -0.6 }, scoreLabel: { marginTop: 1, fontSize: 10, fontWeight: "700" }, summary: { fontSize: 13, lineHeight: 21, fontWeight: "500", marginBottom: 17 }, bandRow: { flexDirection: "row", alignItems: "center", minHeight: 27 }, bandDot: { width: 8, height: 8, borderRadius: 4, marginRight: 9 }, bandLabel: { flex: 1, fontSize: 12, fontWeight: "500" }, bandValue: { fontSize: 12, fontWeight: "800" },
   barRow: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 15 }, barLabel: { width: 104, fontSize: 12, fontWeight: "500" }, barTrack: { flex: 1, height: 10, borderRadius: 6, overflow: "hidden" }, barFill: { height: "100%", borderRadius: 6 }, barValue: { width: 36, textAlign: "right", fontSize: 12, fontWeight: "800" }, emptyText: { marginTop: 18, fontSize: 13, lineHeight: 19, textAlign: "center" },
   chartHeading: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between" }, chartCaption: { marginTop: 2, fontSize: 11, fontWeight: "500" }, trendBadge: { height: 27, paddingHorizontal: 9, borderRadius: 14, flexDirection: "row", alignItems: "center", gap: 4 }, trendBadgeText: { fontSize: 10, fontWeight: "800" }, barChart: { height: 162, flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", paddingTop: 15 }, chartColumn: { flex: 1, height: "100%", alignItems: "center", justifyContent: "flex-end" }, chartValue: { fontSize: 10, fontWeight: "800", marginBottom: 5 }, chartTrack: { width: 22, height: 104, borderRadius: 11, justifyContent: "flex-end", overflow: "hidden" }, chartFill: { width: "100%", borderRadius: 11 }, chartLabel: { marginTop: 7, fontSize: 10, fontWeight: "700" },
   insightCard: { flexDirection: "row", borderRadius: 18, padding: 18, marginBottom: 24 }, insightIcon: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center", marginRight: 13 }, insightCopy: { flex: 1 }, insightTitle: { fontSize: 14, fontWeight: "800" }, insightText: { marginTop: 5, fontSize: 12, lineHeight: 19, fontWeight: "500" }, insightChip: { alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 5, height: 34, paddingHorizontal: 12, borderWidth: 1, borderRadius: 18, marginTop: 13 }, insightChipText: { fontSize: 11, fontWeight: "800" },
-  studentHeading: { fontSize: 20, lineHeight: 26, fontWeight: "800", letterSpacing: -0.35, marginBottom: 14 }, studentRow: { minHeight: 70, borderWidth: 1, borderRadius: 16, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 9 }, studentAvatar: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" }, studentAvatarText: { fontSize: 14, fontWeight: "800" }, studentCopy: { flex: 1 }, studentName: { fontSize: 13, fontWeight: "800" }, studentMeta: { marginTop: 2, fontSize: 11, fontWeight: "500" }, studentScore: { fontSize: 16, fontWeight: "800" }, detailCard: { borderWidth: 1, borderRadius: 16, padding: 16, marginTop: 8 }, detailHeading: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, historyRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 13 }, historyTitle: { flex: 1, fontSize: 12, fontWeight: "500" }, historyScore: { fontSize: 12, fontWeight: "800" },
+  studentHeading: { fontSize: 20, lineHeight: 26, fontWeight: "800", letterSpacing: -0.35, marginBottom: 14 }, studentRow: { minHeight: 70, borderRadius: 16, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 9 }, studentCopy: { flex: 1 }, studentName: { fontSize: 13, fontWeight: "800" }, studentMeta: { marginTop: 2, fontSize: 11, fontWeight: "500" }, studentScore: { fontSize: 16, fontWeight: "800" }, detailCard: { borderRadius: 16, padding: 16, marginTop: 8 }, detailHeading: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, historyRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 13 }, historyTitle: { flex: 1, fontSize: 12, fontWeight: "500" }, historyScore: { fontSize: 12, fontWeight: "800" },
 });

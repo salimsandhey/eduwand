@@ -318,11 +318,8 @@ export function AssignmentDraftReviewScreen({ route, navigation }: Props) {
                     accessibilityRole="button"
                     accessibilityLabel="Regenerate this question"
                   >
-                    {regeneratingId === q.id ? (
-                      <ActivityIndicator size="small" color={colors.accent} />
-                    ) : (
-                      <Ionicons name="refresh-outline" size={19} color={colors.accent} />
-                    )}
+                    {/* No spinner while regenerating - the AI generating overlay covers the screen. */}
+                    <Ionicons name="refresh-outline" size={19} color={colors.accent} />
                   </Pressable>
                   {questions.length > 1 ? (
                     <Pressable onPress={() => removeQuestion(q.id)} hitSlop={8} accessibilityRole="button" accessibilityLabel="Delete this question">

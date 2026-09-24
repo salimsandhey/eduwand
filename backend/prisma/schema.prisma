@@ -270,6 +270,10 @@ model AppUser {
   // First-login product tour (mobile, teacher role only for now). Set true
   // once the teacher dismisses/completes the tour so it never shows again.
   hasSeenOnboardingTour Boolean  @default(false) @map("has_seen_onboarding_tour")
+  // "Complete your profile" prompt (mobile, staff roles). Set true only when
+  // the user taps Skip - never shown again after that. A user who completes
+  // their profile simply stops qualifying for the prompt, no flag needed.
+  hasDismissedProfilePrompt Boolean @default(false) @map("has_dismissed_profile_prompt")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
   createdBy      String?  @map("created_by") @db.Uuid
@@ -709,6 +713,13 @@ model StudentStub {
   // records it exactly as if the teacher had tapped it manually - see
   // admin-dashboard's PresentControlPage.tsx receiver connection.
   seatNumber      Int?         @map("seat_number")
+  // Profile picture the student sets themselves (Profile tab): an uploaded
+  // photo (photoLocation/photoMimeType) or one of unified-app's bundled
+  // student-avatar-01..20 (avatarKey). Setting one clears the other; neither
+  // set = the app's default silhouette. See backend/src/routes/auth-me.ts.
+  photoLocation   String?      @map("photo_location")
+  photoMimeType   String?      @map("photo_mime_type")
+  avatarKey       String?      @map("avatar_key")
   // status is one of: active, removed. Soft delete only - Submission/Grade/
   // PersonalisationSuggestion/CommunicationMessage all reference a student
   // with no cascade rule, so a real row delete would fail once a student
@@ -980,7 +991,7 @@ model Generation {
   // above, not a join table, since this is just a snapshot of who was picked
   // at share time, not something else needs to query from the other side.
   sharedWithAll        Boolean  @default(true) @map("shared_with_all")
-  sharedStudentStubIds String[] @map("shared_student_stub_ids")
+  sharedStudentStubIds String[] @default([]) @map("shared_student_stub_ids")
 
   // Which class periods (1-indexed, matching a stage's own "sessions" tag in
   // the lesson_plan content JSON) the teacher has actually taught, for a
@@ -1488,6 +1499,32 @@ model PlatformSetting {
   updatedBy String?  @map("updated_by") @db.Uuid
 
   @@map("platform_setting")
+}
+
+// Every AI feature that costs credits - the single source of truth for what
+// a call is charged (lib/credits.ts getFeatureCost) AND for how it's named on
+// the teacher's Credits screen, so the two can never disagree. key matches
+// the `feature` string routes pass to logAiUsage() and that's stored as the
+// ai_usage ledger entry's note. platform_admin edits these from the admin
+// dashboard's Platform Settings. Rows are inserted by the migration that
+// created this table, not by seed.ts, so every environment has them.
+model AiFeature {
+  id            String   @id @default(uuid()) @db.Uuid
+  key           String   @unique
+  label         String
+  description   String
+  // An Ionicons glyph name - rendered as-is by unified-app, which falls back
+  // to a generic icon for a name it doesn't know.
+  icon          String
+  cost          Int
+  // Listed under "Your balance covers" on the Credits screen. Off for
+  // internal/legacy features a teacher can't directly start.
+  showOnCredits Boolean  @default(false) @map("show_on_credits")
+  sortOrder     Int      @default(0) @map("sort_order")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  updatedBy     String?  @map("updated_by") @db.Uuid
+
+  @@map("ai_feature")
 }
 
 // Platform-wide, platform_admin-editable long-form pages (Privacy Policy,

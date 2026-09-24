@@ -31,6 +31,9 @@ these instead; every one of them reads live insets or live measurements.
   ([useKeyboardOverlap.ts](unified-app/src/hooks/useKeyboardOverlap.ts)): attach `ref`/`onLayout` to the
   full-height container and add `overlap` as its bottom padding while `keyboardVisible`. It measures
   what the keyboard actually covers, so it is right whether or not the OS already resized the window.
+  If that container sits inside `<Screen edges={[..., "bottom"]}>` (so it stops above the nav bar), pass
+  `useKeyboardOverlap({ bottomInset: insets.bottom })`. Never compare `measureInWindow` positions with
+  a keyboard event's `screenY` - on Android they can differ by the status bar height.
 
 **Chat / message lists**
 - Use an `inverted` FlatList (newest first) so the latest message stays pinned to the bottom. Do not

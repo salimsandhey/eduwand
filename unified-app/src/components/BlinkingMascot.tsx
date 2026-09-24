@@ -52,9 +52,11 @@ interface BlinkingMascotProps {
   style: StyleProp<ViewStyle>;
   /** Optional delay before waking up in ms (defaults to 3800ms to align ~500ms after splash screen ends). */
   wakeUpDelayMs?: number;
+  /** If true, starts with eyes open and begins periodic blinking/gaze immediately without sleeping sequence. */
+  startOpen?: boolean;
 }
 
-export function BlinkingMascot({ style, wakeUpDelayMs = 3800 }: BlinkingMascotProps) {
+export function BlinkingMascot({ style, wakeUpDelayMs = 3800, startOpen = false }: BlinkingMascotProps) {
   const { width, height } = StyleSheet.flatten(style) as { width: number; height: number };
 
   const sourceAspect = SOURCE_WIDTH / SOURCE_HEIGHT;
@@ -65,7 +67,7 @@ export function BlinkingMascot({ style, wakeUpDelayMs = 3800 }: BlinkingMascotPr
   const offsetY = (height - renderedHeight) / 2;
 
   // 1 = closed / sleeping by default, 0 = open
-  const blink = useRef(new Animated.Value(1)).current;
+  const blink = useRef(new Animated.Value(startOpen ? 0 : 1)).current;
   const gaze = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current; // -1 to +1 range (X & Y gaze)
 
   // Wake-up and periodic blinking animation
@@ -174,16 +176,20 @@ export function BlinkingMascot({ style, wakeUpDelayMs = 3800 }: BlinkingMascotPr
       });
     };
 
-    // Start closed by default (sleeping) and wake up ~0.5s after splash screen ends
-    timer = setTimeout(wakeUp, wakeUpDelayMs);
+    if (startOpen) {
+      scheduleNextPeriodicBlink();
+    } else {
+      // Start closed by default (sleeping) and wake up ~0.5s after splash screen ends
+      timer = setTimeout(wakeUp, wakeUpDelayMs);
+    }
 
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [blink, wakeUpDelayMs]);
+  }, [blink, wakeUpDelayMs, startOpen]);
 
-  // Eye gaze/movement animation loop (starts after waking up)
+  // Eye gaze/movement animation loop
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -225,32 +231,36 @@ export function BlinkingMascot({ style, wakeUpDelayMs = 3800 }: BlinkingMascotPr
       });
     };
 
-    // First lazy gaze drift during the initial half-peek
-    Animated.sequence([
-      Animated.delay(wakeUpDelayMs + 100),
-      Animated.timing(gaze, {
-        toValue: { x: -0.25, y: 0.4 }, // lazy drowsy drift down-left
-        duration: 500,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
-      }),
-      Animated.delay(500),
-      Animated.timing(gaze, {
-        toValue: { x: 0, y: 0 },
-        duration: 300,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
-      }),
-    ]).start();
+    if (startOpen) {
+      timer = setTimeout(moveToNextGaze, 800);
+    } else {
+      // First lazy gaze drift during the initial half-peek
+      Animated.sequence([
+        Animated.delay(wakeUpDelayMs + 100),
+        Animated.timing(gaze, {
+          toValue: { x: -0.25, y: 0.4 }, // lazy drowsy drift down-left
+          duration: 500,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.delay(500),
+        Animated.timing(gaze, {
+          toValue: { x: 0, y: 0 },
+          duration: 300,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]).start();
 
-    // Start looking around actively once fully awake
-    timer = setTimeout(moveToNextGaze, wakeUpDelayMs + 2100);
+      // Start looking around actively once fully awake
+      timer = setTimeout(moveToNextGaze, wakeUpDelayMs + 2100);
+    }
 
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [gaze, wakeUpDelayMs]);
+  }, [gaze, wakeUpDelayMs, startOpen]);
 
   return (
     <View style={[{ width, height }, styles.wrapper]}>

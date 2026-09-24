@@ -537,7 +537,6 @@ function TaskCard({
           styles.urgentCard,
           {
             backgroundColor: colors.surface,
-            borderColor: colors.border,
             borderLeftColor: accent,
           },
           shadow,
@@ -585,7 +584,7 @@ function TaskCard({
   }
 
   return (
-    <View style={[styles.fullCard, { backgroundColor: colors.surface, borderColor: colors.border, borderLeftColor: accent }, shadow]}>
+    <View style={[styles.fullCard, { backgroundColor: colors.surface, borderLeftColor: accent }, shadow]}>
       <Pressable onPress={onOpen} style={({ pressed }) => [styles.fullTop, pressed && { opacity: pressedOpacity }]}>
         <Text style={[styles.fullName, { color: colors.textPrimary }]} numberOfLines={1}>
           {name}
@@ -798,7 +797,6 @@ const styles = StyleSheet.create({
   contactRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   urgentCard: {
     borderRadius: 16,
-    borderWidth: 1,
     borderLeftWidth: 3,
     padding: 14,
     gap: 8,
@@ -830,7 +828,6 @@ const styles = StyleSheet.create({
   urgentPrimaryText: { color: "#FFFFFF", fontSize: 13, fontWeight: "700" },
   fullCard: {
     borderRadius: 16,
-    borderWidth: 1,
     borderLeftWidth: 3,
     padding: 16,
     gap: 8,

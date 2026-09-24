@@ -58,7 +58,17 @@ export async function aiAnalyticsRoutes(app: FastifyInstance) {
       const scores = history.map((h) => h.score).filter((s): s is number => s !== null);
       const averageScore = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
 
-      return { data: { studentStubId: student.id, fullName: student.fullName, averageScore, history }, meta: {} };
+      return {
+        data: {
+          studentStubId: student.id,
+          fullName: student.fullName,
+          avatarKey: student.avatarKey,
+          photoMimeType: student.photoMimeType,
+          averageScore,
+          history,
+        },
+        meta: {},
+      };
     }
   );
 
@@ -81,16 +91,21 @@ export async function aiAnalyticsRoutes(app: FastifyInstance) {
 
       const submissions = await prisma.submission.findMany({
         where: { assignmentId: { in: assignmentIds } },
-        include: { grade: true, studentStub: { select: { id: true, fullName: true } } },
+        include: { grade: true, studentStub: { select: { id: true, fullName: true, avatarKey: true, photoMimeType: true } } },
       });
       const graded = submissions.filter((s) => scoreOf(s.grade) !== null);
 
       const classScores = graded.map((s) => scoreOf(s.grade) as number);
       const classAverage = classScores.length > 0 ? classScores.reduce((a, b) => a + b, 0) / classScores.length : null;
 
-      const byStudent = new Map<string, { fullName: string; scores: number[] }>();
+      const byStudent = new Map<string, { fullName: string; avatarKey: string | null; photoMimeType: string | null; scores: number[] }>();
       for (const s of graded) {
-        const entry = byStudent.get(s.studentStubId) ?? { fullName: s.studentStub.fullName, scores: [] };
+        const entry = byStudent.get(s.studentStubId) ?? {
+          fullName: s.studentStub.fullName,
+          avatarKey: s.studentStub.avatarKey,
+          photoMimeType: s.studentStub.photoMimeType,
+          scores: [],
+        };
         entry.scores.push(scoreOf(s.grade) as number);
         byStudent.set(s.studentStubId, entry);
       }
@@ -98,6 +113,8 @@ export async function aiAnalyticsRoutes(app: FastifyInstance) {
         .map(([studentStubId, v]) => ({
           studentStubId,
           fullName: v.fullName,
+          avatarKey: v.avatarKey,
+          photoMimeType: v.photoMimeType,
           averageScore: v.scores.reduce((a, b) => a + b, 0) / v.scores.length,
           submissionCount: v.scores.length,
         }))

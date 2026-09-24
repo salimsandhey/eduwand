@@ -36,6 +36,7 @@ interface AuthContextValue {
   setProfileAvatar: (avatarKey: string) => Promise<void>;
   removeProfilePhoto: () => Promise<void>;
   markOnboardingTourSeen: () => Promise<void>;
+  dismissProfilePrompt: () => Promise<void>;
   deleteAccount: (password: string) => Promise<void>;
 }
 
@@ -252,6 +253,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  async function dismissProfilePrompt() {
+    if (!accessToken || !user) return;
+    setUser({ ...user, hasDismissedProfilePrompt: true });
+    try {
+      await api.dismissProfilePrompt(accessToken);
+    } catch {
+      // Non-critical - worst case the prompt shows once more next launch.
+    }
+  }
+
   return (
     <AuthContext.Provider
       value={{
@@ -272,6 +283,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setProfileAvatar,
         removeProfilePhoto,
         markOnboardingTourSeen,
+        dismissProfilePrompt,
         deleteAccount,
       }}
     >

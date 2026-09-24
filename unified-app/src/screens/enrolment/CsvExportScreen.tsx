@@ -254,7 +254,7 @@ export function CsvExportScreen() {
         )}
 
         {preview ? (
-          <View style={[styles.previewBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View style={[styles.previewBox, { backgroundColor: colors.surface }, cardShadow]}>
             <View style={styles.previewHeader}>
               <Text style={[styles.previewTitle, { color: colors.textPrimary }]}>Export Preview ({preview.id.slice(0, 8)})</Text>
               <Pressable onPress={() => setPreview(null)} hitSlop={8}>
@@ -315,7 +315,7 @@ const styles = StyleSheet.create({
   smallButton: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 8, paddingHorizontal: 12, height: 34, justifyContent: "center" },
   smallButtonText: { fontWeight: "700", fontSize: 12 },
   error: { textAlign: "center", marginTop: 12 },
-  previewBox: { borderWidth: 1, borderRadius: 12, padding: 14, marginTop: 20 },
+  previewBox: { borderRadius: 12, padding: 14, marginTop: 20 },
   previewHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
   previewTitle: { fontSize: 13, fontWeight: "700" },
   previewScroll: { marginTop: 6 },

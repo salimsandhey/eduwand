@@ -1407,7 +1407,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
         <View style={styles.bodyContent}>
 
         {enquiry.erasedAt ? (
-          <View style={[styles.bannerCard, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+          <View style={[styles.bannerCard, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
             <View style={styles.bannerTitleRow}>
               <Ionicons name="shield-checkmark-outline" size={15} color={colors.textMuted} />
               <Text style={[styles.bannerTitle, { color: colors.textMuted }]}>Personal data erased</Text>
@@ -1608,7 +1608,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
             </View>
 
             {intakeFields.length > 0 ? (
-              <View style={[styles.inlineForm, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+              <View style={[styles.inlineForm, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
                 <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Complete intake details</Text>
                 <Text style={[styles.emptyHint, { color: colors.textMuted }]}>Add any details captured after the first conversation.</Text>
                 <DynamicFormFields
@@ -1743,7 +1743,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
               </View>
             </View>
 
-            <View style={[styles.ctaBand, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+            <View style={[styles.ctaBand, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
               <View style={styles.ctaBandText}>
                 <Text style={[styles.ctaBandTitle, { color: colors.textPrimary }]}>Student conversion flow</Text>
                 <Text style={[styles.ctaBandSubtitle, { color: colors.textMuted }]}>
@@ -1821,7 +1821,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
                 <Text style={[styles.emptyHint, { color: colors.textMuted }]}>No notes added yet.</Text>
               ) : (
                 enquiry.notes.map((note) => (
-                  <View key={note.id} style={[styles.noteCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                  <View key={note.id} style={[styles.noteCard, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
                     <View style={styles.noteHead}>
                       <Text style={[styles.noteAuthor, { color: colors.textPrimary }]}>{note.author?.fullName ? capitalizeFirst(note.author.fullName) : "System"}</Text>
                       <Text style={[styles.noteDate, { color: colors.textMuted }]}>{new Date(note.createdAt).toLocaleString("en-IN")}</Text>

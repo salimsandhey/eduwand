@@ -7,6 +7,7 @@ import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
+import { StudentAvatar } from "../../components/StudentAvatar";
 import { api, AssignmentDetail, SubmissionRecord } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
 
@@ -14,10 +15,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "GradingReview">;
 type Filter = "all" | "needs_review" | "graded";
 type Sort = "newest" | "oldest";
 
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "?";
-}
+const AVATAR_SIZE = 38;
 
 export function GradingReviewScreen({ route }: Props) {
   const { assignmentId } = route.params;
@@ -161,7 +159,7 @@ export function GradingReviewScreen({ route }: Props) {
           <Text style={[styles.subtitle, { color: colors.textMuted }]}>{assignment.title}</Text>
         </View>
 
-        <View style={[styles.statsCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <View style={[styles.statsCard, { backgroundColor: colors.surface }, cardShadow]}>
           <View style={styles.stat}>
             <Text style={[styles.statValue, { color: colors.textPrimary }]}>
               {gradedCount}/{assignment.submissions.length}
@@ -223,9 +221,7 @@ export function GradingReviewScreen({ route }: Props) {
               <View key={s.id} style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
                 <View style={styles.cardHeader}>
                   <View style={styles.studentIdentity}>
-                    <View style={[styles.avatar, { backgroundColor: colors.accentSoft }]}>
-                      <Text style={[styles.avatarText, { color: colors.accent }]}>{initials(studentName)}</Text>
-                    </View>
+                    <StudentAvatar studentId={s.studentStubId} picture={s.studentStub ?? {}} size={AVATAR_SIZE} />
                     <View>
                       <Text style={[styles.studentName, { color: colors.textPrimary }]}>{capitalizeFirst(studentName)}</Text>
                       <Text style={[styles.submittedMeta, { color: colors.textMuted }]}>Submitted {new Date(s.submittedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</Text>
@@ -360,7 +356,7 @@ const styles = StyleSheet.create({
   titleSection: { marginBottom: 16 },
   title: { fontSize: 22, fontWeight: "800", letterSpacing: -0.5 },
   subtitle: { fontSize: 13, marginTop: 4, fontWeight: "500" },
-  statsCard: { flexDirection: "row", borderWidth: 1, borderRadius: 16, padding: 14, marginBottom: 14 },
+  statsCard: { flexDirection: "row", borderRadius: 16, padding: 14, marginBottom: 14 },
   stat: { flex: 1, alignItems: "center" },
   statDivider: { width: 1, marginHorizontal: 4 },
   statValue: { fontSize: 18, fontWeight: "800" },
@@ -375,8 +371,6 @@ const styles = StyleSheet.create({
   card: { borderWidth: 1, borderRadius: 14, padding: 14, marginBottom: 12 },
   cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 8 },
   studentIdentity: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
-  avatar: { width: 36, height: 36, borderRadius: 12, alignItems: "center", justifyContent: "center" },
-  avatarText: { fontSize: 13, fontWeight: "800" },
   studentName: { fontSize: 14, fontWeight: "700" },
   submittedMeta: { fontSize: 11, marginTop: 2, fontWeight: "500" },
   statusPill: { borderRadius: 10, paddingHorizontal: 9, paddingVertical: 4 },

@@ -1,5 +1,5 @@
-import { useCallback, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Image, Modal } from "react-native";
+import { useCallback, useRef, useState } from "react";
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Image, Modal, Keyboard, useWindowDimensions } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
@@ -9,6 +9,7 @@ import { useTheme } from "../../theme/ThemeContext";
 import { radius } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { SheetModal } from "../../components/SheetModal";
+import { AnimatedHeight } from "../../components/AnimatedHeight";
 import { api, Topic, Subject } from "../../api/client";
 import { decorativeAssets } from "../../theme/decorativeAssets";
 import { useKeyboardHeight } from "../../hooks/useKeyboardHeight";
@@ -26,6 +27,7 @@ export function TopicListScreen({ navigation, route }: Props) {
   const { accessToken, user } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
   const keyboardHeight = useKeyboardHeight();
+  const { height: windowHeight } = useWindowDimensions();
 
   const [topics, setTopics] = useState<Topic[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -40,6 +42,36 @@ export function TopicListScreen({ navigation, route }: Props) {
 
   const [schoolSubjects, setSchoolSubjects] = useState<Subject[]>([]);
   const [showNewTopicSubjectPicker, setShowNewTopicSubjectPicker] = useState(false);
+  const [subjectQuery, setSubjectQuery] = useState("");
+  const nameInputRef = useRef<TextInput>(null);
+  const searchInputRef = useRef<TextInput>(null);
+
+  // Keyboard continuity between the two steps. The keyboard only stays up
+  // while some text field is focused, and Android drops it the instant a
+  // focused field is hidden or removed. So both steps stay mounted and laid
+  // out for the whole life of the sheet (the inactive one is just invisible),
+  // and focus is handed directly from one field to the other BEFORE the swap
+  // - a field-to-field focus move never closes the keyboard.
+  function openSubjectStep() {
+    if (nameInputRef.current?.isFocused() || Keyboard.isVisible()) searchInputRef.current?.focus();
+    setSubjectQuery("");
+    setShowNewTopicSubjectPicker(true);
+  }
+
+  function closeSubjectStep() {
+    if (searchInputRef.current?.isFocused() || Keyboard.isVisible()) nameInputRef.current?.focus();
+    setShowNewTopicSubjectPicker(false);
+  }
+
+  // With the keyboard up the list gets less room, so the sheet (header +
+  // search + list) still fits between the keyboard and the status bar.
+  const subjectListMaxHeight = Math.round(
+    keyboardHeight > 0 ? Math.max(150, Math.min(windowHeight * 0.5, windowHeight - keyboardHeight - 300)) : windowHeight * 0.5
+  );
+
+  const filteredSubjects = subjectQuery.trim()
+    ? schoolSubjects.filter((s) => s.name.toLowerCase().includes(subjectQuery.trim().toLowerCase()))
+    : schoolSubjects;
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -158,12 +190,12 @@ export function TopicListScreen({ navigation, route }: Props) {
         {isLoading ? (
           <ActivityIndicator color={colors.accent} style={styles.loader} />
         ) : topics.length === 0 ? (
-          <View style={[styles.emptyTopics, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+          <View style={[styles.emptyTopics, { backgroundColor: colors.surface }, cardShadow]}>
             <Ionicons name="book-outline" size={22} color={colors.accent} />
             <Text style={[styles.emptyTopicsText, { color: colors.textMuted }]}>Your first topic will appear here.</Text>
           </View>
         ) : displayedTopics.length === 0 ? (
-          <View style={[styles.emptyTopics, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+          <View style={[styles.emptyTopics, { backgroundColor: colors.surface }, cardShadow]}>
             <Ionicons name="filter-outline" size={22} color={colors.accent} />
             <Text style={[styles.emptyTopicsText, { color: colors.textMuted }]}>No topics for {capitalizeFirst(subjectFilter)}.</Text>
           </View>
@@ -199,6 +231,114 @@ export function TopicListScreen({ navigation, route }: Props) {
         maxHeightRatio={0.88}
         sheetStyle={{ paddingHorizontal: 24, paddingBottom: 24 }}
       >
+        {/* Height eases between the form and the subject step, and the
+            incoming step fades/slides in (forward from the right, back from the left). */}
+        <AnimatedHeight contentKey={showNewTopicSubjectPicker ? "subject" : "form"} direction={showNewTopicSubjectPicker ? 1 : -1}>
+        {/* Subject step: swaps with the form inside the same sheet instead of
+            stacking an overlay on top of it, so nothing darkens part of the
+            sheet. Always mounted - see openSubjectStep for why. */}
+          <View
+            style={showNewTopicSubjectPicker ? undefined : styles.hiddenLaidOut}
+            pointerEvents={showNewTopicSubjectPicker ? "auto" : "none"}
+            importantForAccessibility={showNewTopicSubjectPicker ? "auto" : "no-hide-descendants"}
+            accessibilityElementsHidden={!showNewTopicSubjectPicker}
+          >
+            <View style={styles.stepHeader}>
+              <Pressable
+                style={({ pressed }) => [styles.closeButton, { backgroundColor: colors.surfaceRaised }, pressed && { opacity: pressedOpacity }]}
+                onPress={closeSubjectStep}
+                accessibilityRole="button"
+                accessibilityLabel="Back to new topic form"
+              >
+                <Ionicons name="arrow-back" size={20} color={colors.textPrimary} />
+              </Pressable>
+              <View style={styles.stepHeaderCopy}>
+                <Text style={[styles.stepTitle, { color: colors.textPrimary }]}>Choose subject</Text>
+                <Text style={[styles.stepSubtitle, { color: colors.textMuted }]}>
+                  {schoolSubjects.length === 0
+                    ? "Your school hasn't added subjects yet."
+                    : `${schoolSubjects.length} subject${schoolSubjects.length === 1 ? "" : "s"} available`}
+                </Text>
+              </View>
+            </View>
+
+            {/* Always present when there are subjects: it's the field the
+                keyboard's focus moves to while this step is open. */}
+            {schoolSubjects.length > 0 ? (
+              <View style={[styles.searchWrap, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+                <Ionicons name="search" size={17} color={colors.textMuted} />
+                <TextInput
+                  ref={searchInputRef}
+                  style={[styles.searchInput, { color: colors.textPrimary }]}
+                  value={subjectQuery}
+                  onChangeText={setSubjectQuery}
+                  placeholder="Search subjects"
+                  placeholderTextColor={colors.textMuted}
+                  autoCorrect={false}
+                  returnKeyType="search"
+                />
+                {subjectQuery ? (
+                  <Pressable onPress={() => setSubjectQuery("")} hitSlop={8} accessibilityRole="button" accessibilityLabel="Clear search">
+                    <Ionicons name="close-circle" size={17} color={colors.textMuted} />
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
+
+            {schoolSubjects.length === 0 ? (
+              <View style={[styles.subjectEmpty, { backgroundColor: colors.surfaceRaised }]}>
+                <Ionicons name="library-outline" size={22} color={colors.textMuted} />
+                <Text style={[styles.subjectEmptyText, { color: colors.textMuted }]}>Ask your school admin to add subjects, then try again.</Text>
+              </View>
+            ) : filteredSubjects.length === 0 ? (
+              <Text style={[styles.subjectNoMatch, { color: colors.textMuted }]}>No subjects match "{subjectQuery.trim()}".</Text>
+            ) : (
+              <ScrollView
+                style={[styles.subjectList, { borderColor: colors.border, maxHeight: subjectListMaxHeight }]}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                {filteredSubjects.map((s, index) => {
+                  const selected = subject === s.name;
+                  return (
+                    <Pressable
+                      key={s.id}
+                      style={({ pressed }) => [
+                        styles.subjectRow,
+                        index > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+                        selected && { backgroundColor: colors.accentSoft },
+                        pressed && { opacity: pressedOpacity },
+                      ]}
+                      onPress={() => {
+                        setSubject(s.name);
+                        closeSubjectStep();
+                      }}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                    >
+                      <Text
+                        style={[styles.subjectRowText, { color: selected ? colors.accent : colors.textPrimary }, selected && styles.subjectRowTextSelected]}
+                        numberOfLines={1}
+                      >
+                        {capitalizeFirst(s.name)}
+                      </Text>
+                      {selected ? <Ionicons name="checkmark-circle" size={20} color={colors.accent} /> : null}
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            )}
+          </View>
+
+        {/* Hidden (not display:none) while choosing a subject: it stays laid
+            out, so its text field can still take focus - see closeSubjectStep.
+            Absolute, so it doesn't count toward the sheet's measured height. */}
+        <View
+          style={showNewTopicSubjectPicker ? styles.hiddenLaidOut : undefined}
+          pointerEvents={showNewTopicSubjectPicker ? "none" : "auto"}
+          importantForAccessibility={showNewTopicSubjectPicker ? "no-hide-descendants" : "auto"}
+          accessibilityElementsHidden={showNewTopicSubjectPicker}
+        >
         <View style={styles.modalHeader}>
           <View>
             <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>New topic</Text>
@@ -217,6 +357,7 @@ export function TopicListScreen({ navigation, route }: Props) {
         <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={styles.modalContent}>
           <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Topic name</Text>
           <TextInput
+            ref={nameInputRef}
             style={[styles.topicInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
             value={name}
             onChangeText={setName}
@@ -230,14 +371,14 @@ export function TopicListScreen({ navigation, route }: Props) {
               <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Subject</Text>
               <Pressable
                 style={[styles.subjectInputWrap, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}
-                onPress={() => setShowNewTopicSubjectPicker(true)}
+                onPress={openSubjectStep}
                 accessibilityRole="button"
                 accessibilityLabel="Choose subject"
               >
                 <Text style={[styles.subjectInput, { color: subject ? colors.textPrimary : colors.textMuted }]} numberOfLines={1}>
-                  {subject || "Select subject"}
+                  {subject ? capitalizeFirst(subject) : "Select subject"}
                 </Text>
-                <Ionicons name="chevron-down" size={18} color={colors.accent} />
+                <Ionicons name="chevron-forward" size={18} color={colors.accent} />
               </Pressable>
             </View>
           </View>
@@ -251,43 +392,8 @@ export function TopicListScreen({ navigation, route }: Props) {
             {isCreating ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.startButtonText, { color: colors.accentOn }]}>Start topic</Text>}
           </Pressable>
         </ScrollView>
-
-        {showNewTopicSubjectPicker ? (
-          <Pressable
-            style={[styles.pickerBackdrop, StyleSheet.absoluteFill]}
-            onPress={() => setShowNewTopicSubjectPicker(false)}
-            accessibilityRole="button"
-            accessibilityLabel="Close subject picker"
-          >
-            <Pressable style={[styles.pickerSheet, { backgroundColor: colors.surface }]} onPress={(e) => e.stopPropagation()}>
-              <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>Select subject</Text>
-              {schoolSubjects.length === 0 ? (
-                <Text style={[styles.pickerRowText, { color: colors.textMuted, paddingVertical: 10 }]}>
-                  No subjects yet - ask your school admin to add one.
-                </Text>
-              ) : (
-                <ScrollView style={styles.pickerSheetScroll} nestedScrollEnabled showsVerticalScrollIndicator={false}>
-                  {schoolSubjects.map((s) => (
-                    <Pressable
-                      key={s.id}
-                      style={({ pressed }) => [styles.pickerRow, pressed && { opacity: pressedOpacity }]}
-                      onPress={() => {
-                        setSubject(s.name);
-                        setShowNewTopicSubjectPicker(false);
-                      }}
-                      accessibilityRole="button"
-                    >
-                      <Text style={[styles.pickerRowText, { color: subject === s.name ? colors.accent : colors.textPrimary }]} numberOfLines={1}>
-                        {s.name}
-                      </Text>
-                      {subject === s.name ? <Ionicons name="checkmark" size={16} color={colors.accent} /> : null}
-                    </Pressable>
-                  ))}
-                </ScrollView>
-              )}
-            </Pressable>
-          </Pressable>
-        ) : null}
+        </View>
+        </AnimatedHeight>
       </SheetModal>
 
       <SheetModal
@@ -350,7 +456,7 @@ const styles = StyleSheet.create({
   attainmentReportButtonText: { fontSize: 11, fontWeight: "800" },
   error: { textAlign: "center", marginBottom: 12, fontSize: 13 },
   loader: { marginVertical: 28 },
-  emptyTopics: { minHeight: 80, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, borderRadius: radius.lg, borderWidth: 1, paddingHorizontal: 20, marginBottom: 18 },
+  emptyTopics: { minHeight: 80, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, borderRadius: radius.lg, paddingHorizontal: 20, marginBottom: 18 },
   emptyTopicsText: { fontSize: 14, fontWeight: "500" },
   topicCard: { minHeight: 84, flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 18, paddingVertical: 13, paddingLeft: 14, paddingRight: 12, marginBottom: 10 },
   topicNumber: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
@@ -375,8 +481,20 @@ const styles = StyleSheet.create({
   subjectInput: { flex: 1, height: "100%", fontSize: 14, fontWeight: "500", textAlignVertical: "center" },
   startButton: { height: 56, alignItems: "center", justifyContent: "center", borderRadius: 12, marginTop: 20 },
   startButtonText: { fontSize: 16, fontWeight: "800" },
-  pickerBackdrop: { flex: 1, backgroundColor: "rgba(22, 15, 20, 0.48)", justifyContent: "center", alignItems: "center", padding: 24 },
-  pickerSheet: { width: "100%", maxWidth: 340, maxHeight: "70%", borderRadius: radius.lg, padding: 16 },
+  hiddenLaidOut: { position: "absolute", top: 0, left: 0, right: 0, opacity: 0 },
+  stepHeader: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 16 },
+  stepHeaderCopy: { flex: 1 },
+  stepTitle: { fontSize: 20, lineHeight: 26, fontWeight: "800", letterSpacing: -0.4 },
+  stepSubtitle: { marginTop: 1, fontSize: 12, lineHeight: 17, fontWeight: "500" },
+  searchWrap: { height: 44, flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, marginBottom: 12 },
+  searchInput: { flex: 1, height: "100%", fontSize: 14, fontWeight: "500", paddingVertical: 0 },
+  subjectList: { flexGrow: 0, borderWidth: 1, borderRadius: 14 },
+  subjectRow: { minHeight: 52, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, paddingHorizontal: 16 },
+  subjectRowText: { flex: 1, fontSize: 15, fontWeight: "600" },
+  subjectRowTextSelected: { fontWeight: "800" },
+  subjectEmpty: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 14, padding: 16 },
+  subjectEmptyText: { flex: 1, fontSize: 13, lineHeight: 19, fontWeight: "500" },
+  subjectNoMatch: { textAlign: "center", fontSize: 13, fontWeight: "500", paddingVertical: 20 },
   pickerSheetScroll: { flexGrow: 0 },
   pickerTitle: { fontSize: 16, fontWeight: "800", marginBottom: 8 },
   pickerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 12 },

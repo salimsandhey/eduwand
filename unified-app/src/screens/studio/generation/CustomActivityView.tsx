@@ -46,7 +46,7 @@ function BulletsOrText({ text, colors }: { text: string | string[]; colors: any 
 }
 
 export function CustomActivityView({ content, editable, onChange }: Props) {
-  const { colors } = useTheme();
+  const { colors, cardShadow } = useTheme();
   const objectives = content.objectives ?? (content.objective ? [content.objective] : []);
   const usesLegacyObjective = !content.objectives;
 
@@ -79,7 +79,7 @@ export function CustomActivityView({ content, editable, onChange }: Props) {
 
   return (
     <View>
-      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <View style={[styles.card, { backgroundColor: colors.surface }, cardShadow]}>
         <Text style={[styles.cardLabel, { color: colors.textPrimary }]}>Learning objectives</Text>
         {objectives.map((obj, i) => {
           const bloom = extractBloom(obj);
@@ -143,7 +143,7 @@ export function CustomActivityView({ content, editable, onChange }: Props) {
         </Pressable>
       ) : null}
 
-      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: spacing.md }]}>
+      <View style={[styles.card, { backgroundColor: colors.surface, marginTop: spacing.md }, cardShadow]}>
         <Text style={[styles.cardLabel, { color: colors.textPrimary }]}>Report format</Text>
         {editable ? (
           <TextInput
@@ -240,7 +240,7 @@ function AddButton({ colors, label, onPress }: { colors: any; label: string; onP
 }
 
 const styles = StyleSheet.create({
-  card: { borderWidth: 1, borderRadius: radius.lg, padding: spacing.lg, marginBottom: spacing.md },
+  card: { borderRadius: radius.lg, padding: spacing.lg, marginBottom: spacing.md },
   cardLabel: { fontSize: 16, fontFamily: typography.bold, marginBottom: spacing.sm },
   bodyText: { fontSize: 14, lineHeight: 20, fontFamily: typography.fontFamily },
   itemTitle: { fontSize: 14, fontFamily: typography.semiBold, marginBottom: 2 },

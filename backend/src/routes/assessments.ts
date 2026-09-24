@@ -90,7 +90,7 @@ export async function assessmentRoutes(app: FastifyInstance) {
         schoolFormatInstructions: formatTemplate?.templateBody ?? null,
       };
 
-      if (!(await hasSufficientCredits(request.user.sub, getFeatureCost("assessment_generation")))) {
+      if (!(await hasSufficientCredits(request.user.sub, await getFeatureCost("assessment_generation")))) {
         return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to generate this quick check" } });
       }
 

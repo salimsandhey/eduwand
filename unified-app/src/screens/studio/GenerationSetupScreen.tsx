@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Image, Modal } from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, Image, Modal } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -510,7 +510,7 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
 
         <Text style={[styles.sectionHeading, { color: colors.textPrimary }]}>Select sources</Text>
         {!topic ? null : !hasSources ? (
-          <View style={[styles.emptySources, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+          <View style={[styles.emptySources, { backgroundColor: colors.surface }, cardShadow]}>
             <Ionicons name="layers-outline" size={20} color={colors.textMuted} />
             <Text style={[styles.emptySourcesText, { color: colors.textMuted }]}>
               No context sources on this topic yet. You can still generate, or add sources first from the Context tab.
@@ -660,7 +660,8 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
 
         <View style={styles.footer}>
           <Pressable style={({ pressed }) => [styles.generateButton, { backgroundColor: colors.accent }, (isGenerating || blockedByNoSourceSelection || pressed) && { opacity: pressedOpacity }]} onPress={generate} disabled={isGenerating || blockedByNoSourceSelection} accessibilityRole="button">
-            {isGenerating ? <ActivityIndicator color={colors.accentOn} /> : <><Ionicons name={selectedOutput.icon} size={20} color={colors.accentOn} /><Text style={[styles.generateText, { color: colors.accentOn }]}>Create {selectedOutput.label}</Text><Ionicons name="arrow-forward" size={19} color={colors.accentOn} /></>}
+            {/* No spinner while generating - the AI generating overlay covers the screen. */}
+            <Ionicons name={selectedOutput.icon} size={20} color={colors.accentOn} /><Text style={[styles.generateText, { color: colors.accentOn }]}>Create {selectedOutput.label}</Text><Ionicons name="arrow-forward" size={19} color={colors.accentOn} />
           </Pressable>
           <Text style={[styles.footerNote, { color: colors.textMuted }]}>Your lesson will be saved automatically.</Text>
         </View>
@@ -797,7 +798,7 @@ const styles = StyleSheet.create({
   // screen width instead of needing to wrap or getting clipped off-screen.
   colorSwatch: { flex: 1, aspectRatio: 1, borderRadius: 999, borderWidth: 2, alignItems: "center", justifyContent: "center" },
   customSwatch: { flex: 1, aspectRatio: 1, borderRadius: 999, borderWidth: 1, borderStyle: "dashed", alignItems: "center", justifyContent: "center" },
-  emptySources: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10, padding: 13, borderWidth: 1, borderRadius: 13 },
+  emptySources: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10, padding: 13, borderRadius: 13 },
   emptySourcesText: { flex: 1, fontSize: 12, lineHeight: 17, fontWeight: "500" },
   sourceList: { marginTop: 10, gap: 8 },
   sourceRow: { borderWidth: 1, borderRadius: 13 },

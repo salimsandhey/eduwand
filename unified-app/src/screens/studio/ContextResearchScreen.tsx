@@ -252,7 +252,8 @@ export function ContextResearchScreen({ route, navigation }: Props) {
         </View>
       ) : isStarting || !job || job.status === "running" ? (
         <View style={styles.centered}>
-          <ActivityIndicator color={colors.accent} size="large" />
+          {/* Once the job is running the AI generating overlay covers the screen - no spinner behind it. */}
+          {job?.status !== "running" ? <ActivityIndicator color={colors.accent} size="large" /> : null}
           <Text style={[styles.stateText, { color: colors.textPrimary, marginTop: 16 }]}>{STAGE_LABELS[job?.stage ?? "searching"]}</Text>
           <Text style={[styles.stateSubtext, { color: colors.textMuted }]}>This can take a couple of minutes.</Text>
         </View>

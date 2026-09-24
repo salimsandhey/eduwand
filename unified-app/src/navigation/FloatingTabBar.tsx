@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Animated, Easing, Image, ImageSourcePropType, LayoutChangeEvent, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { Animated, Easing, ImageSourcePropType, Keyboard, LayoutChangeEvent, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
@@ -11,6 +11,7 @@ import { AnimatedAiButtonMascot } from "../components/AnimatedAiButtonMascot";
 import { useTabBarScale, useTabBarScrollReset } from "./TabBarScrollContext";
 import { useWelcomeMascot } from "../context/WelcomeMascotContext";
 import { decorativeAssets } from "../theme/decorativeAssets";
+import { AI_ASSISTANT_NAME } from "../constants/brand";
 
 interface FloatingTabBarProps extends BottomTabBarProps {
   icons: Record<string, keyof typeof Ionicons.glyphMap>;
@@ -33,8 +34,22 @@ export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssist
   const scrollScale = useTabBarScale();
   const resetTabBarScroll = useTabBarScrollReset();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
-  const { isFlying, isMascotDocked, welcomeCount, completeWelcome, setDockCoordinates } = useWelcomeMascot();
+  const { isFlying, isMascotDocked, welcomeCount, completeWelcome, finishWelcomeSequence, setDockCoordinates } = useWelcomeMascot();
   const aiButtonRef = useRef<View>(null);
+
+  // A custom tabBar has to honour tabBarHideOnKeyboard itself (only the
+  // default BottomTabBar reads it). Without this the bar rides up on top of
+  // the keyboard whenever the OS resizes the window, covering whatever the
+  // screen pinned above it - e.g. a chat composer.
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  useEffect(() => {
+    const ios = Platform.OS === "ios";
+    const subs = [
+      Keyboard.addListener(ios ? "keyboardWillShow" : "keyboardDidShow", () => setKeyboardVisible(true)),
+      Keyboard.addListener(ios ? "keyboardWillHide" : "keyboardDidHide", () => setKeyboardVisible(false)),
+    ];
+    return () => subs.forEach((s) => s.remove());
+  }, []);
 
   // Post-welcome spotlight state & animations (excludes navbar & cat)
   const [isSpotlightVisible, setIsSpotlightVisible] = useState(false);
@@ -49,6 +64,19 @@ export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssist
     outputRange: [6, 0],
   });
 
+  // Exit: 0 = resting, 1 = gone. Driven with a back-in easing, so it briefly
+  // dips below 0 first - the tag lifts, grows and tilts back a touch before it
+  // tips over and falls. Transforms extrapolate through that dip on purpose.
+  const badgeExit = useRef(new Animated.Value(0)).current;
+  const badgeExitY = badgeExit.interpolate({ inputRange: [0, 1], outputRange: [0, 72] });
+  const badgeExitScale = badgeExit.interpolate({ inputRange: [0, 1], outputRange: [1, 0.8] });
+  const badgeExitRotate = badgeExit.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "11deg"] });
+  const badgeExitOpacity = badgeExit.interpolate({
+    inputRange: [0, 0.45, 1],
+    outputRange: [1, 1, 0],
+    extrapolate: "clamp",
+  });
+
   const isDismissingSpotlightRef = useRef(false);
 
   const dismissSpotlight = useCallback(() => {
@@ -60,30 +88,30 @@ export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssist
       spotlightTimerRef.current = null;
     }
 
+    // The spotlight's exit (tag dropping, dim fading) is the welcome's last
+    // beat - signal it now, as it starts, so whatever follows the cat (the
+    // "Complete your profile" popup) can arrive during the exit, not after it.
+    finishWelcomeSequence();
+
     Animated.parallel([
+      Animated.timing(badgeExit, {
+        toValue: 1,
+        duration: 480,
+        easing: Easing.in(Easing.back(1.7)),
+        useNativeDriver: true,
+      }),
       Animated.timing(spotlightOpacity, {
         toValue: 0,
-        duration: 220,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
-      }),
-      Animated.timing(badgeOpacity, {
-        toValue: 0,
-        duration: 180,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
-      }),
-      Animated.timing(badgeScale, {
-        toValue: 0.92,
-        duration: 180,
-        easing: Easing.out(Easing.quad),
+        duration: 360,
+        delay: 120,
+        easing: Easing.inOut(Easing.quad),
         useNativeDriver: true,
       }),
     ]).start(() => {
       setIsSpotlightVisible(false);
       isDismissingSpotlightRef.current = false;
     });
-  }, [spotlightOpacity, badgeOpacity, badgeScale]);
+  }, [spotlightOpacity, badgeExit, finishWelcomeSequence]);
 
   const wrapBottom = Math.max(insets.bottom, 10);
   const centerScreenX = windowWidth / 2;
@@ -176,6 +204,7 @@ export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssist
           spotlightOpacity.setValue(0);
           badgeOpacity.setValue(0);
           badgeScale.setValue(0.92);
+          badgeExit.setValue(0);
 
           Animated.parallel([
             Animated.timing(spotlightOpacity, {
@@ -214,7 +243,7 @@ export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssist
     } else {
       dockScale.setValue(0);
     }
-  }, [isMascotDocked, welcomeCount, dockScale, spotlightOpacity, badgeOpacity, badgeScale, dismissSpotlight]);
+  }, [isMascotDocked, welcomeCount, dockScale, spotlightOpacity, badgeOpacity, badgeScale, badgeExit, dismissSpotlight]);
 
   useEffect(() => {
     const t1 = setTimeout(measureAiButton, 60);
@@ -264,6 +293,10 @@ export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssist
       if (existing && existing.x === x && existing.width === width) return prev;
       return { ...prev, [index]: { x, width } };
     });
+  }
+
+  if (keyboardVisible && descriptors[state.routes[state.index].key]?.options.tabBarHideOnKeyboard) {
+    return null;
   }
 
   return (
@@ -430,7 +463,7 @@ export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssist
               ]}
               disabled={!isMascotDocked}
               accessibilityRole="button"
-              accessibilityLabel="Open AI assistant"
+              accessibilityLabel={`Open ${AI_ASSISTANT_NAME}`}
             >
               {aiAssistIcon && isMascotDocked ? (
                 <Animated.View
@@ -457,13 +490,19 @@ export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssist
       {/* Mascot Speech Bubble Message Box: Rendered at root level so touches are NEVER clipped by wrap! */}
       {isSpotlightVisible && (
         <Animated.View
+          // Rasterise the tag + its arrow as one layer while it animates, so
+          // the fade/tilt reads as a single object instead of separate pieces.
+          renderToHardwareTextureAndroid
           style={[
             styles.badgeContainer,
             {
               bottom: wrapBottom + TAB_BAR_HEIGHT + 74,
-              opacity: badgeOpacity,
+              opacity: Animated.multiply(badgeOpacity, badgeExitOpacity),
               transform: [
+                { translateY: badgeExitY },
+                { rotate: badgeExitRotate },
                 { scale: badgeScale },
+                { scale: badgeExitScale },
                 { translateY: badgeTranslateY },
               ],
             },
@@ -705,11 +744,13 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     borderWidth: 1,
     maxWidth: 280,
+    // No Android `elevation` here: an elevation shadow under a fading/moving
+    // view is what produced the dark "shadow glitch" when the tag hid. It sits
+    // on the dark spotlight backdrop, so the border alone separates it.
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.12,
     shadowRadius: 10,
-    elevation: 5,
   },
   badgeArrow: {
     position: "absolute",

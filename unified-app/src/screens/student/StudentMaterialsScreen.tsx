@@ -9,6 +9,7 @@ import { api, StudentMaterial } from "../../api/client";
 import { decorativeAssets } from "../../theme/decorativeAssets";
 import { capitalizeFirst } from "../../utils/text";
 import { useTabBarClearance } from "../../navigation/useTabBarClearance";
+import { useTabBarScrollHandler } from "../../navigation/TabBarScrollContext";
 
 const OUTPUT_TYPE_LABELS: Record<string, string> = {
   lesson_plan: "Lesson Plan",
@@ -21,6 +22,7 @@ export function StudentMaterialsScreen() {
   const { accessToken } = useAuth();
   const { colors, cardShadow } = useTheme();
   const tabBarClearance = useTabBarClearance();
+  const handleTabBarScroll = useTabBarScrollHandler();
   const [materials, setMaterials] = useState<StudentMaterial[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -59,6 +61,8 @@ export function StudentMaterialsScreen() {
           data={materials}
           keyExtractor={(m) => m.id}
           contentContainerStyle={[styles.list, { paddingBottom: tabBarClearance }]}
+          onScroll={handleTabBarScroll}
+          scrollEventThrottle={16}
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <Image source={decorativeAssets.book} style={styles.emptyGraphic} resizeMode="contain" />

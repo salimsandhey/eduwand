@@ -116,9 +116,11 @@ function scoreOf(grade: { finalScore: number | null; aiScore: number | null } | 
 
 interface SubmissionForGrouping {
   studentStubId: string;
-  studentStub: { id: string; fullName: string };
+  studentStub: { id: string; fullName: string; avatarKey: string | null; photoMimeType: string | null };
   grade: { finalScore: number | null; aiScore: number | null } | null;
 }
+
+const STUDENT_FOR_REPORT = { select: { id: true, fullName: true, avatarKey: true, photoMimeType: true } } as const;
 
 interface StudentBreakdownBucket {
   id: string;
@@ -130,7 +132,13 @@ interface StudentBreakdownBucket {
 // buckets (assignments for a topic report, topics for a subject report) - so
 // tapping a student in the "Student report" tab can show a real breakdown
 // scoped to this exact report, not an unrelated cross-subject history.
-type StudentAccumulator = { fullName: string; allScores: number[]; buckets: Map<string, { label: string; scores: number[] }> };
+type StudentAccumulator = {
+  fullName: string;
+  avatarKey: string | null;
+  photoMimeType: string | null;
+  allScores: number[];
+  buckets: Map<string, { label: string; scores: number[] }>;
+};
 
 function buildStudentBreakdown(buckets: StudentBreakdownBucket[]) {
   const byStudent = new Map<string, StudentAccumulator>();
@@ -138,7 +146,13 @@ function buildStudentBreakdown(buckets: StudentBreakdownBucket[]) {
     for (const s of bucket.submissions) {
       const score = scoreOf(s.grade);
       if (score == null) continue;
-      const student: StudentAccumulator = byStudent.get(s.studentStubId) ?? { fullName: s.studentStub.fullName, allScores: [], buckets: new Map() };
+      const student: StudentAccumulator = byStudent.get(s.studentStubId) ?? {
+        fullName: s.studentStub.fullName,
+        avatarKey: s.studentStub.avatarKey,
+        photoMimeType: s.studentStub.photoMimeType,
+        allScores: [],
+        buckets: new Map(),
+      };
       student.allScores.push(score);
       const b = student.buckets.get(bucket.id) ?? { label: bucket.label, scores: [] as number[] };
       b.scores.push(score);
@@ -150,6 +164,8 @@ function buildStudentBreakdown(buckets: StudentBreakdownBucket[]) {
     .map(([studentStubId, v]) => ({
       studentStubId,
       fullName: v.fullName,
+      avatarKey: v.avatarKey,
+      photoMimeType: v.photoMimeType,
       averageScore: v.allScores.reduce((a, b) => a + b, 0) / v.allScores.length,
       submissionCount: v.allScores.length,
       breakdown: [...v.buckets.values()].map((b) => ({ label: b.label, averageScore: b.scores.reduce((a, c) => a + c, 0) / b.scores.length })),
@@ -182,7 +198,7 @@ export async function computeTopicReport(topicId: string, schoolId: string) {
         },
       },
       assignments: {
-        include: { submissions: { include: { grade: true, studentStub: { select: { id: true, fullName: true } } } } },
+        include: { submissions: { include: { grade: true, studentStub: STUDENT_FOR_REPORT } } },
       },
     },
   });
@@ -285,7 +301,7 @@ export async function computeSubjectReport(classSectionId: string, subject: stri
     where: { schoolId, classSectionId, subject },
     include: {
       assignments: {
-        include: { submissions: { include: { grade: true, studentStub: { select: { id: true, fullName: true } } } } },
+        include: { submissions: { include: { grade: true, studentStub: STUDENT_FOR_REPORT } } },
       },
     },
     orderBy: { updatedAt: "desc" },

@@ -8,14 +8,17 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useKeyboardOverlap } from "../hooks/useKeyboardOverlap";
 import { useWelcomeMascot } from "../context/WelcomeMascotContext";
 import { useAuth } from "../context/AuthContext";
+import { BlinkingMascot } from "./BlinkingMascot";
 import { api, AssistantAction, AssistantLink, AssistantMessage } from "../api/client";
+import { AI_ASSISTANT_NAME } from "../constants/brand";
+import { AIWandName, withAIWandName } from "./AIWandName";
 
 // Local-only bubbles (greeting, send errors) share the server message shape so
 // one renderer handles everything; they are never persisted.
 const GREETING: AssistantMessage = {
   id: "local-greeting",
   from: "assistant",
-  text: "Meow! I'm your AI assistant. Ask me about your own data here, or tell me what to do and I'll set it up for you to confirm.",
+  text: `Meow! I'm ${AI_ASSISTANT_NAME}, your AI assistant. Ask me about your own data here, or tell me what to do and I'll set it up for you to confirm.`,
   links: [],
   createdAt: "",
   action: null,
@@ -289,7 +292,7 @@ export function AiAssistChatModal({ visible, onClose }: { visible: boolean; onCl
       setMessages((prev) => [...prev.filter((m) => m.id !== optimistic.id), userMessage, ...replies]);
     } catch {
       // Drop the unsent bubble and hand the text back so it isn't lost.
-      setMessages((prev) => [...prev.filter((m) => m.id !== optimistic.id), localError("Couldn't reach the assistant - please try again.")]);
+      setMessages((prev) => [...prev.filter((m) => m.id !== optimistic.id), localError(`Couldn't reach ${AI_ASSISTANT_NAME} - please try again.`)]);
       setDraft(text);
     } finally {
       setIsTyping(false);
@@ -330,7 +333,7 @@ export function AiAssistChatModal({ visible, onClose }: { visible: boolean; onCl
 
   function confirmClear() {
     if (!accessToken) return;
-    Alert.alert("Start a new chat?", "This clears your conversation with the assistant.", [
+    Alert.alert("Start a new chat?", `This clears your conversation with ${AI_ASSISTANT_NAME}.`, [
       { text: "Cancel", style: "cancel" },
       {
         text: "Clear",
@@ -385,7 +388,7 @@ export function AiAssistChatModal({ visible, onClose }: { visible: boolean; onCl
             style={StyleSheet.absoluteFill}
             onPress={() => animateAndClose()}
             accessibilityRole="button"
-            accessibilityLabel="Close AI assistant"
+            accessibilityLabel={`Close ${AI_ASSISTANT_NAME}`}
           />
         </Animated.View>
 
@@ -405,10 +408,10 @@ export function AiAssistChatModal({ visible, onClose }: { visible: boolean; onCl
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <View style={[styles.avatarWrap, { backgroundColor: colors.accentSoft }]}>
-                <Image source={decorativeAssets.teacherLessonCat} style={styles.avatarImage} resizeMode="contain" />
+                <BlinkingMascot style={styles.avatarImage} startOpen />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>AI Assistant</Text>
+                <AIWandName style={styles.headerTitle} />
                 <Text style={[styles.headerSubtitle, { color: colors.textMuted }]} numberOfLines={1}>
                   {ROLE_SUBTITLE[role] ?? "Ask me anything"}
                 </Text>
@@ -443,7 +446,7 @@ export function AiAssistChatModal({ visible, onClose }: { visible: boolean; onCl
                 style={({ pressed }) => [styles.closeButton, { backgroundColor: colors.surfaceRaised }, pressed && { opacity: pressedOpacity }]}
                 onPress={() => animateAndClose()}
                 accessibilityRole="button"
-                accessibilityLabel="Close AI assistant"
+                accessibilityLabel={`Close ${AI_ASSISTANT_NAME}`}
               >
                 <Ionicons name="close" size={20} color={colors.textPrimary} />
               </Pressable>
@@ -486,7 +489,10 @@ export function AiAssistChatModal({ visible, onClose }: { visible: boolean; onCl
                           : { backgroundColor: colors.surfaceRaised, borderBottomLeftRadius: 4 },
                       ]}
                     >
-                      <Text style={[styles.bubbleText, { color: isUser ? colors.accentOn : colors.textPrimary }]}>{message.text}</Text>
+                      {/* Wordmark only in AIWand's own bubbles - a user bubble is accent-filled, where accent "AI" would vanish. */}
+                      <Text style={[styles.bubbleText, { color: isUser ? colors.accentOn : colors.textPrimary }]}>
+                        {isUser ? message.text : withAIWandName(message.text)}
+                      </Text>
                     </View>
                     {!isUser ? <LinkChips links={message.links} onOpen={openLink} /> : null}
                   </View>

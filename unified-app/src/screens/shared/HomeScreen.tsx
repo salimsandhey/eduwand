@@ -13,8 +13,6 @@ import {
   NativeSyntheticEvent,
   useWindowDimensions,
   LayoutAnimation,
-  Platform,
-  UIManager,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
@@ -36,10 +34,14 @@ import {
 } from "../../api/client";
 import { usePipelineStages } from "../../hooks/usePipelineStages";
 import { decorativeAssets } from "../../theme/decorativeAssets";
-import { resolveUserImageSource } from "../../theme/avatars";
+import { resolveUserImageSource, userImageFillsFrame } from "../../theme/avatars";
 import { capitalizeFirst } from "../../utils/text";
 import { useTabBarScrollHandler } from "../../navigation/TabBarScrollContext";
 import { TeacherTourModal } from "../../components/onboarding/TeacherTourModal";
+import { CompleteProfileModal } from "../../components/onboarding/CompleteProfileModal";
+import { ProfileProgressRing } from "../../components/ProfileProgressRing";
+import { getProfileCompletion } from "../../utils/profileCompletion";
+import { useWelcomeMascot } from "../../context/WelcomeMascotContext";
 import { TeacherOnboardingTasksResult } from "../../api/client";
 import { TypewriterText } from "../../components/TypewriterText";
 import { TeacherCalendar } from "../../components/TeacherCalendar";
@@ -48,6 +50,12 @@ import { useTabBarClearance } from "../../navigation/useTabBarClearance";
 import { MadeWithLoveFooter } from "../../components/MadeWithLoveFooter";
 
 const ENROLMENT_ROLES = ["front_desk", "counsellor", "admin", "leadership"];
+
+// TESTING ONLY - while the "Complete your profile" popup is still being
+// polished: show it on every app launch, ignoring a saved Skip (Skip still
+// hides it for the rest of that session). __DEV__ keeps it out of release
+// builds; set to false once the popup work is signed off.
+const PROFILE_PROMPT_SHOW_EVERY_LAUNCH = __DEV__ && true;
 
 // "Help & support" quick-action cat: hidden (tucked behind the card, moved
 // down from its peek spot) until the counsellor has scrolled this far through
@@ -160,7 +168,7 @@ function getWeekDates(referenceDate: Date): Date[] {
 }
 
 export function HomeScreen() {
-  const { user, accessToken, markOnboardingTourSeen } = useAuth();
+  const { user, accessToken, markOnboardingTourSeen, dismissProfilePrompt } = useAuth();
   const splashDone = useSplashDone();
   // undefined outside the enrolment tab navigator's TabBarScrollProvider - the
   // teacher branch below intentionally doesn't wire this into its own scroll
@@ -180,11 +188,13 @@ export function HomeScreen() {
     ? resolveUserImageSource({
         id: user.id,
         fullName: user.fullName,
+        role: user.role,
         avatarKey: user.avatarKey,
         hasPhoto: !!user.photoMimeType,
         photoUrl: accessToken ? api.myPhotoUrl(accessToken) : null,
       })
     : null;
+  const profileImageFillsFrame = user ? userImageFillsFrame(user) : false;
 
   const [stats, setStats] = useState<Stats | null>(null);
   const [recentEnquiries, setRecentEnquiries] = useState<Enquiry[]>([]);
@@ -214,6 +224,48 @@ export function HomeScreen() {
   // animation, which runs in its own native layer always on top.
   const showTour = isTeacher && !!user && splashDone && !user.hasSeenOnboardingTour;
 
+  // "Complete your profile" prompt. Waits its turn behind everything else
+  // that greets the user on open (splash, the whole cat welcome - intro,
+  // flight and the post-dock spotlight - and the teacher's first-login tour)
+  // so two overlays never stack. Skip is
+  // permanent (saved server-side); "Complete profile" and Android back only
+  // hide it for this session, so an abandoned profile gets one more nudge on
+  // a later launch. A complete profile never qualifies, so no flag is needed.
+  // dockCoordinates = the AI button where the welcome cat docks - the popup's
+  // entrance orb launches from there, as if the cat delivers it.
+  const { isWelcomeSequenceComplete, dockCoordinates } = useWelcomeMascot();
+  const [profilePromptHiddenThisSession, setProfilePromptHiddenThisSession] = useState(false);
+  const [showProfilePrompt, setShowProfilePrompt] = useState(false);
+  // Separate from the popup: the progress ring around the header avatar stays
+  // until the profile is actually complete, Skip or not.
+  const profileCompletion = user ? getProfileCompletion(user) : null;
+  const showProfileProgress = (isTeacher || isEnrolmentRole) && !!profileCompletion && profileCompletion.percent < 100;
+  // The header avatar is where Skip "lands" the popup (the card shrinks into
+  // it), so the user sees where the reminder lives from then on.
+  const profileAvatarRef = useRef<View>(null);
+  const screenOriginRef = useRef<View>(null);
+  const profilePromptEligible =
+    !!user &&
+    showProfileProgress &&
+    (PROFILE_PROMPT_SHOW_EVERY_LAUNCH || !user.hasDismissedProfilePrompt) &&
+    !profilePromptHiddenThisSession;
+  // The ring stays hidden while the popup is still due this session and draws
+  // itself in once it's resolved - on Skip, the instant the popup's orb lands
+  // on the avatar. When no popup is coming, it simply draws in on open.
+  const profileRingRevealed = !profilePromptEligible;
+  // Bumped when the popup's orb lands on the avatar - the avatar "catches" it.
+  const [avatarCatchSignal, setAvatarCatchSignal] = useState(0);
+  const profilePromptReady = profilePromptEligible && splashDone && isWelcomeSequenceComplete && !showTour;
+
+  useEffect(() => {
+    if (!profilePromptReady) {
+      setShowProfilePrompt(false);
+      return;
+    }
+    // Straight in, as the cat's spotlight starts leaving - the popup's backdrop
+    // fades up while the spotlight's dim fades out, so they cross-fade.
+    setShowProfilePrompt(true);
+  }, [profilePromptReady]);
   useEffect(() => {
     if (!isTeacher || !accessToken) return;
     api.getOnboardingTasks(accessToken).then(setOnboardingTasks).catch(() => {});
@@ -512,20 +564,37 @@ export function HomeScreen() {
                     ) : null}
                   </Pressable>
                   <Pressable
+                    ref={profileAvatarRef}
+                    collapsable={false}
                     onPress={() => navigation.navigate("More")}
-                    style={({ pressed }) => [styles.headerAvatar, { backgroundColor: colors.accentSoft }, pressed && { opacity: pressedOpacity }]}
+                    style={({ pressed }) => [pressed && { opacity: pressedOpacity }]}
                     accessibilityRole="button"
-                    accessibilityLabel="Open profile menu"
+                    accessibilityLabel={showProfileProgress && profileCompletion ? `Open profile menu, profile ${profileCompletion.percent}% complete` : "Open profile menu"}
                   >
-                    {teacherProfileImage ? (
-                      <Image
-                        source={teacherProfileImage}
-                        style={user.photoMimeType ? styles.headerAvatarPhoto : styles.headerAvatarIllustration}
-                        resizeMode={user.photoMimeType ? "cover" : "contain"}
-                      />
-                    ) : (
-                      <Ionicons name="person" size={18} color={colors.accent} />
-                    )}
+                    {(() => {
+                      const avatar = (
+                        <View style={[styles.headerAvatar, showProfileProgress && styles.headerAvatarInRing, { backgroundColor: colors.accentSoft }]}>
+                          {teacherProfileImage ? (
+                            <Image
+                              source={teacherProfileImage}
+                              style={profileImageFillsFrame ? styles.headerAvatarPhoto : styles.headerAvatarIllustration}
+                              resizeMode={profileImageFillsFrame ? "cover" : "contain"}
+                            />
+                          ) : (
+                            <Ionicons name="person" size={18} color={colors.accent} />
+                          )}
+                        </View>
+                      );
+                      // While incomplete, the avatar shrinks inside a progress ring of the
+                      // same outer size (so the header doesn't grow); complete = plain avatar.
+                      return showProfileProgress && profileCompletion ? (
+                        <ProfileProgressRing percent={profileCompletion.percent} size={38} color={colors.accent} trackColor={colors.border} revealed={profileRingRevealed} catchSignal={avatarCatchSignal}>
+                          {avatar}
+                        </ProfileProgressRing>
+                      ) : (
+                        avatar
+                      );
+                    })()}
                   </Pressable>
                 </View>
               </View>
@@ -748,10 +817,38 @@ export function HomeScreen() {
                   >
                     <Ionicons name="chatbubble-ellipses" size={18} color={colors.accent} />
                   </Pressable>
-                  <Pressable style={({ pressed }) => [styles.teacherAvatarRing, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.navigate("More")} accessibilityRole="button" accessibilityLabel={setupIncomplete ? "Open more menu, setup not finished" : "Open more menu"}>
-                    <View style={[styles.teacherAvatarFrame, { backgroundColor: colors.accentSoft }]}>
-                      {teacherProfileImage ? <Image source={teacherProfileImage} style={user?.photoMimeType ? styles.teacherAvatarPhoto : styles.teacherAvatar} resizeMode={user?.photoMimeType ? "cover" : "contain"} /> : null}
-                    </View>
+                  <Pressable
+                    ref={profileAvatarRef}
+                    collapsable={false}
+                    style={({ pressed }) => [
+                      styles.teacherAvatarRing,
+                      { backgroundColor: colors.surface, borderColor: colors.border },
+                      // The progress ring replaces the plain outline while the profile is incomplete.
+                      showProfileProgress && styles.teacherAvatarRingProgress,
+                      pressed && { opacity: pressedOpacity },
+                    ]}
+                    onPress={() => navigation.navigate("More")}
+                    accessibilityRole="button"
+                    accessibilityLabel={[
+                      "Open more menu",
+                      setupIncomplete ? "setup not finished" : null,
+                      showProfileProgress && profileCompletion ? `profile ${profileCompletion.percent}% complete` : null,
+                    ].filter(Boolean).join(", ")}
+                  >
+                    {(() => {
+                      const avatar = (
+                        <View style={[styles.teacherAvatarFrame, showProfileProgress && styles.teacherAvatarFrameInRing, { backgroundColor: colors.accentSoft }]}>
+                          {teacherProfileImage ? <Image source={teacherProfileImage} style={profileImageFillsFrame ? styles.teacherAvatarPhoto : styles.teacherAvatar} resizeMode={profileImageFillsFrame ? "cover" : "contain"} /> : null}
+                        </View>
+                      );
+                      return showProfileProgress && profileCompletion ? (
+                        <ProfileProgressRing percent={profileCompletion.percent} size={40} color={colors.accent} trackColor={colors.border} revealed={profileRingRevealed} catchSignal={avatarCatchSignal}>
+                          {avatar}
+                        </ProfileProgressRing>
+                      ) : (
+                        avatar
+                      );
+                    })()}
                     {setupIncomplete ? <View style={[styles.avatarSetupDot, { backgroundColor: colors.danger, borderColor: colors.surface }]} /> : null}
                   </Pressable>
                 </View>
@@ -1024,7 +1121,32 @@ export function HomeScreen() {
         <Text style={[styles.emptyText, { color: colors.textMuted }]}>No dashboard is configured for this role yet.</Text>
       )}
     </Screen>
+    {/* Invisible marker at this screen's top-left - gives the popup's Skip
+        animation a zero point in the app's coordinate space to measure the
+        avatar and the AI button against (see CompleteProfileModal's hostOriginRef). */}
+    <View ref={screenOriginRef} collapsable={false} pointerEvents="none" style={styles.screenOriginMarker} />
     <TeacherTourModal visible={showTour} onDone={markOnboardingTourSeen} />
+    {teacherProfileImage ? (
+      <CompleteProfileModal
+        visible={showProfilePrompt}
+        user={user}
+        imageSource={teacherProfileImage}
+        imageFillsFrame={profileImageFillsFrame}
+        skipTargetRef={profileAvatarRef}
+        hostOriginRef={screenOriginRef}
+        enterFromPoint={dockCoordinates}
+        onComplete={() => {
+          setProfilePromptHiddenThisSession(true);
+          navigation.navigate("Profile");
+        }}
+        onSkip={() => {
+          setAvatarCatchSignal((n) => n + 1);
+          setProfilePromptHiddenThisSession(true);
+          dismissProfilePrompt();
+        }}
+        onLater={() => setProfilePromptHiddenThisSession(true)}
+      />
+    ) : null}
     </>
   );
 }
@@ -1364,10 +1486,6 @@ const NUDGE_ROTATE_MS = 4500;
 // The ticker rotates through only the first few; the bell's sheet shows all.
 const TICKER_MAX_ITEMS = 4;
 
-if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
-
 // Live "needs your attention" ticker. nudges === null means still loading (or
 // failed) - render nothing rather than flash placeholder text; an empty list
 // means genuinely nothing to do.
@@ -1517,6 +1635,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     overflow: "hidden",
   },
+  headerAvatarInRing: { width: 30, height: 30, borderRadius: 15 },
   headerAvatarPhoto: {
     width: "100%",
     height: "100%",
@@ -1920,6 +2039,9 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
   teacherAvatarPhoto: { width: "100%", height: "100%" },
+  teacherAvatarRingProgress: { borderWidth: 0, padding: 0 },
+  screenOriginMarker: { position: "absolute", top: 0, left: 0, width: 1, height: 1 },
+  teacherAvatarFrameInRing: { width: 32, height: 32, borderRadius: 16 },
   avatarSetupDot: {
     position: "absolute",
     top: -2,

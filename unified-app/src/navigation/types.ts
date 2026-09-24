@@ -33,7 +33,15 @@ export type RootStackParamList = {
     | { classSectionId: string; subject: string; className: string; sectionName: string };
   CommunicationHub: undefined;
   CommunicationChat:
-    | { mode: "student"; studentId: string; studentName: string; classLabel: string }
+    | {
+        mode: "student";
+        studentId: string;
+        studentName: string;
+        classLabel: string;
+        // The student's picture for the header (optional: older callers omit it).
+        studentAvatarKey?: string | null;
+        studentPhotoMimeType?: string | null;
+      }
     | { mode: "class"; classSectionId: string; classLabel: string };
   Notifications: undefined;
   Profile: undefined;
@@ -86,6 +94,7 @@ export type StudentTabParamList = {
   Materials: undefined;
   Results: undefined;
   Messages: undefined;
+  Profile: undefined;
 };
 
 export type MoreStackParamList = {

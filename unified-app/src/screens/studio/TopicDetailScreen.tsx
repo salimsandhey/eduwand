@@ -1423,8 +1423,8 @@ export function TopicDetailScreen({ route, navigation }: Props) {
           ) : null}
         </View>
 
-        <View style={styles.sourceTextHeaderRow}>
-          <Text style={[styles.fieldLabel, { color: colors.textMuted, marginTop: isEditingSourceText ? 18 : 0 }]}>
+        <View style={[styles.sourceTextHeaderRow, { borderTopColor: colors.border }]}>
+          <Text style={[styles.fieldLabel, { color: colors.textMuted, marginTop: 0, marginBottom: 0 }]}>
             {isEditingSourceText ? "Edit extracted text" : "Extracted text"}
           </Text>
           {!isEditingSourceText ? (
@@ -1453,7 +1453,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
             />
             <View style={styles.sourceEditActionRow}>
               <Pressable
-                style={({ pressed }) => [styles.sourceGhostButton, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
+                style={({ pressed }) => [styles.sourceGhostButton, { borderColor: colors.border, flexGrow: 0 }, pressed && { opacity: pressedOpacity }]}
                 onPress={() => {
                   setSourceDraft(openSource?.extractedText ?? "");
                   setIsEditingSourceText(false);
@@ -1495,8 +1495,9 @@ function EmptyWorkbench({
   detail: string;
   colors: ReturnType<typeof useTheme>["colors"];
 }) {
+  const { cardShadow } = useTheme();
   return (
-    <View style={[styles.emptyWorkbench, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
+    <View style={[styles.emptyWorkbench, { backgroundColor: colors.surface }, cardShadow]}>
       <View style={[styles.emptyWorkbenchIcon, { backgroundColor: colors.accentSoft }]}>
         <Ionicons name={icon} size={19} color={colors.accent} />
       </View>
@@ -1532,10 +1533,14 @@ const styles = StyleSheet.create({
   meta: { marginTop: 3, fontSize: 12, lineHeight: 17, fontWeight: "500" },
   error: { textAlign: "center", marginBottom: 12 },
   sourceDetailActionRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 14 },
-  sourceGhostButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, minHeight: 38, borderWidth: 1, borderRadius: 11, paddingHorizontal: 14 },
+  // flexGrow so buttons share each row evenly - a button that wraps onto its
+  // own line fills it instead of hanging off to one side.
+  sourceGhostButton: { flexGrow: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, minHeight: 38, borderWidth: 1, borderRadius: 11, paddingHorizontal: 14 },
   sourceGhostButtonText: { fontSize: 12, fontWeight: "700" },
   sourceTextInput: { height: 200, marginTop: 6 },
-  sourceTextHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  // Its own section, divided from the source actions above, so the Edit pill
+  // never reads as part of that button row.
+  sourceTextHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 18, paddingTop: 14, borderTopWidth: StyleSheet.hairlineWidth, marginBottom: 4, minHeight: 30 },
   editTextButton: { flexDirection: "row", alignItems: "center", gap: 4, height: 30, borderRadius: 15, paddingHorizontal: 12 },
   editTextButtonText: { fontSize: 11, fontWeight: "800" },
   sourceTextView: { maxHeight: 220, minHeight: 90, borderWidth: 1, borderRadius: 12, padding: 12, marginTop: 6 },
@@ -1563,7 +1568,7 @@ const styles = StyleSheet.create({
   workbenchAction: { minWidth: 68, height: 36, borderRadius: radius.pill, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4 },
   workbenchIconAction: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
   workbenchActionText: { fontSize: 12, fontWeight: "800" },
-  emptyWorkbench: { minHeight: 150, borderWidth: 1, borderRadius: 18, paddingHorizontal: 24, paddingVertical: 20, alignItems: "center", justifyContent: "center" },
+  emptyWorkbench: { minHeight: 150, borderRadius: 18, paddingHorizontal: 24, paddingVertical: 20, alignItems: "center", justifyContent: "center" },
   emptyWorkbenchIcon: { width: 42, height: 42, borderRadius: 14, alignItems: "center", justifyContent: "center" },
   emptyWorkbenchTitle: { marginTop: 10, fontSize: 15, fontWeight: "800" },
   emptyWorkbenchDetail: { maxWidth: 260, marginTop: 4, fontSize: 12, lineHeight: 18, fontWeight: "600", textAlign: "center" },

@@ -60,7 +60,7 @@ export async function lessonStudioRoutes(app: FastifyInstance) {
         classLabel = `${classSection.className} ${classSection.sectionName}`;
       }
 
-      if (!(await hasSufficientCredits(request.user.sub, getFeatureCost("lesson_plan")))) {
+      if (!(await hasSufficientCredits(request.user.sub, await getFeatureCost("lesson_plan")))) {
         return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to generate this lesson plan" } });
       }
 
@@ -123,7 +123,7 @@ export async function lessonStudioRoutes(app: FastifyInstance) {
         });
       }
 
-      if (!(await hasSufficientCredits(request.user.sub, getFeatureCost("research_report")))) {
+      if (!(await hasSufficientCredits(request.user.sub, await getFeatureCost("research_report")))) {
         return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to generate this research report" } });
       }
 

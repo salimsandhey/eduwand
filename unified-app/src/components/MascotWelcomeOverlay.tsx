@@ -2,22 +2,30 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated,
   Easing,
+  Pressable,
   StyleSheet,
   Text,
   View,
   useWindowDimensions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { decorativeAssets } from "../theme/decorativeAssets";
 import { useWelcomeMascot } from "../context/WelcomeMascotContext";
 import { useTheme } from "../theme/ThemeContext";
+import { AI_ASSISTANT_NAME } from "../constants/brand";
 
 const MASCOT_CENTER_SIZE = 190;
 
-const GREETINGS = [
-  "Hi! I'm your AI Assistant,\nhere to help you",
-  "You can ask me anything\nabout Eduwand",
+// `highlight` is a phrase inside `text` (the assistant's name) drawn entirely
+// in the brand accent color as it gets typed out - deliberately not the
+// two-tone AIWandName wordmark used elsewhere.
+const GREETINGS: { text: string; highlight?: string }[] = [
+  { text: `Hi! I'm ${AI_ASSISTANT_NAME},\nhere to help you`, highlight: AI_ASSISTANT_NAME },
+  { text: "Plan less, teach more,\nI'll handle the busywork" },
 ];
+
+const TYPE_CHAR_MS = 30;
 
 interface RubOutParticle {
   id: number;
@@ -89,7 +97,8 @@ const WAND_SPARKLES = [
 export function MascotWelcomeOverlay() {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const { isWelcomeActive, startFlight, welcomeCount } = useWelcomeMascot();
-  const { mode } = useTheme();
+  const { mode, colors } = useTheme();
+  const insets = useSafeAreaInsets();
 
   // Full-screen canvas fade opacity
   const screenBgOpacity = useRef(new Animated.Value(1)).current;
@@ -102,8 +111,8 @@ export function MascotWelcomeOverlay() {
   const islandScale = useRef(new Animated.Value(0.88)).current;
   const islandOpacity = useRef(new Animated.Value(0)).current;
 
-  // Celestial 3D orbital rune rotation
-  const orbitRotation = useRef(new Animated.Value(0)).current;
+  // "Skip" link fades in a beat after the mascot, so it never competes with the entrance
+  const skipOpacity = useRef(new Animated.Value(0)).current;
 
   // Ambient sparkles slow breathing & drifting
   const ambientPulse = useRef(new Animated.Value(0)).current;
@@ -114,6 +123,7 @@ export function MascotWelcomeOverlay() {
 
   // Typewriter state
   const [displayedText, setDisplayedText] = useState("");
+  const [greetingIndex, setGreetingIndex] = useState(0);
   const [isRubbingOut, setIsRubbingOut] = useState(false);
   const [isCaretVisible, setIsCaretVisible] = useState(true);
 
@@ -145,20 +155,6 @@ export function MascotWelcomeOverlay() {
       startFlight();
     });
   }, [screenBgOpacity, islandOpacity, startFlight]);
-
-  // Orbit rotation continuous 12s loop
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.timing(orbitRotation, {
-        toValue: 1,
-        duration: 12000,
-        easing: Easing.linear,
-        useNativeDriver: true,
-      })
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [orbitRotation]);
 
   // Ambient sparkles breathing & floating loops
   useEffect(() => {
@@ -223,9 +219,18 @@ export function MascotWelcomeOverlay() {
     islandOpacity.setValue(0);
     screenBgOpacity.setValue(1);
     rubOutProgress.setValue(0);
+    skipOpacity.setValue(0);
     setDisplayedText("");
     setIsRubbingOut(false);
     isSkippedRef.current = false;
+
+    Animated.timing(skipOpacity, {
+      toValue: 1,
+      duration: 400,
+      delay: 700,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true,
+    }).start();
 
     // Mascot & Dialogue Island spring into view
     Animated.parallel([
@@ -268,8 +273,9 @@ export function MascotWelcomeOverlay() {
         return;
       }
 
-      const fullText = GREETINGS[greetingIndex];
+      const fullText = GREETINGS[greetingIndex].text;
       let charIdx = 0;
+      setGreetingIndex(greetingIndex);
       setDisplayedText("");
       setIsRubbingOut(false);
       rubOutProgress.setValue(0);
@@ -280,7 +286,7 @@ export function MascotWelcomeOverlay() {
         setDisplayedText(fullText.slice(0, charIdx));
 
         if (charIdx < fullText.length) {
-          timer = setTimeout(typeNextChar, 38);
+          timer = setTimeout(typeNextChar, TYPE_CHAR_MS);
         } else {
           // Finished typing: pause comfortably for reading
           timer = setTimeout(() => {
@@ -340,6 +346,15 @@ export function MascotWelcomeOverlay() {
     : "rgba(194, 0, 125, 0.14)";
   const accentColor = isDarkMode ? "#F472B6" : "#C2007D";
 
+  // Split the partially-typed text around the current greeting's highlight
+  // phrase, so the phrase takes the brand color letter by letter as it types.
+  const currentGreeting = GREETINGS[greetingIndex];
+  const highlightStart = currentGreeting?.highlight ? currentGreeting.text.indexOf(currentGreeting.highlight) : -1;
+  const highlightEnd = highlightStart >= 0 ? highlightStart + currentGreeting.highlight!.length : -1;
+  const textBefore = highlightStart >= 0 ? displayedText.slice(0, highlightStart) : displayedText;
+  const textHighlight = highlightStart >= 0 ? displayedText.slice(highlightStart, highlightEnd) : "";
+  const textAfter = highlightStart >= 0 ? displayedText.slice(highlightEnd) : "";
+
   // Ethereal text dissolve during rub-out
   const textOpacity = rubOutProgress.interpolate({
     inputRange: [0, 0.15, 0.65, 1],
@@ -357,12 +372,7 @@ export function MascotWelcomeOverlay() {
     extrapolate: "clamp",
   });
 
-  const orbitSpin = orbitRotation.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0deg", "360deg"],
-  });
-
-
+  const skipTextColor = isDarkMode ? "rgba(255, 255, 255, 0.42)" : "rgba(15, 7, 40, 0.38)";
 
   return (
     <View style={StyleSheet.absoluteFill}>
@@ -473,39 +483,6 @@ export function MascotWelcomeOverlay() {
         pointerEvents="none"
       />
 
-      {/* Celestial 3D Orbital Rune Ring Revolving Under Paws */}
-      <Animated.View
-        style={[
-          styles.orbitWrapper,
-          {
-            left: centerScreenX - 85,
-            top: centerScreenY + MASCOT_CENTER_SIZE / 2 - 99,
-            opacity: Animated.multiply(mascotOpacity, screenBgOpacity),
-            transform: [
-              { scale: mascotScale },
-              { rotate: orbitSpin },
-              { scaleY: 0.28 },
-            ],
-          },
-        ]}
-        pointerEvents="none"
-      >
-        <View
-          style={[
-            styles.orbitRing,
-            {
-              borderColor: isDarkMode
-                ? "rgba(192, 132, 252, 0.35)"
-                : "rgba(194, 0, 125, 0.22)",
-            },
-          ]}
-        />
-        <View style={[styles.orbitNode, { top: -4, left: 81, backgroundColor: "#FFD700" }]} />
-        <View style={[styles.orbitNode, { bottom: -4, left: 81, backgroundColor: "#C2007D" }]} />
-        <View style={[styles.orbitNode, { top: 81, left: -4, backgroundColor: "#38BDF8", width: 6, height: 6 }]} />
-        <View style={[styles.orbitNode, { top: 81, right: -4, backgroundColor: "#E879F9", width: 6, height: 6 }]} />
-      </Animated.View>
-
       {/* Center Mascot with Wand Sparkles & Wand Tip Magic Burst */}
       <Animated.View
         style={[
@@ -613,7 +590,10 @@ export function MascotWelcomeOverlay() {
             }}
           >
             <Text style={[styles.typingText, { color: primaryTextColor }]}>
-              {displayedText}
+              {textBefore}
+              {/* The welcome is the one place the whole name is drawn in the accent color, not the two-tone wordmark. */}
+              {textHighlight ? <Text style={{ color: colors.accent }}>{textHighlight}</Text> : null}
+              {textAfter}
               {displayedText.length > 0 && (
                 <Text
                   style={{
@@ -701,6 +681,26 @@ export function MascotWelcomeOverlay() {
           )}
         </View>
       </Animated.View>
+
+      {/* Quiet "Skip" link - jumps straight to the same flight-and-dock ending */}
+      <Animated.View
+        style={[
+          styles.skipWrap,
+          {
+            bottom: insets.bottom + 28,
+            opacity: Animated.multiply(skipOpacity, screenBgOpacity),
+          },
+        ]}
+      >
+        <Pressable
+          onPress={handleFinishToFlight}
+          hitSlop={{ top: 14, bottom: 14, left: 24, right: 24 }}
+          accessibilityRole="button"
+          accessibilityLabel="Skip introduction"
+        >
+          <Text style={[styles.skipText, { color: skipTextColor }]}>Skip</Text>
+        </Pressable>
+      </Animated.View>
     </View>
   );
 }
@@ -749,30 +749,17 @@ const styles = StyleSheet.create({
     borderRadius: 7,
     zIndex: 35,
   },
-  orbitWrapper: {
+  skipWrap: {
     position: "absolute",
-    width: 170,
-    height: 170,
+    left: 0,
+    right: 0,
     alignItems: "center",
-    justifyContent: "center",
-    zIndex: 38,
+    zIndex: 70,
   },
-  orbitRing: {
-    width: 170,
-    height: 170,
-    borderRadius: 85,
-    borderWidth: 1.5,
-    borderStyle: "dashed",
-  },
-  orbitNode: {
-    position: "absolute",
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.9,
-    shadowRadius: 4,
-    elevation: 3,
+  skipText: {
+    fontSize: 13,
+    fontWeight: "500",
+    letterSpacing: 0.4,
   },
   ambientSparkle: {
     position: "absolute",

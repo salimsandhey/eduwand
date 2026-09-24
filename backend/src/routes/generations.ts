@@ -283,7 +283,7 @@ export async function generationRoutes(app: FastifyInstance) {
       const embeddedSources = topic.contextSources.filter((s) => mediaItems.some((item) => item.sourceId === s.id));
 
       // Assembling from the teacher's own media makes no AI call, so it is free.
-      if (!assembleOnly && !(await hasSufficientCredits(request.user.sub, getFeatureCost("generation")))) {
+      if (!assembleOnly && !(await hasSufficientCredits(request.user.sub, await getFeatureCost("generation")))) {
         return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to generate this content" } });
       }
 
@@ -564,7 +564,7 @@ export async function generationRoutes(app: FastifyInstance) {
     // A deck assembled purely from the teacher's media has no AI step to redo.
     const wasAssembled = generation.modelUsed === "assembled" && mediaItems.length > 0;
 
-    if (!wasAssembled && !(await hasSufficientCredits(request.user.sub, getFeatureCost("generation")))) {
+    if (!wasAssembled && !(await hasSufficientCredits(request.user.sub, await getFeatureCost("generation")))) {
       return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to retry this generation" } });
     }
 
