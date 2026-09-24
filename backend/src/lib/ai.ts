@@ -157,7 +157,125 @@ export type PresentationTemplate = "detailed" | "instructional" | "school_format
 // write this, colors always come from the school's branding (or an override
 // for one generation - see overridePrimaryColor/overrideSecondaryColor).
 export type PresentationColorScheme = "indigo" | "coral" | "forest" | "slate";
-export type PresentationSlideLayout = "title" | "bullets" | "stat" | "quote" | "divider" | "stat-grid" | "timeline" | "icon-grid" | "image";
+
+// The reason IS the structure (spec: "the teacher picks what she is doing in
+// class, not which format she wants"). Internal names only - never shown to
+// the teacher (see PRESENTATION_REASON_LABELS below for what she actually
+// sees), printed on the export footer instead so an HOD can see what was
+// used, same convention already set for the lesson planner.
+export type PresentationReason = "concept_deck" | "activity_walkthrough" | "revision_deck";
+
+// One lever, three settings, phrased in the teacher's language on mobile (see
+// PRESENTATION_DENSITY_LABELS below) - "revision_deck" ignores this and
+// always runs dense (see ROLE_SEQUENCES below).
+export type PresentationDensity = "light" | "balanced" | "dense";
+
+// A slide's *purpose* within its structure - fixed per PresentationReason,
+// never chosen by the teacher. Drives which layout(s) the generator may use
+// for that slide (see ROLE_LAYOUTS) and what content-fill instructions apply.
+export type PresentationSlideRole =
+  | "title"
+  | "hook"
+  | "define"
+  | "explain_core"
+  | "worked_example"
+  | "check"
+  | "recap"
+  | "aim"
+  | "materials"
+  | "safety"
+  | "step"
+  | "record"
+  | "expected_result"
+  | "conclusion"
+  | "whats_covered"
+  | "must_know"
+  | "common_mistakes"
+  | "rapid_fire"
+  | "answer_key"
+  // Auto-inserted for multi-class decks, built from already-generated slides,
+  // never asked of the model as their own generation step - see
+  // routes/generations.ts's presentation-confirm handler.
+  | "section_divider"
+  | "recap_bridge";
+
+// The 14-layout library (spec: "How each individual slide looks - The
+// generator, never the teacher - 14 layouts"). Superset of the 8 legacy
+// PresentationSlideLayout values (kept for backward compatibility with
+// generations written before this flow existed - "title"/"bullets"/"divider"
+// are also reused directly by the new role sequences) plus 6 new ones.
+// "section_divider" is rendered with the existing "divider" layout (see
+// ROLE_LAYOUTS) - it is a role, not its own layout; counting the spec's 14:
+// title, big_statement, definition, bullets, compare_2col, process_flow,
+// step, timeline, card_grid, table, callout, divider, recap_bridge,
+// closing_recap. "stat"/"quote"/"stat-grid"/"icon-grid"/"image" are
+// legacy-only from here on - no role maps to them, but old rows still parse.
+export type PresentationSlideLayout =
+  | "title" | "bullets" | "stat" | "quote" | "divider" | "stat-grid" | "timeline" | "icon-grid" | "image"
+  | "big_statement"
+  | "definition"
+  | "compare_2col"
+  | "process_flow"
+  | "step"
+  | "card_grid"
+  | "table"
+  | "callout"
+  | "recap_bridge"
+  | "closing_recap";
+
+// Fixed slide-role sequence per structure (spec section "The three
+// structures"). "explain_core"/"check"/"step"/"must_know"/"rapid_fire" are
+// variable-count roles - the count itself is decided by
+// lib/presentationPlan.ts's buildRoleSequence from the teacher's chosen slide
+// count, not fixed here. section_divider/recap_bridge are NOT listed here -
+// they're spliced in afterward for multi-class decks only.
+export const ROLE_SEQUENCES: Record<PresentationReason, PresentationSlideRole[]> = {
+  concept_deck: ["title", "hook", "define", "explain_core", "worked_example", "check", "recap"],
+  activity_walkthrough: ["title", "aim", "materials", "safety", "step", "record", "expected_result", "conclusion"],
+  revision_deck: ["title", "whats_covered", "must_know", "common_mistakes", "rapid_fire", "answer_key"],
+};
+
+// Which layout(s) a role may use - the generator (never the teacher) picks
+// among them per slide, e.g. explain_core alternates bullets/compare_2col/
+// process_flow/table across its 2-4 slides to avoid a monotonous deck.
+export const ROLE_LAYOUTS: Record<PresentationSlideRole, PresentationSlideLayout[]> = {
+  title: ["title"],
+  hook: ["big_statement"],
+  define: ["definition"],
+  explain_core: ["bullets", "compare_2col", "process_flow", "table"],
+  worked_example: ["bullets", "process_flow"],
+  check: ["card_grid", "bullets"],
+  recap: ["closing_recap"],
+  aim: ["big_statement"],
+  materials: ["card_grid"],
+  safety: ["callout"],
+  step: ["step"],
+  record: ["bullets", "table"],
+  expected_result: ["compare_2col"],
+  conclusion: ["closing_recap"],
+  whats_covered: ["bullets"],
+  must_know: ["card_grid"],
+  common_mistakes: ["bullets"],
+  rapid_fire: ["bullets"],
+  answer_key: ["table", "card_grid"],
+  section_divider: ["divider"],
+  recap_bridge: ["recap_bridge"],
+};
+
+// Plain-language labels for the reason (step 5) and density (step 7) pickers
+// - mirrored manually in unified-app (mobile can't import this backend file -
+// same duplicated-table convention already used for
+// ACTIVITY_GROUP_SIZE_LABELS/LEARNING_STAGE_OPTIONS above).
+export const PRESENTATION_REASON_LABELS: Record<PresentationReason, { label: string; caption: string }> = {
+  concept_deck: { label: "Teaching this for the first time", caption: "A new chapter or sub-topic. The default." },
+  activity_walkthrough: { label: "Running an activity or experiment", caption: "Practicals, lab work, classroom activities" },
+  revision_deck: { label: "Revising before a test", caption: "End of chapter, pre-exam recap" },
+};
+export const PRESENTATION_DENSITY_LABELS: Record<PresentationDensity, { label: string; caption: string }> = {
+  light: { label: "Light", caption: "Headline points only" },
+  balanced: { label: "Balanced", caption: "The default - enough to teach from" },
+  dense: { label: "Dense", caption: "Full detail, reference-ready" },
+};
 
 // An image or PDF page the teacher chose to show as-is (see lib/media.ts).
 // `id` is what a presentation slide's mediaId points at.
@@ -189,6 +307,12 @@ export interface PresentationContent {
     // Optional so pre-layout generations keep parsing - readers default to
     // "bullets" when absent/unrecognized.
     layout?: PresentationSlideLayout;
+    // Which role this slide fills (new flow only - absent on legacy rows and
+    // on anything built via the old free-form single-pass path).
+    role?: PresentationSlideRole;
+    // 0-indexed class period this slide belongs to (new flow, multi-class
+    // decks only) - absent means "single class" / legacy row.
+    classIndex?: number;
     // Doubles as the big number on a "stat" slide, or the quote text on a
     // "quote" slide.
     title: string;
@@ -202,10 +326,21 @@ export interface PresentationContent {
     // Only on layout "image": which entry of the deck's `media` this slide shows.
     mediaId?: string;
     // Used by "stat-grid" (title = the number, description = its label),
-    // "timeline" (title = step name, tag = duration like "1 Week",
-    // description = the step's paragraph), and "icon-grid" (title = card
-    // heading, description = card body, icon auto-picked from title).
+    // "timeline"/"process_flow" (title = step name, tag = duration like
+    // "1 Week", description = the step's paragraph), "icon-grid", and
+    // "card_grid" (title = card heading, description = card body).
     items?: { title: string; description?: string; tag?: string }[];
+    // "compare_2col": two labelled columns of short lines (spec's "GOES IN" /
+    // "COMES OUT" example). Each column's `rows` is one line per row.
+    columns?: { heading: string; rows: string[] }[];
+    // "table": a simple grid - header row + data rows, all plain strings.
+    table?: { headers: string[]; rows: string[][] };
+    // "step": one action per slide with a progress indicator.
+    stepIndex?: number; // 1-indexed
+    stepTotal?: number;
+    // "callout": a flagged warning/note (used by the "safety" role).
+    calloutIcon?: string; // e.g. "!" - short glyph, not an image
+    calloutBody?: string;
   }[];
 }
 
@@ -240,6 +375,48 @@ export interface GenerationInput {
   // descriptions - and is told where/how to place them.
   mediaCatalog?: MediaCatalogEntry[];
 }
+
+export interface PresentationOutlineInput {
+  topicName: string;
+  subject: string;
+  board: string;
+  gradeLevel: string;
+  roleSequence: { role: PresentationSlideRole; classIndex: number }[];
+  contextText: string | null;
+  language: string;
+  customPrompt?: string | null;
+}
+
+export interface PresentationOutlineEntry {
+  role: PresentationSlideRole;
+  classIndex: number;
+  title: string;
+  oneLiner: string;
+}
+
+export interface PresentationFillInput {
+  topicName: string;
+  subject: string;
+  board: string;
+  gradeLevel: string;
+  outline: PresentationOutlineEntry[];
+  density: PresentationDensity;
+  reason: PresentationReason;
+  contextText: string | null;
+  language: string;
+  customPrompt?: string | null;
+  mediaCatalog?: MediaCatalogEntry[];
+}
+
+// Density instructions - "revision_deck" always runs dense regardless of what
+// is passed in (spec: "Revision decks ignore the density lever"), enforced by
+// the caller (routes/generations.ts) recomputing an effective density before
+// this is used, and again defensively wherever a provider reads it.
+export const PRESENTATION_DENSITY_INSTRUCTIONS: Record<PresentationDensity, string> = {
+  light: "Keep every slide to headline points only: 1-2 short bullets, or a single short sentence for non-bulleted layouts.",
+  balanced: "Give each slide enough to teach from directly: 2-4 bullets, or 2-3 sentences for non-bulleted layouts.",
+  dense: "Make this a text-heavy, reference-ready slide: 4-6 bullets, or a fuller paragraph for non-bulleted layouts.",
+};
 
 export interface AnswerKeyQuestionInput {
   id: string;
@@ -735,6 +912,13 @@ export interface AiProvider {
   }>;
 
   generateContent(input: GenerationInput): Promise<{ content: string; model: string }>;
+  // Presentation flow step 8: roles+titles+one-liner only, no layout/body
+  // content - fast, so the teacher can review/trim/reorder before committing
+  // to the slower content-fill pass below.
+  generatePresentationOutline(input: PresentationOutlineInput): Promise<PresentationOutlineEntry[]>;
+  // Presentation flow step 9: fills body content for an already-confirmed
+  // outline, one JSON shape per slide's assigned layout.
+  fillPresentationContent(input: PresentationFillInput): Promise<PresentationContent["slides"]>;
   // Drafts a set of assignment questions AND their model answers in one pass,
   // grounded in the topic's taught content. Used by
   // POST /topics/:id/assignment-draft (backend/src/routes/assignments.ts).
@@ -1110,6 +1294,38 @@ class StubAiProvider implements AiProvider {
     }
 
     return { content: JSON.stringify(content), model: MODEL_SONNET };
+  }
+
+  async generatePresentationOutline({ topicName, roleSequence }: PresentationOutlineInput): Promise<PresentationOutlineEntry[]> {
+    return roleSequence.map(({ role, classIndex }) => ({
+      role,
+      classIndex,
+      title: `${role.replace(/_/g, " ")} — ${topicName}`,
+      oneLiner: `Covers the "${role.replace(/_/g, " ")}" part of the deck.`,
+    }));
+  }
+
+  async fillPresentationContent({ outline }: PresentationFillInput): Promise<PresentationContent["slides"]> {
+    return outline.map((o) => {
+      const layout = ROLE_LAYOUTS[o.role][0];
+      const base = { layout, role: o.role, classIndex: o.classIndex, title: o.title, bullets: [] as string[], notes: o.oneLiner };
+      switch (layout) {
+        case "compare_2col":
+          return { ...base, columns: [{ heading: "COLUMN A", rows: [o.oneLiner] }, { heading: "COLUMN B", rows: [o.oneLiner] }] };
+        case "table":
+          return { ...base, table: { headers: ["Item"], rows: [[o.oneLiner]] } };
+        case "callout":
+          return { ...base, calloutIcon: "!", calloutBody: o.oneLiner };
+        case "step":
+          return { ...base, bullets: [o.oneLiner], stepIndex: 1, stepTotal: 1 };
+        case "card_grid":
+        case "timeline":
+        case "process_flow":
+          return { ...base, items: [{ title: o.title, description: o.oneLiner }] };
+        default:
+          return { ...base, bullets: [o.oneLiner] };
+      }
+    });
   }
 
   async generateAnswerKey(questions: AnswerKeyQuestionInput[]) {
@@ -2079,6 +2295,113 @@ class GeminiAiProvider implements AiProvider {
     }
 
     return { content: JSON.stringify(parsed), model: MODEL_GEMINI_FLASH };
+  }
+
+  async generatePresentationOutline(input: PresentationOutlineInput): Promise<PresentationOutlineEntry[]> {
+    const roleList = input.roleSequence
+      .map((r, i) => `${i + 1}. ${r.role}${r.classIndex > 0 ? ` (class ${r.classIndex + 1})` : ""}`)
+      .join("\n");
+    const prompt = [
+      `Topic: ${input.topicName}. Subject: ${input.subject}. Board: ${input.board}. Grade: ${input.gradeLevel}.`,
+      boardGuidance(input.board),
+      `Output language: ${input.language}`,
+      input.contextText ? `Teacher-provided context (ground the outline in this, do not copy sentences verbatim):\n${input.contextText}` : "",
+      input.customPrompt ? `Teacher's extra instruction: ${input.customPrompt}` : "",
+      "Produce a one-line outline for a classroom slide deck with EXACTLY this sequence of slide roles, in this order:",
+      roleList,
+      'Respond with ONLY a JSON array of this exact shape (no prose, no markdown fences): ' +
+        '[{"title": string (a short slide headline, 3-8 words), "oneLiner": string (one sentence describing what this slide will cover)}]. ' +
+        `Return exactly ${input.roleSequence.length} entries, in the same order as the role list above - do not add, remove, merge or reorder roles.`,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+    const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json" } }),
+    });
+    if (!response.ok) throw new Error(`Gemini API request failed (${response.status}): ${await response.text().catch(() => "")}`);
+    const data = (await response.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+    const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+    if (!text) throw new Error("Gemini returned no text for the presentation outline");
+    const parsed = parseModelJson(text) as { title?: string; oneLiner?: string }[];
+
+    return input.roleSequence.map((r, i) => ({
+      role: r.role,
+      classIndex: r.classIndex,
+      title: parsed[i]?.title ?? r.role,
+      oneLiner: parsed[i]?.oneLiner ?? "",
+    }));
+  }
+
+  async fillPresentationContent(input: PresentationFillInput): Promise<PresentationContent["slides"]> {
+    // "revision_deck" always runs dense regardless of what's passed in (spec:
+    // "Revision decks ignore the density lever").
+    const effectiveDensity: PresentationDensity = input.reason === "revision_deck" ? "dense" : input.density;
+    const densityInstruction = PRESENTATION_DENSITY_INSTRUCTIONS[effectiveDensity];
+    const safetyNote =
+      input.reason === "activity_walkthrough"
+        ? 'The "safety" role\'s slide is mandatory and must never be thinned out regardless of density - list every real hazard plainly.'
+        : "";
+    const outlineList = input.outline
+      .map((o, i) => `${i + 1}. role=${o.role}, layout options=[${ROLE_LAYOUTS[o.role].join(", ")}], title="${o.title}", covers="${o.oneLiner}"`)
+      .join("\n");
+
+    const prompt = [
+      `Topic: ${input.topicName}. Subject: ${input.subject}. Board: ${input.board}. Grade: ${input.gradeLevel}.`,
+      boardGuidance(input.board),
+      `Output language: ${input.language}`,
+      input.contextText ? `Teacher-provided context (ground the content in this; write original sentences, never copy spans verbatim):\n${input.contextText}` : "",
+      input.customPrompt ? `Teacher's extra instruction: ${input.customPrompt}` : "",
+      densityInstruction,
+      safetyNote,
+      mediaCatalogInstructions("presentation", input.mediaCatalog),
+      "Fill in the body content for exactly these slides, in this order - keep each title exactly as given, pick exactly one layout from that slide's own layout options, and shape the JSON for that layout as described below:",
+      outlineList,
+      'Respond with ONLY a JSON array of this exact shape (no prose, no markdown fences), one entry per slide above, in order: ' +
+        '{"layout": string (one of that slide\'s own layout options), "title": string (unchanged from above), ' +
+        '"bullets": string[] (for layouts: bullets, big_statement, definition, closing_recap, recap_bridge - 1 line each), ' +
+        '"columns": {"heading": string, "rows": string[]}[] (exactly 2 entries, for layout compare_2col only), ' +
+        '"items": {"title": string, "description": string, "tag": string}[] (for layouts: card_grid, timeline, process_flow - tag optional), ' +
+        '"table": {"headers": string[], "rows": string[][]} (for layout table only), ' +
+        '"stepIndex": number, "stepTotal": number (for layout step only - this slide\'s position and the total step count), ' +
+        '"calloutIcon": string, "calloutBody": string (for layout callout only), ' +
+        '"notes": string (1-2 sentences of speaker notes, every slide)}',
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+    const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json" } }),
+    });
+    if (!response.ok) throw new Error(`Gemini API request failed (${response.status}): ${await response.text().catch(() => "")}`);
+    const data = (await response.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+    const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+    if (!text) throw new Error("Gemini returned no text for the presentation content fill");
+    const parsed = parseModelJson(text) as Array<Record<string, unknown>>;
+
+    return input.outline.map((o, i) => {
+      const p = parsed[i] ?? {};
+      const layout = (ROLE_LAYOUTS[o.role].includes(p.layout as PresentationSlideLayout) ? p.layout : ROLE_LAYOUTS[o.role][0]) as PresentationSlideLayout;
+      return {
+        layout,
+        role: o.role,
+        classIndex: o.classIndex,
+        title: o.title,
+        bullets: Array.isArray(p.bullets) ? (p.bullets as string[]) : [],
+        columns: Array.isArray(p.columns) ? (p.columns as { heading: string; rows: string[] }[]) : undefined,
+        items: Array.isArray(p.items) ? (p.items as { title: string; description?: string; tag?: string }[]) : undefined,
+        table: p.table && typeof p.table === "object" ? (p.table as { headers: string[]; rows: string[][] }) : undefined,
+        stepIndex: typeof p.stepIndex === "number" ? p.stepIndex : undefined,
+        stepTotal: typeof p.stepTotal === "number" ? p.stepTotal : undefined,
+        calloutIcon: typeof p.calloutIcon === "string" ? p.calloutIcon : undefined,
+        calloutBody: typeof p.calloutBody === "string" ? p.calloutBody : undefined,
+        notes: typeof p.notes === "string" ? p.notes : undefined,
+      };
+    });
   }
 
   async assistantStep({ contents, systemPrompt, tools }: AssistantStepInput) {

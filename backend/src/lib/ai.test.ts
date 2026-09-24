@@ -9,6 +9,8 @@ import {
   expandDifficultyMix,
   heuristicAssignmentQuestions,
   normaliseGeneratedQuestions,
+  ROLE_SEQUENCES,
+  ROLE_LAYOUTS,
 } from "./ai";
 
 // Test the offline stub directly - it is the dev default and the offline
@@ -235,4 +237,43 @@ test("stub gradeSubmission grades a mixed MCQ + short-answer submission and keep
     ["q2", "q1"]
   );
   assert.equal(result.questionDetails.find((d) => d.questionId === "q1")?.correct, true);
+});
+
+test("stub generatePresentationOutline returns one outline entry per role in the sequence", async () => {
+  const outline = await aiProvider.generatePresentationOutline({
+    topicName: "Photosynthesis",
+    subject: "Science",
+    board: "CBSE",
+    gradeLevel: "7",
+    roleSequence: ROLE_SEQUENCES.concept_deck.map((role) => ({ role, classIndex: 0 })),
+    contextText: null,
+    language: "English",
+  });
+  assert.equal(outline.length, ROLE_SEQUENCES.concept_deck.length);
+  for (const entry of outline) {
+    assert.equal(typeof entry.title, "string");
+    assert.ok(entry.title.length > 0);
+    assert.equal(typeof entry.oneLiner, "string");
+  }
+});
+
+test("stub fillPresentationContent fills every outline entry with a layout valid for its role", async () => {
+  const outline = [
+    { role: "title" as const, classIndex: 0, title: "Photosynthesis", oneLiner: "Intro" },
+    { role: "define" as const, classIndex: 0, title: "What is photosynthesis?", oneLiner: "The core term" },
+  ];
+  const slides = await aiProvider.fillPresentationContent({
+    topicName: "Photosynthesis",
+    subject: "Science",
+    board: "CBSE",
+    gradeLevel: "7",
+    outline,
+    density: "balanced",
+    reason: "concept_deck",
+    contextText: null,
+    language: "English",
+  });
+  assert.equal(slides.length, 2);
+  assert.ok(ROLE_LAYOUTS.title.includes(slides[0].layout!));
+  assert.ok(ROLE_LAYOUTS.define.includes(slides[1].layout!));
 });
