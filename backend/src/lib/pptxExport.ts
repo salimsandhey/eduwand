@@ -4,6 +4,7 @@ import { imageSize } from "image-size";
 import PptxGenJS from "pptxgenjs";
 import { PresentationContent, PresentationColorScheme, PresentationSlideLayout } from "./ai";
 import { sniffImageMime, type MediaItem } from "./media";
+import { SLIDE_W, SLIDE_H, MARGIN_X, CONTENT_TOP, CONTENT_BOTTOM, CONTENT_W, TYPE, buildPalette, bodySizeFor, type DeckPalette } from "./presentationDesign";
 
 // The pixels behind an "image" slide's mediaId - an uploaded image, or one
 // rendered page of a PDF - resolved by the caller (this module has no DB or
@@ -23,8 +24,6 @@ const COLOR_SCHEME_PRESETS: Record<PresentationColorScheme, { background: string
   slate: { background: "2B2F36", accent: "9FB4C7" },
 };
 
-const SLIDE_W = 13.33;
-const SLIDE_H = 7.5;
 const HEADLINE_FONT = "Georgia";
 const BODY_FONT = "Calibri";
 
@@ -163,6 +162,7 @@ function iconData(iconName: string): string {
 interface DeckTheme {
   background: string;
   accent: string;
+  palette: DeckPalette;
   logo: LogoAsset | null;
   footerLabel: string | null;
   mediaAssets: Map<string, MediaAsset>;
@@ -170,16 +170,30 @@ interface DeckTheme {
 }
 
 function addChrome(slide: PptxGenJS.Slide, theme: DeckTheme, opts?: { skipFooter?: boolean }) {
-  // Thin accent bar across the top edge, and a small logo/footer credit -
-  // the consistent branding chrome every slide carries, mirroring the
-  // reference deck's top bar + corner watermark.
-  slide.addShape("rect", { x: 0, y: 0, w: SLIDE_W, h: 0.12, fill: { color: theme.accent } });
+  // Accent bar across the top edge, a logo, and a footer credit + slide number
+  // - the branding chrome every slide carries.
+  const P = theme.palette;
+  slide.addShape("rect", { x: 0, y: 0, w: SLIDE_W, h: 0.14, fill: { color: theme.accent } });
   if (theme.logo) {
-    slide.addImage({ data: theme.logo.data, x: SLIDE_W - 0.3 - theme.logo.w, y: 0.3, w: theme.logo.w, h: theme.logo.h });
+    slide.addImage({ data: theme.logo.data, x: SLIDE_W - 0.4 - theme.logo.w, y: 0.35, w: theme.logo.w, h: theme.logo.h });
   }
-  if (theme.footerLabel && !opts?.skipFooter) {
-    slide.addText(theme.footerLabel, { x: 0.4, y: SLIDE_H - 0.4, w: SLIDE_W - 0.8, h: 0.3, fontSize: 9, color: theme.accent, fontFace: BODY_FONT, align: "right" });
+  if (!opts?.skipFooter) {
+    slide.addShape("line", { x: MARGIN_X, y: SLIDE_H - 0.55, w: CONTENT_W, h: 0, line: { color: P.panelAlt, width: 1 } });
+    if (theme.footerLabel) {
+      slide.addText(theme.footerLabel, { x: MARGIN_X, y: SLIDE_H - 0.5, w: CONTENT_W - 1, h: 0.35, fontSize: TYPE.footer, color: P.muted, fontFace: BODY_FONT, align: "left", valign: "middle" });
+    }
+    slide.slideNumber = { x: SLIDE_W - MARGIN_X - 1, y: SLIDE_H - 0.5, w: 1, h: 0.35, fontSize: TYPE.footer, color: P.muted, fontFace: BODY_FONT, align: "right" };
   }
+}
+
+// Title in a serif headline with a short accent rule under it - the standard
+// header for every content slide. Returns the y where content should start.
+function addTitleBlock(slide: PptxGenJS.Slide, title: string, tag: string | null, theme: DeckTheme): number {
+  const P = theme.palette;
+  const tagH = addBloomTag(slide, tag, MARGIN_X, 0.5, theme.accent, P.onAccent);
+  slide.addText(title, { x: MARGIN_X, y: 0.45 + tagH, w: CONTENT_W - 1.5, h: 1.0, fontSize: scaledFontSize(title, TYPE.title, 32, 80, 26), bold: true, color: P.text, valign: "middle", fontFace: HEADLINE_FONT });
+  slide.addShape("rect", { x: MARGIN_X, y: 1.5 + tagH, w: 1.1, h: 0.07, fill: { color: theme.accent } });
+  return Math.max(CONTENT_TOP, 1.85 + tagH);
 }
 
 function addIconBadge(slide: PptxGenJS.Slide, iconName: string, x: number, y: number, size: number, accent: string) {
@@ -192,7 +206,7 @@ function addIconBadge(slide: PptxGenJS.Slide, iconName: string, x: number, y: nu
 // prefix - same visual language as the "STEP N" badge already used
 // elsewhere. Returns the extra vertical space it took up, so callers can
 // shift the title/content below it down accordingly.
-function addBloomTag(slide: PptxGenJS.Slide, tag: string | null, x: number, y: number, accent: string): number {
+function addBloomTag(slide: PptxGenJS.Slide, tag: string | null, x: number, y: number, accent: string, onAccent = "111111"): number {
   if (!tag) return 0;
   const w = 0.15 + tag.length * 0.075;
   slide.addShape("roundRect", { x, y, w, h: 0.3, rectRadius: 0.06, fill: { color: accent } });
@@ -213,6 +227,7 @@ function scaledFontSize(text: string, base: number, minChars: number, maxChars: 
 
 async function renderSlide(pptx: PptxGenJS, content: PresentationContent["slides"][number], theme: DeckTheme) {
   const slide = pptx.addSlide();
+  const P = theme.palette;
   slide.background = { color: theme.background };
   // Legacy rows from before this layout set (including the old, now-removed
   // "image-left"/"image-right" photo layouts) fall back to plain bullets -
@@ -239,9 +254,16 @@ async function renderSlide(pptx: PptxGenJS, content: PresentationContent["slides
 
   switch (layout) {
     case "title": {
-      const fontSize = scaledFontSize(title, 44, 30, 70, 26);
-      slide.addText(title, { x: 1, y: SLIDE_H / 2 - 1, w: SLIDE_W - 2, h: 2, fontSize, bold: true, color: "FFFFFF", align: "center", valign: "middle", fontFace: HEADLINE_FONT });
-      addChrome(slide, theme);
+      // Large left-aligned title with an accent rule, and a big soft circle
+      // for weight - instead of one small centred line on a flat colour.
+      slide.addShape("ellipse", { x: SLIDE_W - 6.2, y: SLIDE_H - 4.6, w: 8, h: 8, fill: { color: P.panelAlt } });
+      slide.addShape("ellipse", { x: SLIDE_W - 4.4, y: SLIDE_H - 3.4, w: 5, h: 5, fill: { color: theme.accent, transparency: 55 } });
+      slide.addShape("rect", { x: MARGIN_X + 0.2, y: 2.35, w: 1.4, h: 0.09, fill: { color: theme.accent } });
+      slide.addText(title, { x: MARGIN_X + 0.2, y: 2.6, w: 8.2, h: 2.6, fontSize: scaledFontSize(title, TYPE.display, 24, 60, 34), bold: true, color: P.text, valign: "top", fontFace: HEADLINE_FONT });
+      if (bullets[0]) {
+        slide.addText(bullets[0], { x: MARGIN_X + 0.2, y: 5.3, w: 8.2, h: 0.9, fontSize: TYPE.bodySmall, color: P.muted, valign: "top", fontFace: BODY_FONT });
+      }
+      addChrome(slide, theme, { skipFooter: false });
       break;
     }
     case "image": {
@@ -252,7 +274,7 @@ async function renderSlide(pptx: PptxGenJS, content: PresentationContent["slides
       const item = content.mediaId ? theme.mediaItems.get(content.mediaId) : undefined;
       const hasCaption = title.trim().length > 0;
       if (hasCaption) {
-        slide.addText(title, { x: 0.7, y: 0.35, w: SLIDE_W - 1.4, h: 0.7, fontSize: scaledFontSize(title, 26, 40, 90, 16), bold: true, color: "FFFFFF", fontFace: HEADLINE_FONT });
+        slide.addText(title, { x: 0.7, y: 0.35, w: SLIDE_W - 1.4, h: 0.7, fontSize: scaledFontSize(title, 26, 40, 90, 16), bold: true, color: P.text, fontFace: HEADLINE_FONT });
       }
       const top = hasCaption ? 1.2 : 0.5;
       const creditH = item?.attribution ? 0.35 : 0;
@@ -266,11 +288,11 @@ async function renderSlide(pptx: PptxGenJS, content: PresentationContent["slides
         const mime = sniffImageMime(asset.data) ?? "image/png";
         slide.addImage({ data: `data:${mime};base64,${asset.data.toString("base64")}`, x: 0.7 + (boxW - w) / 2, y: top + (boxH - h) / 2, w, h });
       } else {
-        slide.addText("This image is no longer available.", { x: 0.7, y: top, w: boxW, h: boxH, fontSize: 18, color: "E3E3F0", align: "center", valign: "middle", fontFace: BODY_FONT });
+        slide.addText("This image is no longer available.", { x: 0.7, y: top, w: boxW, h: boxH, fontSize: 18, color: P.muted, align: "center", valign: "middle", fontFace: BODY_FONT });
       }
       let y = top + boxH + 0.1;
       if (bullets.length > 0) {
-        slide.addText(bullets.slice(0, 2).join("  ·  "), { x: 0.7, y, w: boxW, h: 0.45, fontSize: 14, color: "E3E3F0", align: "center", fontFace: BODY_FONT });
+        slide.addText(bullets.slice(0, 2).join("  ·  "), { x: 0.7, y, w: boxW, h: 0.45, fontSize: 14, color: P.muted, align: "center", fontFace: BODY_FONT });
         y += 0.5;
       }
       if (item?.attribution) {
@@ -281,9 +303,9 @@ async function renderSlide(pptx: PptxGenJS, content: PresentationContent["slides
     }
     case "divider": {
       slide.background = { color: theme.accent };
-      const fontSize = scaledFontSize(title, 36, 30, 70, 22);
-      slide.addText(title, { x: 1, y: SLIDE_H / 2 - 0.75, w: SLIDE_W - 2, h: 1.5, fontSize, bold: true, color: "FFFFFF", align: "center", valign: "middle", fontFace: HEADLINE_FONT });
-      addChrome(slide, theme, { skipFooter: true });
+      slide.addShape("ellipse", { x: SLIDE_W - 5, y: -2, w: 7, h: 7, fill: { color: P.onAccent, transparency: 90 } });
+      slide.addShape("rect", { x: MARGIN_X, y: SLIDE_H / 2 - 1.25, w: 1.2, h: 0.09, fill: { color: P.onAccent } });
+      slide.addText(title, { x: MARGIN_X, y: SLIDE_H / 2 - 0.85, w: SLIDE_W - MARGIN_X * 2 - 1, h: 2.3, fontSize: scaledFontSize(title, TYPE.display - 4, 24, 70, 32), bold: true, color: P.onAccent, valign: "top", fontFace: HEADLINE_FONT });
       break;
     }
     case "stat": {
@@ -292,47 +314,47 @@ async function renderSlide(pptx: PptxGenJS, content: PresentationContent["slides
       // isn't actually short, so a full sentence here doesn't overflow its
       // box and overlap the caption below it.
       const fontSize = scaledFontSize(title, 72, 12, 60, 28);
-      slide.addText(title, { x: 1, y: 1.6, w: SLIDE_W - 2, h: 2.4, fontSize, bold: true, color: "FFFFFF", align: "center", valign: "middle", fontFace: HEADLINE_FONT, fit: "shrink" });
+      slide.addText(title, { x: 1, y: 1.6, w: SLIDE_W - 2, h: 2.4, fontSize, bold: true, color: P.text, align: "center", valign: "middle", fontFace: HEADLINE_FONT, fit: "shrink" });
       if (bullets[0]) {
-        slide.addText(bullets[0], { x: 1.5, y: 4.3, w: SLIDE_W - 3, h: 1, fontSize: 18, color: "E3E3F0", align: "center", fontFace: BODY_FONT });
+        slide.addText(bullets[0], { x: 1.5, y: 4.3, w: SLIDE_W - 3, h: 1, fontSize: 18, color: P.muted, align: "center", fontFace: BODY_FONT });
       }
       addChrome(slide, theme);
       break;
     }
     case "quote": {
       const fontSize = scaledFontSize(title, 30, 60, 160, 18);
-      slide.addText(`"${title}"`, { x: 1.5, y: 1.6, w: SLIDE_W - 3, h: 2.8, fontSize, italic: true, color: "FFFFFF", align: "center", valign: "middle", fontFace: HEADLINE_FONT, fit: "shrink" });
+      slide.addText(`"${title}"`, { x: 1.5, y: 1.6, w: SLIDE_W - 3, h: 2.8, fontSize, italic: true, color: P.text, align: "center", valign: "middle", fontFace: HEADLINE_FONT, fit: "shrink" });
       if (bullets[0]) {
-        slide.addText(`- ${bullets[0]}`, { x: 1.5, y: 4.7, w: SLIDE_W - 3, h: 0.6, fontSize: 16, color: "E3E3F0", align: "center", fontFace: BODY_FONT });
+        slide.addText(`- ${bullets[0]}`, { x: 1.5, y: 4.7, w: SLIDE_W - 3, h: 0.6, fontSize: 16, color: P.muted, align: "center", fontFace: BODY_FONT });
       }
       addChrome(slide, theme);
       break;
     }
     case "stat-grid": {
       const tagH = addBloomTag(slide, titleTag, 0.7, 0.35, theme.accent);
-      slide.addText(title, { x: 0.7, y: 0.35 + tagH, w: SLIDE_W - 1.4, h: 0.8, fontSize: 26, bold: true, color: "FFFFFF", fontFace: HEADLINE_FONT });
+      slide.addText(title, { x: 0.7, y: 0.35 + tagH, w: SLIDE_W - 1.4, h: 0.8, fontSize: 26, bold: true, color: P.text, fontFace: HEADLINE_FONT });
       const gridItems = items.slice(0, 5);
       const gap = 0.3;
       const boxW = (SLIDE_W - 1.4 - gap * (gridItems.length - 1)) / Math.max(gridItems.length, 1);
       const boxY = 1.6 + tagH;
       gridItems.forEach((item, i) => {
         const x = 0.7 + i * (boxW + gap);
-        slide.addShape("roundRect", { x, y: boxY, w: boxW, h: 1.9, rectRadius: 0.1, fill: { color: "FFFFFF", transparency: 92 }, line: { color: theme.accent, width: 1 } });
+        slide.addShape("roundRect", { x, y: boxY, w: boxW, h: 1.9, rectRadius: 0.1, fill: { color: P.panel }, line: { color: theme.accent, width: 1 } });
         const valueFontSize = scaledFontSize(item.title, 32, 4, 12, 18);
         slide.addText(item.title, { x, y: boxY + 0.2, w: boxW, h: 0.9, fontSize: valueFontSize, bold: true, color: theme.accent, align: "center", fontFace: HEADLINE_FONT });
         if (item.description) {
-          slide.addText(item.description, { x: x + 0.1, y: boxY + 1.15, w: boxW - 0.2, h: 0.65, fontSize: 11, color: "E3E3F0", align: "center", fontFace: BODY_FONT });
+          slide.addText(item.description, { x: x + 0.1, y: boxY + 1.15, w: boxW - 0.2, h: 0.65, fontSize: 11, color: P.muted, align: "center", fontFace: BODY_FONT });
         }
       });
       if (bullets.length) {
-        slide.addText(bullets.join(" "), { x: 0.7, y: boxY + 2.1, w: SLIDE_W - 1.4, h: SLIDE_H - (boxY + 2.1) - 0.5, fontSize: 13, color: "E3E3F0", fontFace: BODY_FONT, valign: "top" });
+        slide.addText(bullets.join(" "), { x: 0.7, y: boxY + 2.1, w: SLIDE_W - 1.4, h: SLIDE_H - (boxY + 2.1) - 0.5, fontSize: 13, color: P.muted, fontFace: BODY_FONT, valign: "top" });
       }
       addChrome(slide, theme);
       break;
     }
     case "timeline": {
       const tagH = addBloomTag(slide, titleTag, 0.7, 0.3, theme.accent);
-      slide.addText(title, { x: 0.7, y: 0.3 + tagH, w: SLIDE_W - 1.4, h: 0.6, fontSize: 24, bold: true, color: "FFFFFF", fontFace: HEADLINE_FONT });
+      slide.addText(title, { x: 0.7, y: 0.3 + tagH, w: SLIDE_W - 1.4, h: 0.6, fontSize: 24, bold: true, color: P.text, fontFace: HEADLINE_FONT });
       const steps = items.slice(0, 6);
       const gap = 0.25;
       const colW = (SLIDE_W - 1.4 - gap * (steps.length - 1)) / Math.max(steps.length, 1);
@@ -349,18 +371,18 @@ async function renderSlide(pptx: PptxGenJS, content: PresentationContent["slides
           slide.addShape("line", { x: cx + circleSize, y: circleY + circleSize / 2, w: colW + gap - circleSize, h: 0, line: { color: theme.accent, width: 2 } });
         }
         slide.addShape("ellipse", { x: cx, y: circleY, w: circleSize, h: circleSize, fill: { color: theme.accent } });
-        slide.addText(String(i + 1), { x: cx, y: circleY, w: circleSize, h: circleSize, fontSize: 15, bold: true, color: "FFFFFF", align: "center", valign: "middle", fontFace: BODY_FONT });
+        slide.addText(String(i + 1), { x: cx, y: circleY, w: circleSize, h: circleSize, fontSize: 15, bold: true, color: P.text, align: "center", valign: "middle", fontFace: BODY_FONT });
         const cardY = circleY + circleSize + 0.25;
-        slide.addShape("roundRect", { x, y: cardY, w: colW, h: cardH, rectRadius: 0.08, fill: { color: "FFFFFF", transparency: 92 }, line: { color: theme.accent, width: 1 } });
+        slide.addShape("roundRect", { x, y: cardY, w: colW, h: cardH, rectRadius: 0.08, fill: { color: P.panel }, line: { color: theme.accent, width: 1 } });
         let textY = cardY + 0.15;
-        slide.addText(step.title, { x: x + 0.1, y: textY, w: colW - 0.2, h: 0.4, fontSize: 12, bold: true, color: "FFFFFF", fontFace: BODY_FONT });
+        slide.addText(step.title, { x: x + 0.1, y: textY, w: colW - 0.2, h: 0.4, fontSize: 12, bold: true, color: P.text, fontFace: BODY_FONT });
         textY += 0.4;
         if (step.tag) {
           slide.addText(step.tag, { x: x + 0.1, y: textY, w: colW - 0.2, h: 0.28, fontSize: 9, color: theme.accent, fontFace: BODY_FONT });
           textY += 0.28;
         }
         if (step.description) {
-          slide.addText(step.description, { x: x + 0.1, y: textY, w: colW - 0.2, h: cardY + cardH - textY - 0.1, fontSize: 9, color: "D8D8E8", fontFace: BODY_FONT, valign: "top" });
+          slide.addText(step.description, { x: x + 0.1, y: textY, w: colW - 0.2, h: cardY + cardH - textY - 0.1, fontSize: 9, color: P.muted, fontFace: BODY_FONT, valign: "top" });
         }
       });
       addChrome(slide, theme);
@@ -368,7 +390,7 @@ async function renderSlide(pptx: PptxGenJS, content: PresentationContent["slides
     }
     case "icon-grid": {
       const tagH = addBloomTag(slide, titleTag, 0.7, 0.35, theme.accent);
-      slide.addText(title, { x: 0.7, y: 0.35 + tagH, w: SLIDE_W - 1.4, h: 0.6, fontSize: 24, bold: true, color: "FFFFFF", fontFace: HEADLINE_FONT });
+      slide.addText(title, { x: 0.7, y: 0.35 + tagH, w: SLIDE_W - 1.4, h: 0.6, fontSize: 24, bold: true, color: P.text, fontFace: HEADLINE_FONT });
       const cards = items.slice(0, 4);
       const cols = cards.length > 3 ? 4 : Math.max(cards.length, 1);
       const gap = 0.3;
@@ -377,160 +399,184 @@ async function renderSlide(pptx: PptxGenJS, content: PresentationContent["slides
       const y = 1.5 + tagH;
       cards.forEach((card, i) => {
         const x = 0.7 + i * (cardW + gap);
-        slide.addShape("roundRect", { x, y, w: cardW, h: cardH, rectRadius: 0.1, fill: { color: "FFFFFF", transparency: 92 }, line: { color: theme.accent, width: 1 } });
+        slide.addShape("roundRect", { x, y, w: cardW, h: cardH, rectRadius: 0.1, fill: { color: P.panel }, line: { color: theme.accent, width: 1 } });
         addIconBadge(slide, pickIconForText(card.title), x + cardW / 2 - 0.4, y + 0.35, 0.8, theme.accent);
-        slide.addText(card.title, { x: x + 0.15, y: y + 1.35, w: cardW - 0.3, h: 0.7, fontSize: 14, bold: true, color: "FFFFFF", align: "center", fontFace: BODY_FONT });
+        slide.addText(card.title, { x: x + 0.15, y: y + 1.35, w: cardW - 0.3, h: 0.7, fontSize: 14, bold: true, color: P.text, align: "center", fontFace: BODY_FONT });
         if (card.description) {
-          slide.addText(card.description, { x: x + 0.15, y: y + 2.1, w: cardW - 0.3, h: cardH - 2.3, fontSize: 11, color: "D8D8E8", align: "center", fontFace: BODY_FONT, valign: "top" });
+          slide.addText(card.description, { x: x + 0.15, y: y + 2.1, w: cardW - 0.3, h: cardH - 2.3, fontSize: 11, color: P.muted, align: "center", fontFace: BODY_FONT, valign: "top" });
         }
       });
       addChrome(slide, theme);
       break;
     }
     case "big_statement": {
-      // Same centered-hero shape as "stat"/"quote" above, for the "hook"/"aim"
-      // roles - a question or one-sentence framing rather than a number/quote.
-      const fontSize = scaledFontSize(title, 40, 20, 100, 22);
-      slide.addText(title, { x: 1, y: 1.6, w: SLIDE_W - 2, h: 2.4, fontSize, bold: true, color: "FFFFFF", align: "center", valign: "middle", fontFace: HEADLINE_FONT, fit: "shrink" });
+      // The "hook"/"aim" roles - one question or framing sentence, given the
+      // whole slide, with a large accent quote mark for weight.
+      slide.addText("“", { x: MARGIN_X, y: 0.7, w: 2, h: 1.8, fontSize: 130, bold: true, color: P.accent, fontFace: HEADLINE_FONT });
+      const fontSize = scaledFontSize(title, TYPE.display - 6, 24, 110, 28);
+      slide.addText(title, { x: MARGIN_X + 0.4, y: 1.9, w: CONTENT_W - 0.8, h: 3.0, fontSize, bold: true, color: P.text, valign: "middle", fontFace: HEADLINE_FONT });
       if (bullets[0]) {
-        slide.addText(bullets[0], { x: 1.5, y: 4.3, w: SLIDE_W - 3, h: 1, fontSize: 16, color: "E3E3F0", align: "center", fontFace: BODY_FONT });
+        slide.addShape("rect", { x: MARGIN_X + 0.4, y: 5.15, w: 1.0, h: 0.06, fill: { color: P.accent } });
+        slide.addText(bullets[0], { x: MARGIN_X + 0.4, y: 5.35, w: CONTENT_W - 0.8, h: 1.0, fontSize: TYPE.bodySmall, color: P.muted, valign: "top", fontFace: BODY_FONT });
       }
       addChrome(slide, theme);
       break;
     }
     case "definition": {
-      // The "define" role - the term as a large headline, its meaning as the
-      // body text under it (not bulleted - it reads as one definition).
-      const tagH = addBloomTag(slide, titleTag, 0.7, 0.6, theme.accent);
-      slide.addText(title, { x: 0.7, y: 0.6 + tagH, w: SLIDE_W - 1.4, h: 1.1, fontSize: 34, bold: true, color: "FFFFFF", fontFace: HEADLINE_FONT });
-      slide.addText(bullets.join(" "), { x: 0.9, y: 1.9 + tagH, w: SLIDE_W - 1.8, h: SLIDE_H - 2.5 - tagH, fontSize: 18, color: "E3E3F0", fontFace: BODY_FONT, valign: "top" });
+      const top = addTitleBlock(slide, title, titleTag, theme);
+      const text = bullets.join(" ");
+      slide.addShape("roundRect", { x: MARGIN_X, y: top, w: CONTENT_W, h: CONTENT_BOTTOM - top, rectRadius: 0.15, fill: { color: P.panel } });
+      slide.addShape("rect", { x: MARGIN_X, y: top + 0.35, w: 0.12, h: CONTENT_BOTTOM - top - 0.7, fill: { color: P.accent } });
+      slide.addText(text, { x: MARGIN_X + 0.6, y: top + 0.3, w: CONTENT_W - 1.2, h: CONTENT_BOTTOM - top - 0.6, fontSize: bodySizeFor([text], 380) + 2, color: P.text, valign: "middle", fontFace: BODY_FONT, lineSpacingMultiple: 1.15 });
       addChrome(slide, theme);
       break;
     }
     case "compare_2col": {
-      const tagH = addBloomTag(slide, titleTag, 0.7, 0.35, theme.accent);
-      slide.addText(title, { x: 0.7, y: 0.35 + tagH, w: SLIDE_W - 1.4, h: 0.7, fontSize: 26, bold: true, color: "FFFFFF", fontFace: HEADLINE_FONT });
+      const top = addTitleBlock(slide, title, titleTag, theme);
       const cols = columns.slice(0, 2);
       const gap = 0.4;
-      const colW = (SLIDE_W - 1.4 - gap * (cols.length - 1)) / Math.max(cols.length, 1);
-      const colY = 1.5 + tagH;
+      const colW = (CONTENT_W - gap * (cols.length - 1)) / Math.max(cols.length, 1);
+      const h = CONTENT_BOTTOM - top;
+      const size = bodySizeFor(cols.flatMap((c) => c.rows), 520) - 4;
       cols.forEach((col, i) => {
-        const x = 0.7 + i * (colW + gap);
-        slide.addText(col.heading, { x, y: colY, w: colW, h: 0.4, fontSize: 15, bold: true, color: theme.accent, fontFace: BODY_FONT });
+        const x = MARGIN_X + i * (colW + gap);
+        slide.addShape("roundRect", { x, y: top, w: colW, h, rectRadius: 0.15, fill: { color: P.panel } });
+        slide.addShape("roundRect", { x, y: top, w: colW, h: 0.75, rectRadius: 0.15, fill: { color: P.accent } });
+        slide.addText(col.heading, { x: x + 0.3, y: top, w: colW - 0.6, h: 0.75, fontSize: TYPE.bodySmall, bold: true, color: P.onAccent, valign: "middle", fontFace: BODY_FONT });
         slide.addText(
-          col.rows.map((r) => ({ text: r, options: { bullet: true, breakLine: true } })),
-          { x, y: colY + 0.5, w: colW, h: SLIDE_H - (colY + 0.5) - 0.5, fontSize: 14, color: "E3E3F0", fontFace: BODY_FONT }
+          col.rows.map((r) => ({ text: r, options: { bullet: { indent: 22 }, breakLine: true, paraSpaceAfter: 12 } })),
+          { x: x + 0.3, y: top + 0.95, w: colW - 0.6, h: h - 1.15, fontSize: Math.max(size, 18), color: P.text, valign: "top", fontFace: BODY_FONT }
         );
       });
       addChrome(slide, theme);
       break;
     }
     case "process_flow": {
-      const tagH = addBloomTag(slide, titleTag, 0.7, 0.3, theme.accent);
-      slide.addText(title, { x: 0.7, y: 0.3 + tagH, w: SLIDE_W - 1.4, h: 0.6, fontSize: 24, bold: true, color: "FFFFFF", fontFace: HEADLINE_FONT });
+      const top = addTitleBlock(slide, title, titleTag, theme);
       const steps = items.slice(0, 6);
-      const arrowW = 0.4;
-      const gap = 0.2;
-      const boxW = (SLIDE_W - 1.4 - gap * (steps.length - 1) - arrowW * Math.max(steps.length - 1, 0)) / Math.max(steps.length, 1);
-      const boxY = 2.5 + tagH;
-      const boxH = 1.6;
+      const arrowW = 0.5;
+      const boxW = (CONTENT_W - arrowW * Math.max(steps.length - 1, 0)) / Math.max(steps.length, 1);
+      const boxH = Math.min(2.4, CONTENT_BOTTOM - top);
+      const boxY = top + (CONTENT_BOTTOM - top - boxH) / 2;
       steps.forEach((step, i) => {
-        const x = 0.7 + i * (boxW + arrowW + gap);
-        slide.addShape("roundRect", { x, y: boxY, w: boxW, h: boxH, rectRadius: 0.08, fill: { color: theme.accent } });
-        slide.addText(step.title, { x: x + 0.1, y: boxY, w: boxW - 0.2, h: boxH, fontSize: 12, bold: true, color: "111111", align: "center", valign: "middle", fontFace: BODY_FONT });
+        const x = MARGIN_X + i * (boxW + arrowW);
+        slide.addShape("roundRect", { x, y: boxY, w: boxW, h: boxH, rectRadius: 0.15, fill: { color: P.panel }, line: { color: P.accent, width: 1.5 } });
+        slide.addShape("ellipse", { x: x + boxW / 2 - 0.3, y: boxY + 0.25, w: 0.6, h: 0.6, fill: { color: P.accent } });
+        slide.addText(String(i + 1), { x: x + boxW / 2 - 0.3, y: boxY + 0.25, w: 0.6, h: 0.6, fontSize: 18, bold: true, color: P.onAccent, align: "center", valign: "middle", fontFace: BODY_FONT });
+        slide.addText(step.title, { x: x + 0.15, y: boxY + 1.0, w: boxW - 0.3, h: boxH - 1.2, fontSize: steps.length > 4 ? 15 : 19, bold: true, color: P.text, align: "center", valign: "top", fontFace: BODY_FONT });
         if (i < steps.length - 1) {
-          slide.addText("→", { x: x + boxW, y: boxY, w: arrowW, h: boxH, fontSize: 20, bold: true, color: theme.accent, align: "center", valign: "middle", fontFace: BODY_FONT });
+          slide.addText("→", { x: x + boxW, y: boxY, w: arrowW, h: boxH, fontSize: 26, bold: true, color: P.accent, align: "center", valign: "middle", fontFace: BODY_FONT });
         }
       });
       addChrome(slide, theme);
       break;
     }
     case "step": {
-      if (stepIndex && stepTotal) {
-        slide.addText(`STEP ${stepIndex} OF ${stepTotal}`, { x: 0.7, y: 0.35, w: 4, h: 0.35, fontSize: 12, bold: true, color: theme.accent, fontFace: BODY_FONT });
-      }
-      slide.addText(String(stepIndex ?? ""), { x: 0.7, y: 0.85, w: 1.4, h: 1.4, fontSize: 60, bold: true, color: theme.accent, fontFace: HEADLINE_FONT });
-      slide.addText(title, { x: 2.3, y: 0.85, w: SLIDE_W - 3, h: 0.9, fontSize: 26, bold: true, color: "FFFFFF", fontFace: HEADLINE_FONT });
+      // One action per slide, with a large step number and a progress bar.
+      const total = stepTotal ?? 1;
+      const idx = stepIndex ?? 1;
+      slide.addShape("roundRect", { x: MARGIN_X, y: 0.6, w: 1.9, h: 0.5, rectRadius: 0.25, fill: { color: P.accent } });
+      slide.addText(`STEP ${idx} OF ${total}`, { x: MARGIN_X, y: 0.6, w: 1.9, h: 0.5, fontSize: 13, bold: true, color: P.onAccent, align: "center", valign: "middle", fontFace: BODY_FONT });
+      slide.addShape("roundRect", { x: MARGIN_X + 2.2, y: 0.8, w: CONTENT_W - 2.2, h: 0.1, rectRadius: 0.05, fill: { color: P.panelAlt } });
+      slide.addShape("roundRect", { x: MARGIN_X + 2.2, y: 0.8, w: Math.max(0.2, ((CONTENT_W - 2.2) * idx) / total), h: 0.1, rectRadius: 0.05, fill: { color: P.accent } });
+      slide.addText(String(idx), { x: MARGIN_X, y: 1.5, w: 2.2, h: 2.4, fontSize: 130, bold: true, color: P.accent, valign: "middle", fontFace: HEADLINE_FONT });
+      slide.addText(title, { x: MARGIN_X + 2.5, y: 1.6, w: CONTENT_W - 2.5, h: 1.2, fontSize: scaledFontSize(title, TYPE.title, 30, 80, 24), bold: true, color: P.text, valign: "middle", fontFace: HEADLINE_FONT });
+      slide.addShape("roundRect", { x: MARGIN_X, y: 4.1, w: CONTENT_W, h: CONTENT_BOTTOM - 4.1, rectRadius: 0.15, fill: { color: P.panel } });
       slide.addText(
-        bullets.map((b) => ({ text: b, options: { bullet: true, breakLine: true } })),
-        { x: 2.3, y: 1.85, w: SLIDE_W - 3, h: SLIDE_H - 2.4, fontSize: 16, color: "E3E3F0", fontFace: BODY_FONT }
+        bullets.map((b) => ({ text: b, options: { bullet: { indent: 22 }, breakLine: true, paraSpaceAfter: 10 } })),
+        { x: MARGIN_X + 0.4, y: 4.25, w: CONTENT_W - 0.8, h: CONTENT_BOTTOM - 4.4, fontSize: bodySizeFor(bullets, 300) - 4, color: P.text, valign: "middle", fontFace: BODY_FONT }
       );
       addChrome(slide, theme);
       break;
     }
     case "card_grid": {
-      // Same card-grid box style as "icon-grid" above, without the icon badge
-      // (used for "materials"/"check"/"must_know"/"answer_key" - plain term
-      // cards, not concept icons).
-      const tagH = addBloomTag(slide, titleTag, 0.7, 0.35, theme.accent);
-      slide.addText(title, { x: 0.7, y: 0.35 + tagH, w: SLIDE_W - 1.4, h: 0.6, fontSize: 24, bold: true, color: "FFFFFF", fontFace: HEADLINE_FONT });
+      const top = addTitleBlock(slide, title, titleTag, theme);
       const cards = items.slice(0, 6);
-      const cols = Math.min(cards.length, 4) || 1;
+      const cols = cards.length <= 2 ? cards.length || 1 : cards.length === 4 ? 2 : 3;
       const rows = Math.ceil(cards.length / cols);
       const gap = 0.3;
-      const cardW = (SLIDE_W - 1.4 - gap * (cols - 1)) / cols;
-      const cardH = Math.min(2.1, (SLIDE_H - (1.5 + tagH) - 0.5 - gap * (rows - 1)) / rows);
-      const startY = 1.5 + tagH;
+      const cardW = (CONTENT_W - gap * (cols - 1)) / cols;
+      const cardH = Math.min(3.4, (CONTENT_BOTTOM - top - gap * (rows - 1)) / rows);
+      const startY = top + (CONTENT_BOTTOM - top - (cardH * rows + gap * (rows - 1))) / 2;
       cards.forEach((card, i) => {
-        const col = i % cols;
-        const row = Math.floor(i / cols);
-        const x = 0.7 + col * (cardW + gap);
-        const y = startY + row * (cardH + gap);
-        slide.addShape("roundRect", { x, y, w: cardW, h: cardH, rectRadius: 0.1, fill: { color: "FFFFFF", transparency: 92 }, line: { color: theme.accent, width: 1 } });
-        slide.addText(card.title, { x: x + 0.15, y: y + 0.15, w: cardW - 0.3, h: 0.5, fontSize: 13, bold: true, color: theme.accent, fontFace: BODY_FONT });
+        const x = MARGIN_X + (i % cols) * (cardW + gap);
+        const y = startY + Math.floor(i / cols) * (cardH + gap);
+        slide.addShape("roundRect", { x, y, w: cardW, h: cardH, rectRadius: 0.15, fill: { color: P.panel } });
+        slide.addShape("rect", { x: x + 0.3, y: y + 0.3, w: 0.7, h: 0.07, fill: { color: P.accent } });
+        slide.addText(card.title, { x: x + 0.3, y: y + 0.45, w: cardW - 0.6, h: 0.8, fontSize: rows > 1 ? 20 : 24, bold: true, color: P.text, valign: "middle", fontFace: HEADLINE_FONT });
         if (card.description) {
-          slide.addText(card.description, { x: x + 0.15, y: y + 0.65, w: cardW - 0.3, h: cardH - 0.8, fontSize: 10, color: "E3E3F0", fontFace: BODY_FONT, valign: "top" });
+          slide.addText(card.description, { x: x + 0.3, y: y + 1.25, w: cardW - 0.6, h: cardH - 1.45, fontSize: rows > 1 ? 15 : 18, color: P.muted, valign: "top", fontFace: BODY_FONT });
         }
       });
       addChrome(slide, theme);
       break;
     }
     case "table": {
-      const tagH = addBloomTag(slide, titleTag, 0.7, 0.35, theme.accent);
-      slide.addText(title, { x: 0.7, y: 0.35 + tagH, w: SLIDE_W - 1.4, h: 0.6, fontSize: 24, bold: true, color: "FFFFFF", fontFace: HEADLINE_FONT });
+      const top = addTitleBlock(slide, title, titleTag, theme);
       if (table) {
+        const rowsN = table.rows.length + 1;
+        const rowH = Math.min(rowsN <= 5 ? 1.0 : 0.85, (CONTENT_BOTTOM - top) / rowsN);
+        const fontSize = rowsN > 7 ? 15 : rowsN > 5 ? 18 : 22;
+        const cell = (text: string, header: boolean, zebra: boolean): PptxGenJS.TableCell => ({
+          text,
+          options: {
+            bold: header,
+            fontSize,
+            fontFace: BODY_FONT,
+            color: header ? P.onAccent : P.text,
+            fill: { color: header ? P.accent : zebra ? P.panelAlt : P.panel },
+            valign: "middle",
+            margin: [0.05, 0.15, 0.05, 0.15],
+          },
+        });
         const rows: PptxGenJS.TableRow[] = [
-          table.headers.map((h) => ({ text: h, options: { bold: true, color: "111111", fill: { color: theme.accent }, fontFace: BODY_FONT } })),
-          ...table.rows.map((r) => r.map((c) => ({ text: c, options: { color: "111111", fontFace: BODY_FONT } }))),
+          table.headers.map((h) => cell(h, true, false)),
+          ...table.rows.map((r, ri) => r.map((c) => cell(c, false, ri % 2 === 1))),
         ];
-        slide.addTable(rows, { x: 0.7, y: 1.5 + tagH, w: SLIDE_W - 1.4, h: SLIDE_H - (1.5 + tagH) - 0.5, fontSize: 12, border: { type: "solid", color: theme.accent, pt: 0.5 }, fill: { color: "FFFFFF" } });
+        slide.addTable(rows, { x: MARGIN_X, y: top, w: CONTENT_W, rowH, border: { type: "solid", color: P.background, pt: 1.5 } });
       }
       addChrome(slide, theme);
       break;
     }
     case "callout": {
-      // The "safety" role's slide - a flagged warning, never removed by
-      // density (see fillPresentationContent's safetyNote instruction).
-      const badgeSize = 0.9;
-      slide.addShape("roundRect", { x: 0.7, y: 1.4, w: badgeSize, h: badgeSize, rectRadius: 0.15, fill: { color: theme.accent } });
-      slide.addText(calloutIcon, { x: 0.7, y: 1.4, w: badgeSize, h: badgeSize, fontSize: 34, bold: true, color: "111111", align: "center", valign: "middle", fontFace: BODY_FONT });
-      slide.addText(title, { x: 0.7 + badgeSize + 0.3, y: 1.3, w: SLIDE_W - 1.4 - badgeSize - 0.3, h: 0.6, fontSize: 24, bold: true, color: "FFFFFF", fontFace: HEADLINE_FONT });
-      slide.addText(calloutBody, { x: 0.7 + badgeSize + 0.3, y: 2.0, w: SLIDE_W - 1.4 - badgeSize - 0.3, h: SLIDE_H - 2.5, fontSize: 16, color: "E3E3F0", fontFace: BODY_FONT, valign: "top" });
+      // The "safety" role's slide - a flagged warning, never removed by density.
+      const cy = 1.5;
+      const ch = 4.3;
+      slide.addShape("roundRect", { x: MARGIN_X, y: cy, w: CONTENT_W, h: ch, rectRadius: 0.2, fill: { color: P.panel }, line: { color: P.accent, width: 3 } });
+      slide.addShape("ellipse", { x: MARGIN_X + 0.6, y: cy + 0.6, w: 1.5, h: 1.5, fill: { color: P.accent } });
+      slide.addText(calloutIcon, { x: MARGIN_X + 0.6, y: cy + 0.6, w: 1.5, h: 1.5, fontSize: 60, bold: true, color: P.onAccent, align: "center", valign: "middle", fontFace: BODY_FONT });
+      slide.addText(title.toUpperCase(), { x: MARGIN_X + 2.5, y: cy + 0.5, w: CONTENT_W - 3.1, h: 0.9, fontSize: TYPE.title, bold: true, color: P.accent, valign: "middle", fontFace: HEADLINE_FONT });
+      slide.addText(calloutBody, { x: MARGIN_X + 2.5, y: cy + 1.5, w: CONTENT_W - 3.1, h: ch - 1.9, fontSize: bodySizeFor([calloutBody], 300), color: P.text, valign: "top", fontFace: BODY_FONT, lineSpacingMultiple: 1.15 });
       addChrome(slide, theme);
       break;
     }
     case "recap_bridge":
     case "closing_recap": {
-      // Auto-inserted multi-class bridge, and the end-of-deck recap - both
-      // are a title + short bullet list, same visual weight as "bullets" but
-      // framed distinctly enough (via the title's own copy) not to need a
-      // different shape.
-      const tagH = addBloomTag(slide, titleTag, 0.7, 0.5, theme.accent);
-      slide.addText(title, { x: 0.7, y: 0.5 + tagH, w: SLIDE_W - 1.4, h: 1, fontSize: 30, bold: true, color: "FFFFFF", fontFace: HEADLINE_FONT });
-      slide.addText(
-        bullets.map((b) => ({ text: b, options: { bullet: true, breakLine: true } })),
-        { x: 0.9, y: 1.7 + tagH, w: SLIDE_W - 1.8, h: SLIDE_H - 2.3 - tagH, fontSize: 18, color: "E3E3F0", fontFace: BODY_FONT }
-      );
+      // The end-of-deck recap and the multi-class bridge - numbered takeaways
+      // on their own cards rather than a bare list.
+      const top = addTitleBlock(slide, title, titleTag, theme);
+      const points = bullets.slice(0, 5);
+      const gap = 0.25;
+      const rowH = Math.min(1.35, (CONTENT_BOTTOM - top - gap * (points.length - 1)) / Math.max(points.length, 1));
+      const size = bodySizeFor(points, 500) - 2;
+      points.forEach((b, i) => {
+        const y = top + i * (rowH + gap);
+        slide.addShape("roundRect", { x: MARGIN_X, y, w: CONTENT_W, h: rowH, rectRadius: 0.15, fill: { color: P.panel } });
+        slide.addShape("ellipse", { x: MARGIN_X + 0.3, y: y + rowH / 2 - 0.35, w: 0.7, h: 0.7, fill: { color: P.accent } });
+        slide.addText(String(i + 1), { x: MARGIN_X + 0.3, y: y + rowH / 2 - 0.35, w: 0.7, h: 0.7, fontSize: 22, bold: true, color: P.onAccent, align: "center", valign: "middle", fontFace: HEADLINE_FONT });
+        slide.addText(b, { x: MARGIN_X + 1.3, y, w: CONTENT_W - 1.6, h: rowH, fontSize: Math.max(size, 18), color: P.text, valign: "middle", fontFace: BODY_FONT });
+      });
       addChrome(slide, theme);
       break;
     }
     case "bullets":
     default: {
-      const tagH = addBloomTag(slide, titleTag, 0.7, 0.5, theme.accent);
-      slide.addText(title, { x: 0.7, y: 0.5 + tagH, w: SLIDE_W - 1.4, h: 1, fontSize: 30, bold: true, color: "FFFFFF", fontFace: HEADLINE_FONT });
+      const top = addTitleBlock(slide, title, titleTag, theme);
+      const size = bodySizeFor(bullets);
+      slide.addShape("roundRect", { x: MARGIN_X, y: top, w: CONTENT_W, h: CONTENT_BOTTOM - top, rectRadius: 0.15, fill: { color: P.panel } });
       slide.addText(
-        bullets.map((b) => ({ text: b, options: { bullet: true, breakLine: true } })),
-        { x: 0.9, y: 1.7 + tagH, w: SLIDE_W - 1.8, h: SLIDE_H - 2.3 - tagH, fontSize: 18, color: "E3E3F0", fontFace: BODY_FONT }
+        bullets.map((b) => ({ text: b, options: { bullet: { indent: 26 }, breakLine: true, paraSpaceAfter: 14 } })),
+        { x: MARGIN_X + 0.5, y: top + 0.2, w: CONTENT_W - 1.0, h: CONTENT_BOTTOM - top - 0.4, fontSize: size, color: P.text, valign: "middle", fontFace: BODY_FONT, lineSpacingMultiple: 1.1 }
       );
       addChrome(slide, theme);
       break;
@@ -552,9 +598,12 @@ export async function buildPresentationPptx(
   pptx.author = "EduWand";
 
   const preset = COLOR_SCHEME_PRESETS[content.colorScheme ?? "indigo"];
+  const bg = hexOf(content.primaryColor, preset.background);
+  const ac = hexOf(content.secondaryColor, preset.accent);
   const theme: DeckTheme = {
-    background: hexOf(content.primaryColor, preset.background),
-    accent: hexOf(content.secondaryColor, preset.accent),
+    background: bg,
+    accent: ac,
+    palette: buildPalette(bg, ac),
     logo: await fetchLogoAsset(content.logoUrl),
     footerLabel: content.footerLabel ?? null,
     mediaAssets,
