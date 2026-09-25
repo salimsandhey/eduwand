@@ -1,4 +1,6 @@
 import { Prisma, PrismaClient } from "@prisma/client";
+import { sendEmailInBackground } from "./email/sender";
+import { creditsLowEmail } from "./email/templates";
 import { prisma } from "./prisma";
 
 // Credits are billed per teacher seat regardless of account type (individual
@@ -79,13 +81,16 @@ export async function deductCredits(
   cost: number,
   info: { feature: string; aiUsageLogId?: string }
 ): Promise<void> {
+  let balanceBefore = 0;
+  let balanceAfter = 0;
   await prisma.$transaction(async (tx) => {
     const account = await tx.teacherCreditAccount.upsert({
       where: { teacherUserId },
       update: {},
       create: { teacherUserId, balance: 0 },
     });
-    const balanceAfter = account.balance - cost;
+    balanceBefore = account.balance;
+    balanceAfter = account.balance - cost;
 
     await tx.teacherCreditAccount.update({ where: { teacherUserId }, data: { balance: balanceAfter } });
     await tx.creditLedgerEntry.create({
@@ -99,4 +104,19 @@ export async function deductCredits(
       },
     });
   });
+
+  await notifyIfCreditsLow(teacherUserId, balanceBefore, balanceAfter);
+}
+
+// One email when the balance first drops to the low mark, and one when it
+// hits zero - only on the crossing, so it never repeats on every AI call.
+export const LOW_CREDITS_THRESHOLD = 300;
+
+async function notifyIfCreditsLow(teacherUserId: string, before: number, after: number): Promise<void> {
+  const exhausted = before > 0 && after <= 0;
+  const low = before > LOW_CREDITS_THRESHOLD && after <= LOW_CREDITS_THRESHOLD && after > 0;
+  if (!exhausted && !low) return;
+
+  const teacher = await prisma.appUser.findUnique({ where: { id: teacherUserId }, select: { fullName: true, email: true } });
+  if (teacher) sendEmailInBackground(teacher.email, creditsLowEmail({ name: teacher.fullName, balance: after, exhausted }));
 }

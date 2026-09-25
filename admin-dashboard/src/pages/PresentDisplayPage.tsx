@@ -1,4 +1,4 @@
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { usePresentSession } from "../hooks/usePresentSession";
 import type { PresentDisplayState } from "../api/client";
 import "./present.css";
@@ -44,13 +44,6 @@ export function PresentDisplayPage() {
         )}
       </main>
 
-      {code && !error && !ended ? (
-        <div style={{ textAlign: "center", padding: "0 20px 14px" }}>
-          <Link to={`/present/${code}/control`} style={{ fontSize: 11, color: "var(--text-muted)", textDecoration: "underline" }}>
-            Are you the teacher? Open the control page instead
-          </Link>
-        </div>
-      ) : null}
     </div>
   );
 }

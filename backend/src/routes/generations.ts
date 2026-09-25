@@ -1,4 +1,7 @@
 import { FastifyInstance } from "fastify";
+import { sendEmailsInBackground } from "../lib/email/sender";
+import { materialSharedEmail, classLabel } from "../lib/email/templates";
+import { studentRecipientsForClass } from "../lib/email/recipients";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import {
@@ -696,7 +699,9 @@ export async function generationRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const generation = await prisma.generation.findFirst({
         where: { id: request.params.id, topic: { schoolId: request.schoolId } },
-        include: { topic: { select: { classSectionId: true } } },
+        include: {
+          topic: { select: { classSectionId: true, name: true, subject: true, classSection: { select: { className: true, sectionName: true } } } },
+        },
       });
       if (!generation) {
         return reply.code(404).send({ data: null, error: { code: "not_found", message: "Generation not found" } });
@@ -721,6 +726,31 @@ export async function generationRoutes(app: FastifyInstance) {
         data: { shareStatus: "published", publishedAt: new Date(), sharedWithAll, sharedStudentStubIds: sharedWithAll ? [] : studentStubIds },
         include: { contextSources: true },
       });
+
+      // Tell the students it went to - but not on a re-share of something
+      // already published, so editing and re-sharing doesn't spam them.
+      if (generation.shareStatus !== "published") {
+        const [recipients, teacher, school] = await Promise.all([
+          studentRecipientsForClass(generation.topic.classSectionId, sharedWithAll ? undefined : studentStubIds),
+          prisma.appUser.findUnique({ where: { id: request.user.sub }, select: { fullName: true } }),
+          prisma.school.findUnique({ where: { id: request.schoolId! }, select: { name: true } }),
+        ]);
+        sendEmailsInBackground(
+          recipients.map((r) => ({
+            to: r.email,
+            email: materialSharedEmail({
+              studentName: r.fullName,
+              teacherName: teacher?.fullName,
+              topicName: generation.topic.name,
+              subject: generation.topic.subject,
+              outputType: generation.outputType,
+              className: classLabel(generation.topic.classSection.className, generation.topic.classSection.sectionName),
+              schoolName: school?.name,
+            }),
+          }))
+        );
+      }
+
       return { data: updated, meta: {} };
     }
   );

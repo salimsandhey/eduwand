@@ -10,8 +10,9 @@ const ADMIN_URL = process.env.EXPO_PUBLIC_ADMIN_URL ?? "http://localhost:5173";
 export function getPresentDisplayLink(code: string): string {
   return `${ADMIN_URL}/present/${code}`;
 }
-export function getPresentControlLink(code: string): string {
-  return `${ADMIN_URL}/present/${code}/control`;
+// The control key rides in the URL fragment so it is never sent to a server or logged.
+export function getPresentControlLink(code: string, controlKey: string): string {
+  return `${ADMIN_URL}/present/${code}/control#k=${encodeURIComponent(controlKey)}`;
 }
 export function getPresentSocketUrl(code: string): string {
   return `${API_URL.replace(/^http/, "ws")}/realtime?presentCode=${encodeURIComponent(code)}`;
@@ -1406,7 +1407,7 @@ export const api = {
   updateProfile: (token: string, input: UpdateProfileInput) =>
     request<CurrentUser>("/auth/me", { method: "PATCH", body: JSON.stringify(input) }, token),
   changeMyPassword: (token: string, input: { currentPassword: string; newPassword: string }) =>
-    request<{ message: string }>("/auth/me/change-password", { method: "POST", body: JSON.stringify(input) }, token),
+    request<{ message: string; accessToken?: string; refreshToken?: string }>("/auth/me/change-password", { method: "POST", body: JSON.stringify(input) }, token),
   markOnboardingTourSeen: (token: string) =>
     request<{ hasSeenOnboardingTour: boolean }>("/auth/me/onboarding-tour-seen", { method: "POST" }, token),
   dismissProfilePrompt: (token: string) =>
@@ -1869,7 +1870,7 @@ export const api = {
   saveAssessmentResponses: (token: string, id: string, questionId: string, responses: { studentStubId: string; selectedOptionIndex?: number; isDoubt?: boolean }[]) =>
     request<Assessment>(`/assessments/${id}/responses`, { method: "POST", body: JSON.stringify({ questionId, responses }) }, token),
   completeAssessment: (token: string, id: string) => request<Assessment>(`/assessments/${id}/complete`, { method: "POST" }, token),
-  startPresentSession: (token: string, id: string) => request<{ code: string; expiresAt: string }>(`/assessments/${id}/present-session`, { method: "POST" }, token),
+  startPresentSession: (token: string, id: string) => request<{ code: string; controlKey: string; expiresAt: string }>(`/assessments/${id}/present-session`, { method: "POST" }, token),
   getAssessmentInsight: (token: string, id: string) => request<AssessmentInsight>(`/assessments/${id}/insight`, {}, token),
   releaseAssessmentResults: (token: string, id: string) => request<Assessment>(`/assessments/${id}/release-results`, { method: "POST" }, token),
   listStudentAssessments: (token: string) => request<StudentAssessmentRecord[]>("/student/assessments", {}, token),

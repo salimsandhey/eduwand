@@ -228,7 +228,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function changePassword(currentPassword: string, newPassword: string) {
     if (!accessToken) throw new Error("Not signed in");
-    await api.changeMyPassword(accessToken, { currentPassword, newPassword });
+    const result = await api.changeMyPassword(accessToken, { currentPassword, newPassword });
+    // Other sessions were just ended server-side; keep this device signed in on the new tokens.
+    if (result.accessToken && result.refreshToken) {
+      const tokens = { accessToken: result.accessToken, refreshToken: result.refreshToken };
+      setAccessToken(tokens.accessToken);
+      setRefreshToken(tokens.refreshToken);
+      await persistTokens(tokens);
+    }
   }
 
   async function uploadProfilePhoto(file: { uri: string; name: string; mimeType: string }) {

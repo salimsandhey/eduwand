@@ -1,4 +1,5 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { detectImageMime, imageKey, IMAGE_ONLY_ERROR } from "../lib/upload";
 import { prisma } from "../lib/prisma";
 import { storage } from "../lib/storage";
 
@@ -36,12 +37,10 @@ export async function enquiryPhotoRoutes(app: FastifyInstance) {
       if (!file) {
         return reply.code(400).send({ data: null, error: { code: "validation_error", message: "A file is required" } });
       }
-      if (!file.mimetype.startsWith("image/")) {
-        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "Photo must be an image file" } });
-      }
-
       const buffer = await file.toBuffer();
-      const key = `${request.schoolId}/photos/${enquiry.id}/${Date.now()}-${file.filename}`;
+      const imageMime = detectImageMime(buffer);
+      if (!imageMime) return reply.code(400).send(IMAGE_ONLY_ERROR);
+      const key = imageKey(`${request.schoolId}/photos/${enquiry.id}`, imageMime);
       const { location } = await storage.save(key, buffer);
 
       if (enquiry.photoLocation) {
@@ -50,7 +49,7 @@ export async function enquiryPhotoRoutes(app: FastifyInstance) {
 
       const updated = await prisma.enquiry.update({
         where: { id: enquiry.id },
-        data: { photoLocation: location, photoMimeType: file.mimetype, avatarKey: null },
+        data: { photoLocation: location, photoMimeType: imageMime, avatarKey: null },
         select: { id: true, photoLocation: true, photoMimeType: true, avatarKey: true },
       });
 

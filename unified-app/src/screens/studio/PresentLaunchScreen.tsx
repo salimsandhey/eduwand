@@ -23,6 +23,7 @@ export function PresentLaunchScreen({ route, navigation }: Props) {
   const { colors, cardShadow, pressedOpacity } = useTheme();
 
   const [code, setCode] = useState<string | null>(null);
+  const [controlKey, setControlKey] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { state, ended } = usePresentSession(code);
@@ -34,6 +35,7 @@ export function PresentLaunchScreen({ route, navigation }: Props) {
     try {
       const session = await api.startPresentSession(accessToken, assessmentId);
       setCode(session.code);
+      setControlKey(session.controlKey);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't start the session");
     } finally {
@@ -107,7 +109,7 @@ export function PresentLaunchScreen({ route, navigation }: Props) {
             icon="phone-portrait-outline"
             title="Control"
             caption="Open this on your own laptop or phone browser - it's what you tap answers on."
-            onShare={() => Share.share({ message: `Tap answers here: ${getPresentControlLink(code)}` })}
+            onShare={() => Share.share({ message: `Tap answers here: ${getPresentControlLink(code, controlKey ?? "")}` })}
           />
 
           <Text style={[styles.note, { color: colors.textMuted }]}>

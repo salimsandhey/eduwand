@@ -1,9 +1,12 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { detectImageMime, imageKey, IMAGE_ONLY_ERROR } from "../lib/upload";
 import bcrypt from "bcryptjs";
 import { prisma } from "../lib/prisma";
 import { storage } from "../lib/storage";
 import { recordAuditEvent } from "../lib/audit";
 import { loadStudentMe } from "../lib/student-me";
+import { sendEmailInBackground } from "../lib/email/sender";
+import { securityAlertEmail } from "../lib/email/templates";
 
 // Self-service profile editing for staff (AppUser). Students (StudentStub)
 // have no AppUser row and sign in with phone + OTP, so most handlers here
@@ -207,7 +210,13 @@ export async function authMeRoutes(app: FastifyInstance) {
       }
 
       const passwordHash = await bcrypt.hash(newPassword, 10);
-      await prisma.appUser.update({ where: { id: user.id }, data: { passwordHash } });
+      // Ends every existing session (other devices, a stolen refresh token); the
+      // app signs the user back in with the new password.
+      const updated = await prisma.appUser.update({
+        where: { id: user.id },
+        data: { passwordHash, tokenVersion: { increment: 1 } },
+        select: { tokenVersion: true },
+      });
 
       await recordAuditEvent({
         actorUserId: user.id,
@@ -220,7 +229,19 @@ export async function authMeRoutes(app: FastifyInstance) {
         trustId: user.trustId,
       });
 
-      return { data: { message: "Password updated" }, meta: {} };
+      sendEmailInBackground(user.email, securityAlertEmail({ name: user.fullName, event: "password_changed" }));
+
+      // Fresh tokens for this device so the person who just changed their password
+      // stays signed in here while every other session is ended.
+      const claims = { sub: user.id, role: user.role, schoolId: user.schoolId, trustId: user.trustId, tv: updated.tokenVersion };
+      return {
+        data: {
+          message: "Password updated",
+          accessToken: app.jwt.sign({ ...claims, type: "access" }, { expiresIn: "15m" }),
+          refreshToken: app.jwt.sign({ ...claims, type: "refresh" }, { expiresIn: "30d" }),
+        },
+        meta: {},
+      };
     }
   );
 
@@ -270,6 +291,7 @@ export async function authMeRoutes(app: FastifyInstance) {
         where: { id: user.id },
         data: {
           status: "deleted",
+          tokenVersion: { increment: 1 },
           fullName: "Deleted user",
           email: `deleted-${user.id}@deleted.eduwand.invalid`,
           phone: null,
@@ -292,6 +314,9 @@ export async function authMeRoutes(app: FastifyInstance) {
         trustId: user.trustId,
       });
 
+      // Sent to the address the account had, which the update above just erased.
+      sendEmailInBackground(user.email, securityAlertEmail({ name: user.fullName, event: "account_deleted" }));
+
       return { data: { message: "Account deleted" }, meta: {} };
     }
   );
@@ -304,20 +329,19 @@ export async function authMeRoutes(app: FastifyInstance) {
       if (!file) {
         return reply.code(400).send({ data: null, error: { code: "validation_error", message: "A file is required" } });
       }
-      if (!file.mimetype.startsWith("image/")) {
-        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "Photo must be an image file" } });
-      }
-
       const buffer = await file.toBuffer();
+      // Identify the image by its bytes, not the client-declared type.
+      const imageMime = detectImageMime(buffer);
+      if (!imageMime) return reply.code(400).send(IMAGE_ONLY_ERROR);
 
       if (isStudent(request)) {
-        const key = `${request.user.schoolId}/student-photos/${request.user.sub}/${Date.now()}-${file.filename}`;
+        const key = imageKey(`${request.user.schoolId}/student-photos/${request.user.sub}`, imageMime);
         const { location } = await storage.save(key, buffer);
-        const me = await updateStudentPicture(request.user.sub, { photoLocation: location, photoMimeType: file.mimetype, avatarKey: null });
+        const me = await updateStudentPicture(request.user.sub, { photoLocation: location, photoMimeType: imageMime, avatarKey: null });
         return reply.code(201).send({ data: me, meta: {} });
       }
 
-      const key = `staff-photos/${request.user.sub}/${Date.now()}-${file.filename}`;
+      const key = imageKey(`staff-photos/${request.user.sub}`, imageMime);
       const { location } = await storage.save(key, buffer);
 
       const existing = await prisma.appUser.findUnique({
@@ -330,7 +354,7 @@ export async function authMeRoutes(app: FastifyInstance) {
 
       const user = await prisma.appUser.update({
         where: { id: request.user.sub },
-        data: { photoLocation: location, photoMimeType: file.mimetype, avatarKey: null },
+        data: { photoLocation: location, photoMimeType: imageMime, avatarKey: null },
         select: ME_SELECT,
       });
 

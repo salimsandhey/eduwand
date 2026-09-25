@@ -5,6 +5,8 @@ import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 import { authPlugin } from "./plugins/auth";
 import { scopePlugin } from "./plugins/scope";
+import { securityPlugin, redactUrl } from "./plugins/security";
+import { isDevOtpMode } from "./lib/otp";
 import { healthRoutes } from "./routes/health";
 import { authRoutes } from "./routes/auth";
 import { authMeRoutes } from "./routes/auth-me";
@@ -57,12 +59,62 @@ import { contentPageRoutes } from "./routes/content-pages";
 import { timetableRoutes } from "./routes/timetable";
 import { aiFeatureRoutes } from "./routes/ai-features";
 
-const app = Fastify({ logger: true });
+const isProduction = process.env.NODE_ENV === "production";
 
-app.register(cors, { origin: true, methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"] });
+// Behind a load balancer/reverse proxy request.ip is the proxy's address unless
+// told to trust X-Forwarded-For - which would make every IP-based rate limit
+// treat all users as one client. Opt in with TRUST_PROXY=true (or a hop count);
+// off by default because trusting it without a proxy lets clients spoof their IP.
+function trustProxySetting(): boolean {
+  const raw = process.env.TRUST_PROXY?.trim().toLowerCase();
+  if (!raw || raw === "false") return false;
+  if (raw === "true") return true;
+  const hops = Number(raw);
+  // Fastify accepts a hop count at runtime; its type definitions just don't list it.
+  return Number.isInteger(hops) && hops > 0 ? (hops as unknown as boolean) : false;
+}
+
+const app = Fastify({
+  trustProxy: trustProxySetting(),
+  logger: {
+    serializers: {
+      // ?token= carries a live access token for image/websocket URLs - keep it out of logs.
+      req(request) {
+        return {
+          method: request.method,
+          url: redactUrl(request.url),
+          hostname: request.hostname,
+          remoteAddress: request.ip,
+        };
+      },
+    },
+  },
+});
+
+// Browsers only: native mobile requests send no Origin header and are unaffected.
+// Production must list the admin dashboard's origin(s) in CORS_ORIGINS.
+const allowedOrigins = (process.env.CORS_ORIGINS ?? "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+if (isProduction && allowedOrigins.length === 0) {
+  console.error("CORS_ORIGINS is not set - browser clients (the admin dashboard) will be blocked. Set it to the dashboard origin(s), comma-separated.");
+}
+
+app.register(cors, {
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    // Local development convenience only.
+    if (!isProduction && allowedOrigins.length === 0) return callback(null, true);
+    return callback(null, false);
+  },
+  methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
+});
 app.register(rateLimit, { global: true, max: 1000, timeWindow: "1 minute" });
 app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024 } });
 app.register(authPlugin);
+app.register(securityPlugin);
 app.register(scopePlugin);
 app.register(healthRoutes, { prefix: "/api/v1" });
 app.register(authRoutes, { prefix: "/api/v1" });
@@ -125,6 +177,26 @@ for (const requiredEnv of ["DATABASE_URL", "JWT_SECRET", "CLOUDINARY_URL"]) {
     console.error(`Missing required environment variable: ${requiredEnv}`);
     process.exit(1);
   }
+}
+
+// A weak or placeholder signing secret lets anyone mint valid tokens.
+const jwtSecret = process.env.JWT_SECRET ?? "";
+if (jwtSecret.length < 32 || /change-me|changeme|secret$/i.test(jwtSecret)) {
+  const message = "JWT_SECRET is too weak - use a random value of at least 32 characters (e.g. `openssl rand -base64 48`).";
+  if (isProduction) {
+    console.error(message);
+    process.exit(1);
+  }
+  console.warn(`[security] ${message}`);
+}
+
+// The fixed dev sign-in code (123456) must never be reachable in production.
+if (isProduction && process.env.ALLOW_DEV_OTP === "true") {
+  console.error("ALLOW_DEV_OTP=true is not permitted when NODE_ENV=production.");
+  process.exit(1);
+}
+if (isDevOtpMode()) {
+  console.warn("[security] Dev OTP mode is ON - every login code is 123456. Never enable this outside local development.");
 }
 
 app.listen({ port, host: "0.0.0.0" }).catch((err) => {

@@ -1,4 +1,7 @@
 import { FastifyInstance } from "fastify";
+import { detectImageMime, imageKey, IMAGE_ONLY_ERROR } from "../lib/upload";
+import { sendEmailInBackground } from "../lib/email/sender";
+import { gradeReleasedEmail } from "../lib/email/templates";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
@@ -90,7 +93,9 @@ export async function submissionRoutes(app: FastifyInstance) {
       for await (const part of parts) {
         if (part.type === "file") {
           const buffer = await part.toBuffer();
-          const { location } = await storage.save(`submissions/${Date.now()}-${part.filename}`, buffer);
+          const imageMime = detectImageMime(buffer);
+          if (!imageMime) return reply.code(400).send(IMAGE_ONLY_ERROR);
+          const { location } = await storage.save(imageKey("submissions", imageMime), buffer);
           photoFileLocation = location;
           submissionType = "photo";
         } else {
@@ -357,6 +362,28 @@ export async function submissionRoutes(app: FastifyInstance) {
         finalFeedback: grade.finalFeedback ?? grade.aiFeedback,
       },
     });
+
+    const released = await prisma.submission.findUnique({
+      where: { id: grade.submissionId },
+      select: {
+        studentStub: { select: { fullName: true, email: true } },
+        assignment: { select: { title: true, teacher: { select: { fullName: true } }, school: { select: { name: true } } } },
+      },
+    });
+    if (released?.studentStub.email) {
+      sendEmailInBackground(
+        released.studentStub.email,
+        gradeReleasedEmail({
+          studentName: released.studentStub.fullName,
+          assignmentTitle: released.assignment.title,
+          score: updated.finalScore,
+          performanceBand: updated.performanceBand,
+          feedback: updated.finalFeedback,
+          teacherName: released.assignment.teacher.fullName,
+          schoolName: released.assignment.school.name,
+        })
+      );
+    }
 
     return { data: updated, meta: {} };
   });

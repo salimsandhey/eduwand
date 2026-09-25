@@ -6,6 +6,8 @@ import { requireRoles } from "../lib/rbac";
 import { PLATFORM_ADMIN_ROLE, INVITABLE_ROLES } from "../lib/roles";
 import { recordAuditEvent } from "../lib/audit";
 import { grantInitialCredits } from "../lib/credits";
+import { sendEmailInBackground } from "../lib/email/sender";
+import { staffInviteEmail, adminPasswordResetEmail } from "../lib/email/templates";
 
 interface InviteUserBody {
   fullName: string;
@@ -197,6 +199,24 @@ export async function userRoutes(app: FastifyInstance) {
       metadata: { role: user.role },
     });
 
+    // Still returned in the response for the admin, but also emailed so the
+    // new person doesn't depend on being handed it out-of-band.
+    const [inviter, school] = await Promise.all([
+      prisma.appUser.findUnique({ where: { id: caller.sub }, select: { fullName: true } }),
+      schoolId ? prisma.school.findUnique({ where: { id: schoolId }, select: { name: true } }) : null,
+    ]);
+    sendEmailInBackground(
+      user.email,
+      staffInviteEmail({
+        name: user.fullName,
+        email: user.email,
+        role: user.role,
+        schoolName: school?.name,
+        invitedByName: inviter?.fullName,
+        tempPassword,
+      })
+    );
+
     return reply.code(201).send({ data: user, meta: { tempPassword } });
     }
   );
@@ -273,7 +293,13 @@ export async function userRoutes(app: FastifyInstance) {
 
       const user = await prisma.appUser.update({
         where: { id: target.id },
-        data: { role: body.role ?? undefined, status: body.status ?? undefined, schoolId: newSchoolId },
+        data: {
+          role: body.role ?? undefined,
+          status: body.status ?? undefined,
+          schoolId: newSchoolId,
+          // Changing role, school or status must not leave old sessions with the old access.
+          ...(body.role || body.status || newSchoolId !== undefined ? { tokenVersion: { increment: 1 } } : {}),
+        },
         select: { id: true, fullName: true, email: true, role: true, status: true, schoolId: true },
       });
 
@@ -334,11 +360,22 @@ export async function userRoutes(app: FastifyInstance) {
 
       const user = await prisma.appUser.update({
         where: { id: target.id },
-        data: { passwordHash, status: "invited" },
+        data: { passwordHash, status: "invited", tokenVersion: { increment: 1 }, failedLoginAttempts: 0, lockedUntil: null },
         select: { id: true, fullName: true, email: true, role: true, status: true },
       });
 
-      const actor = await prisma.appUser.findUnique({ where: { id: caller.sub }, select: { email: true } });
+      const actor = await prisma.appUser.findUnique({ where: { id: caller.sub }, select: { email: true, fullName: true } });
+      const targetSchool = target.schoolId ? await prisma.school.findUnique({ where: { id: target.schoolId }, select: { name: true } }) : null;
+      sendEmailInBackground(
+        user.email,
+        adminPasswordResetEmail({
+          name: user.fullName,
+          email: user.email,
+          tempPassword,
+          resetByName: actor?.fullName,
+          schoolName: targetSchool?.name,
+        })
+      );
       await recordAuditEvent({
         actorUserId: caller.sub,
         actorEmail: actor?.email ?? "unknown",

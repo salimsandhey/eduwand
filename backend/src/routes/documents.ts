@@ -1,4 +1,5 @@
 import { FastifyInstance } from "fastify";
+import { uploadKey } from "../lib/upload";
 import { prisma } from "../lib/prisma";
 import { storage } from "../lib/storage";
 
@@ -65,7 +66,7 @@ export async function documentRoutes(app: FastifyInstance) {
         }
       }
 
-      const key = `${request.schoolId}/documents/${enquiry.id}/${Date.now()}-${fileName}`;
+      const key = uploadKey(`${request.schoolId}/documents/${enquiry.id}`, fileName);
       const { location } = await storage.save(key, fileBuffer);
 
       const document = await prisma.document.create({

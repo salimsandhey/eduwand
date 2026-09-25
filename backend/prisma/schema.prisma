@@ -260,6 +260,14 @@ model AppUser {
   role           String
   authProviderId String?  @map("auth_provider_id")
   passwordHash   String?  @map("password_hash")
+  // Brute-force protection: consecutive wrong passwords, and the time until
+  // which sign-in is refused after too many (see routes/auth.ts).
+  failedLoginAttempts Int      @default(0) @map("failed_login_attempts")
+  lockedUntil         DateTime? @map("locked_until")
+  // Bumped to end every existing session at once (password change/reset,
+  // account disabled or deleted). Refresh tokens carry the value they were
+  // issued with and stop working when it no longer matches.
+  tokenVersion        Int      @default(0) @map("token_version")
   // Self-service profile photo (unified-app ProfileScreen). Same
   // mutually-exclusive uploaded-file vs preset-avatar shape as Enquiry
   // (see the photoLocation/avatarKey comment there) - setting one clears
@@ -712,6 +720,9 @@ model StudentStub {
   // until then that student can't sign in. guardianContact stays as a phone
   // number for calls/records only.
   email           String?      @map("email")
+  // Same purpose as AppUser.tokenVersion - bumped when the student is removed
+  // or their sign-in email changes, ending their existing sessions.
+  tokenVersion    Int          @default(0) @map("token_version")
   admissionDate   DateTime     @map("admission_date") @db.Date
   feeStatus       String       @default("pending") @map("fee_status")
   // A physical clicker's hardware DEVICE_ID (see clicker.ino), assigned once
@@ -1284,6 +1295,9 @@ model Assessment {
   // which invalidates whatever device still has the old link/tab open.
   presentCode             String?   @unique @map("present_code")
   presentCodeExpiresAt    DateTime? @map("present_code_expires_at")
+  // Secret only the teacher's control device knows. presentCode is shown on the
+  // projector, so on its own it must only allow watching, never controlling.
+  presentControlKey       String?   @map("present_control_key")
   // Which question is currently being presented, and whether the class has
   // been shown the correct answer for it yet. Server-side (not per-client)
   // because the Display and Control pages are two different devices that

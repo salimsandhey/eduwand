@@ -1,4 +1,6 @@
 import { prisma } from "./prisma";
+import { sendEmail } from "./email/sender";
+import { followUpEmail } from "./email/templates";
 import { messageProvider, renderTemplate } from "./messaging";
 
 export class FollowUpSendError extends Error {
@@ -38,7 +40,16 @@ export async function sendFollowUpTask(taskId: string) {
     gradeInterest: task.enquiry.gradeInterest,
   });
 
-  const result = await messageProvider.send(task.channel as "sms" | "email" | "whatsapp", recipient, renderedBody);
+  let result: { success: boolean; error?: string };
+  if (task.channel === "email") {
+    const school = await prisma.school.findUnique({ where: { id: task.enquiry.schoolId }, select: { name: true } });
+    result = await sendEmail(
+      recipient,
+      followUpEmail({ body: renderedBody, recipientName: task.enquiry.contactName, schoolName: school?.name })
+    );
+  } else {
+    result = await messageProvider.send(task.channel as "sms" | "whatsapp", recipient, renderedBody);
+  }
 
   const updated = await prisma.followUpTask.update({
     where: { id: task.id },

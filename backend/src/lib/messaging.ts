@@ -1,12 +1,24 @@
 import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 
+// Only the email channel uses these: a real subject line and an HTML body
+// (with `body` sent as the plain-text alternative). See lib/email/.
+export interface SendOptions {
+  subject?: string;
+  html?: string;
+}
+
 export interface MessageProvider {
-  send(channel: "sms" | "email" | "whatsapp", to: string, body: string): Promise<{ success: boolean; providerId?: string; error?: string }>;
+  send(
+    channel: "sms" | "email" | "whatsapp",
+    to: string,
+    body: string,
+    options?: SendOptions
+  ): Promise<{ success: boolean; providerId?: string; error?: string }>;
 }
 
 class StubMessageProvider implements MessageProvider {
-  async send(channel: "sms" | "email" | "whatsapp", to: string, body: string) {
-    console.warn(`[stub messaging] would send ${channel} to ${to}: ${body}`);
+  async send(channel: "sms" | "email" | "whatsapp", to: string, body: string, options?: SendOptions) {
+    console.warn(`[stub messaging] would send ${channel} to ${to}${options?.subject ? ` (subject: ${options.subject})` : ""}: ${body}`);
     return { success: true, providerId: `stub-${Date.now()}` };
   }
 }
@@ -48,7 +60,7 @@ export class SesEmailProvider implements MessageProvider {
     this.client = new SESClient({ region });
   }
 
-  async send(channel: "sms" | "email" | "whatsapp", to: string, body: string) {
+  async send(channel: "sms" | "email" | "whatsapp", to: string, body: string, options?: SendOptions) {
     if (channel !== "email") {
       return { success: false, error: "SesEmailProvider only handles the email channel" };
     }
@@ -65,8 +77,11 @@ export class SesEmailProvider implements MessageProvider {
           Source: this.fromEmail,
           Destination: { ToAddresses: [to] },
           Message: {
-            Subject: { Data: "EduWand" },
-            Body: { Text: { Data: body } },
+            Subject: { Data: options?.subject ?? "EduWand", Charset: "UTF-8" },
+            Body: {
+              Text: { Data: body, Charset: "UTF-8" },
+              ...(options?.html ? { Html: { Data: options.html, Charset: "UTF-8" } } : {}),
+            },
           },
         })
       );
@@ -83,8 +98,8 @@ class ChannelRoutingProvider implements MessageProvider {
     private readonly fallback: MessageProvider
   ) {}
 
-  send(channel: "sms" | "email" | "whatsapp", to: string, body: string) {
-    return (this.byChannel[channel] ?? this.fallback).send(channel, to, body);
+  send(channel: "sms" | "email" | "whatsapp", to: string, body: string, options?: SendOptions) {
+    return (this.byChannel[channel] ?? this.fallback).send(channel, to, body, options);
   }
 }
 

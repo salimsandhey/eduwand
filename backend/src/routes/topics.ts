@@ -1,4 +1,5 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { uploadKey, detectImageMime, imageKey, IMAGE_ONLY_ERROR } from "../lib/upload";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { storage } from "../lib/storage";
@@ -164,7 +165,7 @@ export async function topicRoutes(app: FastifyInstance) {
           : "image";
         originalFilename = file.filename;
         fileBuffer = await file.toBuffer();
-        const { location } = await storage.save(`context-sources/${topic.id}/${Date.now()}-${file.filename}`, fileBuffer);
+        const { location } = await storage.save(uploadKey(`context-sources/${topic.id}`, file.filename), fileBuffer);
         fileLocation = location;
       } else {
         const body = request.body ?? ({} as CreateContextSourceBody);
@@ -576,7 +577,7 @@ export async function topicRoutes(app: FastifyInstance) {
       filename = safeFilename(candidate.title, "pdf");
     }
 
-    const { location } = await storage.save(`context-sources/${topicId}/${Date.now()}-${filename}`, downloaded.buffer);
+    const { location } = await storage.save(uploadKey(`context-sources/${topicId}`, filename), downloaded.buffer);
     const extraction = await runContextExtraction({ sourceType, fileLocation: location, buffer: downloaded.buffer });
 
     let host = "";
@@ -778,7 +779,9 @@ export async function topicRoutes(app: FastifyInstance) {
         for await (const part of request.parts()) {
           if (part.type === "file") {
             const buffer = await part.toBuffer();
-            const { location } = await storage.save(`observations/${Date.now()}-${part.filename}`, buffer);
+            const imageMime = detectImageMime(buffer);
+            if (!imageMime) return reply.code(400).send(IMAGE_ONLY_ERROR);
+            const { location } = await storage.save(imageKey("observations", imageMime), buffer);
             photoUrl = location;
           } else {
             fields[part.fieldname] = part.value as string;

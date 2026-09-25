@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { sanitizeHtml } from "../utils/sanitizeHtml";
 import { marked } from "marked";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api/client";
@@ -186,7 +187,7 @@ export function ContentPagesEditor() {
                 <ContactCards fields={fields} />
               </>
             ) : (
-              <div className="markdown-body" dangerouslySetInnerHTML={{ __html: marked.parse(bodyMarkdown || "_Nothing to preview yet._", { async: false }) as string }} />
+              <div className="markdown-body" dangerouslySetInnerHTML={{ __html: sanitizeHtml(marked.parse(bodyMarkdown || "_Nothing to preview yet._", { async: false }) as string) }} />
             )}
           </Card>
         </>

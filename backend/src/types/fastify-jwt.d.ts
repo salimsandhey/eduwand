@@ -7,6 +7,8 @@ export interface AppJwtPayload {
   trustId: string | null;
   type: "access" | "refresh" | "student_select";
   email?: string;
+  // tokenVersion the token was issued under - see AppUser.tokenVersion.
+  tv?: number;
 }
 
 declare module "@fastify/jwt" {

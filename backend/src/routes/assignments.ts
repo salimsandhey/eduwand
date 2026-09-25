@@ -1,4 +1,7 @@
 import { FastifyInstance } from "fastify";
+import { sendEmailsInBackground } from "../lib/email/sender";
+import { assignmentPublishedEmail, classLabel } from "../lib/email/templates";
+import { studentRecipientsForClass } from "../lib/email/recipients";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
@@ -569,6 +572,27 @@ export async function assignmentRoutes(app: FastifyInstance) {
       where: { id: assignment.id },
       data: { status: "published", publishedAt: new Date() },
     });
+
+    const [recipients, teacher, school, section] = await Promise.all([
+      studentRecipientsForClass(assignment.classSectionId),
+      prisma.appUser.findUnique({ where: { id: assignment.teacherUserId }, select: { fullName: true } }),
+      prisma.school.findUnique({ where: { id: assignment.schoolId }, select: { name: true } }),
+      prisma.classSection.findUnique({ where: { id: assignment.classSectionId }, select: { className: true, sectionName: true } }),
+    ]);
+    const questionCount = Array.isArray(assignment.questions) ? assignment.questions.length : undefined;
+    sendEmailsInBackground(
+      recipients.map((r) => ({
+        to: r.email,
+        email: assignmentPublishedEmail({
+          studentName: r.fullName,
+          title: assignment.title,
+          teacherName: teacher?.fullName,
+          className: section ? classLabel(section.className, section.sectionName) : undefined,
+          questionCount,
+          schoolName: school?.name,
+        }),
+      }))
+    );
 
     return { data: updated, meta: {} };
     }

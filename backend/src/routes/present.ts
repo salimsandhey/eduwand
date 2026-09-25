@@ -15,6 +15,33 @@ const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolSco
 const PRESENT_CODE_LIFETIME_MS = 4 * 60 * 60 * 1000; // 4 hours - well past any single lesson.
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O or 1/I/L - read out loud or typed on a TV remote.
 
+// The code on the projector is public to everyone in the room, so it only lets a
+// device WATCH. Everything that changes the session (advance, reveal, end,
+// recording answers, the identified roster view) also needs the control key,
+// which only the teacher's own device receives when the session starts.
+function generateControlKey(): string {
+  return crypto.randomBytes(18).toString("base64url");
+}
+
+function hasControlKey(stored: string | null, provided: unknown): boolean {
+  if (!stored || typeof provided !== "string" || provided.length !== stored.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(stored), Buffer.from(provided));
+}
+
+function presentKeyFrom(request: { headers: Record<string, unknown> }): string | undefined {
+  const header = request.headers["x-present-key"];
+  return typeof header === "string" ? header : undefined;
+}
+
+const controlForbidden = {
+  data: null,
+  error: { code: "control_key_required", message: "Open the control link from the teacher app to control this session" },
+};
+
+// Public endpoints need their own limits - there is no login to key them on.
+const publicLimit = { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } };
+const controlLimit = { config: { rateLimit: { max: 300, timeWindow: "1 minute" } } };
+
 function generateCode(): string {
   return Array.from({ length: 6 }, () => CODE_ALPHABET[crypto.randomInt(CODE_ALPHABET.length)]).join("");
 }
@@ -131,12 +158,13 @@ export async function presentRoutes(app: FastifyInstance) {
     }
 
     const expiresAt = new Date(Date.now() + PRESENT_CODE_LIFETIME_MS);
+    const controlKey = generateControlKey();
     await prisma.assessment.update({
       where: { id: assessment.id },
-      data: { presentCode: code, presentCodeExpiresAt: expiresAt, currentQuestionIndex: 0, currentQuestionRevealed: false },
+      data: { presentCode: code, presentCodeExpiresAt: expiresAt, presentControlKey: controlKey, currentQuestionIndex: 0, currentQuestionRevealed: false },
     });
 
-    return reply.code(201).send({ data: { code, expiresAt }, meta: {} });
+    return reply.code(201).send({ data: { code, controlKey, expiresAt }, meta: {} });
   });
 
   // Everything below is reached only by knowing the code - no login on the
@@ -145,23 +173,29 @@ export async function presentRoutes(app: FastifyInstance) {
   // role=control is the teacher's own tapping device; anything else (absent,
   // "display", or unrecognized) gets the safe/anonymous shape - safe-by-
   // default, so a caller has to explicitly ask for the identified view.
-  app.get<{ Params: { code: string }; Querystring: { role?: string } }>("/present/:code", async (request, reply) => {
+  app.get<{ Params: { code: string }; Querystring: { role?: string } }>("/present/:code", publicLimit, async (request, reply) => {
     const assessment = await findByCode(request.params.code);
     if (!assessment) {
       return reply.code(404).send({ data: null, error: { code: "not_found", message: "This session code is invalid or has expired" } });
     }
+    const wantsControl = request.query?.role === "control";
+    if (wantsControl && !hasControlKey(assessment.presentControlKey, presentKeyFrom(request))) {
+      return reply.code(403).send(controlForbidden);
+    }
     const roster = await loadRoster(assessment.classSectionId);
-    const state = request.query?.role === "control" ? controlState(assessment, roster) : displayState(assessment, roster);
+    const state = wantsControl ? controlState(assessment, roster) : displayState(assessment, roster);
     return { data: state, meta: {} };
   });
 
   app.post<{ Params: { code: string }; Body: { questionId: string; studentStubId: string; selectedOptionIndex?: number; isDoubt?: boolean } }>(
     "/present/:code/responses",
+    controlLimit,
     async (request, reply) => {
       const assessment = await findByCode(request.params.code);
       if (!assessment) {
         return reply.code(404).send({ data: null, error: { code: "not_found", message: "This session code is invalid or has expired" } });
       }
+      if (!hasControlKey(assessment.presentControlKey, presentKeyFrom(request))) return reply.code(403).send(controlForbidden);
       const body = request.body ?? ({} as { questionId: string; studentStubId: string; selectedOptionIndex?: number; isDoubt?: boolean });
       const questions = assessment.questions as unknown as StoredAssessmentQuestion[];
       const question = questions.find((q) => q.id === body.questionId);
@@ -192,11 +226,12 @@ export async function presentRoutes(app: FastifyInstance) {
     }
   );
 
-  app.post<{ Params: { code: string }; Body: { direction: "next" | "prev" } }>("/present/:code/advance", async (request, reply) => {
+  app.post<{ Params: { code: string }; Body: { direction: "next" | "prev" } }>("/present/:code/advance", controlLimit, async (request, reply) => {
     const assessment = await findByCode(request.params.code);
     if (!assessment) {
       return reply.code(404).send({ data: null, error: { code: "not_found", message: "This session code is invalid or has expired" } });
     }
+    if (!hasControlKey(assessment.presentControlKey, presentKeyFrom(request))) return reply.code(403).send(controlForbidden);
     const questions = assessment.questions as unknown as StoredAssessmentQuestion[];
     const direction = request.body?.direction === "prev" ? -1 : 1;
     const nextIndex = Math.max(0, Math.min(questions.length - 1, assessment.currentQuestionIndex + direction));
@@ -211,11 +246,12 @@ export async function presentRoutes(app: FastifyInstance) {
     return { data: controlState((await findByCode(request.params.code))!, roster), meta: {} };
   });
 
-  app.post<{ Params: { code: string } }>("/present/:code/reveal", async (request, reply) => {
+  app.post<{ Params: { code: string } }>("/present/:code/reveal", controlLimit, async (request, reply) => {
     const assessment = await findByCode(request.params.code);
     if (!assessment) {
       return reply.code(404).send({ data: null, error: { code: "not_found", message: "This session code is invalid or has expired" } });
     }
+    if (!hasControlKey(assessment.presentControlKey, presentKeyFrom(request))) return reply.code(403).send(controlForbidden);
 
     await prisma.assessment.update({
       where: { id: assessment.id },
@@ -227,15 +263,16 @@ export async function presentRoutes(app: FastifyInstance) {
     return { data: controlState((await findByCode(request.params.code))!, roster), meta: {} };
   });
 
-  app.post<{ Params: { code: string } }>("/present/:code/end", async (request, reply) => {
+  app.post<{ Params: { code: string } }>("/present/:code/end", controlLimit, async (request, reply) => {
     const assessment = await findByCode(request.params.code);
     if (!assessment) {
       return reply.code(404).send({ data: null, error: { code: "not_found", message: "This session code is invalid or has expired" } });
     }
+    if (!hasControlKey(assessment.presentControlKey, presentKeyFrom(request))) return reply.code(403).send(controlForbidden);
 
     await prisma.assessment.update({
       where: { id: assessment.id },
-      data: { status: "completed", completedAt: new Date(), presentCode: null, presentCodeExpiresAt: null },
+      data: { status: "completed", completedAt: new Date(), presentCode: null, presentCodeExpiresAt: null, presentControlKey: null },
     });
 
     publish([controlRoom(assessment.id), displayRoom(assessment.id)], { type: "present_ended", assessmentId: assessment.id });

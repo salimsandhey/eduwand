@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { sanitizeHtml } from "../utils/sanitizeHtml";
 import { marked } from "marked";
 import { api } from "../api/client";
 import type { ContentPage } from "../api/client";
@@ -88,7 +89,7 @@ export function PublicContentPage({ contentKey }: { contentKey: string }) {
             ) : (
               <div style={styles.contentCard}>
                 {/* Content is authored by platform_admin, not arbitrary users - safe to render as HTML. */}
-                <div className="markdown-body" style={styles.markdownBody} dangerouslySetInnerHTML={{ __html: marked.parse(page.bodyMarkdown, { async: false }) as string }} />
+                <div className="markdown-body" style={styles.markdownBody} dangerouslySetInnerHTML={{ __html: sanitizeHtml(marked.parse(page.bodyMarkdown, { async: false }) as string) }} />
               </div>
             )}
           </>

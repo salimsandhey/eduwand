@@ -1,4 +1,5 @@
 import { FastifyInstance } from "fastify";
+import { detectImageMime, imageKey, IMAGE_ONLY_ERROR } from "../lib/upload";
 import { prisma } from "../lib/prisma";
 import { storage } from "../lib/storage";
 import { authorizeForSchool } from "./academic-structure";
@@ -115,7 +116,9 @@ export async function schoolFormatTemplateRoutes(app: FastifyInstance) {
         for await (const part of parts) {
           if (part.type === "file") {
             const buffer = await part.toBuffer();
-            const { location } = await storage.save(`school-branding/${request.params.schoolId}/${Date.now()}-${part.filename}`, buffer);
+            const imageMime = detectImageMime(buffer);
+            if (!imageMime) return reply.code(400).send(IMAGE_ONLY_ERROR);
+            const { location } = await storage.save(imageKey(`school-branding/${request.params.schoolId}`, imageMime), buffer);
             logoLocation = location;
           } else if (part.fieldname === "primaryColor") {
             primaryColor = part.value as string;

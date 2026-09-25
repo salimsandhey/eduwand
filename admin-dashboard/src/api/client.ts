@@ -740,31 +740,43 @@ export interface PresentDisplayState {
   seats: { seatNumber: number | null; answered: boolean }[];
 }
 
+// The Control page is opened from the teacher's app with the session's control
+// key in the URL fragment (#k=...). Only that key lets a device change the
+// session - the code shown on the projector is watch-only.
+let presentControlKey: string | undefined;
+export function setPresentControlKey(key: string | undefined) {
+  presentControlKey = key;
+}
+function presentKeyHeaders(): Record<string, string> {
+  return presentControlKey ? { "X-Present-Key": presentControlKey } : {};
+}
+
 export function publicGetPresentState(code: string, role: "control" | "display"): Promise<PresentControlState | PresentDisplayState> {
-  return request(`/present/${code}?role=${role}`);
+  return request(`/present/${code}?role=${role}`, { headers: role === "control" ? presentKeyHeaders() : {} });
 }
 
 export function publicRecordPresentResponse(
   code: string,
   input: { questionId: string; studentStubId: string; selectedOptionIndex?: number; isDoubt?: boolean }
 ) {
-  return request<PresentControlState>(`/present/${code}/responses`, { method: "POST", body: JSON.stringify(input) });
+  return request<PresentControlState>(`/present/${code}/responses`, { method: "POST", body: JSON.stringify(input), headers: presentKeyHeaders() });
 }
 
 export function publicAdvancePresentQuestion(code: string, direction: "next" | "prev") {
-  return request<PresentControlState>(`/present/${code}/advance`, { method: "POST", body: JSON.stringify({ direction }) });
+  return request<PresentControlState>(`/present/${code}/advance`, { method: "POST", body: JSON.stringify({ direction }), headers: presentKeyHeaders() });
 }
 
 export function publicRevealPresentAnswer(code: string) {
-  return request<PresentControlState>(`/present/${code}/reveal`, { method: "POST" });
+  return request<PresentControlState>(`/present/${code}/reveal`, { method: "POST", headers: presentKeyHeaders() });
 }
 
 export function publicEndPresentSession(code: string) {
-  return request<{ ended: boolean }>(`/present/${code}/end`, { method: "POST" });
+  return request<{ ended: boolean }>(`/present/${code}/end`, { method: "POST", headers: presentKeyHeaders() });
 }
 
 export function getPresentSocketUrl(code: string, role: "control" | "display"): string {
-  return `${API_URL.replace(/^http/, "ws")}/realtime?presentCode=${encodeURIComponent(code)}&role=${role}`;
+  const key = role === "control" && presentControlKey ? `&key=${encodeURIComponent(presentControlKey)}` : "";
+  return `${API_URL.replace(/^http/, "ws")}/realtime?presentCode=${encodeURIComponent(code)}&role=${role}${key}`;
 }
 
 export const api = {

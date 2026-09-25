@@ -1,4 +1,6 @@
 import { FastifyInstance } from "fastify";
+import { sendEmailInBackground } from "../lib/email/sender";
+import { joinRequestReceivedEmail, joinRequestDecidedEmail, classLabel } from "../lib/email/templates";
 import { prisma } from "../lib/prisma";
 import { markOnboardingTaskComplete } from "../lib/onboarding";
 
@@ -98,6 +100,23 @@ export async function classJoinRoutes(app: FastifyInstance) {
           studentEmail: studentEmail || null,
         },
       });
+
+      // Let the class's teacher(s) know a request is waiting.
+      const teachers = await prisma.classSectionTeacher.findMany({
+        where: { classSectionId: classSection.id, teacher: { status: "active" } },
+        select: { teacher: { select: { fullName: true, email: true } } },
+      });
+      for (const { teacher } of teachers) {
+        sendEmailInBackground(
+          teacher.email,
+          joinRequestReceivedEmail({
+            teacherName: teacher.fullName,
+            studentName: created.studentName,
+            guardianName: created.guardianName,
+            className: classLabel(classSection.className, classSection.sectionName),
+          })
+        );
+      }
 
       return reply.code(201).send({ data: { id: created.id, status: created.status }, meta: {} });
     }
@@ -203,6 +222,26 @@ export async function classJoinRoutes(app: FastifyInstance) {
 
       if (body.decision === "approved" && request.user.role === "teacher") {
         await markOnboardingTaskComplete(request.user.sub, "first_student");
+      }
+
+      // Tell the student/guardian who used the link how it turned out.
+      if (existing.studentEmail) {
+        const [teacher, school] = await Promise.all([
+          prisma.appUser.findUnique({ where: { id: request.user.sub }, select: { fullName: true } }),
+          prisma.school.findUnique({ where: { id: request.schoolId! }, select: { name: true } }),
+        ]);
+        sendEmailInBackground(
+          existing.studentEmail,
+          joinRequestDecidedEmail({
+            studentName: existing.studentName,
+            className: classLabel(classSection.className, classSection.sectionName),
+            approved: body.decision === "approved",
+            teacherName: teacher?.fullName,
+            schoolName: school?.name,
+            note: body.note,
+            canSignIn: true,
+          })
+        );
       }
 
       return { data: decided, meta: {} };

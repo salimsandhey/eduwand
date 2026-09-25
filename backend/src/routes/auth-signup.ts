@@ -4,8 +4,9 @@ import bcrypt from "bcryptjs";
 import { prisma } from "../lib/prisma";
 import { grantInitialCredits } from "../lib/credits";
 import { BOARDS, isValidBoard } from "../lib/boards";
-import { messageProvider } from "../lib/messaging";
-import { generateLoginOtp, isDevOtpMode, hashOtpCode, compareOtpCode, OTP_TTL_MS, MAX_OTP_ATTEMPTS } from "../lib/otp";
+import { sendEmail, sendEmailInBackground } from "../lib/email/sender";
+import { loginCodeEmail, teacherWelcomeEmail, accountExistsEmail } from "../lib/email/templates";
+import { generateLoginOtp, isDevOtpMode, hashOtpCode, compareOtpCode, OTP_TTL_MS, MAX_OTP_ATTEMPTS, OTP_REQUEST_WINDOW_MS, MAX_OTP_REQUESTS_PER_WINDOW } from "../lib/otp";
 
 // Public self-signup for individual teachers - the only account-creation
 // path in this codebase that doesn't require an existing admin/leadership
@@ -94,11 +95,22 @@ export async function authSignupRoutes(app: FastifyInstance) {
         });
       }
 
+      // Answer identically whether or not the email already has an account, so this
+      // form can't be used to find out who is registered. An existing account gets
+      // an email saying so (with a way in) instead of a code.
       const existing = await prisma.appUser.findUnique({ where: { email } });
       if (existing) {
-        return reply.code(400).send({
+        sendEmailInBackground(email, accountExistsEmail({ name: existing.fullName }));
+        return reply.send({ data: { message: "Verification code sent" }, meta: {} });
+      }
+
+      const recentRequests = await prisma.signupOtpRequest.count({
+        where: { email, createdAt: { gt: new Date(Date.now() - OTP_REQUEST_WINDOW_MS) } },
+      });
+      if (recentRequests >= MAX_OTP_REQUESTS_PER_WINDOW) {
+        return reply.code(429).send({
           data: null,
-          error: { code: "validation_error", message: "A user with this email already exists" },
+          error: { code: "too_many_requests", message: "Too many codes requested for this email. Please wait a few minutes and try again." },
         });
       }
 
@@ -116,7 +128,7 @@ export async function authSignupRoutes(app: FastifyInstance) {
         },
       });
 
-      const sent = await messageProvider.send("email", email, `Your EduWand verification code is ${code}. It expires in 5 minutes.`);
+      const sent = await sendEmail(email, loginCodeEmail({ name: fullName, code, purpose: "teacher_signup" }));
       if (!sent.success) {
         request.log.error({ err: sent.error }, "signup OTP email failed");
         return reply.code(502).send({
@@ -221,11 +233,18 @@ export async function authSignupRoutes(app: FastifyInstance) {
         return createdUser;
       });
 
+      const credits = await prisma.teacherCreditAccount.findUnique({ where: { teacherUserId: user.id }, select: { balance: true } });
+      sendEmailInBackground(
+        user.email,
+        teacherWelcomeEmail({ name: user.fullName, workspaceName: workspaceName || `${fullName}'s Classroom`, credits: credits?.balance })
+      );
+
       const claims = {
         sub: user.id,
         role: user.role,
         schoolId: user.schoolId,
         trustId: user.trustId,
+        tv: user.tokenVersion,
       };
 
       const accessToken = app.jwt.sign({ ...claims, type: "access" }, { expiresIn: ACCESS_TOKEN_EXPIRY });

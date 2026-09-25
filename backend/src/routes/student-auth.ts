@@ -1,8 +1,9 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
-import { messageProvider } from "../lib/messaging";
+import { sendEmail } from "../lib/email/sender";
+import { loginCodeEmail } from "../lib/email/templates";
 import { storage } from "../lib/storage";
-import { generateLoginOtp, isDevOtpMode, hashOtpCode, compareOtpCode, OTP_TTL_MS, MAX_OTP_ATTEMPTS } from "../lib/otp";
+import { generateLoginOtp, isDevOtpMode, hashOtpCode, compareOtpCode, OTP_TTL_MS, MAX_OTP_ATTEMPTS, OTP_REQUEST_WINDOW_MS, MAX_OTP_REQUESTS_PER_WINDOW } from "../lib/otp";
 
 const ACCESS_TOKEN_EXPIRY = "15m";
 const REFRESH_TOKEN_EXPIRY = "30d";
@@ -44,10 +45,20 @@ export async function studentAuthRoutes(app: FastifyInstance) {
       });
     }
 
-    const known = await prisma.studentStub.count({ where: { email, status: "active" } });
+    const matches = await prisma.studentStub.findMany({
+      where: { email, status: "active" },
+      select: { fullName: true, school: { select: { name: true } } },
+      orderBy: { fullName: "asc" },
+    });
+    const known = matches.length;
+
+    const recentRequests = await prisma.studentOtpRequest.count({
+      where: { email, createdAt: { gt: new Date(Date.now() - OTP_REQUEST_WINDOW_MS) } },
+    });
 
     let devCode: string | undefined;
-    if (known > 0) {
+    // Over the limit: answer exactly as usual but send nothing.
+    if (known > 0 && recentRequests < MAX_OTP_REQUESTS_PER_WINDOW) {
       const code = generateLoginOtp();
       const otpCodeHash = await hashOtpCode(code);
 
@@ -59,7 +70,16 @@ export async function studentAuthRoutes(app: FastifyInstance) {
         data: { email, otpCodeHash, expiresAt: new Date(Date.now() + OTP_TTL_MS) },
       });
 
-      const sent = await messageProvider.send("email", email, `Your EduWand login code is ${code}. It expires in 5 minutes.`);
+      // One email can cover several students; greet by name only when it's unambiguous.
+      const sent = await sendEmail(
+        email,
+        loginCodeEmail({
+          name: matches.length === 1 ? matches[0].fullName : undefined,
+          code,
+          purpose: "student_login",
+          schoolName: matches[0].school.name,
+        })
+      );
       if (!sent.success) console.error(`[student-auth] OTP email to ${email} failed: ${sent.error}`);
       devCode = isDevOtpMode() ? code : undefined;
     }
@@ -68,7 +88,10 @@ export async function studentAuthRoutes(app: FastifyInstance) {
     }
   );
 
-  app.post<{ Body: VerifyOtpBody }>("/auth/student/verify-otp", async (request, reply) => {
+  app.post<{ Body: VerifyOtpBody }>(
+    "/auth/student/verify-otp",
+    { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } },
+    async (request, reply) => {
     const email = normalizeEmail(request.body?.email);
     const code = request.body?.code?.trim();
     if (!email || !code) {
@@ -123,7 +146,8 @@ export async function studentAuthRoutes(app: FastifyInstance) {
     );
 
     return { data: { selectionToken, students }, meta: {} };
-  });
+    }
+  );
 
   // Profile photo for the "which child?" picker shown between verify-otp and
   // select - nobody is signed in yet, so it takes the selection token (as
@@ -184,7 +208,7 @@ export async function studentAuthRoutes(app: FastifyInstance) {
       return reply.code(404).send({ data: null, error: { code: "not_found", message: "Student not found for this email" } });
     }
 
-    const claims = { sub: student.id, role: "student", schoolId: student.schoolId, trustId: null };
+    const claims = { sub: student.id, role: "student", schoolId: student.schoolId, trustId: null, tv: student.tokenVersion };
     const accessToken = app.jwt.sign({ ...claims, type: "access" }, { expiresIn: ACCESS_TOKEN_EXPIRY });
     const refreshToken = app.jwt.sign({ ...claims, type: "refresh" }, { expiresIn: REFRESH_TOKEN_EXPIRY });
 

@@ -1,4 +1,6 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { sendEmailInBackground } from "../lib/email/sender";
+import { studentEmailChangedEmail } from "../lib/email/templates";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { storage } from "../lib/storage";
@@ -372,11 +374,26 @@ export async function studentRoutes(app: FastifyInstance) {
             ...(body.guardianName !== undefined ? { guardianName: body.guardianName.trim() } : {}),
             ...(body.guardianContact !== undefined ? { guardianContact: body.guardianContact.trim() } : {}),
             ...(patchEmail !== undefined ? { email: patchEmail } : {}),
+            ...(patchEmail !== undefined && patchEmail !== student.email ? { tokenVersion: { increment: 1 } } : {}),
             ...(body.feeStatus !== undefined ? { feeStatus: body.feeStatus } : {}),
             ...(body.seatNumber !== undefined ? { seatNumber: body.seatNumber } : {}),
             updatedBy: request.user.sub,
           },
         });
+
+        if (patchEmail !== undefined && patchEmail !== student.email) {
+          const school = await prisma.school.findUnique({ where: { id: student.schoolId }, select: { name: true } });
+          if (student.email) {
+            sendEmailInBackground(
+              student.email,
+              studentEmailChangedEmail({ studentName: student.fullName, oldEmail: student.email, newEmail: patchEmail, audience: "old", schoolName: school?.name })
+            );
+          }
+          sendEmailInBackground(
+            patchEmail,
+            studentEmailChangedEmail({ studentName: student.fullName, oldEmail: student.email, newEmail: patchEmail, audience: "new", schoolName: school?.name })
+          );
+        }
 
         return { data: updated, meta: {} };
       } catch (err) {
@@ -441,7 +458,7 @@ export async function studentRoutes(app: FastifyInstance) {
       return reply.code(403).send({ data: null, error: { code: "forbidden", message: "Not authorized for this student's class" } });
     }
 
-    await prisma.studentStub.update({ where: { id: student.id }, data: { status: "removed", updatedBy: request.user.sub } });
+    await prisma.studentStub.update({ where: { id: student.id }, data: { status: "removed", tokenVersion: { increment: 1 }, updatedBy: request.user.sub } });
 
     return { data: { deleted: true }, meta: {} };
   });

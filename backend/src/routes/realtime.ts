@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
 import websocket from "@fastify/websocket";
@@ -41,11 +42,22 @@ export async function realtimeRoutes(app: FastifyInstance) {
     if (query.presentCode) {
       const assessment = await prisma.assessment.findFirst({
         where: { presentCode: query.presentCode, presentCodeExpiresAt: { gt: new Date() } },
-        select: { id: true },
+        select: { id: true, presentControlKey: true },
       });
       if (!assessment) {
         socket.close(4404, "present session not found or expired");
         return;
+      }
+      // The control room receives the identified roster and answers - it needs the
+      // teacher's control key, not just the code shown on the projector.
+      if (query.role === "control") {
+        const provided = (request.query as { key?: string }).key;
+        const stored = assessment.presentControlKey;
+        const ok = !!stored && typeof provided === "string" && provided.length === stored.length && crypto.timingSafeEqual(Buffer.from(stored), Buffer.from(provided));
+        if (!ok) {
+          socket.close(4403, "control key required");
+          return;
+        }
       }
       const room = `assessment:${assessment.id}:${query.role === "control" ? "control" : "display"}`;
       joinRoom(room, socket);

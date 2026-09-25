@@ -205,7 +205,7 @@ export async function assessmentRoutes(app: FastifyInstance) {
     // finishing from the app should stop a projector/control page too.
     const updated = await prisma.assessment.update({
       where: { id: assessment.id },
-      data: { status: "completed", completedAt: new Date(), presentCode: null, presentCodeExpiresAt: null },
+      data: { status: "completed", completedAt: new Date(), presentCode: null, presentCodeExpiresAt: null, presentControlKey: null },
     });
     return { data: updated, meta: {} };
   });

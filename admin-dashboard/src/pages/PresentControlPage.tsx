@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { usePresentSession } from "../hooks/usePresentSession";
 import { useClickerReceiver, type ClickerPacket } from "../hooks/useClickerReceiver";
 import { ReceiverSetupWizard } from "./ReceiverSetupWizard";
-import { publicAdvancePresentQuestion, publicEndPresentSession, publicRecordPresentResponse, publicRevealPresentAnswer, ApiError, type PresentControlState } from "../api/client";
+import { publicAdvancePresentQuestion, publicEndPresentSession, publicRecordPresentResponse, publicRevealPresentAnswer, setPresentControlKey, ApiError, type PresentControlState } from "../api/client";
 import "./present.css";
 
 const LETTERS = ["A", "B", "C", "D", "E"];
@@ -14,6 +14,8 @@ const LETTERS = ["A", "B", "C", "D", "E"];
 // for which answer while it happens.
 export function PresentControlPage() {
   const { code } = useParams<{ code: string }>();
+  // Set before the session hook runs so its first request and socket carry the key.
+  setPresentControlKey(new URLSearchParams(window.location.hash.replace(/^#/, "")).get("k") ?? undefined);
   const { state, error, ended } = usePresentSession(code, "control");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
