@@ -53,6 +53,12 @@ export class SesEmailProvider implements MessageProvider {
       return { success: false, error: "SesEmailProvider only handles the email channel" };
     }
 
+    // Seeded demo users use non-routable *.local addresses; sending to them would hard-bounce and hurt SES sender reputation.
+    if (/\.local$/i.test(to.split("@")[1] ?? "")) {
+      console.warn(`[ses] skipped non-routable address ${to}`);
+      return { success: true, providerId: `skipped-${Date.now()}` };
+    }
+
     try {
       const result = await this.client.send(
         new SendEmailCommand({
@@ -71,7 +77,23 @@ export class SesEmailProvider implements MessageProvider {
   }
 }
 
-export const messageProvider: MessageProvider = new StubMessageProvider();
+class ChannelRoutingProvider implements MessageProvider {
+  constructor(
+    private readonly byChannel: Partial<Record<"sms" | "email" | "whatsapp", MessageProvider>>,
+    private readonly fallback: MessageProvider
+  ) {}
+
+  send(channel: "sms" | "email" | "whatsapp", to: string, body: string) {
+    return (this.byChannel[channel] ?? this.fallback).send(channel, to, body);
+  }
+}
+
+// Email goes through SES only when FROM_EMAIL is set; sms/whatsapp stay on the logging stub until an SMS provider exists.
+const fromEmail = process.env.FROM_EMAIL;
+export const messageProvider: MessageProvider = new ChannelRoutingProvider(
+  fromEmail ? { email: new SesEmailProvider(fromEmail) } : {},
+  new StubMessageProvider()
+);
 
 export function renderTemplate(body: string, data: Record<string, string | null | undefined>): string {
   return body.replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key) => {
