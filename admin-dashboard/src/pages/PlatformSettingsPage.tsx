@@ -156,7 +156,7 @@ export function PlatformSettingsPage() {
 
   return (
     <div>
-      <PageHeader title="Platform Settings" subtitle="Credit grants and billing plans for teacher seats" />
+      <PageHeader title="Plans & pricing" subtitle="School billing plans, what each AI action costs in credits, and fallback settings" />
 
       {error ? <p style={{ color: "var(--status-critical)" }}>{error}</p> : null}
 

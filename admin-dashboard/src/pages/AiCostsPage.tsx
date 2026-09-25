@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import type { AiCostFeature, AiCostOverview } from "../api/client";
 import { Card } from "../components/Card";
 import { PageHeader } from "../components/PageHeader";
+import { SectionTabs } from "../components/SectionTabs";
 import { StatTile } from "../components/StatTile";
 import { LineChart } from "../components/LineChart";
 import { BarChart } from "../components/BarChart";
@@ -84,6 +85,7 @@ export function AiCostsPage() {
 
   return (
     <div>
+      <SectionTabs group="ai" />
       <PageHeader
         title="AI Costs"
         subtitle="What AI costs you per action, against what teachers are charged - use it to set credit prices"

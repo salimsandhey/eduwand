@@ -63,6 +63,7 @@ import { aiGuardRoutes } from "./routes/ai-guard";
 import { aiCostRoutes } from "./routes/ai-costs";
 import { billingPlanRoutes } from "./routes/billing-plans";
 import { billingRoutes, billingWebhookRoutes } from "./routes/billing";
+import { adminStatusRoutes } from "./routes/admin-status";
 import { startPlanReminderJob } from "./lib/plan-reminders";
 
 const isProduction = process.env.NODE_ENV === "production";
@@ -178,6 +179,7 @@ app.register(aiGuardRoutes, { prefix: "/api/v1" });
 app.register(aiCostRoutes, { prefix: "/api/v1" });
 app.register(billingPlanRoutes, { prefix: "/api/v1" });
 app.register(billingRoutes, { prefix: "/api/v1" });
+app.register(adminStatusRoutes, { prefix: "/api/v1" });
 app.register(billingWebhookRoutes, { prefix: "/api/v1" });
 
 const port = Number(process.env.PORT) || 4000;

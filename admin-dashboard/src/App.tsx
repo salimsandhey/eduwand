@@ -2,7 +2,8 @@ import type { ReactElement } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { SchoolProvider } from "./context/SchoolContext";
-import { Layout, NAV_ITEMS } from "./components/Layout";
+import { Layout } from "./components/Layout";
+import { ROUTE_ROLES as NAV_ROUTE_ROLES } from "./components/nav";
 import { LoginPage } from "./pages/LoginPage";
 import { ClassJoinPage } from "./pages/ClassJoinPage";
 import { PresentDisplayPage } from "./pages/PresentDisplayPage";
@@ -62,7 +63,7 @@ const EXTRA_ROUTE_ROLES: Record<string, string[]> = {
 
 const ROUTE_ROLES: Record<string, string[]> = {
   ...EXTRA_ROUTE_ROLES,
-  ...Object.fromEntries(NAV_ITEMS.map((item) => [item.to, item.roles])),
+  ...NAV_ROUTE_ROLES,
 };
 
 // Teachers have nothing else in the dashboard - land them on their plan page.

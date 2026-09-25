@@ -125,7 +125,7 @@ export function TeacherPlansPage() {
 
   return (
     <div>
-      <PageHeader title="Teacher Plans" subtitle="The free trial and paid plan for individual teachers, and who is on what" />
+      <PageHeader title="Individual teachers" subtitle="Self-signed-up teachers: the free trial and paid plan, and who is on what" />
 
       {error ? <p style={{ color: "var(--status-critical)" }}>{error}</p> : null}
 

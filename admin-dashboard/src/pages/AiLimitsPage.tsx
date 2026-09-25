@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import type { AiGuardLimit, AiGuardOverview, AiModelPrice } from "../api/client";
 import { Card } from "../components/Card";
 import { PageHeader } from "../components/PageHeader";
+import { SectionTabs } from "../components/SectionTabs";
 import { StatTile } from "../components/StatTile";
 
 // Spend guard for every Claude / Gemini call (backend lib/llm/guard.ts). A call
@@ -120,6 +121,7 @@ export function AiLimitsPage() {
 
   return (
     <div>
+      <SectionTabs group="ai" />
       <PageHeader
         title="AI Limits"
         subtitle="Spending safeguards - an AI call is refused before it is sent if it could pass any limit below"

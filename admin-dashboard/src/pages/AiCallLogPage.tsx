@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import type { AiCallList, AiCallRow } from "../api/client";
 import { Card } from "../components/Card";
 import { PageHeader } from "../components/PageHeader";
+import { SectionTabs } from "../components/SectionTabs";
 import { StatTile } from "../components/StatTile";
 
 // Every AI provider call (and every request the spend guard refused), newest
@@ -69,6 +70,7 @@ export function AiCallLogPage() {
 
   return (
     <div>
+      <SectionTabs group="ai" />
       <PageHeader title="AI Call Log" subtitle="Every AI call and refused request - filter to find a user, a feature or a failure" />
 
       {error ? <p style={{ color: "var(--status-critical)" }}>{error}</p> : null}

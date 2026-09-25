@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import type { SubjectChangeRequest } from "../api/client";
 import { Card } from "../components/Card";
 import { PageHeader } from "../components/PageHeader";
+import { SectionTabs } from "../components/SectionTabs";
 
 // Approval queue for individual-account subject swaps (fixed set of exactly
 // 2, at most once every 6 months - the cooldown is enforced server-side on
@@ -47,7 +48,8 @@ export function SubjectChangeRequestsPage() {
 
   return (
     <div>
-      <PageHeader title="Subject Change Requests" subtitle="Individual-teacher subject swap requests awaiting review" />
+      <SectionTabs group="approvals" />
+      <PageHeader title="Approvals - subject changes" subtitle="Individual-teacher subject swap requests awaiting review" />
 
       <div style={{ marginBottom: 16 }}>
         <select style={styles.select} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>

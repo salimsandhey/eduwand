@@ -7,6 +7,7 @@ import { Card } from "../components/Card";
 import { StatTile } from "../components/StatTile";
 import { BarChart } from "../components/BarChart";
 import { PageHeader } from "../components/PageHeader";
+import { SectionTabs } from "../components/SectionTabs";
 import { SelectSchoolPrompt } from "../components/SelectSchoolPrompt";
 
 const SERIES_COLORS = ["var(--series-1)", "var(--series-2)", "var(--series-3)", "var(--series-4)", "var(--series-5)", "var(--series-6)"];
@@ -57,7 +58,8 @@ export function AiUsagePage() {
 
   return (
     <div>
-      <PageHeader title="AI Usage Analytics" subtitle="Leadership visibility into AI Module adoption" />
+      <SectionTabs group="ai" />
+      <PageHeader title="AI usage by school" subtitle="Leadership visibility into AI Module adoption" />
 
       {error ? <p style={{ color: "var(--status-critical)" }}>{error}</p> : null}
 

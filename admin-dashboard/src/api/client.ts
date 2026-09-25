@@ -687,6 +687,17 @@ export interface AiCallQuery {
   q?: string;
 }
 
+export interface AdminStatus {
+  approvals: { subject: number; class: number; board: number; total: number };
+  ai: { paused: boolean; spentTodayInr: number; dayLimitInr: number | null };
+  payments: {
+    mode: "razorpay" | "mock" | "unconfigured";
+    keyMode: "live" | "test" | null;
+    webhookConfigured: boolean;
+    invoiceDetailsReady: boolean;
+  };
+}
+
 export interface AiCostFeature {
   key: string;
   label: string;
@@ -1142,6 +1153,7 @@ export const api = {
       {},
       token
     ),
+  getAdminStatus: (token: string) => request<AdminStatus>("/admin/status", {}, token),
   getAiCosts: (token: string, days: number) => request<AiCostOverview>(`/ai-costs?days=${days}`, {}, token),
   setAiCostSettings: (token: string, input: { creditValueInr?: number; targetMargin?: number }) =>
     request<{ creditValueInr: number; targetMargin: number }>("/ai-costs/settings", { method: "PUT", body: JSON.stringify(input) }, token),

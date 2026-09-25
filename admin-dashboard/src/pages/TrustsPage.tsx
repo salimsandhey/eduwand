@@ -64,7 +64,7 @@ export function TrustsPage() {
   return (
     <div>
       <PageHeader
-        title="Trusts"
+        title="Schools & trusts"
         subtitle="Every client organisation on the platform"
         action={
           <div style={{ display: "flex", gap: 8 }}>

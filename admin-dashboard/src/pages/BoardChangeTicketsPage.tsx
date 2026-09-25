@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import type { BoardChangeTicket } from "../api/client";
 import { Card } from "../components/Card";
 import { PageHeader } from "../components/PageHeader";
+import { SectionTabs } from "../components/SectionTabs";
 
 // Approval queue for board changes - board is a request/approval-only
 // setting for every school (individual and institutional), there's no
@@ -48,7 +49,8 @@ export function BoardChangeTicketsPage() {
 
   return (
     <div>
-      <PageHeader title="Board Change Tickets" subtitle="School board changes awaiting approval" />
+      <SectionTabs group="approvals" />
+      <PageHeader title="Approvals - board changes" subtitle="School board changes awaiting approval" />
 
       <div style={{ marginBottom: 16 }}>
         <select style={styles.select} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
