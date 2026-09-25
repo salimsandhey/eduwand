@@ -13,6 +13,12 @@ import { BySourcePage } from "./pages/BySourcePage";
 import { CounsellorsPage } from "./pages/CounsellorsPage";
 import { AiUsagePage } from "./pages/AiUsagePage";
 import { AiPromptsPage } from "./pages/AiPromptsPage";
+import { AiLimitsPage } from "./pages/AiLimitsPage";
+import { AiCostsPage } from "./pages/AiCostsPage";
+import { TeacherPlansPage } from "./pages/TeacherPlansPage";
+import { BillingPage } from "./pages/BillingPage";
+import { PaymentsPage } from "./pages/PaymentsPage";
+import { AiCallLogPage } from "./pages/AiCallLogPage";
 import { PlatformSettingsPage } from "./pages/PlatformSettingsPage";
 import { SubjectChangeRequestsPage } from "./pages/SubjectChangeRequestsPage";
 import { ClassChangeRequestsPage } from "./pages/ClassChangeRequestsPage";
@@ -58,6 +64,12 @@ const ROUTE_ROLES: Record<string, string[]> = {
   ...EXTRA_ROUTE_ROLES,
   ...Object.fromEntries(NAV_ITEMS.map((item) => [item.to, item.roles])),
 };
+
+// Individual teachers have nothing else in the dashboard - land them on their plan.
+function HomeRedirect() {
+  const { user } = useAuth();
+  return <Navigate to={user?.role === "teacher" && user.accountType === "individual" ? "/billing" : "/overview"} replace />;
+}
 
 function RequireRole({ path, children }: { path: string; children: ReactElement }) {
   const { user } = useAuth();
@@ -122,7 +134,7 @@ function Root() {
         <Route key={r.path} path={r.path} element={<PublicContentPage contentKey={r.key} />} />
       ))}
       <Route element={<Layout />}>
-        <Route index element={<Navigate to="/overview" replace />} />
+        <Route index element={<HomeRedirect />} />
         <Route path="/overview" element={<OverviewPage />} />
         <Route path="/my-school" element={<RequireRole path="/my-school"><MySchoolRedirect /></RequireRole>} />
         <Route path="/funnel" element={<RequireRole path="/funnel"><FunnelPage /></RequireRole>} />
@@ -130,6 +142,12 @@ function Root() {
         <Route path="/counsellors" element={<RequireRole path="/counsellors"><CounsellorsPage /></RequireRole>} />
         <Route path="/ai-usage" element={<RequireRole path="/ai-usage"><AiUsagePage /></RequireRole>} />
         <Route path="/ai-prompts" element={<RequireRole path="/ai-prompts"><AiPromptsPage /></RequireRole>} />
+        <Route path="/ai-limits" element={<RequireRole path="/ai-limits"><AiLimitsPage /></RequireRole>} />
+        <Route path="/ai-costs" element={<RequireRole path="/ai-costs"><AiCostsPage /></RequireRole>} />
+        <Route path="/teacher-plans" element={<RequireRole path="/teacher-plans"><TeacherPlansPage /></RequireRole>} />
+        <Route path="/payments" element={<RequireRole path="/payments"><PaymentsPage /></RequireRole>} />
+        <Route path="/billing" element={<RequireRole path="/billing"><BillingPage /></RequireRole>} />
+        <Route path="/ai-calls" element={<RequireRole path="/ai-calls"><AiCallLogPage /></RequireRole>} />
         <Route path="/platform-settings" element={<RequireRole path="/platform-settings"><PlatformSettingsPage /></RequireRole>} />
         <Route path="/content-pages" element={<RequireRole path="/content-pages"><ContentPagesEditor /></RequireRole>} />
         <Route path="/subject-change-requests" element={<RequireRole path="/subject-change-requests"><SubjectChangeRequestsPage /></RequireRole>} />

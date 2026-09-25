@@ -1,3 +1,4 @@
+import { hasSufficientCredits, getFeatureCost } from "../lib/credits";
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { uploadKey, detectImageMime, imageKey, IMAGE_ONLY_ERROR } from "../lib/upload";
 import { prisma } from "../lib/prisma";
@@ -412,8 +413,15 @@ export async function topicRoutes(app: FastifyInstance) {
       return reply.code(404).send({ data: null, error: { code: "not_found", message: "Topic not found" } });
     }
 
+    // Teachers pay for the web search in credits; other staff roles have no
+    // credit account and are not charged.
+    const charged = request.user.role === "teacher";
+    if (charged && !(await hasSufficientCredits(request.user.sub, await getFeatureCost("context_research")))) {
+      return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits for a web research" } });
+    }
+
     const job = await prisma.contextResearchJob.create({ data: { topicId: topic.id } });
-    void runContextResearch(job.id);
+    void runContextResearch(job.id, charged ? { schoolId: request.schoolId, teacherUserId: request.user.sub } : undefined);
 
     return reply.code(202).send({ data: job, meta: {} });
   });

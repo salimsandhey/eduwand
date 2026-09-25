@@ -8,7 +8,7 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { spacing, softCardShadow } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
-import { api, AiFeatureInfo, CreditAccountSummary, CreditLedgerEntry, CreditUsageStats } from "../../api/client";
+import { api, AiFeatureInfo, CreditAccountSummary, CreditLedgerEntry, CreditUsageStats, PlanStatus } from "../../api/client";
 import { getRelativeDateLabel } from "../../utils/date";
 
 // Balance, runway, spend breakdown and ledger history for the signed-in
@@ -27,6 +27,34 @@ const LOW_RUNWAY_DAYS = 7;
 const CHART_HEIGHT = 96;
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// The teacher's trial / plan at a glance. Says nothing about where to buy -
+// the app must not steer to an outside payment page.
+function PlanNotice({ plan }: { plan: PlanStatus }) {
+  const { colors } = useTheme();
+  const live = plan.status === "trial" || plan.status === "active";
+  const ends = plan.endsAt ? new Date(plan.endsAt) : null;
+  const endsLabel = ends ? `${ends.getDate()} ${MONTHS[ends.getMonth()]}` : "";
+  const days = plan.daysLeft ?? 0;
+
+  const title = live ? (plan.status === "trial" ? "Free trial" : plan.planName ?? "Your plan") : plan.status === "none" ? "No active plan" : "Your plan has ended";
+  const body = live
+    ? `${days} day${days === 1 ? "" : "s"} left - ends ${endsLabel}. Credits from this period don't carry over.`
+    : "AI features are paused. Your classes, students and saved content are not affected.";
+
+  return (
+    <View style={[planStyles.card, softCardShadow, { backgroundColor: colors.surface, borderLeftColor: live ? colors.accent : colors.danger }]}>
+      <Text style={[planStyles.title, { color: colors.textPrimary }]}>{title}</Text>
+      <Text style={[planStyles.body, { color: colors.textMuted }]}>{body}</Text>
+    </View>
+  );
+}
+
+const planStyles = StyleSheet.create({
+  card: { marginBottom: 14, borderRadius: 14, borderLeftWidth: 3, padding: 14 },
+  title: { fontSize: 15, fontWeight: "700" },
+  body: { marginTop: 4, fontSize: 13, lineHeight: 19 },
+});
 
 function formatNumber(value: number): string {
   return Math.round(value).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
@@ -154,6 +182,8 @@ export function CreditsScreen({ navigation }: Props) {
           <>
             {error ? <Text style={[styles.inlineError, { color: colors.danger }]}>{error}</Text> : null}
 
+            {summary.subscription ? <PlanNotice plan={summary.subscription} /> : null}
+
             <BalanceCard balance={balance} stats={stats} runwayText={runway.text} />
 
             {isRunningLow ? (
@@ -165,19 +195,8 @@ export function CreditsScreen({ navigation }: Props) {
                   {cannotAffordAnything
                     ? `The cheapest AI action costs ${cheapestCost} credits, so AI actions are blocked until you get a top-up.`
                     : `At your current pace this runs out in about ${runway.days} day${runway.days === 1 ? "" : "s"}.`}{" "}
-                  {user?.accountType === "individual" ? "Contact us to top up." : "Ask your school admin for a top-up."}
+                  {user?.accountType === "individual" ? "Your credits reset when a new plan period starts." : "Ask your school admin for a top-up."}
                 </Text>
-                {user?.accountType === "individual" ? (
-                  <Pressable
-                    onPress={() => navigation.navigate("Contact")}
-                    hitSlop={8}
-                    style={({ pressed }) => [styles.noticeAction, pressed && { opacity: pressedOpacity }]}
-                    accessibilityRole="button"
-                  >
-                    <Text style={[styles.noticeActionText, { color: colors.accent }]}>Contact us</Text>
-                    <Ionicons name="arrow-forward" size={14} color={colors.accent} />
-                  </Pressable>
-                ) : null}
               </View>
             ) : null}
 

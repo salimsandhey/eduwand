@@ -1,3 +1,5 @@
+import { hasSufficientCredits, getFeatureCost } from "../lib/credits";
+import { logAiUsage, MODEL_HAIKU } from "../lib/ai";
 import { FastifyInstance } from "fastify";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
@@ -76,6 +78,14 @@ export async function aiAssistantRoutes(app: FastifyInstance) {
         return reply.code(400).send({ data: null, error: { code: "validation_error", message: `text must be at most ${MAX_TEXT} characters` } });
       }
 
+      // Teachers spend credits on the assistant like on any other AI feature;
+      // other staff roles have no credit account and are not charged.
+      const charged = request.user.role === "teacher";
+      if (charged && !(await hasSufficientCredits(request.user.sub, await getFeatureCost("assistant")))) {
+        return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to use the assistant" } });
+      }
+      const started = Date.now();
+
       const conversation = await getConversation(request.user.sub, request.schoolId);
       const userMessage = await prisma.aiMessage.create({
         data: { conversationId: conversation.id, from: "user", text },
@@ -100,6 +110,9 @@ export async function aiAssistantRoutes(app: FastifyInstance) {
       let replies: MessageRow[];
       try {
         const turn = await runAssistantTurn({ ctx: contextFor(request, role), conversationId: conversation.id, history });
+        if (charged) {
+          await logAiUsage({ schoolId: request.schoolId, teacherUserId: request.user.sub, feature: "assistant", model: MODEL_HAIKU, durationMs: Date.now() - started });
+        }
         const reply1 = await prisma.aiMessage.create({
           data: { conversationId: conversation.id, from: "assistant", text: turn.text, ...(turn.links.length ? { links: turn.links as unknown as Prisma.InputJsonValue } : {}) },
           include: { action: true },

@@ -15,6 +15,14 @@ export class ApiError extends Error {
   }
 }
 
+async function requestBlob(path: string, token: string): Promise<Blob> {
+  const response = await fetch(`${API_URL}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok) {
+    throw new ApiError("download_failed", "Download failed");
+  }
+  return response.blob();
+}
+
 async function requestText(path: string, token: string): Promise<string> {
   const response = await fetch(`${API_URL}${path}`, { headers: { Authorization: `Bearer ${token}` } });
   if (!response.ok) {
@@ -82,6 +90,8 @@ export interface CurrentUser {
   schoolId: string | null;
   trustId: string | null;
   status: string;
+  // "individual" for a self-signed-up teacher, "institutional" for a school's.
+  accountType?: string | null;
 }
 
 export type EnquiryStatus = "new" | "contacted" | "visit_scheduled" | "visit_done" | "application" | "admitted" | "enrolled" | "lost";
@@ -517,6 +527,272 @@ export interface AiFeature {
   updatedAt: string;
 }
 
+export interface BillingInvoiceSummary {
+  id: string;
+  number: string;
+  totalPaise: number;
+  issuedAt: string;
+}
+
+export interface BillingOverview {
+  user: { fullName: string; email: string; phone: string | null } | null;
+  balance: number;
+  subscription: { status: "trial" | "active" | "expired" | "none"; planName: string | null; endsAt: string | null; daysLeft: number | null };
+  plans: { key: string; name: string; priceInr: number; durationDays: number; credits: number }[];
+  gstIncluded: boolean;
+  gstRatePercent: number;
+  gateway: { mode: "razorpay" | "mock" | "unconfigured"; keyId: string | null };
+  states: { code: string; name: string }[];
+  payments: {
+    id: string;
+    planName: string;
+    amountPaise: number;
+    status: "created" | "paid" | "failed";
+    method: string | null;
+    createdAt: string;
+    paidAt: string | null;
+    invoice: BillingInvoiceSummary | null;
+  }[];
+}
+
+export interface CheckoutOrder {
+  paymentId: string;
+  orderId: string;
+  amountPaise: number;
+  currency: string;
+  mode: "razorpay" | "mock";
+  keyId: string | null;
+  description: string;
+  prefill: { name: string; email: string; contact: string };
+}
+
+export interface AdminPaymentTotals {
+  count: number;
+  collectedPaise: number;
+  netPaise: number;
+  taxPaise: number;
+}
+
+export interface AdminPayments {
+  gateway: { mode: "razorpay" | "mock" | "unconfigured"; webhookConfigured: boolean };
+  businessReady: boolean;
+  totals: { today: AdminPaymentTotals; month: AdminPaymentTotals; allTime: AdminPaymentTotals };
+  statusCounts: Record<string, number>;
+  total: number;
+  page: number;
+  pageSize: number;
+  rows: {
+    id: string;
+    teacherName: string;
+    teacherEmail: string | null;
+    planName: string;
+    amountPaise: number;
+    status: "created" | "paid" | "failed";
+    gateway: string;
+    method: string | null;
+    gatewayPaymentId: string | null;
+    failureReason: string | null;
+    createdAt: string;
+    paidAt: string | null;
+    invoice: BillingInvoiceSummary | null;
+  }[];
+}
+
+export interface BusinessDetails {
+  legalName: string;
+  gstin: string;
+  address: string;
+  stateCode: string;
+  email: string;
+  sacCode: string;
+  gstRatePercent: number;
+  gstRegistered: boolean;
+}
+
+export interface BillingPlan {
+  id: string;
+  key: string;
+  name: string;
+  kind: "trial" | "paid";
+  priceInr: number;
+  durationDays: number;
+  credits: number;
+  enabled: boolean;
+  sortOrder: number;
+  updatedAt: string;
+}
+
+export interface SubscriptionRow {
+  userId: string;
+  name: string;
+  email: string | null;
+  planKey: string;
+  planName: string;
+  status: "trial" | "active" | "expired";
+  startsAt: string;
+  endsAt: string;
+  daysLeft: number;
+  source: string;
+  balance: number;
+  note: string | null;
+}
+
+export interface SubscriptionList {
+  total: number;
+  page: number;
+  pageSize: number;
+  counts: { trial: number; active: number; expired: number };
+  rows: SubscriptionRow[];
+}
+
+export interface AiCallRow {
+  id: string;
+  createdAt: string;
+  userName: string | null;
+  userEmail: string | null;
+  provider: string;
+  model: string;
+  purpose: string;
+  feature: string | null;
+  status: "success" | "error" | "timeout" | "blocked";
+  blockedReason: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  searches: number;
+  costInr: number;
+  latencyMs: number | null;
+  error: string | null;
+}
+
+export interface AiCallList {
+  days: number;
+  page: number;
+  pageSize: number;
+  total: number;
+  totalCostInr: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  filters: { models: string[]; purposes: string[]; features: string[] };
+  rows: AiCallRow[];
+}
+
+export interface AiCallQuery {
+  days: number;
+  page: number;
+  status?: string;
+  model?: string;
+  purpose?: string;
+  feature?: string;
+  q?: string;
+}
+
+export interface AiCostFeature {
+  key: string;
+  label: string;
+  currentCredits: number;
+  actions: number;
+  avgCalls: number | null;
+  avgInputTokens: number | null;
+  avgOutputTokens: number | null;
+  avgCostInr: number | null;
+  p90CostInr: number | null;
+  maxCostInr: number | null;
+  totalCostInr: number;
+  creditsCharged: number;
+  marginPct: number | null;
+  suggestedCredits: number | null;
+  suggestedCreditsP90: number | null;
+}
+
+export interface AiCostOverview {
+  days: number;
+  usdInr: number;
+  pricing: { creditValueInr: number; targetMargin: number };
+  summary: {
+    totalCostInr: number;
+    calls: number;
+    failedCalls: number;
+    blockedCalls: number;
+    failedCostInr: number;
+    unchargedCostInr: number;
+    inputTokens: number;
+    outputTokens: number;
+    creditsCharged: number;
+    revenueInr: number;
+    paymentsCount: number;
+    collectedInr: number;
+    netRevenueInr: number;
+    realMarginPct: number | null;
+    marginPct: number | null;
+  };
+  daily: { day: string; costInr: number; calls: number }[];
+  byModel: {
+    model: string;
+    provider: string;
+    calls: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    searches: number;
+    costInr: number;
+    avgLatencyMs: number;
+    p90LatencyMs: number;
+  }[];
+  byFeature: AiCostFeature[];
+  byPurpose: {
+    purpose: string;
+    calls: number;
+    chargedCalls: number;
+    avgInputTokens: number;
+    avgOutputTokens: number;
+    avgCostInr: number;
+    p90CostInr: number;
+    totalCostInr: number;
+  }[];
+  uncharged: { purpose: string; calls: number; costInr: number }[];
+  topUsers: { userId: string; name: string; email: string | null; calls: number; costInr: number }[];
+}
+
+export interface AiGuardLimit {
+  key: string;
+  label: string;
+  description: string;
+  scope: "global" | "user" | "call";
+  period: "minute" | "day" | "month" | "call";
+  unit: "inr" | "requests" | "tokens";
+  enabled: boolean;
+  value: number;
+  // Where the limit currently stands, in its own unit; null for per-call limits.
+  usage: number | null;
+}
+
+export interface AiModelPrice {
+  id: string;
+  model: string;
+  provider: string;
+  inputPerMtokUsd: number;
+  outputPerMtokUsd: number;
+  cacheReadPerMtokUsd: number;
+  cacheWritePerMtokUsd: number;
+  perSearchUsd: number;
+  updatedAt: string;
+}
+
+export interface AiGuardOverview {
+  paused: boolean;
+  usdInr: number;
+  hardCeilings: { dayUsd: number; dayInr: number; monthUsd: number; monthInr: number };
+  totals: {
+    day: { spentInr: number; requests: number; tokens: number };
+    month: { spentInr: number; requests: number; tokens: number };
+  };
+  limits: AiGuardLimit[];
+  topUsers: { userId: string; name: string; email: string | null; spentInr: number; requests: number }[];
+  prices: AiModelPrice[];
+  recentBlocked: { id: string; createdAt: string; purpose: string; reason: string | null; userName: string | null }[];
+}
+
 export interface PlatformSetting {
   id: string;
   key: string;
@@ -813,6 +1089,72 @@ export const api = {
   listPlatformSettings: (token: string) => request<PlatformSetting[]>("/platform-settings", {}, token),
   updatePlatformSetting: (token: string, key: string, value: string) =>
     request<PlatformSetting>(`/platform-settings/${key}`, { method: "PUT", body: JSON.stringify({ value }) }, token),
+  getBillingOverview: (token: string) => request<BillingOverview>("/billing/overview", {}, token),
+  createCheckout: (token: string, input: { planKey?: string; stateCode: string }) =>
+    request<CheckoutOrder>("/billing/checkout", { method: "POST", body: JSON.stringify(input) }, token),
+  verifyPayment: (token: string, input: { orderId: string; paymentId: string; signature: string }) =>
+    request<{ status: string; alreadyPaid: boolean; invoice: BillingInvoiceSummary | null }>(
+      "/billing/verify",
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    ),
+  mockPay: (token: string, orderId: string) =>
+    request<{ status: string }>("/billing/mock-pay", { method: "POST", body: JSON.stringify({ orderId }) }, token),
+  downloadInvoice: (token: string, invoiceId: string) => requestBlob(`/billing/invoices/${invoiceId}/pdf`, token),
+  listPayments: (token: string, query: { status?: string; q?: string; page: number }) =>
+    request<AdminPayments>(
+      `/billing/admin/payments${toQueryString({ status: query.status || undefined, q: query.q || undefined, page: String(query.page) })}`,
+      {},
+      token
+    ),
+  getBusinessDetails: (token: string) => request<BusinessDetails>("/billing/admin/business", {}, token),
+  saveBusinessDetails: (token: string, input: Partial<Omit<BusinessDetails, "gstRegistered">>) =>
+    request<BusinessDetails>("/billing/admin/business", { method: "PUT", body: JSON.stringify(input) }, token),
+  listBillingPlans: (token: string) => request<BillingPlan[]>("/billing-plans", {}, token),
+  updateBillingPlan: (
+    token: string,
+    key: string,
+    input: Partial<Pick<BillingPlan, "name" | "priceInr" | "durationDays" | "credits" | "enabled">>
+  ) => request<BillingPlan>(`/billing-plans/${key}`, { method: "PATCH", body: JSON.stringify(input) }, token),
+  listSubscriptions: (token: string, query: { status?: string; q?: string; page: number }) =>
+    request<SubscriptionList>(
+      `/subscriptions${toQueryString({ status: query.status || undefined, q: query.q || undefined, page: String(query.page) })}`,
+      {},
+      token
+    ),
+  extendSubscription: (token: string, userId: string, days: number) =>
+    request<{ endsAt: string }>(`/subscriptions/${userId}/extend`, { method: "POST", body: JSON.stringify({ days }) }, token),
+  activateSubscription: (token: string, userId: string, planKey: string) =>
+    request<{ endsAt: string; balance: number }>(`/subscriptions/${userId}/activate`, { method: "POST", body: JSON.stringify({ planKey }) }, token),
+  listAiCalls: (token: string, query: AiCallQuery) =>
+    request<AiCallList>(
+      `/ai-costs/calls${toQueryString({
+        days: String(query.days),
+        page: String(query.page),
+        status: query.status || undefined,
+        model: query.model || undefined,
+        purpose: query.purpose || undefined,
+        feature: query.feature || undefined,
+        q: query.q || undefined,
+      })}`,
+      {},
+      token
+    ),
+  getAiCosts: (token: string, days: number) => request<AiCostOverview>(`/ai-costs?days=${days}`, {}, token),
+  setAiCostSettings: (token: string, input: { creditValueInr?: number; targetMargin?: number }) =>
+    request<{ creditValueInr: number; targetMargin: number }>("/ai-costs/settings", { method: "PUT", body: JSON.stringify(input) }, token),
+  getAiGuard: (token: string) => request<AiGuardOverview>("/ai-guard", {}, token),
+  updateAiGuardLimit: (token: string, key: string, input: { enabled?: boolean; value?: number }) =>
+    request<{ key: string; enabled: boolean; value: number }>(`/ai-guard/limits/${key}`, { method: "PUT", body: JSON.stringify(input) }, token),
+  setAiPaused: (token: string, paused: boolean) =>
+    request<{ paused: boolean }>("/ai-guard/pause", { method: "PUT", body: JSON.stringify({ paused }) }, token),
+  setAiUsdInr: (token: string, usdInr: number) =>
+    request<{ usdInr: number }>("/ai-guard/settings", { method: "PUT", body: JSON.stringify({ usdInr }) }, token),
+  updateAiModelPrice: (
+    token: string,
+    model: string,
+    input: Partial<Pick<AiModelPrice, "inputPerMtokUsd" | "outputPerMtokUsd" | "cacheReadPerMtokUsd" | "cacheWritePerMtokUsd" | "perSearchUsd">>
+  ) => request<AiModelPrice>(`/ai-guard/prices/${model}`, { method: "PUT", body: JSON.stringify(input) }, token),
   listAiFeatures: (token: string) => request<AiFeature[]>("/ai-features", {}, token),
   updateAiFeature: (
     token: string,

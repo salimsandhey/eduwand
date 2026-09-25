@@ -4,10 +4,44 @@ import { MAX_EXTRACTED_CHARS } from "./extraction";
 import { getFeatureCost, deductCredits } from "./credits";
 import type { MediaItem } from "./media";
 import { jsonrepair } from "jsonrepair";
+import {
+  CLAUDE_MODEL_LABELS,
+  converse,
+  isClaudeConfigured,
+  type ClaudeTier,
+  type ConverseContentBlock,
+  type ConverseMessage,
+  type ConverseResult,
+} from "./llm/bedrock";
+import { imageBlockForClaude } from "./llm/image";
+import { AiLimitError, estimateTokens, reserveAiSpend, settleAiSpend } from "./llm/guard";
+import { aiRequestContext } from "./llm/context";
 
-export const MODEL_SONNET = "claude-sonnet";
-export const MODEL_HAIKU = "claude-haiku";
+// Labels stored on AiUsageLog / generations - the Bedrock inference-profile
+// ids live in llm/bedrock.ts.
+export const MODEL_SONNET = CLAUDE_MODEL_LABELS.sonnet;
+export const MODEL_HAIKU = CLAUDE_MODEL_LABELS.haiku;
+// Web research only - the one call that still uses Gemini (Google Search grounding).
 export const MODEL_GEMINI_FLASH = "gemini-2.5-flash";
+
+// Which Claude model does which job. Sonnet for anything a teacher reads as
+// finished material; Haiku for high-volume, structured or short tasks.
+const MODEL_TIER = {
+  generateContent: "sonnet",
+  presentationOutline: "sonnet",
+  presentationFill: "sonnet",
+  assignment: "sonnet",
+  handwritingOcr: "sonnet",
+  grading: "haiku",
+  answerKey: "haiku",
+  personalisation: "haiku",
+  assessmentRecommendation: "haiku",
+  imageContext: "haiku",
+  articleCleanup: "haiku",
+  assistant: "haiku",
+} as const satisfies Record<string, ClaudeTier>;
+
+const tierLabel = (tier: ClaudeTier) => (tier === "sonnet" ? MODEL_SONNET : MODEL_HAIKU);
 
 export type GenerationOutputType =
   | "lesson_plan"
@@ -894,7 +928,8 @@ export interface AiProvider {
   // above, which produces a text report) - searches the web for candidate
   // sources a teacher can approve into real ContextSource rows. See
   // backend/src/lib/context-research.ts.
-  researchContextSources(input: ContextResearchInput): Promise<{ candidates: ResearchCandidateDraft[] }>;
+  // live is true only when a real web search ran - canned fallback results are never charged for.
+  researchContextSources(input: ContextResearchInput): Promise<{ candidates: ResearchCandidateDraft[]; live?: boolean }>;
   generatePersonalisationSuggestion(
     input: PersonalisationInput
   ): Promise<{ suggestedMix: Record<string, number>; reasoning: string; model: string }>;
@@ -1377,13 +1412,44 @@ export const stubProvider = new StubAiProvider();
 const GEMINI_ENDPOINT =
   "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 
-const IMAGE_MIME_TYPES: Record<string, string> = {
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  png: "image/png",
-  gif: "image/gif",
-  webp: "image/webp",
-};
+// One-shot Claude call: a single user prompt (optionally with an image) in,
+// text out. With jsonSchema the model is forced to answer through a tool whose
+// input is that schema, and the text returned is that input as JSON.
+async function claudeText(params: {
+  tier: ClaudeTier;
+  purpose: string;
+  prompt: string;
+  maxTokens: number;
+  system?: string;
+  image?: ConverseContentBlock;
+  jsonSchema?: Record<string, unknown>;
+}): Promise<ConverseResult & { model: string }> {
+  const content: ConverseContentBlock[] = [];
+  if (params.image) content.push(params.image);
+  content.push({ text: params.prompt });
+
+  const result = await converse({
+    tier: params.tier,
+    purpose: params.purpose,
+    system: params.system,
+    maxTokens: params.maxTokens,
+    messages: [{ role: "user", content }],
+    ...(params.jsonSchema
+      ? {
+          tools: [{ name: "respond", description: "Return the answer as structured data.", inputSchema: params.jsonSchema }],
+          forceTool: "respond",
+        }
+      : {}),
+  });
+
+  const text = params.jsonSchema ? (result.toolCalls[0] ? JSON.stringify(result.toolCalls[0].input) : "") : result.text;
+  return { ...result, text, model: tierLabel(params.tier) };
+}
+
+async function loadImageBlock(fileLocation: string): Promise<ConverseContentBlock> {
+  const buffer = await storage.readBuffer(fileLocation);
+  return imageBlockForClaude(buffer, fileLocation.split(".").pop() ?? "");
+}
 
 const OCR_NO_TEXT_SENTINEL = "NO_TEXT_FOUND";
 
@@ -1572,14 +1638,25 @@ function parseModelJson(raw: string): unknown {
 function stripJsonFence(raw: string): string {
   const trimmed = raw.trim();
   const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  return fenced ? fenced[1] : trimmed;
+  const body = fenced ? fenced[1] : trimmed;
+  if (body.startsWith("{") || body.startsWith("[")) return body;
+
+  // Claude occasionally opens with a sentence ("Here is the JSON:") or closes
+  // with a remark around an otherwise valid body - cut down to the JSON span.
+  const start = body.search(/[{[]/);
+  const end = Math.max(body.lastIndexOf("}"), body.lastIndexOf("]"));
+  return start >= 0 && end > start ? body.slice(start, end + 1) : body;
 }
 
-class GeminiAiProvider implements AiProvider {
+// Claude (via Bedrock) does all the writing, grading and vision work; Gemini
+// is used only for researchContextSources, which needs live Google Search.
+class LlmAiProvider implements AiProvider {
   generateLessonPlan = stubProvider.generateLessonPlan.bind(stubProvider);
   generateResearchReport = stubProvider.generateResearchReport.bind(stubProvider);
 
   async researchContextSources({ topicName, subject, board }: ContextResearchInput) {
+    if (!process.env.GEMINI_API_KEY) return stubProvider.researchContextSources({ topicName, subject, board });
+
     // Video/YouTube candidates are deferred to a later phase - no reliable
     // way yet to verify or pull real content from a video link.
     const prompt = [
@@ -1594,21 +1671,55 @@ class GeminiAiProvider implements AiProvider {
     ].join("\n");
 
     try {
-      const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          tools: [{ google_search: {} }],
-        }),
+      // Reserved against the spend limits like every Claude call - a grounded
+      // search is billed per prompt, so one search is reserved up front.
+      const reservation = await reserveAiSpend({
+        provider: "gemini",
+        model: MODEL_GEMINI_FLASH,
+        purpose: "researchContextSources",
+        estInputTokens: estimateTokens(prompt),
+        maxOutputTokens: 8192,
+        searches: 1,
       });
-      if (!response.ok) throw new Error(`Gemini request failed (${response.status})`);
-      const data = (await response.json()) as {
+      const started = Date.now();
+      let data: {
         candidates?: {
           content?: { parts?: { text?: string }[] };
-          groundingMetadata?: { groundingChunks?: { web?: { uri?: string; title?: string } }[] };
+          groundingMetadata?: { groundingChunks?: { web?: { uri?: string; title?: string } }[]; webSearchQueries?: string[] };
         }[];
+        usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number };
       };
+      try {
+        const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            tools: [{ google_search: {} }],
+            generationConfig: { maxOutputTokens: reservation.maxOutputTokens },
+          }),
+          signal: AbortSignal.timeout(120_000),
+        });
+        if (!response.ok) throw Object.assign(new Error(`Gemini request failed (${response.status})`), { rejected: true });
+        data = (await response.json()) as typeof data;
+      } catch (err) {
+        await settleAiSpend(reservation, {
+          status: (err as { rejected?: boolean }).rejected ? "error" : "timeout",
+          latencyMs: Date.now() - started,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
+      }
+      await settleAiSpend(reservation, {
+        status: "success",
+        latencyMs: Date.now() - started,
+        usage: {
+          inputTokens: data.usageMetadata?.promptTokenCount ?? 0,
+          // Thinking tokens are billed as output.
+          outputTokens: (data.usageMetadata?.candidatesTokenCount ?? 0) + (data.usageMetadata?.thoughtsTokenCount ?? 0),
+          searches: data.candidates?.[0]?.groundingMetadata?.webSearchQueries?.length ? 1 : 0,
+        },
+      });
       const first = data.candidates?.[0];
       const text = first?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
       if (!text) throw new Error("Gemini returned no text");
@@ -1646,8 +1757,9 @@ class GeminiAiProvider implements AiProvider {
         });
 
       if (candidates.length === 0) throw new Error("No grounded candidates in research response");
-      return { candidates };
+      return { candidates, live: true };
     } catch (err) {
+      if (err instanceof AiLimitError) throw err;
       console.error("[ai] researchContextSources fell back to stub:", err);
       return stubProvider.researchContextSources({ topicName, subject, board });
     }
@@ -1669,16 +1781,9 @@ class GeminiAiProvider implements AiProvider {
     ].join("\n");
 
     try {
-      const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-      });
-      if (!response.ok) throw new Error(`Gemini request failed (${response.status})`);
-      const data = (await response.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) throw new Error("Gemini returned no text");
-      const parsed = JSON.parse(stripJsonFence(text)) as { suggestedMix?: Record<string, number>; reasoning?: string };
+      const { text } = await claudeText({ tier: MODEL_TIER.personalisation, purpose: "personalisation", prompt, maxTokens: 1000 });
+      if (!text) throw new Error("Claude returned no text");
+      const parsed = parseModelJson(text) as { suggestedMix?: Record<string, number>; reasoning?: string };
       if (!parsed.suggestedMix || !parsed.reasoning) throw new Error("Malformed personalisation response");
       const rawMix = {
         easy: Math.max(0, Math.round(parsed.suggestedMix.easy ?? 0)),
@@ -1688,8 +1793,9 @@ class GeminiAiProvider implements AiProvider {
       // The model is asked to sum to questionCount but isn't guaranteed to -
       // rescale rather than trust it verbatim, same safety net the stub uses.
       const suggestedMix = scaleMixToQuestionCount(rawMix, questionCount);
-      return { suggestedMix, reasoning: parsed.reasoning, model: MODEL_GEMINI_FLASH };
+      return { suggestedMix, reasoning: parsed.reasoning, model: tierLabel(MODEL_TIER.personalisation) };
     } catch (err) {
+      if (err instanceof AiLimitError) throw err;
       // Fall back to the deterministic heuristic rather than failing the
       // publish flow over a single malformed/failed model response.
       console.error("[ai] generatePersonalisationSuggestion fell back to heuristic:", err);
@@ -1722,19 +1828,13 @@ class GeminiAiProvider implements AiProvider {
       .join("\n");
 
     try {
-      const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-      });
-      if (!response.ok) throw new Error(`Gemini request failed (${response.status})`);
-      const data = (await response.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) throw new Error("Gemini returned no text");
-      const parsed = JSON.parse(stripJsonFence(text)) as { recommendation?: string };
+      const { text } = await claudeText({ tier: MODEL_TIER.assessmentRecommendation, purpose: "assessmentRecommendation", prompt, maxTokens: 800 });
+      if (!text) throw new Error("Claude returned no text");
+      const parsed = parseModelJson(text) as { recommendation?: string };
       if (!parsed.recommendation) throw new Error("Malformed assessment recommendation response");
-      return { recommendation: parsed.recommendation, model: MODEL_GEMINI_FLASH };
+      return { recommendation: parsed.recommendation, model: tierLabel(MODEL_TIER.assessmentRecommendation) };
     } catch (err) {
+      if (err instanceof AiLimitError) throw err;
       console.error("[ai] generateAssessmentRecommendation fell back to heuristic:", err);
       return stubProvider.generateAssessmentRecommendation(input);
     }
@@ -1786,7 +1886,7 @@ class GeminiAiProvider implements AiProvider {
       if (shortAnswerQuestions.length > 0 && mcqDetails.length === 0) {
         return stubProvider.gradeSubmission({ questions, answers, answerKey });
       }
-      return finalise([...mcqDetails, ...blankDetails], null, null, MODEL_GEMINI_FLASH);
+      return finalise([...mcqDetails, ...blankDetails], null, null, tierLabel(MODEL_TIER.grading));
     }
 
     const questionBlock = shortAnswerQuestions
@@ -1815,16 +1915,9 @@ class GeminiAiProvider implements AiProvider {
     ].join("\n");
 
     try {
-      const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-      });
-      if (!response.ok) throw new Error(`Gemini request failed (${response.status})`);
-      const data = (await response.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) throw new Error("Gemini returned no text");
-      const parsed = JSON.parse(stripJsonFence(text)) as {
+      const { text } = await claudeText({ tier: MODEL_TIER.grading, purpose: "grading", prompt, maxTokens: 4000 });
+      if (!text) throw new Error("Claude returned no text");
+      const parsed = parseModelJson(text) as {
         questionDetails?: { questionId: string; correct: boolean; marksAwarded: number; note: string }[];
         overallFeedback?: string;
         nextStep?: string;
@@ -1844,9 +1937,10 @@ class GeminiAiProvider implements AiProvider {
         [...mcqDetails, ...saDetails],
         parsed.overallFeedback,
         parsed.nextStep ?? "Review with the student before releasing.",
-        MODEL_GEMINI_FLASH
+        tierLabel(MODEL_TIER.grading)
       );
     } catch (err) {
+      if (err instanceof AiLimitError) throw err;
       console.error("[ai] gradeSubmission fell back to heuristic:", err);
       return stubProvider.gradeSubmission({ questions, answers, answerKey });
     }
@@ -1864,23 +1958,17 @@ class GeminiAiProvider implements AiProvider {
     ].join("\n");
 
     try {
-      const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-      });
-      if (!response.ok) throw new Error(`Gemini request failed (${response.status})`);
-      const data = (await response.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) throw new Error("Gemini returned no text");
-      const parsed = JSON.parse(stripJsonFence(text)) as { answers?: Record<string, string> };
+      const { text } = await claudeText({ tier: MODEL_TIER.answerKey, purpose: "answerKey", prompt, maxTokens: 6000 });
+      if (!text) throw new Error("Claude returned no text");
+      const parsed = parseModelJson(text) as { answers?: Record<string, string> };
       if (!parsed.answers) throw new Error("Malformed answer-key response");
       const answers: Record<string, string> = {};
       for (const q of questions) {
         answers[q.id] = parsed.answers[q.id]?.trim() || `Draft answer for: "${q.prompt}" — teacher review required.`;
       }
-      return { answers, model: MODEL_GEMINI_FLASH };
+      return { answers, model: tierLabel(MODEL_TIER.answerKey) };
     } catch (err) {
+      if (err instanceof AiLimitError) throw err;
       console.error("[ai] generateAnswerKey fell back to template:", err);
       return stubProvider.generateAnswerKey(questions);
     }
@@ -1927,25 +2015,19 @@ class GeminiAiProvider implements AiProvider {
       .join("\n");
 
     try {
-      const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-      });
-      if (!response.ok) throw new Error(`Gemini request failed (${response.status})`);
-      const data = (await response.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) throw new Error("Gemini returned no text");
-      const parsed = JSON.parse(stripJsonFence(text)) as { questions?: unknown };
+      const { text } = await claudeText({ tier: MODEL_TIER.assignment, purpose: "assignment", prompt, maxTokens: 12000 });
+      if (!text) throw new Error("Claude returned no text");
+      const parsed = parseModelJson(text) as { questions?: unknown };
       const rows = Array.isArray(parsed.questions) ? parsed.questions : Array.isArray(parsed) ? parsed : null;
       if (!rows || rows.length === 0) throw new Error("Malformed assignment-generation response");
 
       const questions = normaliseGeneratedQuestions(rows, mix, input.questionTypes);
       if (questions.length === 0) throw new Error("No usable questions in response");
-      return { questions, model: MODEL_GEMINI_FLASH };
+      return { questions, model: tierLabel(MODEL_TIER.assignment) };
     } catch (err) {
+      if (err instanceof AiLimitError) throw err;
       console.error("[ai] generateAssignmentFromTopic fell back to heuristic:", err);
-      return { questions: heuristicAssignmentQuestions(input), model: MODEL_GEMINI_FLASH };
+      return { questions: heuristicAssignmentQuestions(input), model: tierLabel(MODEL_TIER.assignment) };
     }
   }
 
@@ -1953,10 +2035,7 @@ class GeminiAiProvider implements AiProvider {
     fileLocation,
     questions,
   }: OcrInput): Promise<{ text: string; confidence: number; perQuestion?: Record<string, string> }> {
-    const buffer = await storage.readBuffer(fileLocation);
-    const ext = (fileLocation.split(".").pop() ?? "").toLowerCase();
-    const mimeType = IMAGE_MIME_TYPES[ext] ?? "image/jpeg";
-    const base64 = buffer.toString("base64");
+    const image = await loadImageBlock(fileLocation);
 
     if (questions && questions.length > 0) {
       const questionList = questions.map((q, i) => `${i + 1}. [id: ${q.id}] ${q.prompt}`).join("\n");
@@ -1973,21 +2052,9 @@ class GeminiAiProvider implements AiProvider {
           "for. Omit a question entirely only if the image has no readable text at all.",
       ].join("\n");
 
-      const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: base64 } }] }],
-        }),
-      });
-      if (!response.ok) {
-        const errBody = await response.text().catch(() => "");
-        throw new Error(`Gemini OCR request failed (${response.status}): ${errBody}`);
-      }
-      const data = (await response.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
-      const raw = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      const { text: raw } = await claudeText({ tier: MODEL_TIER.handwritingOcr, purpose: "handwritingOcr", prompt, image, maxTokens: 6000 });
       try {
-        const parsed = raw ? (JSON.parse(stripJsonFence(raw)) as { perQuestion?: Record<string, string> }) : null;
+        const parsed = raw ? (parseModelJson(raw) as { perQuestion?: Record<string, string> }) : null;
         const perQuestion = parsed?.perQuestion;
         if (perQuestion && Object.keys(perQuestion).length > 0) {
           const hasAnyText = Object.values(perQuestion).some((v) => v.trim().length > 0);
@@ -2005,23 +2072,8 @@ class GeminiAiProvider implements AiProvider {
       "(headings, bullet points, paragraphs) where possible. Do not translate - transcribe in " +
       `the original language. If the image has no readable text, respond with exactly: ${OCR_NO_TEXT_SENTINEL}`;
 
-    const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: base64 } }] }],
-      }),
-    });
-
-    if (!response.ok) {
-      const errBody = await response.text().catch(() => "");
-      throw new Error(`Gemini OCR request failed (${response.status}): ${errBody}`);
-    }
-
-    const data = (await response.json()) as {
-      candidates?: { content?: { parts?: { text?: string }[] } }[];
-    };
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    const result = await claudeText({ tier: MODEL_TIER.handwritingOcr, purpose: "handwritingOcr", prompt, image, maxTokens: 6000 });
+    const text = result.text.trim();
 
     if (!text || text === OCR_NO_TEXT_SENTINEL) {
       return { text: "", confidence: 0 };
@@ -2030,10 +2082,7 @@ class GeminiAiProvider implements AiProvider {
   }
 
   async describeImageForContext({ fileLocation }: OcrInput): Promise<{ text: string; model: string }> {
-    const buffer = await storage.readBuffer(fileLocation);
-    const ext = (fileLocation.split(".").pop() ?? "").toLowerCase();
-    const mimeType = IMAGE_MIME_TYPES[ext] ?? "image/jpeg";
-    const base64 = buffer.toString("base64");
+    const image = await loadImageBlock(fileLocation);
 
     const prompt =
       "You are preparing reference material a teacher will use to generate lesson content. " +
@@ -2047,35 +2096,21 @@ class GeminiAiProvider implements AiProvider {
       "Only if the image has NEITHER readable text NOR anything worth describing (e.g. it is blank, " +
       `corrupted, or unreadable noise), respond with exactly: ${OCR_NO_TEXT_SENTINEL}`;
 
-    const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: base64 } }] }],
-      }),
-    });
-
-    if (!response.ok) {
-      const errBody = await response.text().catch(() => "");
-      throw new Error(`Gemini image context request failed (${response.status}): ${errBody}`);
-    }
-
-    const data = (await response.json()) as {
-      candidates?: { content?: { parts?: { text?: string }[] } }[];
-    };
-    let text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    const model = tierLabel(MODEL_TIER.imageContext);
+    const result = await claudeText({ tier: MODEL_TIER.imageContext, purpose: "imageContext", prompt, image, maxTokens: 6000 });
+    let text = result.text.trim();
 
     if (!text || text === OCR_NO_TEXT_SENTINEL) {
-      return { text: "", model: MODEL_GEMINI_FLASH };
+      return { text: "", model };
     }
     // Defensive: some responses still lead with the sentinel (e.g. "no text
     // to transcribe") before going on to describe a figure. Strip a stray
     // leading occurrence rather than storing it as if it were content.
     text = text.replace(new RegExp(`^${OCR_NO_TEXT_SENTINEL}\\s*`), "").trim();
     if (!text) {
-      return { text: "", model: MODEL_GEMINI_FLASH };
+      return { text: "", model };
     }
-    return { text: text.slice(0, MAX_EXTRACTED_CHARS), model: MODEL_GEMINI_FLASH };
+    return { text: text.slice(0, MAX_EXTRACTED_CHARS), model };
   }
 
   async cleanScrapedArticleText({ rawText, sourceUrl }: CleanArticleTextInput): Promise<{ text: string; model: string }> {
@@ -2091,18 +2126,14 @@ class GeminiAiProvider implements AiProvider {
       rawText,
     ].join("\n");
 
+    const model = tierLabel(MODEL_TIER.articleCleanup);
     try {
-      const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-      });
-      if (!response.ok) throw new Error(`Gemini request failed (${response.status})`);
-      const data = (await response.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-      if (!text || text === NO_CONTENT_SENTINEL) return { text: "", model: MODEL_GEMINI_FLASH };
-      return { text: text.slice(0, MAX_EXTRACTED_CHARS), model: MODEL_GEMINI_FLASH };
+      const result = await claudeText({ tier: MODEL_TIER.articleCleanup, purpose: "articleCleanup", prompt, maxTokens: 8000 });
+      const text = result.text.trim();
+      if (!text || text === NO_CONTENT_SENTINEL) return { text: "", model };
+      return { text: text.slice(0, MAX_EXTRACTED_CHARS), model };
     } catch (err) {
+      if (err instanceof AiLimitError) throw err;
       // Fall back to the raw scrape rather than losing the source entirely
       // over a single failed cleanup call.
       console.error("[ai] cleanScrapedArticleText fell back to raw text:", err);
@@ -2208,49 +2239,29 @@ class GeminiAiProvider implements AiProvider {
       .filter(Boolean)
       .join("\n");
 
-    // Presentations get an enforced response schema - layout variety and
-    // speaker notes are new and easy for prose-only instructions to drift on;
-    // every other output type stays on today's prose-instructed JSON.
-    // Every other type is still instructed in prose, but asking for JSON mode
-    // steers the model to a plain JSON body instead of prose around it.
-    const generationConfig =
-      outputType === "presentation"
-        ? { responseMimeType: "application/json", responseSchema: PRESENTATION_RESPONSE_SCHEMA }
-        : { responseMimeType: "application/json" };
+    // Presentations get an enforced response schema (the model is forced to
+    // answer through a tool with that schema) - layout variety and speaker
+    // notes are new and easy for prose-only instructions to drift on; every
+    // other output type stays on the prose-instructed JSON shape.
+    const jsonSchema = outputType === "presentation" ? PRESENTATION_RESPONSE_SCHEMA : undefined;
 
     // The model occasionally writes structurally broken JSON (a missing closing
-    // brace after a list, say) even in JSON mode - on roughly a third of
-    // lesson plans / flashcard sets in testing. Small slips are repaired
-    // locally for free; if that isn't enough the call is repeated once, so a
-    // teacher isn't shown a failed generation for what is a transient glitch.
+    // brace after a list, say). Small slips are repaired locally for free; if
+    // that isn't enough the call is repeated once, so a teacher isn't shown a
+    // failed generation for what is a transient glitch.
     const MAX_ATTEMPTS = 2;
     let parsed: unknown;
     let lastFailure = "";
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], ...(generationConfig ? { generationConfig } : {}) }),
+      const { text, stopReason } = await claudeText({
+        tier: MODEL_TIER.generateContent,
+        purpose: `generateContent:${outputType}`,
+        prompt,
+        jsonSchema,
+        maxTokens: 16000,
       });
-
-      if (!response.ok) {
-        const errBody = await response.text().catch(() => "");
-        throw new Error(`Gemini API request failed (${response.status}): ${errBody}`);
-      }
-
-      const data = (await response.json()) as {
-        candidates?: { finishReason?: string; content?: { parts?: { text?: string; thought?: boolean }[] } }[];
-      };
-      // A long reply can come back split across several parts (and a thinking
-      // model may put its reasoning in a separate, flagged part) - reading only
-      // the first one could cut the JSON off mid-way.
-      const candidate = data.candidates?.[0];
-      const text = candidate?.content?.parts
-        ?.filter((part) => !part.thought)
-        .map((part) => part.text ?? "")
-        .join("");
       if (!text) {
-        throw new Error(`Gemini API returned no generated text${candidate?.finishReason ? ` (finishReason ${candidate.finishReason})` : ""}`);
+        throw new Error(`Claude returned no generated text (stopReason ${stopReason})`);
       }
 
       try {
@@ -2258,7 +2269,7 @@ class GeminiAiProvider implements AiProvider {
         break;
       } catch {
         lastFailure =
-          `Gemini returned non-JSON content for outputType "${outputType}" (finishReason ${candidate?.finishReason ?? "unknown"}, ` +
+          `Claude returned non-JSON content for outputType "${outputType}" (stopReason ${stopReason}, ` +
           `${text.length} chars): ${text.slice(0, 200)} ... ${text.slice(-120)}`;
         console.error(`[ai] attempt ${attempt}/${MAX_ATTEMPTS}: ${lastFailure}`);
       }
@@ -2294,7 +2305,7 @@ class GeminiAiProvider implements AiProvider {
       (parsed as Record<string, unknown>).template = presentationTemplate ?? "detailed";
     }
 
-    return { content: JSON.stringify(parsed), model: MODEL_GEMINI_FLASH };
+    return { content: JSON.stringify(parsed), model: tierLabel(MODEL_TIER.generateContent) };
   }
 
   async generatePresentationOutline(input: PresentationOutlineInput): Promise<PresentationOutlineEntry[]> {
@@ -2316,15 +2327,8 @@ class GeminiAiProvider implements AiProvider {
       .filter(Boolean)
       .join("\n\n");
 
-    const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json" } }),
-    });
-    if (!response.ok) throw new Error(`Gemini API request failed (${response.status}): ${await response.text().catch(() => "")}`);
-    const data = (await response.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
-    const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
-    if (!text) throw new Error("Gemini returned no text for the presentation outline");
+    const { text } = await claudeText({ tier: MODEL_TIER.presentationOutline, purpose: "presentationOutline", prompt, maxTokens: 4000 });
+    if (!text) throw new Error("Claude returned no text for the presentation outline");
     const parsed = parseModelJson(text) as { title?: string; oneLiner?: string }[];
 
     return input.roleSequence.map((r, i) => ({
@@ -2372,15 +2376,8 @@ class GeminiAiProvider implements AiProvider {
       .filter(Boolean)
       .join("\n\n");
 
-    const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json" } }),
-    });
-    if (!response.ok) throw new Error(`Gemini API request failed (${response.status}): ${await response.text().catch(() => "")}`);
-    const data = (await response.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
-    const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
-    if (!text) throw new Error("Gemini returned no text for the presentation content fill");
+    const { text } = await claudeText({ tier: MODEL_TIER.presentationFill, purpose: "presentationFill", prompt, maxTokens: 16000 });
+    if (!text) throw new Error("Claude returned no text for the presentation content fill");
     const parsed = parseModelJson(text) as Array<Record<string, unknown>>;
 
     return input.outline.map((o, i) => {
@@ -2405,39 +2402,69 @@ class GeminiAiProvider implements AiProvider {
   }
 
   async assistantStep({ contents, systemPrompt, tools }: AssistantStepInput) {
-    const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        contents,
-        ...(tools.length
-          ? {
-              tools: [
-                {
-                  functionDeclarations: tools.map((t) => ({
-                    name: t.name,
-                    description: t.description,
-                    ...(t.parameters && Object.keys(t.parameters.properties).length ? { parameters: t.parameters } : {}),
-                  })),
-                },
-              ],
-            }
-          : {}),
-      }),
+    const result = await converse({
+      tier: MODEL_TIER.assistant,
+      purpose: "assistant",
+      system: systemPrompt,
+      maxTokens: 2000,
+      messages: assistantContentsToMessages(contents),
+      tools: tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.parameters && Object.keys(t.parameters.properties).length ? t.parameters : { type: "object", properties: {} },
+      })),
     });
-    if (!response.ok) throw new Error(`Gemini request failed (${response.status})`);
-    const data = (await response.json()) as { candidates?: { content?: { parts?: AssistantPart[] } }[] };
-    // Returned parts are passed straight back into the next request's contents,
-    // untouched - Gemini may attach extra fields (e.g. thought signatures) that
-    // must be echoed for a function-calling turn to stay valid.
-    const parts = data.candidates?.[0]?.content?.parts ?? [];
-    if (!parts.length) throw new Error("Gemini returned no content");
-    return { parts, model: MODEL_GEMINI_FLASH };
+
+    const parts: AssistantPart[] = [];
+    if (result.text.trim()) parts.push({ text: result.text });
+    for (const call of result.toolCalls) parts.push({ functionCall: { name: call.name, args: call.input } });
+    if (!parts.length) throw new Error("Claude returned no content");
+    return { parts, model: tierLabel(MODEL_TIER.assistant) };
   }
 }
 
-export const aiProvider: AiProvider = process.env.GEMINI_API_KEY ? new GeminiAiProvider() : stubProvider;
+// The assistant engine keeps its history in a provider-neutral shape
+// (text / functionCall / functionResponse parts with no ids). Bedrock pairs a
+// tool call with its result by id, so ids are derived from position: the Nth
+// functionResponse in a turn answers the Nth functionCall of the model turn
+// before it - which is the order the engine builds them in.
+function assistantContentsToMessages(contents: AssistantContent[]): ConverseMessage[] {
+  const messages: ConverseMessage[] = [];
+  let pendingCallIds: string[] = [];
+
+  contents.forEach((content, contentIndex) => {
+    const role: ConverseMessage["role"] = content.role === "model" ? "assistant" : "user";
+    const blocks: ConverseContentBlock[] = [];
+    const callIds: string[] = [];
+    let responseIndex = 0;
+
+    for (const part of content.parts) {
+      if ("text" in part) {
+        if (part.text.trim()) blocks.push({ text: part.text });
+      } else if ("functionCall" in part) {
+        const toolUseId = `call_${contentIndex}_${callIds.length}`;
+        callIds.push(toolUseId);
+        blocks.push({ toolUse: { toolUseId, name: part.functionCall.name, input: part.functionCall.args ?? {} } });
+      } else {
+        const toolUseId = pendingCallIds[responseIndex++] ?? `call_${contentIndex}_orphan_${responseIndex}`;
+        blocks.push({ toolResult: { toolUseId, content: [{ json: part.functionResponse.response }] } });
+      }
+    }
+
+    pendingCallIds = callIds;
+    if (!blocks.length) return;
+
+    // Bedrock needs strictly alternating roles starting with a user turn -
+    // fold consecutive same-role turns together and drop a leading assistant one.
+    const last = messages[messages.length - 1];
+    if (last && last.role === role) last.content.push(...blocks);
+    else if (messages.length > 0 || role === "user") messages.push({ role, content: blocks });
+  });
+
+  return messages;
+}
+
+export const aiProvider: AiProvider = isClaudeConfigured() ? new LlmAiProvider() : stubProvider;
 
 export async function logAiUsage(params: {
   schoolId: string;
@@ -2458,6 +2485,15 @@ export async function logAiUsage(params: {
       durationMs: params.durationMs,
     },
   });
+
+  // Tie the provider calls made so far in this request (the real AI cost) to
+  // this credit-charged action, so cost per feature can be measured.
+  const callLogIds = aiRequestContext.getStore()?.callLogIds?.splice(0) ?? [];
+  if (callLogIds.length > 0) {
+    await prisma.aiCallLog
+      .updateMany({ where: { id: { in: callLogIds } }, data: { aiUsageLogId: log.id, feature: params.feature } })
+      .catch((err) => console.error("[ai] could not link AI calls to usage log:", err));
+  }
 
   // Only successful calls are charged - callers are expected to have already
   // pre-flight-checked hasSufficientCredits() before making the AI provider

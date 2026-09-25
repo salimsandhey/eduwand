@@ -342,6 +342,127 @@ export function creditsLowEmail(input: { name: string; balance: number; exhauste
   });
 }
 
+// --- Plans (individual teachers) ---------------------------------------------
+
+// Where a teacher signs in on the website to manage their plan. Emails may
+// link to it; the mobile app must not (Google Play payments policy).
+function billingCta(label: string): { label: string; url: string } | undefined {
+  const url = process.env.BILLING_URL?.trim();
+  return url ? { label, url } : undefined;
+}
+
+const dateLabel = (date: Date) => date.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Kolkata" });
+
+export function planEndingEmail(input: { name: string; planName: string; kind: string; daysLeft: number; endsAt: Date; credits: number }): RenderedEmail {
+  const days = `${input.daysLeft} day${input.daysLeft === 1 ? "" : "s"}`;
+  const isTrial = input.kind === "trial";
+  return renderEmail(isTrial ? `Your EduWand trial ends in ${days}` : `Your EduWand plan ends in ${days}`, {
+    preheader: `${input.planName} ends on ${dateLabel(input.endsAt)}.`,
+    heading: isTrial ? "Your free trial is ending soon" : "Your plan is ending soon",
+    recipientName: input.name,
+    paragraphs: [
+      `Your ${input.planName} ends on ${dateLabel(input.endsAt)}. After that, AI features (lesson plans, presentations, grading and the assistant) pause until you choose a plan. Your classes, students and saved content are not affected.`,
+      "Credits from this period do not carry over, so use them before it ends.",
+    ],
+    details: [
+      { label: "Ends on", value: dateLabel(input.endsAt) },
+      { label: "Credits this period", value: String(input.credits) },
+    ],
+    cta: billingCta("Choose a plan"),
+    note: "Sign in on the EduWand website with your account to manage your plan.",
+  });
+}
+
+export function planEndedEmail(input: { name: string; planName: string; kind: string }): RenderedEmail {
+  return renderEmail(input.kind === "trial" ? "Your EduWand trial has ended" : "Your EduWand plan has ended", {
+    preheader: "AI features are paused until you choose a plan.",
+    heading: input.kind === "trial" ? "Your free trial has ended" : "Your plan has ended",
+    recipientName: input.name,
+    paragraphs: [
+      `Your ${input.planName} has ended, so AI features are paused. Your classes, students and saved content are all still there, and everything else keeps working.`,
+      "Choose a plan to switch AI features back on.",
+    ],
+    cta: billingCta("Choose a plan"),
+    note: "Sign in on the EduWand website with your account to manage your plan.",
+  });
+}
+
+export function invoiceEmail(input: {
+  name: string;
+  invoice: {
+    number: string;
+    description: string;
+    periodStart: Date;
+    periodEnd: Date;
+    gstRegistered: boolean;
+    taxRatePercent: number;
+    taxableValuePaise: number;
+    cgstPaise: number;
+    sgstPaise: number;
+    igstPaise: number;
+    totalPaise: number;
+    seller: unknown;
+  };
+}): RenderedEmail {
+  const { invoice } = input;
+  const money = (paise: number) => `Rs ${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const seller = invoice.seller as { legalName?: string; gstin?: string };
+  const details = [
+    { label: "Invoice number", value: invoice.number },
+    { label: "Plan", value: invoice.description },
+    { label: "Period", value: `${dateLabel(invoice.periodStart)} to ${dateLabel(invoice.periodEnd)}` },
+    { label: invoice.gstRegistered ? "Taxable value" : "Amount", value: money(invoice.taxableValuePaise) },
+    ...(invoice.gstRegistered
+      ? invoice.igstPaise > 0
+        ? [{ label: `IGST @ ${invoice.taxRatePercent}%`, value: money(invoice.igstPaise) }]
+        : [
+            { label: `CGST @ ${invoice.taxRatePercent / 2}%`, value: money(invoice.cgstPaise) },
+            { label: `SGST @ ${invoice.taxRatePercent / 2}%`, value: money(invoice.sgstPaise) },
+          ]
+      : []),
+    { label: "Total paid", value: money(invoice.totalPaise) },
+  ];
+  return renderEmail(`Payment received - invoice ${invoice.number}`, {
+    preheader: `Thanks! Your plan is active until ${dateLabel(invoice.periodEnd)}.`,
+    heading: "Payment received",
+    recipientName: input.name,
+    paragraphs: [
+      `Thank you - your payment went through and your plan is active until ${dateLabel(invoice.periodEnd)}. AI features are switched on and your credits have been added.`,
+      `This is your ${invoice.gstRegistered ? "GST tax invoice" : "invoice"}${seller.legalName ? ` from ${seller.legalName}` : ""}${seller.gstin ? ` (GSTIN ${seller.gstin})` : ""}.`,
+    ],
+    details,
+    cta: billingCta("View invoice"),
+    note: "You can download the PDF invoice any time from your plan page on the EduWand website.",
+  });
+}
+
+// --- AI spend limits (platform admins) ------------------------------------------
+
+export function aiLimitEmail(input: {
+  name: string;
+  period: string;
+  percent: 80 | 100;
+  spentInr: number;
+  limitInr: number;
+  limitName: string;
+}): RenderedEmail {
+  const reached = input.percent === 100;
+  return renderEmail(reached ? "AI spend limit reached - AI is paused" : "AI spend is at 80% of its limit", {
+    preheader: `₹${input.spentInr} of ₹${input.limitInr} used ${input.period}.`,
+    heading: reached ? "AI spend limit reached" : "AI spend nearing its limit",
+    recipientName: input.name,
+    paragraphs: [
+      reached
+        ? `The ${input.limitName} has been reached ${input.period}, so new AI requests are being refused until the period resets or you raise the limit in the admin panel (AI Limits).`
+        : `AI spend has reached 80% of the ${input.limitName} ${input.period}. Requests keep working, but will be refused once the limit is hit.`,
+    ],
+    details: [
+      { label: "Spent", value: `₹${input.spentInr}` },
+      { label: "Limit", value: `₹${input.limitInr}` },
+    ],
+  });
+}
+
 // --- School-authored follow-ups ----------------------------------------------
 
 // Wraps a school's own follow-up template text in the branded layout so it

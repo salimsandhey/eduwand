@@ -825,8 +825,17 @@ export interface CreditUsageStats {
   daily: { date: string; credits: number }[];
 }
 
+// An individual teacher's trial / plan; null for teachers of a school.
+export interface PlanStatus {
+  status: "trial" | "active" | "expired" | "none";
+  planName: string | null;
+  endsAt: string | null;
+  daysLeft: number | null;
+}
+
 export interface CreditAccountSummary {
   balance: number;
+  subscription?: PlanStatus | null;
   ledgerEntries: CreditLedgerEntry[];
   // Ordered by the teacher's own 30-day usage, then the admin-set order.
   features: AiFeatureInfo[];

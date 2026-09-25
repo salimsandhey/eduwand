@@ -1,5 +1,5 @@
 import { prisma } from "./prisma";
-import { aiProvider, ResearchCandidateType } from "./ai";
+import { aiProvider, logAiUsage, MODEL_GEMINI_FLASH, ResearchCandidateType } from "./ai";
 import { resolveReachableUrlDetailed } from "./extraction";
 import { getSchoolBoard } from "./boards";
 import { searchImages, ImageHit } from "./image-search";
@@ -66,7 +66,7 @@ async function findVideoCandidates(topicName: string, subject: string): Promise<
  * for the only other async infra, a separate process not otherwise involved
  * in Context module features).
  */
-export async function runContextResearch(jobId: string): Promise<void> {
+export async function runContextResearch(jobId: string, charge?: { schoolId: string; teacherUserId: string }): Promise<void> {
   try {
     const job = await prisma.contextResearchJob.findUniqueOrThrow({
       where: { id: jobId },
@@ -151,6 +151,13 @@ export async function runContextResearch(jobId: string): Promise<void> {
       channelTitle: hit.channelTitle,
       duration: hit.duration,
     }));
+
+    // The web search is a paid AI call - charged when it worked, like every
+    // other AI feature (the search itself was refused up front if the teacher
+    // could not afford it).
+    if (charge && webResult.status === "fulfilled" && webResult.value.live) {
+      await logAiUsage({ schoolId: charge.schoolId, teacherUserId: charge.teacherUserId, feature: "context_research", model: MODEL_GEMINI_FLASH });
+    }
 
     await prisma.contextResearchJob.update({
       where: { id: jobId },

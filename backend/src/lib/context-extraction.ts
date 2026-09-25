@@ -1,4 +1,5 @@
 import { aiProvider } from "./ai";
+import { isClaudeConfigured } from "./llm/bedrock";
 import { storage } from "./storage";
 import { extractText, extractUrlText, MAX_EXTRACTED_CHARS } from "./extraction";
 import { fetchYoutubeTitle } from "./context-limits";
@@ -44,7 +45,7 @@ export async function runContextExtraction(params: {
   sourceUrl?: string | null;
   buffer?: Buffer | null;
 }): Promise<ContextExtractionResult> {
-  const hasVisionKey = Boolean(process.env.GEMINI_API_KEY);
+  const hasVisionKey = isClaudeConfigured();
   let extractedText: string | null = null;
   let extractionError: string | null = null;
   let pageCount: number | undefined;

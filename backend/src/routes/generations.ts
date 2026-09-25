@@ -13,7 +13,7 @@ import {
   PresentationReason,
   PresentationDensity,
   PresentationOutlineEntry,
-  MODEL_GEMINI_FLASH,
+  MODEL_SONNET,
   ActivityGroupSize,
   ACTIVITY_GROUP_SIZE_LABELS,
   ACTIVITY_RESOURCE_OPTIONS,
@@ -22,6 +22,7 @@ import {
 import { buildRoleSequence, slidesPerClassRange } from "../lib/presentationPlan";
 import { findVerbatimOverlap } from "../lib/overlapCheck";
 import { hasSufficientCredits, getFeatureCost } from "../lib/credits";
+import { AiLimitError } from "../lib/llm/guard";
 import { storage } from "../lib/storage";
 import { extractPdfPageRangeText } from "../lib/extraction";
 import { buildPresentationPptx } from "../lib/pptxExport";
@@ -354,6 +355,7 @@ export async function generationRoutes(app: FastifyInstance) {
           model = result.model;
         }
       } catch (err) {
+        if (err instanceof AiLimitError) throw err;
         app.log.error(err, "Generation failed");
         const failed = await prisma.generation.create({
           data: {
@@ -862,6 +864,7 @@ export async function generationRoutes(app: FastifyInstance) {
           customPrompt: body.customPrompt ?? null,
         });
       } catch (err) {
+        if (err instanceof AiLimitError) throw err;
         app.log.error(err, "Presentation outline generation failed");
         return reply.code(500).send({ data: null, error: { code: "generation_failed", message: "Could not generate the outline. Please try again." } });
       }
@@ -877,7 +880,7 @@ export async function generationRoutes(app: FastifyInstance) {
           presentationClasses: classes,
           outline: outline as unknown as object,
           aiOutput: "{}", // no slide content yet - non-null column, placeholder until confirm
-          modelUsed: MODEL_GEMINI_FLASH,
+          modelUsed: MODEL_SONNET,
           generationStatus: "outline",
           customPrompt: body.customPrompt ?? null,
           selectedSources: (body.sources ?? []) as unknown as object,
@@ -889,7 +892,7 @@ export async function generationRoutes(app: FastifyInstance) {
         schoolId: request.schoolId,
         teacherUserId: request.user.sub,
         feature: "generation",
-        model: MODEL_GEMINI_FLASH,
+        model: MODEL_SONNET,
         durationMs: Date.now() - start,
       });
 
@@ -962,6 +965,7 @@ export async function generationRoutes(app: FastifyInstance) {
           customPrompt: generation.customPrompt,
         });
       } catch (err) {
+        if (err instanceof AiLimitError) throw err;
         app.log.error(err, "Presentation content-fill failed");
         return reply.code(500).send({ data: null, error: { code: "generation_failed", message: "Could not generate the deck. Please try again." } });
       }
@@ -1007,7 +1011,7 @@ export async function generationRoutes(app: FastifyInstance) {
         schoolId: request.schoolId,
         teacherUserId: request.user.sub,
         feature: "generation",
-        model: MODEL_GEMINI_FLASH,
+        model: MODEL_SONNET,
         durationMs: Date.now() - start,
       });
 
@@ -1065,6 +1069,7 @@ export async function generationRoutes(app: FastifyInstance) {
           language: "English",
         });
       } catch (err) {
+        if (err instanceof AiLimitError) throw err;
         app.log.error(err, "Slide regeneration failed");
         return reply.code(500).send({ data: null, error: { code: "generation_failed", message: "Could not regenerate this slide. Please try again." } });
       }
@@ -1080,7 +1085,7 @@ export async function generationRoutes(app: FastifyInstance) {
         schoolId: request.schoolId,
         teacherUserId: request.user.sub,
         feature: "generation",
-        model: MODEL_GEMINI_FLASH,
+        model: MODEL_SONNET,
         durationMs: Date.now() - start,
       });
 

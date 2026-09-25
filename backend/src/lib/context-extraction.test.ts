@@ -30,8 +30,8 @@ test("extractionStatusFor: a document with no text is 'failed_no_text'", () => {
 });
 
 test("runContextExtraction: image without a vision key stays pending and is never sent to the model", async (t) => {
-  const original = process.env.GEMINI_API_KEY;
-  delete process.env.GEMINI_API_KEY;
+  const original = process.env.AWS_BEARER_TOKEN_BEDROCK;
+  delete process.env.AWS_BEARER_TOKEN_BEDROCK;
   let called = false;
   const originalFn = aiProvider.describeImageForContext;
   aiProvider.describeImageForContext = async () => {
@@ -40,8 +40,8 @@ test("runContextExtraction: image without a vision key stays pending and is neve
   };
   t.after(() => {
     aiProvider.describeImageForContext = originalFn;
-    if (original === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = original;
+    if (original === undefined) delete process.env.AWS_BEARER_TOKEN_BEDROCK;
+    else process.env.AWS_BEARER_TOKEN_BEDROCK = original;
   });
 
   const result = await runContextExtraction({ sourceType: "image", fileLocation: "context-sources/x/y.png" });
@@ -51,17 +51,17 @@ test("runContextExtraction: image without a vision key stays pending and is neve
 });
 
 test("runContextExtraction: image with a vision key stores the transcription", async (t) => {
-  const original = process.env.GEMINI_API_KEY;
-  process.env.GEMINI_API_KEY = "test-key";
+  const original = process.env.AWS_BEARER_TOKEN_BEDROCK;
+  process.env.AWS_BEARER_TOKEN_BEDROCK = "test-key";
   const originalFn = aiProvider.describeImageForContext;
   aiProvider.describeImageForContext = async () => ({
     text: "Cell diagram. [Figure] labelled nucleus, membrane, cytoplasm.",
-    model: "gemini-2.5-flash",
+    model: "claude-haiku-4-5",
   });
   t.after(() => {
     aiProvider.describeImageForContext = originalFn;
-    if (original === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = original;
+    if (original === undefined) delete process.env.AWS_BEARER_TOKEN_BEDROCK;
+    else process.env.AWS_BEARER_TOKEN_BEDROCK = original;
   });
 
   const result = await runContextExtraction({ sourceType: "image", fileLocation: "context-sources/x/y.png" });
@@ -71,16 +71,16 @@ test("runContextExtraction: image with a vision key stores the transcription", a
 });
 
 test("runContextExtraction: a vision failure is captured, not thrown", async (t) => {
-  const original = process.env.GEMINI_API_KEY;
-  process.env.GEMINI_API_KEY = "test-key";
+  const original = process.env.AWS_BEARER_TOKEN_BEDROCK;
+  process.env.AWS_BEARER_TOKEN_BEDROCK = "test-key";
   const originalFn = aiProvider.describeImageForContext;
   aiProvider.describeImageForContext = async () => {
-    throw new Error("Gemini image context request failed (503)");
+    throw new Error("Claude image context request failed (503)");
   };
   t.after(() => {
     aiProvider.describeImageForContext = originalFn;
-    if (original === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = original;
+    if (original === undefined) delete process.env.AWS_BEARER_TOKEN_BEDROCK;
+    else process.env.AWS_BEARER_TOKEN_BEDROCK = original;
   });
 
   const result = await runContextExtraction({ sourceType: "image", fileLocation: "context-sources/x/y.png" });

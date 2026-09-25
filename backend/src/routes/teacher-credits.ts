@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { prisma } from "../lib/prisma";
 import { PLATFORM_ADMIN_ROLE } from "../lib/roles";
+import { getEntitlement } from "../lib/subscriptions";
 
 // Teacher-facing balance/history view + admin-manual top-up. No payment
 // gateway in this phase - top-ups are an admin action only. See
@@ -99,8 +100,21 @@ async function loadAccount(teacherUserId: string) {
       showOnCredits: f.showOnCredits,
     }));
 
+  // The trial / plan state - null for teachers of a school, who have no plan.
+  const entitlement = await getEntitlement(teacherUserId, now);
+  const subscription =
+    entitlement.status === "not_applicable"
+      ? null
+      : {
+          status: entitlement.status,
+          planName: entitlement.planName,
+          endsAt: entitlement.endsAt,
+          daysLeft: entitlement.daysLeft,
+        };
+
   return {
     balance: account?.balance ?? 0,
+    subscription,
     ledgerEntries,
     features: orderedFeatures,
     stats: {

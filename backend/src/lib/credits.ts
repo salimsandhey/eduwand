@@ -2,6 +2,7 @@ import { Prisma, PrismaClient } from "@prisma/client";
 import { sendEmailInBackground } from "./email/sender";
 import { creditsLowEmail } from "./email/templates";
 import { prisma } from "./prisma";
+import { assertAiEntitlement } from "./subscriptions";
 
 // Credits are billed per teacher seat regardless of account type (individual
 // or institutional) - see Docs/superpowers/plans/2026-09-09-individual-
@@ -69,6 +70,9 @@ export async function getFeatureCost(feature: string): Promise<number> {
 // every teacher has an account by the time this runs; a genuinely missing
 // account is treated as zero balance, not as unlimited.
 export async function hasSufficientCredits(teacherUserId: string, cost: number): Promise<boolean> {
+  // An individual teacher with no live trial/plan is refused outright (402
+  // plan_expired) rather than told they lack credits.
+  await assertAiEntitlement(teacherUserId);
   const account = await prisma.teacherCreditAccount.findUnique({ where: { teacherUserId } });
   return (account?.balance ?? 0) >= cost;
 }
@@ -84,15 +88,15 @@ export async function deductCredits(
   let balanceBefore = 0;
   let balanceAfter = 0;
   await prisma.$transaction(async (tx) => {
-    const account = await tx.teacherCreditAccount.upsert({
-      where: { teacherUserId },
-      update: {},
-      create: { teacherUserId, balance: 0 },
-    });
-    balanceBefore = account.balance;
-    balanceAfter = account.balance - cost;
+    await tx.teacherCreditAccount.upsert({ where: { teacherUserId }, update: {}, create: { teacherUserId, balance: 0 } });
+    // One atomic decrement (not read-then-write), so two AI calls finishing
+    // together can't both start from the same balance and lose a deduction.
+    const rows = await tx.$queryRaw<{ balance: number }[]>(
+      Prisma.sql`UPDATE teacher_credit_account SET balance = balance - ${cost}::int, updated_at = now() WHERE teacher_user_id = ${teacherUserId}::uuid RETURNING balance`
+    );
+    balanceAfter = rows[0].balance;
+    balanceBefore = balanceAfter + cost;
 
-    await tx.teacherCreditAccount.update({ where: { teacherUserId }, data: { balance: balanceAfter } });
     await tx.creditLedgerEntry.create({
       data: {
         teacherUserId,

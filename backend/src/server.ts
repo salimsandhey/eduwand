@@ -5,6 +5,7 @@ import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 import { authPlugin } from "./plugins/auth";
 import { scopePlugin } from "./plugins/scope";
+import { aiContextPlugin } from "./plugins/ai-context";
 import { securityPlugin, redactUrl } from "./plugins/security";
 import { isDevOtpMode } from "./lib/otp";
 import { healthRoutes } from "./routes/health";
@@ -58,6 +59,11 @@ import { aiAssistantRoutes } from "./routes/ai-assistant";
 import { contentPageRoutes } from "./routes/content-pages";
 import { timetableRoutes } from "./routes/timetable";
 import { aiFeatureRoutes } from "./routes/ai-features";
+import { aiGuardRoutes } from "./routes/ai-guard";
+import { aiCostRoutes } from "./routes/ai-costs";
+import { billingPlanRoutes } from "./routes/billing-plans";
+import { billingRoutes, billingWebhookRoutes } from "./routes/billing";
+import { startPlanReminderJob } from "./lib/plan-reminders";
 
 const isProduction = process.env.NODE_ENV === "production";
 
@@ -116,6 +122,7 @@ app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024 } });
 app.register(authPlugin);
 app.register(securityPlugin);
 app.register(scopePlugin);
+app.register(aiContextPlugin);
 app.register(healthRoutes, { prefix: "/api/v1" });
 app.register(authRoutes, { prefix: "/api/v1" });
 app.register(authMeRoutes, { prefix: "/api/v1" });
@@ -167,6 +174,11 @@ app.register(aiAssistantRoutes, { prefix: "/api/v1" });
 app.register(contentPageRoutes, { prefix: "/api/v1" });
 app.register(timetableRoutes, { prefix: "/api/v1" });
 app.register(aiFeatureRoutes, { prefix: "/api/v1" });
+app.register(aiGuardRoutes, { prefix: "/api/v1" });
+app.register(aiCostRoutes, { prefix: "/api/v1" });
+app.register(billingPlanRoutes, { prefix: "/api/v1" });
+app.register(billingRoutes, { prefix: "/api/v1" });
+app.register(billingWebhookRoutes, { prefix: "/api/v1" });
 
 const port = Number(process.env.PORT) || 4000;
 
@@ -195,9 +207,22 @@ if (isProduction && process.env.ALLOW_DEV_OTP === "true") {
   console.error("ALLOW_DEV_OTP=true is not permitted when NODE_ENV=production.");
   process.exit(1);
 }
+// The fake payment gateway must never be reachable in production.
+if (isProduction && process.env.RAZORPAY_MOCK === "true") {
+  console.error("RAZORPAY_MOCK=true is not permitted when NODE_ENV=production.");
+  process.exit(1);
+}
+if (process.env.RAZORPAY_MOCK === "true") {
+  console.warn("[billing] Mock payment gateway is ON - payments are simulated. Never enable this outside local development.");
+}
+if (isProduction && process.env.RAZORPAY_KEY_ID && !process.env.RAZORPAY_WEBHOOK_SECRET) {
+  console.warn("[billing] RAZORPAY_WEBHOOK_SECRET is not set - payments that finish after the browser closes will not be applied.");
+}
 if (isDevOtpMode()) {
   console.warn("[security] Dev OTP mode is ON - every login code is 123456. Never enable this outside local development.");
 }
+
+startPlanReminderJob();
 
 app.listen({ port, host: "0.0.0.0" }).catch((err) => {
   app.log.error(err);

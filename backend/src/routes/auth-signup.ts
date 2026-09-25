@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { Prisma } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { prisma } from "../lib/prisma";
-import { grantInitialCredits } from "../lib/credits";
+import { startTrialForNewTeacher } from "../lib/subscriptions";
 import { BOARDS, isValidBoard } from "../lib/boards";
 import { sendEmail, sendEmailInBackground } from "../lib/email/sender";
 import { loginCodeEmail, teacherWelcomeEmail, accountExistsEmail } from "../lib/email/templates";
@@ -228,7 +228,9 @@ export async function authSignupRoutes(app: FastifyInstance) {
           },
         });
 
-        await grantInitialCredits(tx, createdUser.id, trust.id);
+        // Individual teachers start a trial (length and credits come from the
+        // admin-editable "trial" billing plan) instead of the flat grant.
+        await startTrialForNewTeacher(tx, createdUser.id);
 
         return createdUser;
       });

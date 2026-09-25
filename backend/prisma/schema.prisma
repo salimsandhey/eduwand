@@ -1653,7 +1653,7 @@ model TeacherCreditAccount {
 }
 
 // Audit trail of every credit balance change. reason is one of: plan_grant,
-// admin_topup, ai_usage. relatedAiUsageLogId links an ai_usage deduction back
+// plan_purchase, admin_topup, ai_usage. relatedAiUsageLogId links an ai_usage deduction back
 // to the AiUsageLog row that caused it; createdByUserId is set for
 // admin_topup entries (who granted the top-up).
 model CreditLedgerEntry {
@@ -1748,6 +1748,98 @@ model ClassChangeRequest {
   @@map("class_change_request")
 }
 
+// --- AI spend guard & call metering -----------------------------------------
+// Every Claude/Gemini call is reserved against these counters BEFORE it is
+// sent (lib/llm/guard.ts) so spend can never pass a configured limit, then
+// settled with the real cost and written to AiCallLog.
+
+// Provider list prices, USD per million tokens (per search for web grounding).
+// Editable by platform_admin - model prices change, so they are not in code.
+model AiModelPrice {
+  id                   String   @id @default(uuid()) @db.Uuid
+  model                String   @unique
+  provider             String
+  inputPerMtokUsd      Float    @map("input_per_mtok_usd")
+  outputPerMtokUsd     Float    @map("output_per_mtok_usd")
+  cacheReadPerMtokUsd  Float    @default(0) @map("cache_read_per_mtok_usd")
+  cacheWritePerMtokUsd Float    @default(0) @map("cache_write_per_mtok_usd")
+  perSearchUsd         Float    @default(0) @map("per_search_usd")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+  updatedBy            String?  @map("updated_by") @db.Uuid
+
+  @@map("ai_model_price")
+}
+
+// One row per limit in the catalog in lib/llm/guard.ts (the catalog holds
+// the label/scope/period/unit; this table holds the admin's on/off + value).
+// "inr" limits are entered in rupees and enforced in USD at PlatformSetting
+// "usd_inr".
+model AiLimit {
+  id        String   @id @default(uuid()) @db.Uuid
+  key       String   @unique
+  enabled   Boolean  @default(true)
+  value     Float
+  updatedAt DateTime @updatedAt @map("updated_at")
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  @@map("ai_limit")
+}
+
+// Running totals per scope ("global" or "user:<id>") and period
+// ("d:YYYY-MM-DD" / "m:YYYY-MM" / "n:YYYY-MM-DDTHH:MM", IST). reserved_* is
+// what in-flight calls may still cost; spent_* is what finished calls did.
+model AiSpendCounter {
+  id             String   @id @default(uuid()) @db.Uuid
+  scope          String
+  periodKey      String   @map("period_key")
+  spentUsd       Float    @default(0) @map("spent_usd")
+  reservedUsd    Float    @default(0) @map("reserved_usd")
+  requests       Int      @default(0)
+  tokens         Int      @default(0)
+  reservedTokens Int      @default(0) @map("reserved_tokens")
+  alerted80      Boolean  @default(false) @map("alerted_80")
+  alerted100     Boolean  @default(false) @map("alerted_100")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([scope, periodKey])
+  @@index([periodKey])
+  @@map("ai_spend_counter")
+}
+
+// One row per provider call (including calls the guard blocked). status is
+// one of: success, error, timeout, blocked.
+model AiCallLog {
+  id               String   @id @default(uuid()) @db.Uuid
+  teacherUserId    String?  @map("teacher_user_id") @db.Uuid
+  schoolId         String?  @map("school_id") @db.Uuid
+  provider         String
+  model            String
+  purpose          String
+  // The credit-charged action (AiUsageLog) this call was part of, and its
+  // feature key - null for calls that were never charged (assistant chat,
+  // web research, refused calls).
+  aiUsageLogId     String?  @map("ai_usage_log_id") @db.Uuid
+  feature          String?
+  status           String
+  blockedReason    String?  @map("blocked_reason")
+  inputTokens      Int      @default(0) @map("input_tokens")
+  outputTokens     Int      @default(0) @map("output_tokens")
+  cacheReadTokens  Int      @default(0) @map("cache_read_tokens")
+  cacheWriteTokens Int      @default(0) @map("cache_write_tokens")
+  searches         Int      @default(0)
+  costUsd          Float    @default(0) @map("cost_usd")
+  latencyMs        Int?     @map("latency_ms")
+  error            String?
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([teacherUserId, createdAt])
+  @@index([status, createdAt])
+  @@index([aiUsageLogId])
+  @@index([feature, createdAt])
+  @@map("ai_call_log")
+}
+
 // Submitted publicly (unauthenticated, via ClassSection.joinCode) by a
 // student/parent - never direct entry, the teacher must approve before a
 // real StudentStub is created. status is one of: pending, approved, rejected.
@@ -1786,4 +1878,125 @@ model TeacherOnboardingTask {
 
   @@unique([teacherUserId, taskKey])
   @@map("teacher_onboarding_task")
+}
+
+// --- Individual teacher trial & paid plan -------------------------------------
+// See Docs/superpowers/plans/2026-09-25-trial-plans-and-purchase.md.
+
+// The plans an individual teacher can be on. key "trial" is granted at sign-up
+// (enabled = false stops new trials); key "pro" is the paid plan. priceInr is in
+// whole rupees, GST included (0 for the trial). Everything is admin-editable.
+model BillingPlan {
+  id           String   @id @default(uuid()) @db.Uuid
+  key          String   @unique
+  name         String
+  kind         String
+  priceInr     Int      @map("price_inr")
+  durationDays Int      @map("duration_days")
+  credits      Int
+  enabled      Boolean  @default(true)
+  sortOrder    Int      @default(0) @map("sort_order")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  updatedBy    String?  @map("updated_by") @db.Uuid
+
+  @@map("billing_plan")
+}
+
+// One row per period a teacher has been on a plan. The current period is the
+// latest active row; AI access ends when endsAt passes (checked at use time,
+// no expiry job). kind is trial or paid. source is one of: signup, purchase,
+// admin. The price is copied from the plan so later edits don't rewrite history.
+model TeacherSubscription {
+  id              String   @id @default(uuid()) @db.Uuid
+  teacherUserId   String   @map("teacher_user_id") @db.Uuid
+  planKey         String   @map("plan_key")
+  planName        String   @map("plan_name")
+  kind            String
+  status          String   @default("active")
+  startsAt        DateTime @map("starts_at")
+  endsAt          DateTime @map("ends_at")
+  credits         Int
+  priceInr        Int      @map("price_inr")
+  source          String
+  paymentId       String?  @map("payment_id")
+  createdByUserId String?  @map("created_by_user_id") @db.Uuid
+  note            String?
+  reminded3d      Boolean  @default(false) @map("reminded_3d")
+  reminded1d      Boolean  @default(false) @map("reminded_1d")
+  remindedEnded   Boolean  @default(false) @map("reminded_ended")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([teacherUserId, endsAt])
+  @@index([status, endsAt])
+  @@map("teacher_subscription")
+}
+
+// --- Payments & GST invoices (individual teacher plans) -----------------------
+// See Docs/superpowers/plans/2026-09-25-trial-plans-and-purchase.md.
+
+// One row per attempt to buy a plan. The server creates it (and the gateway
+// order) with the amount taken from the plan, never from the client; it only
+// becomes "paid" when the signature or webhook is verified. status is one of:
+// created, paid, failed. gateway is razorpay or mock (local testing only).
+model BillingPayment {
+  id               String          @id @default(uuid()) @db.Uuid
+  teacherUserId    String          @map("teacher_user_id") @db.Uuid
+  planKey          String          @map("plan_key")
+  planName         String          @map("plan_name")
+  amountPaise      Int             @map("amount_paise")
+  currency         String          @default("INR")
+  status           String          @default("created")
+  gateway          String
+  gatewayOrderId   String          @unique @map("gateway_order_id")
+  gatewayPaymentId String?         @unique @map("gateway_payment_id")
+  method           String?
+  failureReason    String?         @map("failure_reason")
+  buyerState       String?         @map("buyer_state")
+  buyerStateCode   String?         @map("buyer_state_code")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  paidAt           DateTime?       @map("paid_at")
+  invoice          BillingInvoice?
+
+  @@index([teacherUserId, createdAt])
+  @@index([status, createdAt])
+  @@map("billing_payment")
+}
+
+// A GST invoice, numbered per financial year (EW/2526/000001). Amounts are in
+// paise; price is GST-inclusive so taxable value + tax = total. The seller
+// block is a snapshot of the business details at the time of issue.
+model BillingInvoice {
+  id                String         @id @default(uuid()) @db.Uuid
+  number            String         @unique
+  paymentId         String         @unique @map("payment_id") @db.Uuid
+  payment           BillingPayment @relation(fields: [paymentId], references: [id])
+  teacherUserId     String         @map("teacher_user_id") @db.Uuid
+  issuedAt          DateTime       @default(now()) @map("issued_at")
+  customerName      String         @map("customer_name")
+  customerEmail     String         @map("customer_email")
+  buyerState        String?        @map("buyer_state")
+  buyerStateCode    String?        @map("buyer_state_code")
+  description       String
+  periodStart       DateTime       @map("period_start")
+  periodEnd         DateTime       @map("period_end")
+  sacCode           String         @map("sac_code")
+  gstRegistered     Boolean        @map("gst_registered")
+  taxRatePercent    Float          @map("tax_rate_percent")
+  taxableValuePaise Int            @map("taxable_value_paise")
+  cgstPaise         Int            @default(0) @map("cgst_paise")
+  sgstPaise         Int            @default(0) @map("sgst_paise")
+  igstPaise         Int            @default(0) @map("igst_paise")
+  totalPaise        Int            @map("total_paise")
+  seller            Json
+
+  @@index([teacherUserId, issuedAt])
+  @@map("billing_invoice")
+}
+
+// Next invoice number per financial year ("2526" = April 2025 - March 2026).
+model BillingInvoiceCounter {
+  financialYear String @id @map("financial_year")
+  lastNumber    Int    @default(0) @map("last_number")
+
+  @@map("billing_invoice_counter")
 }
