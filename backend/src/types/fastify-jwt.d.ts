@@ -6,7 +6,7 @@ export interface AppJwtPayload {
   schoolId: string | null;
   trustId: string | null;
   type: "access" | "refresh" | "student_select";
-  phone?: string;
+  email?: string;
 }
 
 declare module "@fastify/jwt" {

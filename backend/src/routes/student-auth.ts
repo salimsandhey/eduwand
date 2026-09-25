@@ -2,25 +2,18 @@ import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 import { messageProvider } from "../lib/messaging";
 import { storage } from "../lib/storage";
-import { hashOtpCode, compareOtpCode, OTP_TTL_MS, MAX_OTP_ATTEMPTS } from "../lib/otp";
+import { generateLoginOtp, isDevOtpMode, hashOtpCode, compareOtpCode, OTP_TTL_MS, MAX_OTP_ATTEMPTS } from "../lib/otp";
 
 const ACCESS_TOKEN_EXPIRY = "15m";
 const REFRESH_TOKEN_EXPIRY = "30d";
 const SELECTION_TOKEN_EXPIRY = "10m";
 
-// Fixed instead of randomly generated for now - App Review can't reliably
-// receive real SMS on a reviewer device, so every student login uses this
-// code until proper delivery is verified. Matches AuthScreen's 6-digit
-// CODE_LENGTH. Revert to generateOtpCode() from lib/otp.ts once SMS
-// delivery to reviewers is no longer a concern.
-const FIXED_STUDENT_OTP = "123456";
-
 interface RequestOtpBody {
-  phone: string;
+  email: string;
 }
 
 interface VerifyOtpBody {
-  phone: string;
+  email: string;
   code: string;
 }
 
@@ -29,55 +22,64 @@ interface SelectBody {
   studentStubId: string;
 }
 
+function normalizeEmail(value: string | undefined): string | null {
+  const email = value?.trim().toLowerCase();
+  return email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
+}
+
 export async function studentAuthRoutes(app: FastifyInstance) {
+  // Students sign in with their own email + a one-time code. The response is
+  // the same whether or not the email belongs to a student, so this can't be
+  // used to discover who is enrolled - and a code is only ever emailed to an
+  // address that actually is on a student record.
   app.post<{ Body: RequestOtpBody }>(
     "/auth/student/request-otp",
     { config: { rateLimit: { max: 6, timeWindow: "1 minute" } } },
     async (request, reply) => {
-    const phone = request.body?.phone?.trim();
-    if (!phone) {
+    const email = normalizeEmail(request.body?.email);
+    if (!email) {
       return reply.code(400).send({
         data: null,
-        error: { code: "validation_error", message: "phone is required" },
+        error: { code: "validation_error", message: "A valid email is required" },
       });
     }
 
-    const code = FIXED_STUDENT_OTP;
-    const otpCodeHash = await hashOtpCode(code);
+    const known = await prisma.studentStub.count({ where: { email, status: "active" } });
 
-    await prisma.studentOtpRequest.updateMany({
-      where: { phone, consumedAt: null },
-      data: { consumedAt: new Date() },
-    });
+    let devCode: string | undefined;
+    if (known > 0) {
+      const code = generateLoginOtp();
+      const otpCodeHash = await hashOtpCode(code);
 
-    await prisma.studentOtpRequest.create({
-      data: { phone, otpCodeHash, expiresAt: new Date(Date.now() + OTP_TTL_MS) },
-    });
+      await prisma.studentOtpRequest.updateMany({
+        where: { email, consumedAt: null },
+        data: { consumedAt: new Date() },
+      });
+      await prisma.studentOtpRequest.create({
+        data: { email, otpCodeHash, expiresAt: new Date(Date.now() + OTP_TTL_MS) },
+      });
 
-    await messageProvider.send("sms", phone, `Your EduWand login code is ${code}. It expires in 5 minutes.`);
+      const sent = await messageProvider.send("email", email, `Your EduWand login code is ${code}. It expires in 5 minutes.`);
+      if (!sent.success) console.error(`[student-auth] OTP email to ${email} failed: ${sent.error}`);
+      devCode = isDevOtpMode() ? code : undefined;
+    }
 
-    return {
-      data: {
-        message: "OTP sent",
-        devOtp: process.env.NODE_ENV !== "production" ? code : undefined,
-      },
-      meta: {},
-    };
+    return { data: { message: "If that email is registered, a login code has been sent", devOtp: devCode }, meta: {} };
     }
   );
 
   app.post<{ Body: VerifyOtpBody }>("/auth/student/verify-otp", async (request, reply) => {
-    const phone = request.body?.phone?.trim();
+    const email = normalizeEmail(request.body?.email);
     const code = request.body?.code?.trim();
-    if (!phone || !code) {
+    if (!email || !code) {
       return reply.code(400).send({
         data: null,
-        error: { code: "validation_error", message: "phone and code are required" },
+        error: { code: "validation_error", message: "email and code are required" },
       });
     }
 
     const otpRequest = await prisma.studentOtpRequest.findFirst({
-      where: { phone, consumedAt: null, expiresAt: { gt: new Date() } },
+      where: { email, consumedAt: null, expiresAt: { gt: new Date() } },
       orderBy: { createdAt: "desc" },
     });
 
@@ -103,7 +105,7 @@ export async function studentAuthRoutes(app: FastifyInstance) {
     await prisma.studentOtpRequest.update({ where: { id: otpRequest.id }, data: { consumedAt: new Date() } });
 
     const students = await prisma.studentStub.findMany({
-      where: { guardianContact: phone },
+      where: { email, status: "active" },
       select: { id: true, fullName: true, schoolId: true, classSectionId: true, avatarKey: true, photoMimeType: true },
       orderBy: { fullName: "asc" },
     });
@@ -111,12 +113,12 @@ export async function studentAuthRoutes(app: FastifyInstance) {
     if (students.length === 0) {
       return reply.code(404).send({
         data: null,
-        error: { code: "no_student_found", message: "No student is linked to this phone number" },
+        error: { code: "no_student_found", message: "No student is linked to this email" },
       });
     }
 
     const selectionToken = app.jwt.sign(
-      { sub: "", role: "student_pending", schoolId: null, trustId: null, type: "student_select", phone },
+      { sub: "", role: "student_pending", schoolId: null, trustId: null, type: "student_select", email },
       { expiresIn: SELECTION_TOKEN_EXPIRY }
     );
 
@@ -126,21 +128,21 @@ export async function studentAuthRoutes(app: FastifyInstance) {
   // Profile photo for the "which child?" picker shown between verify-otp and
   // select - nobody is signed in yet, so it takes the selection token (as
   // ?token=, since <Image> can't send headers) and only serves students
-  // linked to the phone number that token was issued for.
+  // linked to the email that token was issued for.
   app.get<{ Params: { id: string }; Querystring: { token?: string } }>("/auth/student/photo/:id", async (request, reply) => {
-    let phone: string | undefined;
+    let email: string | undefined;
     try {
-      const decoded = app.jwt.verify<{ type: string; phone?: string }>(request.query.token ?? "");
-      if (decoded.type === "student_select") phone = decoded.phone;
+      const decoded = app.jwt.verify<{ type: string; email?: string }>(request.query.token ?? "");
+      if (decoded.type === "student_select") email = decoded.email;
     } catch {
-      phone = undefined;
+      email = undefined;
     }
-    if (!phone) {
+    if (!email) {
       return reply.code(401).send({ data: null, error: { code: "unauthorized", message: "Invalid or expired selection token" } });
     }
 
     const student = await prisma.studentStub.findFirst({
-      where: { id: request.params.id, guardianContact: phone },
+      where: { id: request.params.id, email, status: "active" },
       select: { photoLocation: true, photoMimeType: true },
     });
     if (!student?.photoLocation || !student.photoMimeType) {
@@ -161,13 +163,13 @@ export async function studentAuthRoutes(app: FastifyInstance) {
       });
     }
 
-    let phone: string;
+    let email: string;
     try {
-      const decoded = app.jwt.verify<{ type: string; phone?: string }>(selectionToken);
-      if (decoded.type !== "student_select" || !decoded.phone) {
+      const decoded = app.jwt.verify<{ type: string; email?: string }>(selectionToken);
+      if (decoded.type !== "student_select" || !decoded.email) {
         throw new Error("Not a student selection token");
       }
-      phone = decoded.phone;
+      email = decoded.email;
     } catch {
       return reply.code(401).send({
         data: null,
@@ -176,10 +178,10 @@ export async function studentAuthRoutes(app: FastifyInstance) {
     }
 
     const student = await prisma.studentStub.findFirst({
-      where: { id: studentStubId, guardianContact: phone },
+      where: { id: studentStubId, email, status: "active" },
     });
     if (!student) {
-      return reply.code(404).send({ data: null, error: { code: "not_found", message: "Student not found for this phone" } });
+      return reply.code(404).send({ data: null, error: { code: "not_found", message: "Student not found for this email" } });
     }
 
     const claims = { sub: student.id, role: "student", schoolId: student.schoolId, trustId: null };

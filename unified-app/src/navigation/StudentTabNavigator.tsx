@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Ionicons } from "@expo/vector-icons";
 import { StudentTabParamList } from "./types";
@@ -8,8 +7,6 @@ import { StudentResultsScreen } from "../screens/student/StudentResultsScreen";
 import { StudentMessagesScreen } from "../screens/student/StudentMessagesScreen";
 import { StudentProfileScreen } from "../screens/student/StudentProfileScreen";
 import { FloatingTabBar } from "./FloatingTabBar";
-import { AiAssistChatModal } from "../components/AiAssistChatModal";
-import { decorativeAssets } from "../theme/decorativeAssets";
 import { TabBarScrollProvider } from "./TabBarScrollContext";
 
 const Tab = createBottomTabNavigator<StudentTabParamList>();
@@ -23,19 +20,10 @@ const ICONS: Record<keyof StudentTabParamList, keyof typeof Ionicons.glyphMap> =
 };
 
 export function StudentTabNavigator() {
-  const [showAiAssist, setShowAiAssist] = useState(false);
-
   return (
     <TabBarScrollProvider>
       <Tab.Navigator
-        tabBar={(props) => (
-          <FloatingTabBar
-            {...props}
-            icons={ICONS}
-            aiAssistIcon={decorativeAssets.aiButtonIcon}
-            onAiAssistPress={() => setShowAiAssist(true)}
-          />
-        )}
+        tabBar={(props) => <FloatingTabBar {...props} icons={ICONS} />}
         screenOptions={({ route }) => ({
           headerShown: false,
           tabBarHideOnKeyboard: true,
@@ -50,7 +38,6 @@ export function StudentTabNavigator() {
         <Tab.Screen name="Messages" component={StudentMessagesScreen} />
         <Tab.Screen name="Profile" component={StudentProfileScreen} />
       </Tab.Navigator>
-      <AiAssistChatModal visible={showAiAssist} onClose={() => setShowAiAssist(false)} />
     </TabBarScrollProvider>
   );
 }

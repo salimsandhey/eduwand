@@ -42,6 +42,8 @@ function Root() {
       welcomedUserIdRef.current = null;
       return;
     }
+    // Students have no AI assistant, so no mascot intro either.
+    if (user.role === "student") return;
     if (splashDone && welcomedUserIdRef.current !== user.id) {
       welcomedUserIdRef.current = user.id;
       startWelcome();
@@ -57,7 +59,7 @@ function Root() {
       {!splashDone && (
         <AnimatedSplashScreen ready={!isRestoring} onFinish={() => setSplashDone(true)} />
       )}
-      {splashDone && !!user && <MascotWelcomeOverlay key={welcomeCount} />}
+      {splashDone && !!user && user.role !== "student" && <MascotWelcomeOverlay key={welcomeCount} />}
       <AiGeneratingOverlay blurTarget={blurTargetRef} />
       <AiAssistantGlowOverlay />
       {splashDone && <OfflineBanner />}

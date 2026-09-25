@@ -5,7 +5,8 @@
 // Docs/superpowers/plans/2026-09-09-individual-teacher-onboarding-and-
 // credits.md.
 
-export const STUDENT_CSV_TEMPLATE = "full_name,date_of_birth,guardian_name,guardian_contact\nJohn Doe,2015-04-12,Jane Doe,+911234567890\n";
+export const STUDENT_CSV_TEMPLATE =
+  "full_name,date_of_birth,guardian_name,guardian_contact,email\nJohn Doe,2015-04-12,Jane Doe,+911234567890,john@example.com\n";
 
 export function parseCsv(text: string): string[][] {
   const rows: string[][] = [];
@@ -63,6 +64,7 @@ export interface StudentCsvRow {
   dateOfBirth: string;
   guardianName: string;
   guardianContact: string;
+  email: string;
 }
 
 export function rowsToStudentRows(csvRows: string[][]): StudentCsvRow[] {
@@ -73,11 +75,13 @@ export function rowsToStudentRows(csvRows: string[][]): StudentCsvRow[] {
   const dobIdx = col("date_of_birth");
   const guardianNameIdx = col("guardian_name");
   const guardianContactIdx = col("guardian_contact");
+  const emailIdx = col("email");
 
   return csvRows.slice(1).map((r) => ({
     fullName: r[nameIdx]?.trim() ?? "",
     dateOfBirth: r[dobIdx]?.trim() ?? "",
     guardianName: r[guardianNameIdx]?.trim() ?? "",
     guardianContact: r[guardianContactIdx]?.trim() ?? "",
+    email: r[emailIdx]?.trim() ?? "",
   }));
 }

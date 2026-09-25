@@ -25,18 +25,18 @@ import { BOARDS } from "../../constants/boards";
 
 type AuthTab = "staff" | "student";
 type StaffMode = "login" | "forgot-request" | "forgot-reset" | "signup";
-type StudentStep = "phone" | "code" | "select";
+type StudentStep = "email" | "code" | "select";
 
-const STUDENT_STEP_ORDER: StudentStep[] = ["phone", "code", "select"];
+const STUDENT_STEP_ORDER: StudentStep[] = ["email", "code", "select"];
 const CODE_LENGTH = 6;
 const STUDENT_STEP_COPY: Record<StudentStep, { title: string; description: string }> = {
-  phone: {
+  email: {
     title: "Student login",
-    description: "Use your guardian's registered phone number to continue.",
+    description: "Use the email your school has on record for you to continue.",
   },
   code: {
     title: "Enter your code",
-    description: "We sent a 6-digit verification code to your phone.",
+    description: "We sent a 6-digit verification code to your email.",
   },
   select: {
     title: "Who's learning?",
@@ -50,7 +50,7 @@ const DEV_QUICK_LOGIN_ACCOUNTS = [
 ];
 
 export function AuthScreen() {
-  const { login, isLoading, error, signupTeacher, requestStudentOtp, verifyStudentOtp, selectStudent } = useAuth();
+  const { login, isLoading, error, requestTeacherSignupOtp, verifyTeacherSignupOtp, requestStudentOtp, verifyStudentOtp, selectStudent } = useAuth();
   const colors = lightColors;
   const pressedOpacity = PRESSED_OPACITY;
   const cardShadow = getCardShadow("light");
@@ -89,10 +89,15 @@ export function AuthScreen() {
   const [signupWorkspaceName, setSignupWorkspaceName] = useState("");
   const [signupBoard, setSignupBoard] = useState<string>(BOARDS[0]);
   const [boardConfirmed, setBoardConfirmed] = useState(false);
+  // Step 2 of signup: the code emailed to signupEmail. The account only
+  // exists once it's confirmed.
+  const [signupStep, setSignupStep] = useState<"form" | "code">("form");
+  const [signupCode, setSignupCode] = useState("");
+  const [signupDevOtp, setSignupDevOtp] = useState<string | null>(null);
 
   // Student login state
-  const [studentStep, setStudentStep] = useState<StudentStep>("phone");
-  const [phone, setPhone] = useState("");
+  const [studentStep, setStudentStep] = useState<StudentStep>("email");
+  const [studentEmail, setStudentEmail] = useState("");
   const [digits, setDigits] = useState<string[]>(Array(CODE_LENGTH).fill(""));
   const [devOtp, setDevOtp] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<StudentOtpMatch[]>([]);
@@ -242,6 +247,8 @@ export function AuthScreen() {
   function backToLogin() {
     setStaffMode("login");
     setResetError(null);
+    setSignupStep("form");
+    setSignupCode("");
   }
 
   function handleQuickLogin(accountEmail: string, accountPassword: string) {
@@ -250,14 +257,29 @@ export function AuthScreen() {
     login(accountEmail, accountPassword);
   }
 
-  function handleSignup() {
-    signupTeacher({
-      fullName: signupFullName.trim(),
-      email: signupEmail.trim(),
-      password: signupPassword,
-      board: signupBoard,
-      workspaceName: signupWorkspaceName.trim() || undefined,
-    });
+  async function handleSignup() {
+    try {
+      const devCode = await requestTeacherSignupOtp({
+        fullName: signupFullName.trim(),
+        email: signupEmail.trim(),
+        password: signupPassword,
+        board: signupBoard,
+        workspaceName: signupWorkspaceName.trim() || undefined,
+      });
+      setSignupDevOtp(devCode ?? null);
+      setSignupCode("");
+      setSignupStep("code");
+    } catch {
+      // The error is already on the auth context and shown under the form.
+    }
+  }
+
+  async function handleVerifySignup() {
+    try {
+      await verifyTeacherSignupOtp(signupEmail.trim(), signupCode);
+    } catch {
+      // Shown via the auth context error.
+    }
   }
 
   const signupValid =
@@ -279,12 +301,16 @@ export function AuthScreen() {
   }
 
   async function handleRequestOtp() {
-    const code = await requestStudentOtp(phone);
-    setDevOtp(code ?? null);
-    setDigits(Array(CODE_LENGTH).fill(""));
-    setStudentStep("code");
-    startResendCooldown();
-    setTimeout(() => codeInputs.current[0]?.focus(), 250);
+    try {
+      const code = await requestStudentOtp(studentEmail.trim());
+      setDevOtp(code ?? null);
+      setDigits(Array(CODE_LENGTH).fill(""));
+      setStudentStep("code");
+      startResendCooldown();
+      setTimeout(() => codeInputs.current[0]?.focus(), 250);
+    } catch {
+      // Shown via the auth context error.
+    }
   }
 
   function handleDigitChange(index: number, value: string) {
@@ -300,14 +326,18 @@ export function AuthScreen() {
   }
 
   async function handleVerifyOtp() {
-    const { students, selectionToken } = await verifyStudentOtp(phone, digits.join(""));
-    if (students.length === 1) {
-      await selectStudent(students[0].id, selectionToken);
-      return;
+    try {
+      const { students, selectionToken } = await verifyStudentOtp(studentEmail.trim(), digits.join(""));
+      if (students.length === 1) {
+        await selectStudent(students[0].id, selectionToken);
+        return;
+      }
+      setCandidates(students);
+      setPickerToken(selectionToken);
+      setStudentStep("select");
+    } catch {
+      // Shown via the auth context error.
     }
-    setCandidates(students);
-    setPickerToken(selectionToken);
-    setStudentStep("select");
   }
 
   const codeComplete = digits.every(Boolean);
@@ -317,13 +347,13 @@ export function AuthScreen() {
   const footerButton =
     authTab === "staff" && staffMode === "login"
       ? { label: "Continue", onPress: () => login(email, password), disabled: false }
-      : authTab === "student" && studentStep === "phone"
-      ? { label: "Send code", onPress: handleRequestOtp, disabled: !phone }
+      : authTab === "student" && studentStep === "email"
+      ? { label: "Send code", onPress: handleRequestOtp, disabled: !studentEmail.includes("@") }
       : authTab === "student" && studentStep === "code"
       ? { label: "Verify and continue", onPress: handleVerifyOtp, disabled: !codeComplete }
       : null;
 
-  const isLandingState = (authTab === "staff" && staffMode === "login") || (authTab === "student" && studentStep === "phone");
+  const isLandingState = (authTab === "staff" && staffMode === "login") || (authTab === "student" && studentStep === "email");
   const showToggle = !(authTab === "staff" && staffMode !== "login");
 
   return (
@@ -366,7 +396,9 @@ export function AuthScreen() {
                   ? "Welcome back"
                   : authTab === "staff"
                   ? staffMode === "signup"
-                    ? "Create your workspace"
+                    ? signupStep === "code"
+                      ? "Verify your email"
+                      : "Create your workspace"
                     : "Reset password"
                   : studentCopy.title}
               </Text>
@@ -375,12 +407,14 @@ export function AuthScreen() {
                   ? "Sign in to continue to your school workspace."
                   : authTab === "staff"
                   ? staffMode === "signup"
-                    ? "Set up your own personal classroom - no school invite needed."
+                    ? signupStep === "code"
+                      ? `Enter the 6-digit code we sent to ${signupEmail.trim()}.`
+                      : "Set up your own personal classroom - no school invite needed."
                     : staffMode === "forgot-request"
                     ? "Enter your account email and we'll send you a reset code."
                     : `Enter the code sent to ${resetEmail} and choose a new password.`
                   : studentStep === "code"
-                  ? `We sent a 6-digit verification code to ${phone}.`
+                  ? `We sent a 6-digit verification code to ${studentEmail.trim()}.`
                   : studentCopy.description}
               </Text>
             </View>
@@ -612,7 +646,58 @@ export function AuthScreen() {
                     </View>
                   ) : null}
 
-                  {staffMode === "signup" ? (
+                  {staffMode === "signup" && signupStep === "code" ? (
+                    <View style={[styles.formContainer, styles.authCard, { backgroundColor: colors.surface }]}>
+                      <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Verification code</Text>
+                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                        <Ionicons name="keypad-outline" size={20} color={colors.accent} style={styles.inputIcon} />
+                        <TextInput
+                          style={[styles.input, { color: colors.textPrimary, letterSpacing: 6 }]}
+                          placeholder="000000"
+                          placeholderTextColor={colors.textMuted}
+                          keyboardType="number-pad"
+                          maxLength={CODE_LENGTH}
+                          value={signupCode}
+                          onChangeText={(v) => setSignupCode(v.replace(/[^0-9]/g, ""))}
+                        />
+                      </View>
+
+                      {error ? (
+                        <View style={styles.errorRow}>
+                          <Ionicons name="alert-circle" size={16} color={colors.danger} />
+                          <Text style={[styles.errorText, { color: colors.danger }]}>{error}</Text>
+                        </View>
+                      ) : null}
+
+                      <Pressable
+                        onPress={handleVerifySignup}
+                        disabled={isLoading || signupCode.length < CODE_LENGTH}
+                        accessibilityRole="button"
+                        style={[styles.saveButton, { backgroundColor: colors.accent }, (isLoading || signupCode.length < CODE_LENGTH) && styles.buttonDisabled]}
+                      >
+                        {isLoading ? (
+                          <ActivityIndicator color={colors.accentOn} />
+                        ) : (
+                          <Text style={[styles.saveButtonText, { color: colors.accentOn }]}>Verify and create workspace</Text>
+                        )}
+                      </Pressable>
+
+                      <Pressable onPress={handleSignup} disabled={isLoading} hitSlop={8} style={styles.resendButton}>
+                        <Text style={[styles.resendText, { color: colors.accent }]}>Resend code</Text>
+                      </Pressable>
+                      <Pressable onPress={() => setSignupStep("form")} hitSlop={8} style={styles.resendButton}>
+                        <Text style={[styles.resendText, { color: colors.textMuted }]}>Change email</Text>
+                      </Pressable>
+                      {__DEV__ && signupDevOtp ? (
+                        <Pressable onPress={() => setSignupCode(signupDevOtp)} style={[styles.devChip, { backgroundColor: colors.accentSoft, borderColor: colors.accentSoftAlt }]}>
+                          <Ionicons name="flask-outline" size={14} color={colors.accent} />
+                          <Text style={[styles.devChipText, { color: colors.accent }]}>DEV code: {signupDevOtp}. Tap to fill.</Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+                  ) : null}
+
+                  {staffMode === "signup" && signupStep === "form" ? (
                     <View style={[styles.formContainer, styles.authCard, { backgroundColor: colors.surface }]}>
                       <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Full name</Text>
                       <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -724,7 +809,7 @@ export function AuthScreen() {
                         {isLoading ? (
                           <ActivityIndicator color={colors.accentOn} />
                         ) : (
-                          <Text style={[styles.saveButtonText, { color: colors.accentOn }]}>Create workspace</Text>
+                          <Text style={[styles.saveButtonText, { color: colors.accentOn }]}>Send verification code</Text>
                         )}
                       </Pressable>
                     </View>
@@ -732,20 +817,22 @@ export function AuthScreen() {
                 </>
               ) : (
                 <>
-                  {studentStep === "phone" ? (
+                  {studentStep === "email" ? (
                     <View style={styles.form}>
-                      <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Phone number</Text>
+                      <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Email</Text>
                       <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                        <Ionicons name="call-outline" size={20} color={colors.accent} style={styles.inputIcon} />
+                        <Ionicons name="mail-outline" size={20} color={colors.accent} style={styles.inputIcon} />
                         <TextInput
                           style={[styles.input, { color: colors.textPrimary }]}
-                          placeholder="+91XXXXXXXXXX"
+                          placeholder="you@example.com"
                           placeholderTextColor={colors.textMuted}
-                          keyboardType="phone-pad"
-                          value={phone}
-                          onChangeText={setPhone}
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          keyboardType="email-address"
+                          value={studentEmail}
+                          onChangeText={setStudentEmail}
                         />
-                        {phone ? <Pressable onPress={() => setPhone("")} hitSlop={8}><Ionicons name="close-circle" size={18} color={colors.textMuted} /></Pressable> : null}
+                        {studentEmail ? <Pressable onPress={() => setStudentEmail("")} hitSlop={8}><Ionicons name="close-circle" size={18} color={colors.textMuted} /></Pressable> : null}
                       </View>
 
                       <ErrorMessage message={error} />

@@ -32,7 +32,7 @@ function classLabel(section: { className: string; sectionName: string } | undefi
   return `${capitalizeFirst(section.className)} ${capitalizeFirst(section.sectionName)}`;
 }
 
-const EMPTY_MANUAL_FORM = { fullName: "", dateOfBirth: "", guardianName: "", guardianContact: "" };
+const EMPTY_MANUAL_FORM = { fullName: "", dateOfBirth: "", guardianName: "", guardianContact: "", email: "" };
 
 const STATUS_COLORS: Record<string, string> = {
   pending: "#F2A93B",
@@ -102,7 +102,7 @@ export function AddStudentScreen({ navigation }: Props) {
 
   async function saveManualStudent() {
     if (!accessToken || !classId) return;
-    if (!manualForm.fullName.trim() || !manualForm.dateOfBirth || !manualForm.guardianName.trim() || !manualForm.guardianContact.trim()) return;
+    if (!manualForm.fullName.trim() || !manualForm.dateOfBirth || !manualForm.guardianName.trim() || !manualForm.guardianContact.trim() || !manualForm.email.includes("@")) return;
     setIsSavingManual(true);
     setError(null);
     setAddedStudent(null);
@@ -113,6 +113,7 @@ export function AddStudentScreen({ navigation }: Props) {
         classSectionId: classId,
         guardianName: manualForm.guardianName.trim(),
         guardianContact: manualForm.guardianContact.trim(),
+        email: manualForm.email.trim(),
       });
       setAddedStudent(manualForm.fullName.trim());
       setManualForm(EMPTY_MANUAL_FORM);
@@ -260,7 +261,7 @@ export function AddStudentScreen({ navigation }: Props) {
                 placeholder="Guardian's name"
                 placeholderTextColor={colors.textMuted}
               />
-              <Text style={[styles.label, { color: colors.textPrimary }]}>Guardian contact</Text>
+              <Text style={[styles.label, { color: colors.textPrimary }]}>Guardian phone (for calls and records)</Text>
               <TextInput
                 style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
                 value={manualForm.guardianContact}
@@ -268,6 +269,17 @@ export function AddStudentScreen({ navigation }: Props) {
                 placeholder="Phone number"
                 placeholderTextColor={colors.textMuted}
                 keyboardType="phone-pad"
+              />
+              <Text style={[styles.label, { color: colors.textPrimary }]}>Student email (used to sign in)</Text>
+              <TextInput
+                style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+                value={manualForm.email}
+                onChangeText={(v) => setManualForm((f) => ({ ...f, email: v }))}
+                placeholder="student@example.com"
+                placeholderTextColor={colors.textMuted}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
               />
               {addedStudent ? <Text style={[styles.hint, { color: colors.accent, marginTop: 10 }]}>Added {addedStudent}.</Text> : null}
               <Pressable
@@ -281,7 +293,7 @@ export function AddStudentScreen({ navigation }: Props) {
           ) : mode === "bulk" ? (
             <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
               <Text style={[styles.hint, { color: colors.textMuted }]}>
-                Upload a CSV (opens fine in Excel) with columns: full_name, date_of_birth, guardian_name, guardian_contact.
+                Upload a CSV (opens fine in Excel) with columns: full_name, date_of_birth, guardian_name, guardian_contact, email (the student's sign-in email).
               </Text>
               <View style={{ flexDirection: "row", gap: 10, marginTop: 14 }}>
                 <Pressable onPress={shareCsvTemplate} style={[styles.saveButton, styles.saveButtonSecondary, { borderColor: colors.border, flex: 1, marginTop: 0 }]}>

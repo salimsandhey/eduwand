@@ -8,6 +8,14 @@ import { markOnboardingTaskComplete } from "../lib/onboarding";
 
 const MAX_SEAT_NUMBER = 40; // matches the reference clicker firmware/demo's cap
 
+// Students sign in with their own email + OTP, so it's stored normalised.
+// Returns null for anything that isn't a plausible address.
+function normalizeStudentEmail(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const email = value.trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
+}
+
 interface ListQuery {
   classSectionId?: string;
   page?: string;
@@ -20,6 +28,7 @@ interface CreateStudentBody {
   classSectionId: string;
   guardianName: string;
   guardianContact: string;
+  email: string;
   admissionDate?: string;
   feeStatus?: string;
 }
@@ -29,6 +38,7 @@ interface BulkStudentRow {
   dateOfBirth: string;
   guardianName: string;
   guardianContact: string;
+  email: string;
 }
 
 interface BulkCreateStudentsBody {
@@ -42,6 +52,7 @@ interface UpdateStudentBody {
   classSectionId?: string;
   guardianName?: string;
   guardianContact?: string;
+  email?: string | null;
   feeStatus?: string;
   // The physical clicker's DEVICE_ID this student is assigned to, within
   // their class - null clears the assignment. See clicker.ino / present.ts.
@@ -54,8 +65,8 @@ interface BulkReassignBody {
 }
 
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope];
-// Guardian contact doubles as the student's login credential (phone + OTP),
-// so creating/editing a student record is restricted to staff who manage
+// The student's email is their login credential (email + OTP), so
+// creating/editing a student record is restricted to staff who manage
 // enrolment, not every role that can merely view the roster. "teacher" is
 // included so a teacher can add students directly to a class they teach
 // (bulk upload / join-link approval) - teacherOwnsClassSection below is the
@@ -207,6 +218,10 @@ export async function studentRoutes(app: FastifyInstance) {
         error: { code: "validation_error", message: "fullName, dateOfBirth, classSectionId, guardianName, and guardianContact are required" },
       });
     }
+    const email = normalizeStudentEmail(body.email);
+    if (!email) {
+      return reply.code(400).send({ data: null, error: { code: "validation_error", message: "A valid student email is required - it's what the student signs in with" } });
+    }
 
     const classSection = await resolveClassSectionForCaller(request.schoolId!, body.classSectionId, request.user);
     if (!classSection) {
@@ -222,6 +237,7 @@ export async function studentRoutes(app: FastifyInstance) {
         classSectionId: classSection.id,
         guardianName: body.guardianName.trim(),
         guardianContact: body.guardianContact.trim(),
+        email,
         admissionDate: body.admissionDate ? new Date(body.admissionDate) : new Date(),
         feeStatus: body.feeStatus ?? "pending",
         createdBy: request.user.sub,
@@ -266,6 +282,11 @@ export async function studentRoutes(app: FastifyInstance) {
         skipped.push({ row: i + 1, reason: "Missing required field(s)" });
         continue;
       }
+      const rowEmail = normalizeStudentEmail(row.email);
+      if (!rowEmail) {
+        skipped.push({ row: i + 1, reason: "Missing or invalid student email" });
+        continue;
+      }
       const dob = new Date(row.dateOfBirth);
       if (Number.isNaN(dob.getTime())) {
         skipped.push({ row: i + 1, reason: "Invalid date of birth" });
@@ -281,6 +302,7 @@ export async function studentRoutes(app: FastifyInstance) {
           classSectionId: classSection.id,
           guardianName: row.guardianName.trim(),
           guardianContact: row.guardianContact.trim(),
+          email: rowEmail,
           admissionDate: new Date(),
           createdBy: request.user.sub,
         },
@@ -296,8 +318,8 @@ export async function studentRoutes(app: FastifyInstance) {
   });
 
   // Fixes the gap that previously had no edit path at all - most importantly
-  // guardianContact, since a wrong/outdated number locks the student's
-  // guardian out of OTP login with no way to self-recover.
+  // the student's email, since a wrong/outdated address locks them out of
+  // OTP login with no way to self-recover.
   app.patch<{ Params: { id: string }; Body: UpdateStudentBody }>(
     "/students/:id",
     { onRequest: manageScoped(app) },
@@ -328,6 +350,14 @@ export async function studentRoutes(app: FastifyInstance) {
       if (body.guardianContact !== undefined && !body.guardianContact.trim()) {
         return reply.code(400).send({ data: null, error: { code: "validation_error", message: "guardianContact cannot be empty" } });
       }
+      let patchEmail: string | undefined;
+      if (body.email !== undefined) {
+        const normalized = normalizeStudentEmail(body.email);
+        if (!normalized) {
+          return reply.code(400).send({ data: null, error: { code: "validation_error", message: "A valid student email is required" } });
+        }
+        patchEmail = normalized;
+      }
       if (body.seatNumber !== undefined && body.seatNumber !== null && (!Number.isInteger(body.seatNumber) || body.seatNumber < 1 || body.seatNumber > MAX_SEAT_NUMBER)) {
         return reply.code(400).send({ data: null, error: { code: "validation_error", message: `seatNumber must be an integer from 1 to ${MAX_SEAT_NUMBER}, or null to clear it` } });
       }
@@ -341,6 +371,7 @@ export async function studentRoutes(app: FastifyInstance) {
             ...(body.classSectionId !== undefined ? { classSectionId: body.classSectionId } : {}),
             ...(body.guardianName !== undefined ? { guardianName: body.guardianName.trim() } : {}),
             ...(body.guardianContact !== undefined ? { guardianContact: body.guardianContact.trim() } : {}),
+            ...(patchEmail !== undefined ? { email: patchEmail } : {}),
             ...(body.feeStatus !== undefined ? { feeStatus: body.feeStatus } : {}),
             ...(body.seatNumber !== undefined ? { seatNumber: body.seatNumber } : {}),
             updatedBy: request.user.sub,

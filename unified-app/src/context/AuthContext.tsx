@@ -24,10 +24,12 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
 
-  signupTeacher: (input: { fullName: string; email: string; password: string; board: string; phone?: string; workspaceName?: string }) => Promise<void>;
+  // Sign-up is two steps: request emails a code, verify confirms it and signs the teacher in.
+  requestTeacherSignupOtp: (input: { fullName: string; email: string; password: string; board: string; phone?: string; workspaceName?: string }) => Promise<string | undefined>;
+  verifyTeacherSignupOtp: (email: string, code: string) => Promise<void>;
 
-  requestStudentOtp: (phone: string) => Promise<string | undefined>;
-  verifyStudentOtp: (phone: string, code: string) => Promise<{ students: StudentOtpMatch[]; selectionToken: string }>;
+  requestStudentOtp: (email: string) => Promise<string | undefined>;
+  verifyStudentOtp: (email: string, code: string) => Promise<{ students: StudentOtpMatch[]; selectionToken: string }>;
   selectStudent: (studentStubId: string, selectionTokenOverride?: string) => Promise<void>;
 
   updateProfile: (input: UpdateProfileInput) => Promise<void>;
@@ -125,28 +127,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // login/selectStudent do: tokens from the signup response, then /auth/me,
   // then persist + setUser. See Docs/superpowers/plans/2026-09-09-
   // individual-teacher-onboarding-and-credits.md.
-  async function signupTeacher(input: { fullName: string; email: string; password: string; board: string; phone?: string; workspaceName?: string }) {
+  async function requestTeacherSignupOtp(input: { fullName: string; email: string; password: string; board: string; phone?: string; workspaceName?: string }): Promise<string | undefined> {
     setIsLoading(true);
     setError(null);
     try {
-      const tokens = await api.signupTeacher(input);
-      const me = await api.me(tokens.accessToken);
-      setAccessToken(tokens.accessToken);
-      setRefreshToken(tokens.refreshToken);
-      await persistTokens(tokens);
-      setUser(me);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Signup failed");
-    } finally {
-      setIsLoading(false);
-    }
-  }
-
-  async function requestStudentOtp(phone: string): Promise<string | undefined> {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const result = await api.requestStudentOtp(phone);
+      const result = await api.requestTeacherSignupOtp(input);
       return result.devOtp;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not send code");
@@ -156,11 +141,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function verifyStudentOtp(phone: string, code: string): Promise<{ students: StudentOtpMatch[]; selectionToken: string }> {
+  async function verifyTeacherSignupOtp(email: string, code: string) {
     setIsLoading(true);
     setError(null);
     try {
-      const result = await api.verifyStudentOtp(phone, code);
+      const tokens = await api.verifyTeacherSignupOtp(email, code);
+      const me = await api.me(tokens.accessToken);
+      setAccessToken(tokens.accessToken);
+      setRefreshToken(tokens.refreshToken);
+      await persistTokens(tokens);
+      setUser(me);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Signup failed");
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function requestStudentOtp(email: string): Promise<string | undefined> {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const result = await api.requestStudentOtp(email);
+      return result.devOtp;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not send code");
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function verifyStudentOtp(email: string, code: string): Promise<{ students: StudentOtpMatch[]; selectionToken: string }> {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const result = await api.verifyStudentOtp(email, code);
       setSelectionToken(result.selectionToken);
       return { students: result.students, selectionToken: result.selectionToken };
     } catch (err) {
@@ -273,7 +290,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         error,
         login,
         logout,
-        signupTeacher,
+        requestTeacherSignupOtp,
+        verifyTeacherSignupOtp,
         requestStudentOtp,
         verifyStudentOtp,
         selectStudent,

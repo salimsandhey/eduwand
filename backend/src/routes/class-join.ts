@@ -15,6 +15,7 @@ interface SubmitJoinRequestBody {
   dateOfBirth: string;
   guardianName: string;
   guardianContact: string;
+  studentEmail?: string;
 }
 
 interface DecideJoinRequestBody {
@@ -80,6 +81,13 @@ export async function classJoinRoutes(app: FastifyInstance) {
         return reply.code(400).send({ data: null, error: { code: "validation_error", message: "Invalid dateOfBirth" } });
       }
 
+      // Optional here so older join forms keep working, but without it the
+      // student can't sign in until the teacher adds an email.
+      const studentEmail = body.studentEmail?.trim().toLowerCase();
+      if (studentEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(studentEmail)) {
+        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "studentEmail is not a valid email" } });
+      }
+
       const created = await prisma.classJoinRequest.create({
         data: {
           classSectionId: classSection.id,
@@ -87,6 +95,7 @@ export async function classJoinRoutes(app: FastifyInstance) {
           dateOfBirth: dob,
           guardianName: body.guardianName.trim(),
           guardianContact: body.guardianContact.trim(),
+          studentEmail: studentEmail || null,
         },
       });
 
@@ -172,6 +181,7 @@ export async function classJoinRoutes(app: FastifyInstance) {
               classSectionId: existing.classSectionId,
               guardianName: existing.guardianName,
               guardianContact: existing.guardianContact,
+              email: existing.studentEmail,
               admissionDate: new Date(),
               createdBy: request.user.sub,
             },

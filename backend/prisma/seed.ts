@@ -231,7 +231,9 @@ async function main() {
 
   const student = await prisma.studentStub.upsert({
     where: { sourceEnquiryId: studentEnquiry.id },
-    update: {},
+    // Students sign in with their own email + OTP; the dev OTP is echoed by
+    // /auth/student/request-otp outside production.
+    update: { email: "student@eduwand.com" },
     create: {
       schoolId: school.id,
       sourceEnquiryId: studentEnquiry.id,
@@ -240,6 +242,7 @@ async function main() {
       classSectionId: classSection.id,
       guardianName: "Dev Guardian",
       guardianContact: "+911234567890",
+      email: "student@eduwand.com",
       admissionDate: new Date("2026-06-01"),
     },
   });

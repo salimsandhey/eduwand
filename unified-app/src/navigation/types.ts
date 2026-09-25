@@ -1,5 +1,5 @@
 import { NavigatorScreenParams } from "@react-navigation/native";
-import { AssignmentQuestion, PresentationReason, PresentationDensity } from "../api/client";
+import { AssignmentQuestion, PresentationReason, PresentationDensity, StudentMaterial } from "../api/client";
 
 export type RootStackParamList = {
   MainTabs: NavigatorScreenParams<EnrolmentTabParamList | TeacherTabParamList | StudentTabParamList>;
@@ -20,6 +20,7 @@ export type RootStackParamList = {
   TopicDetail: { topicId: string };
   GenerationSetup: { topicId: string };
   GenerationReview: { generationId: string };
+  StudentMaterialDetail: { material: StudentMaterial };
   // New presentation flow (PPT guidelines.pdf) - reason -> classes/slides ->
   // density -> outline review -> GenerationReview (steps 5-9).
   PresentationReason: { topicId: string };

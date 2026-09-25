@@ -204,6 +204,7 @@ interface ConfirmAdmissionBody {
   classSectionId: string;
   guardianName?: string;
   guardianContact?: string;
+  email?: string;
   admissionDate: string;
 }
 
@@ -1119,6 +1120,9 @@ export async function enquiryRoutes(app: FastifyInstance) {
             classSectionId: classSection.id,
             guardianName: body.guardianName ?? enquiry.contactName,
             guardianContact: body.guardianContact ?? enquiry.contactPhone,
+            // The student's own sign-in email; optional at admission, the
+            // school can add it later from the student's record.
+            email: body.email?.trim().toLowerCase() || null,
             admissionDate: new Date(body.admissionDate),
           },
         }),

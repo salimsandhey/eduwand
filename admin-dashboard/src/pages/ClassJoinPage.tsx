@@ -18,6 +18,7 @@ export function ClassJoinPage() {
   const [dateOfBirth, setDateOfBirth] = useState("");
   const [guardianName, setGuardianName] = useState("");
   const [guardianContact, setGuardianContact] = useState("");
+  const [studentEmail, setStudentEmail] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
@@ -30,7 +31,7 @@ export function ClassJoinPage() {
   }, [code]);
 
   async function submit() {
-    if (!code || !studentName.trim() || !dateOfBirth || !guardianName.trim() || !guardianContact.trim()) return;
+    if (!code || !studentName.trim() || !dateOfBirth || !guardianName.trim() || !guardianContact.trim() || !studentEmail.includes("@")) return;
     setIsSubmitting(true);
     setSubmitError(null);
     try {
@@ -39,6 +40,7 @@ export function ClassJoinPage() {
         dateOfBirth,
         guardianName: guardianName.trim(),
         guardianContact: guardianContact.trim(),
+        studentEmail: studentEmail.trim(),
       });
       setSubmitted(true);
     } catch (err) {
@@ -112,13 +114,17 @@ export function ClassJoinPage() {
           <label style={styles.label}>Guardian's phone number</label>
           <input style={styles.input} value={guardianContact} onChange={(e) => setGuardianContact(e.target.value)} />
         </div>
+        <div style={styles.field}>
+          <label style={styles.label}>Student's email (used to sign in)</label>
+          <input style={styles.input} type="email" value={studentEmail} onChange={(e) => setStudentEmail(e.target.value)} />
+        </div>
 
         {submitError ? <p style={{ color: "var(--status-critical)", fontSize: 13 }}>{submitError}</p> : null}
 
         <button
           style={{ ...styles.button, opacity: isSubmitting ? 0.6 : 1 }}
           onClick={submit}
-          disabled={isSubmitting || !studentName.trim() || !dateOfBirth || !guardianName.trim() || !guardianContact.trim()}
+          disabled={isSubmitting || !studentName.trim() || !dateOfBirth || !guardianName.trim() || !guardianContact.trim() || !studentEmail.includes("@")}
         >
           {isSubmitting ? "Submitting…" : "Request to join"}
         </button>

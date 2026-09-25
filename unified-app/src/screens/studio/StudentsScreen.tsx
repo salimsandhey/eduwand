@@ -30,7 +30,7 @@ function classLabel(section: { className: string; sectionName: string } | undefi
   return `${capitalizeFirst(section.className)} ${capitalizeFirst(section.sectionName)}`;
 }
 
-const EMPTY_MANUAL_FORM = { fullName: "", dateOfBirth: "", guardianName: "", guardianContact: "" };
+const EMPTY_MANUAL_FORM = { fullName: "", dateOfBirth: "", guardianName: "", guardianContact: "", email: "" };
 
 export function StudentsScreen({ navigation }: Props) {
   const { accessToken, user } = useAuth();
@@ -142,13 +142,14 @@ export function StudentsScreen({ navigation }: Props) {
       dateOfBirth: student.dateOfBirth.slice(0, 10),
       guardianName: student.guardianName,
       guardianContact: student.guardianContact,
+      email: student.email ?? "",
     });
     setEditClassId(student.classSectionId);
   }
 
   async function saveEdit() {
     if (!accessToken || !editingStudent || !editClassId) return;
-    if (!editForm.fullName.trim() || !editForm.guardianName.trim() || !editForm.guardianContact.trim()) return;
+    if (!editForm.fullName.trim() || !editForm.guardianName.trim() || !editForm.guardianContact.trim() || !editForm.email.includes("@")) return;
     setIsSavingEdit(true);
     setError(null);
     try {
@@ -158,6 +159,7 @@ export function StudentsScreen({ navigation }: Props) {
         classSectionId: editClassId,
         guardianName: editForm.guardianName.trim(),
         guardianContact: editForm.guardianContact.trim(),
+        email: editForm.email.trim().toLowerCase(),
       });
       setEditingStudent(null);
       await load();
@@ -340,12 +342,21 @@ export function StudentsScreen({ navigation }: Props) {
             value={editForm.guardianName}
             onChangeText={(v) => setEditForm((f) => ({ ...f, guardianName: v }))}
           />
-          <Text style={[styles.label, { color: colors.textPrimary }]}>Guardian contact</Text>
+          <Text style={[styles.label, { color: colors.textPrimary }]}>Guardian phone (for calls and records)</Text>
           <TextInput
             style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
             value={editForm.guardianContact}
             onChangeText={(v) => setEditForm((f) => ({ ...f, guardianContact: v }))}
             keyboardType="phone-pad"
+          />
+          <Text style={[styles.label, { color: colors.textPrimary }]}>Student email (used to sign in)</Text>
+          <TextInput
+            style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+            value={editForm.email}
+            onChangeText={(v) => setEditForm((f) => ({ ...f, email: v }))}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoCorrect={false}
           />
           <Text style={[styles.label, { color: colors.textPrimary }]}>Class</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>

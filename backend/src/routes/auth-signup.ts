@@ -1,17 +1,37 @@
 import { FastifyInstance } from "fastify";
+import { Prisma } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { prisma } from "../lib/prisma";
 import { grantInitialCredits } from "../lib/credits";
 import { BOARDS, isValidBoard } from "../lib/boards";
+import { messageProvider } from "../lib/messaging";
+import { generateLoginOtp, isDevOtpMode, hashOtpCode, compareOtpCode, OTP_TTL_MS, MAX_OTP_ATTEMPTS } from "../lib/otp";
 
 // Public self-signup for individual teachers - the only account-creation
 // path in this codebase that doesn't require an existing admin/leadership
-// user to invite the new account. See Docs/superpowers/plans/2026-09-09-
+// user to invite the new account. Two steps: request-otp validates the form
+// and emails a code (nothing is created yet), verify-otp confirms the code
+// and only then creates the account - so every individual teacher's email is
+// proven to be theirs. See Docs/superpowers/plans/2026-09-09-
 // individual-teacher-onboarding-and-credits.md for the full design.
 
 const ACCESS_TOKEN_EXPIRY = "15m";
 const REFRESH_TOKEN_EXPIRY = "30d";
 const MIN_PASSWORD_LENGTH = 8;
+
+interface PendingTeacherSignup {
+  fullName: string;
+  email: string;
+  passwordHash: string;
+  board: string;
+  phone?: string;
+  workspaceName?: string;
+}
+
+interface VerifySignupBody {
+  email: string;
+  code: string;
+}
 
 interface SignupTeacherBody {
   fullName: string;
@@ -38,7 +58,7 @@ function currentAcademicYearWindow(): { label: string; startDate: Date; endDate:
 
 export async function authSignupRoutes(app: FastifyInstance) {
   app.post<{ Body: SignupTeacherBody }>(
-    "/auth/signup/teacher",
+    "/auth/signup/teacher/request-otp",
     { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
     async (request, reply) => {
       const body = request.body ?? ({} as SignupTeacherBody);
@@ -83,9 +103,78 @@ export async function authSignupRoutes(app: FastifyInstance) {
       }
 
       const passwordHash = await bcrypt.hash(password, 10);
+      const code = generateLoginOtp();
+      const pending: PendingTeacherSignup = { fullName, email, passwordHash, board, phone, workspaceName };
+
+      await prisma.signupOtpRequest.updateMany({ where: { email, consumedAt: null }, data: { consumedAt: new Date() } });
+      await prisma.signupOtpRequest.create({
+        data: {
+          email,
+          otpCodeHash: await hashOtpCode(code),
+          pendingData: pending as unknown as Prisma.InputJsonValue,
+          expiresAt: new Date(Date.now() + OTP_TTL_MS),
+        },
+      });
+
+      const sent = await messageProvider.send("email", email, `Your EduWand verification code is ${code}. It expires in 5 minutes.`);
+      if (!sent.success) {
+        request.log.error({ err: sent.error }, "signup OTP email failed");
+        return reply.code(502).send({
+          data: null,
+          error: { code: "email_send_failed", message: "We couldn't send the verification email. Please check the address and try again." },
+        });
+      }
+
+      return reply.send({
+        data: { message: "Verification code sent", devOtp: isDevOtpMode() ? code : undefined },
+        meta: {},
+      });
+    }
+  );
+
+  app.post<{ Body: VerifySignupBody }>(
+    "/auth/signup/teacher/verify-otp",
+    { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      const email = request.body?.email?.trim().toLowerCase();
+      const code = request.body?.code?.trim();
+      if (!email || !code) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "email and code are required" },
+        });
+      }
+
+      const otpRequest = await prisma.signupOtpRequest.findFirst({
+        where: { email, consumedAt: null, expiresAt: { gt: new Date() } },
+        orderBy: { createdAt: "desc" },
+      });
+      if (!otpRequest || otpRequest.attempts >= MAX_OTP_ATTEMPTS) {
+        return reply.code(401).send({
+          data: null,
+          error: { code: "invalid_or_expired_otp", message: "This code is invalid or has expired" },
+        });
+      }
+      if (!(await compareOtpCode(code, otpRequest.otpCodeHash))) {
+        await prisma.signupOtpRequest.update({ where: { id: otpRequest.id }, data: { attempts: { increment: 1 } } });
+        return reply.code(401).send({ data: null, error: { code: "invalid_otp", message: "Incorrect code" } });
+      }
+
+      const { fullName, passwordHash, board, phone, workspaceName } = otpRequest.pendingData as unknown as PendingTeacherSignup;
+
+      // Someone may have registered this email while the code was in flight.
+      if (await prisma.appUser.findUnique({ where: { email } })) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "A user with this email already exists" },
+        });
+      }
+
       const { label, startDate, endDate } = currentAcademicYearWindow();
 
       const user = await prisma.$transaction(async (tx) => {
+        await tx.signupOtpRequest.update({ where: { id: otpRequest.id }, data: { consumedAt: new Date() } });
+
         const trust = await tx.trust.create({
           data: {
             name: `${fullName} (Individual)`,

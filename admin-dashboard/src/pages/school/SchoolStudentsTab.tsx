@@ -12,6 +12,7 @@ interface StudentFormState {
   classSectionId: string;
   guardianName: string;
   guardianContact: string;
+  email: string;
   feeStatus: string;
   // Text input, kept as a string while editing - "" means "not assigned".
   seatNumber: string;
@@ -23,6 +24,7 @@ const EMPTY_FORM: StudentFormState = {
   classSectionId: "",
   guardianName: "",
   guardianContact: "",
+  email: "",
   feeStatus: "pending",
   seatNumber: "",
 };
@@ -105,6 +107,7 @@ export function SchoolStudentsTab() {
       classSectionId: s.classSectionId,
       guardianName: s.guardianName,
       guardianContact: s.guardianContact,
+      email: s.email ?? "",
       feeStatus: s.feeStatus,
       seatNumber: s.seatNumber != null ? String(s.seatNumber) : "",
     });
@@ -122,8 +125,8 @@ export function SchoolStudentsTab() {
 
   async function saveStudent() {
     if (!accessToken) return;
-    if (!form.fullName.trim() || !form.dateOfBirth || !form.classSectionId || !form.guardianName.trim() || !form.guardianContact.trim()) {
-      setFormError("Full name, date of birth, class section, guardian name, and guardian contact are all required.");
+    if (!form.fullName.trim() || !form.dateOfBirth || !form.classSectionId || !form.guardianName.trim() || !form.guardianContact.trim() || !form.email.includes("@")) {
+      setFormError("Full name, date of birth, class section, guardian name, guardian phone, and a valid student email are all required.");
       return;
     }
     const trimmedSeat = form.seatNumber.trim();
@@ -143,6 +146,7 @@ export function SchoolStudentsTab() {
           classSectionId: form.classSectionId,
           guardianName: form.guardianName.trim(),
           guardianContact: form.guardianContact.trim(),
+          email: form.email.trim().toLowerCase(),
           feeStatus: form.feeStatus,
           seatNumber,
         });
@@ -153,6 +157,7 @@ export function SchoolStudentsTab() {
           classSectionId: form.classSectionId,
           guardianName: form.guardianName.trim(),
           guardianContact: form.guardianContact.trim(),
+          email: form.email.trim().toLowerCase(),
           feeStatus: form.feeStatus,
         });
       }
@@ -307,6 +312,16 @@ export function SchoolStudentsTab() {
                 style={styles.input}
                 value={form.guardianContact}
                 onChange={(e) => setForm((f) => ({ ...f, guardianContact: e.target.value }))}
+                placeholder="For calls and records"
+              />
+            </div>
+            <div style={styles.field}>
+              <label style={styles.label}>Student email</label>
+              <input
+                style={styles.input}
+                type="email"
+                value={form.email}
+                onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
                 placeholder="Used for the student's OTP login"
               />
             </div>

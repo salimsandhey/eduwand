@@ -37,6 +37,7 @@ import { TopicListScreen } from "../screens/studio/TopicListScreen";
 import { TopicDetailScreen } from "../screens/studio/TopicDetailScreen";
 import { GenerationSetupScreen } from "../screens/studio/GenerationSetupScreen";
 import { GenerationReviewScreen } from "../screens/studio/GenerationReviewScreen";
+import { StudentMaterialDetailScreen } from "../screens/student/StudentMaterialDetailScreen";
 import { PresentationReasonScreen } from "../screens/studio/PresentationReasonScreen";
 import { PresentationClassesScreen } from "../screens/studio/PresentationClassesScreen";
 import { PresentationDensityScreen } from "../screens/studio/PresentationDensityScreen";
@@ -143,6 +144,7 @@ export function AppNavigator() {
         <Stack.Screen name="TopicDetail" component={TopicDetailScreen} options={{ headerShown: false }} />
         <Stack.Screen name="GenerationSetup" component={GenerationSetupScreen} options={{ headerShown: false }} />
         <Stack.Screen name="GenerationReview" component={GenerationReviewScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="StudentMaterialDetail" component={StudentMaterialDetailScreen} options={{ headerShown: false }} />
         <Stack.Screen name="PresentationReason" component={PresentationReasonScreen} options={{ headerShown: false }} />
         <Stack.Screen name="PresentationClasses" component={PresentationClassesScreen} options={{ headerShown: false }} />
         <Stack.Screen name="PresentationDensity" component={PresentationDensityScreen} options={{ headerShown: false }} />

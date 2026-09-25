@@ -289,6 +289,7 @@ export interface StudentProfile {
   admissionDate: string;
   guardianName: string;
   guardianContact: string;
+  email: string | null;
   classSection: { className: string; sectionName: string };
 }
 
@@ -774,6 +775,7 @@ export interface ClassJoinRequest {
   dateOfBirth: string;
   guardianName: string;
   guardianContact: string;
+  studentEmail: string | null;
   status: string;
   submittedAt: string;
   decidedAt: string | null;
@@ -851,6 +853,7 @@ export interface StudentStub extends StudentPicture {
   classSectionId: string;
   guardianName: string;
   guardianContact: string;
+  email: string | null;
   admissionDate: string;
   feeStatus: string;
   status: string;
@@ -1441,15 +1444,15 @@ export const api = {
       body: JSON.stringify({ email, code, newPassword }),
     }),
 
-  requestStudentOtp: (phone: string) =>
+  requestStudentOtp: (email: string) =>
     request<{ message: string; devOtp?: string }>("/auth/student/request-otp", {
       method: "POST",
-      body: JSON.stringify({ phone }),
+      body: JSON.stringify({ email }),
     }),
-  verifyStudentOtp: (phone: string, code: string) =>
+  verifyStudentOtp: (email: string, code: string) =>
     request<StudentVerifyOtpResult>("/auth/student/verify-otp", {
       method: "POST",
-      body: JSON.stringify({ phone, code }),
+      body: JSON.stringify({ email, code }),
     }),
   selectStudent: (selectionToken: string, studentStubId: string) =>
     request<AuthTokens>("/auth/student/select", {
@@ -1569,8 +1572,11 @@ export const api = {
     ),
   listSubjects: (token: string) => request<Subject[]>("/subjects", {}, token),
 
-  signupTeacher: (input: { fullName: string; email: string; password: string; board: string; phone?: string; workspaceName?: string }) =>
-    request<AuthTokens>("/auth/signup/teacher", { method: "POST", body: JSON.stringify(input) }),
+  // Two steps: the code is emailed first, the account is only created once it's confirmed.
+  requestTeacherSignupOtp: (input: { fullName: string; email: string; password: string; board: string; phone?: string; workspaceName?: string }) =>
+    request<{ message: string; devOtp?: string }>("/auth/signup/teacher/request-otp", { method: "POST", body: JSON.stringify(input) }),
+  verifyTeacherSignupOtp: (email: string, code: string) =>
+    request<AuthTokens>("/auth/signup/teacher/verify-otp", { method: "POST", body: JSON.stringify({ email, code }) }),
 
   createClassSection: (token: string, schoolId: string, input: { academicYearId: string; className: string; sectionName: string }) =>
     request<ClassSection>(`/schools/${schoolId}/class-sections`, { method: "POST", body: JSON.stringify(input) }, token),
@@ -1631,7 +1637,7 @@ export const api = {
   decideClassJoinRequest: (token: string, id: string, input: { decision: "approved" | "rejected"; note?: string }) =>
     request<ClassJoinRequest>(`/join-requests/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
 
-  bulkAddStudents: (token: string, classSectionId: string, students: { fullName: string; dateOfBirth: string; guardianName: string; guardianContact: string }[]) =>
+  bulkAddStudents: (token: string, classSectionId: string, students: { fullName: string; dateOfBirth: string; guardianName: string; guardianContact: string; email: string }[]) =>
     request<{ created: number; skipped: { row: number; reason: string }[] }>(
       "/students/bulk",
       { method: "POST", body: JSON.stringify({ classSectionId, students }) },
@@ -1646,11 +1652,11 @@ export const api = {
   updateStudent: (
     token: string,
     id: string,
-    input: { fullName?: string; dateOfBirth?: string; classSectionId?: string; guardianName?: string; guardianContact?: string; feeStatus?: string }
+    input: { fullName?: string; dateOfBirth?: string; classSectionId?: string; guardianName?: string; guardianContact?: string; email?: string; feeStatus?: string }
   ) => request<StudentStub>(`/students/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
   createStudent: (
     token: string,
-    input: { fullName: string; dateOfBirth: string; classSectionId: string; guardianName: string; guardianContact: string }
+    input: { fullName: string; dateOfBirth: string; classSectionId: string; guardianName: string; guardianContact: string; email: string }
   ) => request<StudentStub>("/students", { method: "POST", body: JSON.stringify(input) }, token),
   deleteStudent: (token: string, id: string) => request<{ deleted: true }>(`/students/${id}`, { method: "DELETE" }, token),
 
@@ -1769,7 +1775,6 @@ export const api = {
   ) => request<Generation>(`/topics/${topicId}/generations`, { method: "POST", body: JSON.stringify(input) }, token),
   getGeneration: (token: string, id: string) => request<Generation>(`/generations/${id}`, {}, token),
   presentationExportUrl: (id: string) => `${API_URL}/generations/${id}/export.pptx`,
-  presentationExportPdfUrl: (id: string) => `${API_URL}/generations/${id}/export.pdf`,
 
   // New presentation flow (steps 4-9) - see PresentationReasonScreen /
   // PresentationClassesScreen / PresentationDensityScreen /

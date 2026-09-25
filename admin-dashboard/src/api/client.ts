@@ -212,6 +212,8 @@ export interface Student {
   classSectionId: string;
   guardianName: string;
   guardianContact: string;
+  // The student's own sign-in email; null for students added before email login.
+  email: string | null;
   admissionDate: string;
   feeStatus: string;
   // The physical clicker DEVICE_ID this student answers with in a live
@@ -225,6 +227,7 @@ export interface CreateStudentInput {
   classSectionId: string;
   guardianName: string;
   guardianContact: string;
+  email: string;
   admissionDate?: string;
   feeStatus?: string;
 }
@@ -235,6 +238,7 @@ export interface UpdateStudentInput {
   classSectionId?: string;
   guardianName?: string;
   guardianContact?: string;
+  email?: string;
   feeStatus?: string;
   seatNumber?: number | null;
 }
@@ -671,7 +675,7 @@ export function publicGetClassJoinInfo(joinCode: string) {
 
 export function publicSubmitClassJoinRequest(
   joinCode: string,
-  input: { studentName: string; dateOfBirth: string; guardianName: string; guardianContact: string }
+  input: { studentName: string; dateOfBirth: string; guardianName: string; guardianContact: string; studentEmail?: string }
 ) {
   return request<{ id: string; status: string }>(`/public/class-sections/${joinCode}/join-requests`, {
     method: "POST",
