@@ -1,4 +1,4 @@
-import { renderEmail, type RenderedEmail } from "./layout";
+import { publicWebUrl, renderEmail, type RenderedEmail } from "./layout";
 
 // Every EduWand email is built here. Each template takes the facts about the
 // event and the recipient (name, school, teacher, class, ...) so the message
@@ -125,6 +125,7 @@ export function teacherWelcomeEmail(input: { name: string; workspaceName: string
   return renderEmail(`Welcome to EduWand, ${input.name.split(/\s+/)[0]}!`, {
     preheader: `Your workspace "${input.workspaceName}" is ready.`,
     heading: "Your workspace is ready",
+    tone: "success",
     recipientName: input.name,
     paragraphs: [
       `Your email is verified and "${input.workspaceName}" is set up. Here's a quick way to get going: add your classes, invite students, then create your first lesson plan or presentation with AI.`,
@@ -146,6 +147,7 @@ export function securityAlertEmail(input: {
     password_changed: {
       subject: "Your EduWand password was changed",
       heading: "Password changed",
+      tone: "warning",
       body: "The password for your EduWand account was just changed.",
     },
     password_reset_completed: {
@@ -259,6 +261,7 @@ export function gradeReleasedEmail(input: {
   return renderEmail(`Your result is in: ${input.assignmentTitle}`, {
     preheader: input.score != null ? `You scored ${input.score}.` : "Your assignment has been graded.",
     heading: "Your assignment has been graded",
+    tone: "success",
     recipientName: input.studentName,
     paragraphs: [
       `${input.teacherName ?? "Your teacher"} has released the result for "${input.assignmentTitle}".`,
@@ -310,6 +313,7 @@ export function joinRequestDecidedEmail(input: {
     {
       preheader: input.approved ? "Your join request was approved." : "Your join request wasn't approved.",
       heading: input.approved ? "You've been added to the class" : "Join request update",
+      tone: input.approved ? "success" : "warning",
       recipientName: input.studentName,
       paragraphs: input.approved
         ? [
@@ -332,6 +336,7 @@ export function creditsLowEmail(input: { name: string; balance: number; exhauste
   return renderEmail(input.exhausted ? "You've run out of AI credits" : "Your AI credits are running low", {
     preheader: input.exhausted ? "AI generation is paused until you top up." : `${input.balance} credits left.`,
     heading: input.exhausted ? "You're out of AI credits" : "AI credits running low",
+    tone: input.exhausted ? "alert" : "warning",
     recipientName: input.name,
     paragraphs: [
       input.exhausted
@@ -347,7 +352,9 @@ export function creditsLowEmail(input: { name: string; balance: number; exhauste
 // Where a teacher signs in on the website to manage their plan. Emails may
 // link to it; the mobile app must not (Google Play payments policy).
 function billingCta(label: string): { label: string; url: string } | undefined {
-  const url = process.env.BILLING_URL?.trim();
+  // BILLING_URL if set, otherwise the website's /billing page.
+  const site = publicWebUrl();
+  const url = process.env.BILLING_URL?.trim() || (site ? `${site}/billing` : "");
   return url ? { label, url } : undefined;
 }
 
@@ -359,6 +366,7 @@ export function planEndingEmail(input: { name: string; planName: string; kind: s
   return renderEmail(isTrial ? `Your EduWand trial ends in ${days}` : `Your EduWand plan ends in ${days}`, {
     preheader: `${input.planName} ends on ${dateLabel(input.endsAt)}.`,
     heading: isTrial ? "Your free trial is ending soon" : "Your plan is ending soon",
+    tone: "warning",
     recipientName: input.name,
     paragraphs: [
       `Your ${input.planName} ends on ${dateLabel(input.endsAt)}. After that, AI features (lesson plans, presentations, grading and the assistant) pause until you choose a plan. Your classes, students and saved content are not affected.`,
@@ -377,6 +385,7 @@ export function planEndedEmail(input: { name: string; planName: string; kind: st
   return renderEmail(input.kind === "trial" ? "Your EduWand trial has ended" : "Your EduWand plan has ended", {
     preheader: "AI features are paused until you choose a plan.",
     heading: input.kind === "trial" ? "Your free trial has ended" : "Your plan has ended",
+    tone: "alert",
     recipientName: input.name,
     paragraphs: [
       `Your ${input.planName} has ended, so AI features are paused. Your classes, students and saved content are all still there, and everything else keeps working.`,
@@ -425,6 +434,7 @@ export function invoiceEmail(input: {
   return renderEmail(`Payment received - invoice ${invoice.number}`, {
     preheader: `Thanks! Your plan is active until ${dateLabel(invoice.periodEnd)}.`,
     heading: "Payment received",
+    tone: "success",
     recipientName: input.name,
     paragraphs: [
       `Thank you - your payment went through and your plan is active until ${dateLabel(invoice.periodEnd)}. AI features are switched on and your credits have been added.`,
@@ -450,6 +460,7 @@ export function aiLimitEmail(input: {
   return renderEmail(reached ? "AI spend limit reached - AI is paused" : "AI spend is at 80% of its limit", {
     preheader: `₹${input.spentInr} of ₹${input.limitInr} used ${input.period}.`,
     heading: reached ? "AI spend limit reached" : "AI spend nearing its limit",
+    tone: reached ? "alert" : "warning",
     recipientName: input.name,
     paragraphs: [
       reached
