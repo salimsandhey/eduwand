@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { useAuth } from "../context/AuthContext";
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 import type { BillingOverview, CheckoutOrder } from "../api/client";
 import { Card } from "../components/Card";
 import { PageHeader } from "../components/PageHeader";
@@ -49,6 +49,7 @@ export function BillingPage() {
   const [data, setData] = useState<BillingOverview | null>(null);
   const [stateCode, setStateCode] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [schoolManaged, setSchoolManaged] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [paying, setPaying] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
@@ -59,7 +60,9 @@ export function BillingPage() {
       setData(await api.getBillingOverview(accessToken));
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load your plan");
+      // Teachers of a school are billed by their school, not here.
+      if (err instanceof ApiError && err.code === "not_individual") setSchoolManaged(true);
+      else setError(err instanceof Error ? err.message : "Failed to load your plan");
     }
   }, [accessToken]);
 
@@ -170,7 +173,14 @@ export function BillingPage() {
       {error ? <p style={{ color: "var(--status-critical)" }}>{error}</p> : null}
       {notice ? <p style={{ color: "var(--status-good)", fontWeight: 600 }}>{notice}</p> : null}
 
-      {!data || !sub ? (
+      {schoolManaged ? (
+        <Card title="Managed by your school">
+          <p style={{ margin: 0, lineHeight: 1.6 }}>
+            Your plan and AI credits are provided by your school, so there is nothing to buy here. Use the EduWand mobile app for your
+            classes, lesson plans and students.
+          </p>
+        </Card>
+      ) : !data || !sub ? (
         !error ? <p style={{ color: "var(--text-muted)" }}>Loading…</p> : null
       ) : (
         <>
@@ -178,7 +188,7 @@ export function BillingPage() {
             <div style={styles.statusRow}>
               <div>
                 <div style={{ fontSize: 22, fontWeight: 800 }}>
-                  {sub.status === "trial" ? "Free trial" : sub.status === "active" ? sub.planName : sub.status === "none" ? "No active plan" : "Your plan has ended"}
+                  {sub.status === "trial" ? "Free trial" : sub.status === "active" ? sub.planName : sub.status === "none" ? "No active plan" : sub.status === "cancelled" ? "Your plan was cancelled" : "Your plan has ended"}
                 </div>
                 <div style={{ color: "var(--text-muted)", marginTop: 4 }}>
                   {live && sub.endsAt

@@ -85,7 +85,7 @@ const GROWTH_ENGINE_ROLES = [...ADMIN_LEADERSHIP_PLATFORM, "principal"];
 const FORM_BUILDER_ROLES = ["admin", "principal"];
 
 export const NAV_ITEMS: NavItem[] = [
-  { to: "/overview", label: "Overview", icon: "home", roles: ["front_desk", "counsellor", "teacher", "admin", "leadership", "platform_admin"] },
+  { to: "/overview", label: "Overview", icon: "home", roles: ["front_desk", "counsellor", "admin", "leadership", "platform_admin"] },
   { to: "/trusts", label: "Trusts", icon: "building", roles: ["platform_admin"] },
   { to: "/billing", label: "My Plan", icon: "sparkle", roles: ["teacher"] },
   { to: "/my-school", label: "My School", icon: "building", roles: ["admin"] },

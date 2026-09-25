@@ -827,7 +827,7 @@ export interface CreditUsageStats {
 
 // An individual teacher's trial / plan; null for teachers of a school.
 export interface PlanStatus {
-  status: "trial" | "active" | "expired" | "none";
+  status: "trial" | "active" | "expired" | "cancelled" | "none";
   planName: string | null;
   endsAt: string | null;
   daysLeft: number | null;

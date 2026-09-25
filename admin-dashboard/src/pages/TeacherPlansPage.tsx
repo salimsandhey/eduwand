@@ -16,8 +16,9 @@ const STATUS_COLORS: Record<SubscriptionRow["status"], string> = {
   trial: "var(--status-warning)",
   active: "var(--status-good)",
   expired: "var(--status-critical)",
+  cancelled: "var(--text-muted)",
 };
-const STATUS_LABELS: Record<SubscriptionRow["status"], string> = { trial: "On trial", active: "Paid", expired: "Ended" };
+const STATUS_LABELS: Record<SubscriptionRow["status"], string> = { trial: "On trial", active: "Paid", expired: "Ended", cancelled: "Cancelled" };
 
 const inr = (n: number) => `₹${n.toLocaleString("en-IN")}`;
 const count = (n: number) => n.toLocaleString("en-IN");
@@ -103,6 +104,16 @@ export function TeacherPlansPage() {
     run(row.userId, () => api.extendSubscription(accessToken, row.userId, days), "Failed to extend");
   }
 
+  // Ends the running plan or trial now. Two questions: cancel at all, and
+  // whether the teacher keeps their unused credits.
+  function cancel(row: SubscriptionRow) {
+    if (!accessToken) return;
+    const paidNote = row.status === "active" ? " This does not refund any payment." : "";
+    if (!window.confirm(`Cancel ${row.name}'s ${row.planName} now? AI stops for them immediately.${paidNote}`)) return;
+    const removeCredits = window.confirm(`Also remove their ${count(row.balance)} unused credits?\n\nOK = remove them\nCancel = let them keep the credits`);
+    run(row.userId, () => api.cancelSubscription(accessToken, row.userId, removeCredits), "Failed to cancel the plan");
+  }
+
   function activate(row: SubscriptionRow, plan: BillingPlan) {
     if (!accessToken) return;
     if (!window.confirm(`Put ${row.name} on ${plan.name} for ${plan.durationDays} days with ${count(plan.credits)} credits? Use this for a payment taken outside the website.`)) return;
@@ -126,6 +137,7 @@ export function TeacherPlansPage() {
             <StatTile label="On free trial" value={count(subs.counts.trial)} />
             <StatTile label="On paid plan" value={count(subs.counts.active)} />
             <StatTile label="Plan ended" value={count(subs.counts.expired)} />
+            <StatTile label="Cancelled" value={count(subs.counts.cancelled)} />
           </div>
 
           <div style={styles.planGrid}>
@@ -209,6 +221,7 @@ export function TeacherPlansPage() {
                 <option value="trial">On free trial</option>
                 <option value="active">On paid plan</option>
                 <option value="expired">Plan ended</option>
+                <option value="cancelled">Cancelled</option>
               </select>
               <form
                 style={{ display: "flex", gap: 6 }}
@@ -256,14 +269,25 @@ export function TeacherPlansPage() {
                         </td>
                         <td style={styles.td}>
                           <div>{dateLabel(row.endsAt)}</div>
-                          <div style={styles.sub}>{row.status === "expired" ? "ended" : `${row.daysLeft} day${row.daysLeft === 1 ? "" : "s"} left`}</div>
+                          <div style={styles.sub}>{row.status === "expired" ? "ended" : row.status === "cancelled" ? "cancelled" : `${row.daysLeft} day${row.daysLeft === 1 ? "" : "s"} left`}</div>
                         </td>
                         <td style={styles.td}>{count(row.balance)}</td>
                         <td style={styles.td}>
                           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                            <button style={styles.smallButton} disabled={busy === row.userId} onClick={() => extend(row)}>
-                              Extend
-                            </button>
+                            {row.status !== "cancelled" ? (
+                              <button style={styles.smallButton} disabled={busy === row.userId} onClick={() => extend(row)}>
+                                Extend
+                              </button>
+                            ) : null}
+                            {row.status === "trial" || row.status === "active" ? (
+                              <button
+                                style={{ ...styles.smallButton, color: "var(--status-critical)" }}
+                                disabled={busy === row.userId}
+                                onClick={() => cancel(row)}
+                              >
+                                Cancel plan
+                              </button>
+                            ) : null}
                             {paidPlan ? (
                               <button style={styles.smallButton} disabled={busy === row.userId} onClick={() => activate(row, paidPlan)}>
                                 Activate {paidPlan.name}

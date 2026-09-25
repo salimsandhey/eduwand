@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { PLATFORM_ADMIN_ROLE } from "../lib/roles";
-import { activatePlan, extendSubscription, getEntitlement } from "../lib/subscriptions";
+import { activatePlan, cancelSubscription, extendSubscription, getEntitlement } from "../lib/subscriptions";
 
 // Platform-admin controls for the individual-teacher trial and paid plan
 // (see Docs/superpowers/plans/2026-09-25-trial-plans-and-purchase.md): edit
@@ -65,7 +65,6 @@ export async function billingPlanRoutes(app: FastifyInstance) {
     const now = new Date();
 
     const latest = await prisma.teacherSubscription.findMany({
-      where: { status: "active" },
       orderBy: [{ teacherUserId: "asc" }, { endsAt: "desc" }],
       distinct: ["teacherUserId"],
       take: 1000,
@@ -82,7 +81,7 @@ export async function billingPlanRoutes(app: FastifyInstance) {
     const search = q?.trim().toLowerCase();
     const rows = latest
       .map((s) => {
-        const live = s.endsAt > now;
+        const live = s.status !== "cancelled" && s.endsAt > now;
         const user = userById.get(s.teacherUserId);
         return {
           userId: s.teacherUserId,
@@ -90,7 +89,7 @@ export async function billingPlanRoutes(app: FastifyInstance) {
           email: user?.email ?? null,
           planKey: s.planKey,
           planName: s.planName,
-          status: live ? (s.kind === "trial" ? "trial" : "active") : "expired",
+          status: s.status === "cancelled" ? "cancelled" : live ? (s.kind === "trial" ? "trial" : "active") : "expired",
           startsAt: s.startsAt,
           endsAt: s.endsAt,
           daysLeft: live ? Math.max(1, Math.ceil((s.endsAt.getTime() - now.getTime()) / 86_400_000)) : 0,
@@ -103,10 +102,10 @@ export async function billingPlanRoutes(app: FastifyInstance) {
       .filter((r) => (search ? `${r.name} ${r.email ?? ""}`.toLowerCase().includes(search) : true))
       .sort((a, b) => a.endsAt.getTime() - b.endsAt.getTime());
 
-    const counts = { trial: 0, active: 0, expired: 0 };
+    const counts = { trial: 0, active: 0, expired: 0, cancelled: 0 };
     for (const s of latest) {
-      const live = s.endsAt > now;
-      counts[live ? (s.kind === "trial" ? "trial" : "active") : "expired"]++;
+      if (s.status === "cancelled") counts.cancelled++;
+      else counts[s.endsAt > now ? (s.kind === "trial" ? "trial" : "active") : "expired"]++;
     }
 
     return {
@@ -120,8 +119,22 @@ export async function billingPlanRoutes(app: FastifyInstance) {
     if (!isWhole(days, 1, 365)) return reply.code(400).send(validationError("days must be a whole number between 1 and 365"));
 
     const updated = await prisma.$transaction((tx) => extendSubscription(tx, request.params.userId, days, request.user.sub, request.body?.note?.trim() || undefined));
-    if (!updated) return reply.code(404).send({ data: null, error: { code: "not_found", message: "This teacher has no subscription to extend" } });
+    if (!updated) return reply.code(404).send({ data: null, error: { code: "not_found", message: "There is no plan to extend - activate a plan for this teacher instead" } });
     return { data: { endsAt: updated.endsAt }, meta: {} };
+  });
+
+  // Ends a teacher's live plan or trial right now. Payments are not refunded.
+  app.post<{ Params: { userId: string }; Body: { removeCredits?: boolean } }>("/subscriptions/:userId/cancel", guard, async (request, reply) => {
+    const entitlement = await getEntitlement(request.params.userId);
+    if (entitlement.status === "not_applicable") {
+      return reply.code(400).send(validationError("Plans only apply to individual teacher accounts"));
+    }
+
+    const result = await prisma.$transaction((tx) =>
+      cancelSubscription(tx, request.params.userId, request.user.sub, { removeCredits: request.body?.removeCredits !== false })
+    );
+    if (!result) return reply.code(400).send(validationError("There is no running plan to cancel - it has already ended or been cancelled"));
+    return { data: result, meta: {} };
   });
 
   // Puts a teacher on a plan by hand (e.g. a payment taken offline). Same

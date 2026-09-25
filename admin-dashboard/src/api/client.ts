@@ -537,7 +537,7 @@ export interface BillingInvoiceSummary {
 export interface BillingOverview {
   user: { fullName: string; email: string; phone: string | null } | null;
   balance: number;
-  subscription: { status: "trial" | "active" | "expired" | "none"; planName: string | null; endsAt: string | null; daysLeft: number | null };
+  subscription: { status: "trial" | "active" | "expired" | "cancelled" | "none"; planName: string | null; endsAt: string | null; daysLeft: number | null };
   plans: { key: string; name: string; priceInr: number; durationDays: number; credits: number }[];
   gstIncluded: boolean;
   gstRatePercent: number;
@@ -628,7 +628,7 @@ export interface SubscriptionRow {
   email: string | null;
   planKey: string;
   planName: string;
-  status: "trial" | "active" | "expired";
+  status: "trial" | "active" | "expired" | "cancelled";
   startsAt: string;
   endsAt: string;
   daysLeft: number;
@@ -641,7 +641,7 @@ export interface SubscriptionList {
   total: number;
   page: number;
   pageSize: number;
-  counts: { trial: number; active: number; expired: number };
+  counts: { trial: number; active: number; expired: number; cancelled: number };
   rows: SubscriptionRow[];
 }
 
@@ -1124,6 +1124,8 @@ export const api = {
     ),
   extendSubscription: (token: string, userId: string, days: number) =>
     request<{ endsAt: string }>(`/subscriptions/${userId}/extend`, { method: "POST", body: JSON.stringify({ days }) }, token),
+  cancelSubscription: (token: string, userId: string, removeCredits: boolean) =>
+    request<{ cancelled: number; creditsRemoved: number }>(`/subscriptions/${userId}/cancel`, { method: "POST", body: JSON.stringify({ removeCredits }) }, token),
   activateSubscription: (token: string, userId: string, planKey: string) =>
     request<{ endsAt: string; balance: number }>(`/subscriptions/${userId}/activate`, { method: "POST", body: JSON.stringify({ planKey }) }, token),
   listAiCalls: (token: string, query: AiCallQuery) =>

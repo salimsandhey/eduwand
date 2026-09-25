@@ -1653,7 +1653,7 @@ model TeacherCreditAccount {
 }
 
 // Audit trail of every credit balance change. reason is one of: plan_grant,
-// plan_purchase, admin_topup, ai_usage. relatedAiUsageLogId links an ai_usage deduction back
+// plan_purchase, plan_cancelled, admin_topup, ai_usage. relatedAiUsageLogId links an ai_usage deduction back
 // to the AiUsageLog row that caused it; createdByUserId is set for
 // admin_topup entries (who granted the top-up).
 model CreditLedgerEntry {

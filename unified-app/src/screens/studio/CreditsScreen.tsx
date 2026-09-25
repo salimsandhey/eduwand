@@ -37,7 +37,7 @@ function PlanNotice({ plan }: { plan: PlanStatus }) {
   const endsLabel = ends ? `${ends.getDate()} ${MONTHS[ends.getMonth()]}` : "";
   const days = plan.daysLeft ?? 0;
 
-  const title = live ? (plan.status === "trial" ? "Free trial" : plan.planName ?? "Your plan") : plan.status === "none" ? "No active plan" : "Your plan has ended";
+  const title = live ? (plan.status === "trial" ? "Free trial" : plan.planName ?? "Your plan") : plan.status === "none" ? "No active plan" : plan.status === "cancelled" ? "Your plan was cancelled" : "Your plan has ended";
   const body = live
     ? `${days} day${days === 1 ? "" : "s"} left - ends ${endsLabel}. Credits from this period don't carry over.`
     : "AI features are paused. Your classes, students and saved content are not affected.";

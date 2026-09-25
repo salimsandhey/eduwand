@@ -10,7 +10,7 @@ type Tx = Prisma.TransactionClient | PrismaClient;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export type EntitlementStatus = "not_applicable" | "trial" | "active" | "expired" | "none";
+export type EntitlementStatus = "not_applicable" | "trial" | "active" | "expired" | "cancelled" | "none";
 
 export interface Entitlement {
   status: EntitlementStatus;
@@ -31,11 +31,16 @@ export async function getEntitlement(userId: string, now: Date = new Date()): Pr
   });
   if (!user || user.role !== "teacher" || user.school?.accountType !== "individual") return NOT_APPLICABLE;
 
+  // The latest period of any kind: a cancelled one ends at the moment it was
+  // cancelled, so a later purchase (which ends later) correctly wins over it.
   const current = await prisma.teacherSubscription.findFirst({
-    where: { teacherUserId: userId, status: "active" },
+    where: { teacherUserId: userId },
     orderBy: { endsAt: "desc" },
   });
   if (!current) return { ...NOT_APPLICABLE, status: "none", allowed: false };
+  if (current.status === "cancelled") {
+    return { status: "cancelled", allowed: false, planKey: current.planKey, planName: current.planName, endsAt: current.endsAt, daysLeft: 0 };
+  }
 
   const live = current.endsAt > now;
   return {
@@ -51,7 +56,9 @@ export async function getEntitlement(userId: string, now: Date = new Date()): Pr
 // Throws PlanExpiredError when an individual teacher has no live plan.
 export async function assertAiEntitlement(userId: string): Promise<void> {
   const entitlement = await getEntitlement(userId);
-  if (!entitlement.allowed) throw new PlanExpiredError(entitlement.status === "none" ? "none" : "expired");
+  if (!entitlement.allowed) {
+    throw new PlanExpiredError(entitlement.status === "none" ? "none" : entitlement.status === "cancelled" ? "cancelled" : "expired");
+  }
 }
 
 interface PlanRow {
@@ -145,4 +152,34 @@ export async function extendSubscription(tx: Tx, userId: string, days: number, a
       createdByUserId: latest.createdByUserId ?? adminUserId,
     },
   });
+}
+
+// Ends the teacher's current plan right now (an admin action). AI stops
+// immediately; the remaining credits are removed unless asked to keep them. It
+// does not refund any payment - there is no refund flow.
+export async function cancelSubscription(
+  tx: Tx,
+  userId: string,
+  adminUserId: string,
+  options: { removeCredits: boolean },
+  now: Date = new Date()
+): Promise<{ cancelled: number; creditsRemoved: number } | null> {
+  const live = await tx.teacherSubscription.updateMany({
+    where: { teacherUserId: userId, status: "active", endsAt: { gt: now } },
+    data: { status: "cancelled", endsAt: now },
+  });
+  if (live.count === 0) return null;
+
+  let creditsRemoved = 0;
+  if (options.removeCredits) {
+    const account = await tx.teacherCreditAccount.findUnique({ where: { teacherUserId: userId } });
+    if (account && account.balance !== 0) {
+      creditsRemoved = account.balance;
+      await tx.teacherCreditAccount.update({ where: { teacherUserId: userId }, data: { balance: 0 } });
+      await tx.creditLedgerEntry.create({
+        data: { teacherUserId: userId, delta: -account.balance, reason: "plan_cancelled", balanceAfter: 0, note: "Plan cancelled by an admin", createdByUserId: adminUserId },
+      });
+    }
+  }
+  return { cancelled: live.count, creditsRemoved };
 }

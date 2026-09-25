@@ -65,17 +65,17 @@ const ROUTE_ROLES: Record<string, string[]> = {
   ...Object.fromEntries(NAV_ITEMS.map((item) => [item.to, item.roles])),
 };
 
-// Individual teachers have nothing else in the dashboard - land them on their plan.
+// Teachers have nothing else in the dashboard - land them on their plan page.
 function HomeRedirect() {
   const { user } = useAuth();
-  return <Navigate to={user?.role === "teacher" && user.accountType === "individual" ? "/billing" : "/overview"} replace />;
+  return <Navigate to={user?.role === "teacher" ? "/billing" : "/overview"} replace />;
 }
 
 function RequireRole({ path, children }: { path: string; children: ReactElement }) {
   const { user } = useAuth();
   const allowedRoles = ROUTE_ROLES[path];
   if (allowedRoles && user?.role && !allowedRoles.includes(user.role)) {
-    return <Navigate to="/overview" replace />;
+    return <Navigate to={user.role === "teacher" ? "/billing" : "/overview"} replace />;
   }
   return children;
 }
