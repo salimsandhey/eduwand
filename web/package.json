@@ -1,5 +1,5 @@
 {
-  "name": "eduwand-landing-web",
+  "name": "web",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -11,7 +11,9 @@
   },
   "dependencies": {
     "canvas-confetti": "^1.9.4",
+    "dompurify": "^3.4.16",
     "lucide-react": "^1.47.0",
+    "marked": "^18.0.14",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.4"

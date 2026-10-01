@@ -100,6 +100,7 @@ export const NAV_SECTIONS: NavSection[] = [
     title: "Settings",
     roles: PLATFORM,
     items: [
+      { to: "/website-enquiries", label: "Website enquiries", icon: "mail", hint: "Messages people sent from the website contact form" },
       { to: "/content-pages", label: "Website pages", icon: "globe", hint: "Privacy policy, terms, about and contact pages" },
       { to: "/audit-log", label: "Audit log", icon: "clock", hint: "Who changed what, and when" },
     ],

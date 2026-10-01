@@ -1,7 +1,29 @@
 import React, { useState } from 'react'
 import confetti from 'canvas-confetti'
-import { Mail, MapPin, Send, CheckCircle2, Building2 } from 'lucide-react'
+import { Mail, MapPin, Send, CheckCircle2, Phone, MessageCircle, Clock } from 'lucide-react'
+import { useContentPage } from '../lib/useContentPage'
+import { sendContactMessage, ApiError } from '../lib/api'
 
+// Shown only if the contact details can't be loaded from the server.
+const FALLBACK_CONTACT: Record<string, string> = {
+  email: 'support@eduwand.com',
+  hours: 'Monday to Saturday: 9:00 AM – 6:00 PM IST',
+}
+
+
+const ContactRow: React.FC<{ icon: React.ReactNode; tone: string; label: string; value: string; href?: string }> = ({ icon, tone, label, value, href }) => (
+  <div className="flex items-start gap-4">
+    <div className={`p-3 rounded-xl flex-shrink-0 ${tone}`}>{icon}</div>
+    <div className="min-w-0">
+      <h4 className="text-sm font-bold text-[#1F1F1F]">{label}</h4>
+      {href ? (
+        <a href={href} className="text-sm text-[#7C005A] font-semibold hover:underline break-words">{value}</a>
+      ) : (
+        <p className="text-sm text-[#5C5358] whitespace-pre-line">{value}</p>
+      )}
+    </div>
+  </div>
+)
 
 export const ContactPage: React.FC = () => {
   const [formData, setFormData] = useState({
@@ -12,16 +34,42 @@ export const ContactPage: React.FC = () => {
     subject: '',
     message: '',
   })
+  const [website, setWebsite] = useState('') // honeypot, real visitors never see it
   const [submitted, setSubmitted] = useState(false)
+  const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const { page: contactPage } = useContentPage('contact')
+  const contact = contactPage?.fields ?? FALLBACK_CONTACT
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!formData.name || !formData.email || !formData.message) {
+    if (sending) return
+    if (!formData.name.trim() || !formData.email.trim() || !formData.message.trim()) {
       setError('Please fill in all required fields.')
       return
     }
     setError('')
+    setFieldErrors({})
+    setSending(true)
+    try {
+      await sendContactMessage({
+        name: formData.name.trim(),
+        email: formData.email.trim(),
+        schoolName: formData.schoolName.trim() || undefined,
+        role: formData.role,
+        subject: formData.subject.trim() || undefined,
+        message: formData.message.trim(),
+        website,
+      })
+    } catch (err) {
+      if (err instanceof ApiError && err.fields) setFieldErrors(err.fields)
+      setError(err instanceof Error ? err.message : 'Could not send your message. Please try again.')
+      setSending(false)
+      return
+    }
+    setSending(false)
     setSubmitted(true)
 
     try {
@@ -56,62 +104,40 @@ export const ContactPage: React.FC = () => {
           <div className="lg:col-span-5 space-y-8">
             <div className="bg-white p-8 rounded-2xl border border-[#E8E2D9] card-shadow space-y-6 text-left">
               <h2 className="text-xl font-extrabold text-[#1F1F1F]">
-                Contact Information
+                {contactPage?.title ?? 'Contact Information'}
               </h2>
               <p className="text-[#5C5358] text-sm leading-relaxed">
-                Reach out directly to our institutional team or request a personalized walkthrough for your school.
+                {contactPage?.bodyMarkdown?.trim() ||
+                  'Reach out directly to our team or request a personalized walkthrough for your school.'}
               </p>
 
               <div className="space-y-5 pt-2">
-                <div className="flex items-start gap-4">
-                  <div className="p-3 rounded-xl bg-[#F7E6F2] text-[#7C005A] flex-shrink-0">
-                    <Mail className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-[#1F1F1F]">Institutional & Support Email</h4>
-                    <a href="mailto:support@eduwand.com" className="text-sm text-[#7C005A] font-semibold hover:underline">
-                      support@eduwand.com
-                    </a>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-4">
-                  <div className="p-3 rounded-xl bg-[#FFF6E5] text-[#D28A00] flex-shrink-0">
-                    <Building2 className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-[#1F1F1F]">School Partnerships</h4>
-                    <a href="mailto:partnerships@eduwand.com" className="text-sm text-[#D28A00] font-semibold hover:underline">
-                      partnerships@eduwand.com
-                    </a>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-4">
-                  <div className="p-3 rounded-xl bg-[#E0F7FA] text-[#00838F] flex-shrink-0">
-                    <MapPin className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-[#1F1F1F]">Office Location</h4>
-                    <p className="text-sm text-[#5C5358]">
-                      EduWand Tech Center, Foveainfotech Campus<br />
-                      India & Global Support Hub
-                    </p>
-                  </div>
-                </div>
+                {contact.email ? (
+                  <ContactRow icon={<Mail className="w-5 h-5" />} tone="bg-[#F7E6F2] text-[#7C005A]" label="Email" value={contact.email} href={`mailto:${contact.email}`} />
+                ) : null}
+                {contact.phone ? (
+                  <ContactRow icon={<Phone className="w-5 h-5" />} tone="bg-[#E0F7FA] text-[#00838F]" label="Call" value={contact.phone} href={`tel:${contact.phone.replace(/s/g, '')}`} />
+                ) : null}
+                {contact.whatsapp ? (
+                  <ContactRow icon={<MessageCircle className="w-5 h-5" />} tone="bg-[#E3F6E3] text-[#0A6B0A]" label="WhatsApp" value={contact.whatsapp} href={`https://wa.me/${contact.whatsapp.replace(/[^0-9]/g, '')}`} />
+                ) : null}
+                {contact.address ? (
+                  <ContactRow icon={<MapPin className="w-5 h-5" />} tone="bg-[#FFF6E5] text-[#D28A00]" label="Office" value={contact.address} />
+                ) : null}
               </div>
             </div>
 
-            {/* Operating Hours Box */}
-            <div className="bg-white p-6 rounded-2xl border border-[#E8E2D9] card-shadow text-left">
-              <h3 className="text-sm font-extrabold text-[#1F1F1F] mb-1">
-                Support Hours
-              </h3>
-              <p className="text-xs text-[#5C5358] leading-relaxed">
-                Monday to Saturday: 9:00 AM – 6:00 PM IST<br />
-                Dedicated 24/7 priority assistance for partner school administrators.
-              </p>
-            </div>
+            {contact.hours ? (
+              <div className="bg-white p-6 rounded-2xl border border-[#E8E2D9] card-shadow text-left flex items-start gap-4">
+                <div className="p-3 rounded-xl bg-[#F7E6F2] text-[#7C005A] flex-shrink-0">
+                  <Clock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold text-[#1F1F1F] mb-1">Support Hours</h3>
+                  <p className="text-xs text-[#5C5358] leading-relaxed">{contact.hours}</p>
+                </div>
+              </div>
+            ) : null}
           </div>
 
           {/* Right Column: Contact Form */}
@@ -122,7 +148,7 @@ export const ContactPage: React.FC = () => {
               </h2>
 
               {!submitted ? (
-                <form onSubmit={handleSubmit} className="space-y-5">
+                <form onSubmit={handleSubmit} className="space-y-5 relative" noValidate>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                     <div>
                       <label className="block text-xs font-bold text-[#3A3437] uppercase mb-2">
@@ -211,13 +237,28 @@ export const ContactPage: React.FC = () => {
                     />
                   </div>
 
-                  {error && <p className="text-xs text-rose-600 font-medium">{error}</p>}
+                  {/* Honeypot: hidden from people, bots fill it in and are ignored by the server. */}
+                  <div className="absolute -left-[9999px] h-0 w-0 overflow-hidden" aria-hidden="true">
+                    <label>
+                      Website
+                      <input type="text" tabIndex={-1} autoComplete="off" value={website} onChange={(e) => setWebsite(e.target.value)} />
+                    </label>
+                  </div>
+
+                  {error && (
+                    <div className="text-xs text-rose-600 font-medium space-y-1" role="alert">
+                      {Object.values(fieldErrors).length > 0
+                        ? Object.values(fieldErrors).map((m) => <p key={m}>{m}</p>)
+                        : <p>{error}</p>}
+                    </div>
+                  )}
 
                   <button
                     type="submit"
-                    className="btn-press w-full py-4 rounded-xl bg-[#7C005A] hover:bg-[#600045] text-white font-extrabold text-sm shadow-xs flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                    disabled={sending}
+                    className="btn-press w-full py-4 rounded-xl bg-[#7C005A] hover:bg-[#600045] disabled:opacity-60 disabled:cursor-not-allowed text-white font-extrabold text-sm shadow-xs flex items-center justify-center gap-2 cursor-pointer transition-colors"
                   >
-                    <span>Send Message</span>
+                    <span>{sending ? 'Sending…' : 'Send Message'}</span>
                     <Send className="w-4 h-4" />
                   </button>
                 </form>
@@ -226,7 +267,7 @@ export const ContactPage: React.FC = () => {
                   <CheckCircle2 className="w-12 h-12 text-[#7C005A] mx-auto" />
                   <h3 className="text-xl font-extrabold text-[#1F1F1F]">Message Received!</h3>
                   <p className="text-sm text-[#5C5358] max-w-md mx-auto leading-relaxed">
-                    Thank you for reaching out. A representative from the EduWand team will get back to your institutional email shortly.
+                    Thank you for reaching out. We have sent a confirmation to your email, and a member of the EduWand team will get back to you shortly.
                   </p>
                   <button
                     onClick={() => {

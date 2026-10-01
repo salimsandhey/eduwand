@@ -3,6 +3,7 @@ import { useAuth } from "../context/AuthContext";
 import { useFormErrors } from "../hooks/useForm";
 import { rules } from "../utils/validation";
 import { FieldError, invalidInput } from "../components/FieldError";
+import { hasWebsite, websiteUrl } from "../utils/website";
 
 const HIGHLIGHTS = [
   { title: "Schools & trusts", body: "Manage every school, class and staff member from one place." },
@@ -117,9 +118,11 @@ export function LoginPage() {
             {isLoading ? "Signing in…" : "Sign in"}
           </button>
 
-          <p style={styles.footer}>
-            <a href="/privacy" style={styles.footerLink}>Privacy Policy</a>
-          </p>
+          {hasWebsite ? (
+            <p style={styles.footer}>
+              <a href={websiteUrl("/privacy")} style={styles.footerLink}>Privacy Policy</a>
+            </p>
+          ) : null}
         </form>
       </div>
 

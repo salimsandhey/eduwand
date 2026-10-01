@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import type { ReactElement } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
@@ -42,20 +43,18 @@ import { SchoolBrandingTab } from "./pages/school/SchoolBrandingTab";
 import { SchoolSubjectsTab } from "./pages/school/SchoolSubjectsTab";
 import { SchoolTimetableTab } from "./pages/school/SchoolTimetableTab";
 import { MySchoolRedirect } from "./pages/MySchoolRedirect";
-import { PublicContentPage } from "./pages/PublicContentPage";
+import { hasWebsite, websiteUrl, WEBSITE_PATHS } from "./utils/website";
 import { ContentPagesEditor } from "./pages/ContentPagesEditor";
+import { WebsiteEnquiriesPage } from "./pages/WebsiteEnquiriesPage";
 
-// Public, unauthenticated pages (Privacy Policy, Terms of Service, About,
-// Contact) - reachable without login, from Play Store/App Store listings, a
-// logged-out visitor, or the mobile app's Legal screens' web fallback.
-const PUBLIC_CONTENT_ROUTES: { path: string; key: string }[] = [
-  { path: "/privacy", key: "privacy_policy" },
-  { path: "/privacy-policy", key: "privacy_policy" },
-  { path: "/terms", key: "terms_of_service" },
-  { path: "/terms-of-service", key: "terms_of_service" },
-  { path: "/about", key: "about" },
-  { path: "/contact", key: "contact" },
-];
+// Privacy Policy, Terms, About and Contact live on the public website now.
+// Old links to them on this domain (store listings, emails) are forwarded.
+function WebsiteRedirect({ to }: { to: string }) {
+  useEffect(() => {
+    window.location.replace(to);
+  }, [to]);
+  return null;
+}
 
 const EXTRA_ROUTE_ROLES: Record<string, string[]> = {
   "/trusts/:id": ["platform_admin", "leadership"],
@@ -108,17 +107,8 @@ function Root() {
     );
   }
 
-  // Public, unauthenticated - Google/Apple store listings and logged-out visitors.
-  const publicContentRoute = PUBLIC_CONTENT_ROUTES.find((r) => r.path === location.pathname);
-  if (publicContentRoute) {
-    return (
-      <Routes>
-        {PUBLIC_CONTENT_ROUTES.map((r) => (
-          <Route key={r.path} path={r.path} element={<PublicContentPage contentKey={r.key} />} />
-        ))}
-      </Routes>
-    );
-  }
+  const websitePath = hasWebsite ? WEBSITE_PATHS[location.pathname] : undefined;
+  if (websitePath) return <WebsiteRedirect to={websiteUrl(websitePath)} />;
 
   if (isLoading) return null;
 
@@ -132,9 +122,6 @@ function Root() {
 
   return (
     <Routes>
-      {PUBLIC_CONTENT_ROUTES.map((r) => (
-        <Route key={r.path} path={r.path} element={<PublicContentPage contentKey={r.key} />} />
-      ))}
       <Route element={<Layout />}>
         <Route index element={<HomeRedirect />} />
         <Route path="/overview" element={<OverviewPage />} />
@@ -151,6 +138,7 @@ function Root() {
         <Route path="/billing" element={<RequireRole path="/billing"><BillingPage /></RequireRole>} />
         <Route path="/ai-calls" element={<RequireRole path="/ai-calls"><AiCallLogPage /></RequireRole>} />
         <Route path="/platform-settings" element={<RequireRole path="/platform-settings"><PlatformSettingsPage /></RequireRole>} />
+        <Route path="/website-enquiries" element={<RequireRole path="/website-enquiries"><WebsiteEnquiriesPage /></RequireRole>} />
         <Route path="/content-pages" element={<RequireRole path="/content-pages"><ContentPagesEditor /></RequireRole>} />
         <Route path="/subject-change-requests" element={<RequireRole path="/subject-change-requests"><SubjectChangeRequestsPage /></RequireRole>} />
         <Route path="/class-change-requests" element={<RequireRole path="/class-change-requests"><ClassChangeRequestsPage /></RequireRole>} />

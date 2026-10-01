@@ -335,6 +335,25 @@ export interface Subject {
   createdAt: string;
 }
 
+export type WebsiteEnquiryStatus = "new" | "in_progress" | "resolved" | "spam";
+
+// A message from the public website's Contact form (WebsiteEnquiry in schema.prisma).
+export interface WebsiteEnquiry {
+  id: string;
+  kind: "contact" | "waitlist";
+  name: string;
+  email: string;
+  schoolName: string | null;
+  role: string | null;
+  subject: string | null;
+  message: string;
+  status: WebsiteEnquiryStatus;
+  internalNote: string | null;
+  handledAt: string | null;
+  ackSent: boolean;
+  createdAt: string;
+}
+
 export interface AuditLogEntry {
   id: string;
   actorEmail: string;
@@ -1387,6 +1406,21 @@ export const api = {
     request<Subject>(`/schools/${schoolId}/subjects`, { method: "POST", body: JSON.stringify({ name }) }, token),
   deleteSubject: (token: string, schoolId: string, subjectId: string) =>
     request<{ deleted: boolean }>(`/schools/${schoolId}/subjects/${subjectId}`, { method: "DELETE" }, token),
+
+  listWebsiteEnquiries: (token: string, params: { kind?: string; status?: string; q?: string; page?: number; pageSize?: number } = {}) =>
+    requestEnvelope<WebsiteEnquiry[]>(
+      `/website-enquiries${toQueryString({
+        kind: params.kind,
+        status: params.status,
+        q: params.q,
+        page: params.page !== undefined ? String(params.page) : undefined,
+        pageSize: params.pageSize !== undefined ? String(params.pageSize) : undefined,
+      })}`,
+      {},
+      token
+    ),
+  updateWebsiteEnquiry: (token: string, id: string, input: { status?: WebsiteEnquiryStatus; internalNote?: string | null }) =>
+    request<WebsiteEnquiry>(`/website-enquiries/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
 
   listAuditLog: (token: string, params: { schoolId?: string; page?: number; pageSize?: number } = {}) =>
     requestEnvelope<AuditLogEntry[]>(

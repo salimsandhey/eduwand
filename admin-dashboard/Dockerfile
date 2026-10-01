@@ -7,6 +7,9 @@ COPY . .
 # Accept the API URL as a build argument so Vite can embed it
 ARG VITE_API_URL
 ENV VITE_API_URL=$VITE_API_URL
+# Public website address - the dashboard links and forwards Privacy/Terms/About/Contact to it.
+ARG VITE_WEBSITE_URL
+ENV VITE_WEBSITE_URL=$VITE_WEBSITE_URL
 
 RUN npm run build
 

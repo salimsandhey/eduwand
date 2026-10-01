@@ -13,6 +13,7 @@ services:
       context: ./admin-dashboard
       args:
         VITE_API_URL: ${VITE_API_URL}
+        VITE_WEBSITE_URL: ${VITE_WEBSITE_URL:-}
     ports:
       - "80:80"
     restart: unless-stopped

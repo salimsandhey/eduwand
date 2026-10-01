@@ -507,4 +507,61 @@ export function accountExistsEmail(input: { name?: string }): RenderedEmail {
   });
 }
 
+// --- Website contact form ----------------------------------------------------
+
+// Sent to the visitor straight after they submit the Contact form.
+export function websiteEnquiryReceivedEmail(input: { name: string; subject?: string | null }): RenderedEmail {
+  return renderEmail("We got your message - EduWand", {
+    preheader: "Thanks for reaching out. Our team will reply shortly.",
+    heading: "Thanks for getting in touch",
+    tone: "success",
+    recipientName: input.name,
+    paragraphs: [
+      input.subject
+        ? `We have received your message about "${input.subject}". A member of the EduWand team will reply to this email address shortly.`
+        : "We have received your message. A member of the EduWand team will reply to this email address shortly.",
+      "In the meantime you can reply to this email if you want to add anything.",
+    ],
+    note: "You are receiving this because this address was used on the EduWand contact form. If that was not you, you can ignore this email.",
+  });
+}
+
+// Sent to the EduWand team (CONTACT_NOTIFY_EMAIL) when a message arrives.
+export function websiteEnquiryNotifyEmail(input: {
+  name: string;
+  email: string;
+  schoolName?: string | null;
+  role?: string | null;
+  subject?: string | null;
+  message: string;
+}): RenderedEmail {
+  return renderEmail(`New website enquiry from ${input.name}`, {
+    preheader: input.subject ?? input.message.slice(0, 90),
+    heading: "New website enquiry",
+    paragraphs: [input.message],
+    details: [
+      { label: "Name", value: input.name },
+      { label: "Email", value: input.email },
+      ...(input.schoolName ? [{ label: "School", value: input.schoolName }] : []),
+      ...(input.role ? [{ label: "Role", value: input.role }] : []),
+      ...(input.subject ? [{ label: "Subject", value: input.subject }] : []),
+    ],
+    note: "Open the admin dashboard, Website enquiries, to reply and track it.",
+  });
+}
+
+// Sent when someone joins the website waitlist.
+export function waitlistJoinedEmail(input: { roleLabel: string }): RenderedEmail {
+  return renderEmail("You are on the EduWand waitlist", {
+    preheader: "Thanks for joining. We will be in touch with early access details.",
+    heading: "You are on the list",
+    tone: "success",
+    paragraphs: [
+      `Thanks for requesting priority access to EduWand as a ${input.roleLabel.toLowerCase()}. We have saved your spot.`,
+      "We will email you with onboarding details as soon as access opens. There is nothing else you need to do.",
+    ],
+    note: "You are receiving this because this address was entered on the EduWand website. If that was not you, you can ignore this email.",
+  });
+}
+
 export { classLabel };

@@ -73,7 +73,7 @@ a:hover {
 }
 
 /* Renders markdown-derived HTML from ContentPage (Privacy Policy, Terms,
-   About, Contact) - see PublicContentPage.tsx and ContentPageEditor.tsx.
+   About, Contact) - previewed in ContentPagesEditor.tsx (the public pages themselves live on the website).
    Plain element selectors because marked's output isn't ours to add classes
    to node by node. */
 .markdown-body h1,

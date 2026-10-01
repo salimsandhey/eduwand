@@ -2,8 +2,13 @@ import React from 'react'
 import { MessageSquare } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import logoColor from '../assets/brand/EduWand-Logo.png'
+import { useContentPage } from '../lib/useContentPage'
 
 export const Footer: React.FC = () => {
+  // Same contact details as the Contact page, edited in the admin dashboard.
+  const { page: contactPage } = useContentPage('contact')
+  const contact = contactPage?.fields
+
   return (
     <footer className="bg-[#F4F1E8] border-t border-[#E8E2D9] pt-16 pb-12 text-[#5C5358]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -66,6 +71,7 @@ export const Footer: React.FC = () => {
             <h4 className="text-[#1F1F1F] text-sm font-extrabold uppercase tracking-wider">Platform</h4>
             <ul className="space-y-2 text-xs sm:text-sm font-medium">
               <li><Link to="/" className="hover:text-[#7C005A] transition-colors">Platform Features</Link></li>
+              <li><Link to="/about" className="hover:text-[#7C005A] transition-colors">About</Link></li>
               <li><Link to="/contact" className="hover:text-[#7C005A] transition-colors">Contact Us</Link></li>
               <li><Link to="/privacy" className="hover:text-[#7C005A] transition-colors">Privacy Policy</Link></li>
               <li><Link to="/terms" className="hover:text-[#7C005A] transition-colors">Terms & Conditions</Link></li>
@@ -78,6 +84,16 @@ export const Footer: React.FC = () => {
             <p className="text-xs text-[#5C5358]">
               Join educators across top schools preparing for the EduWand launch.
             </p>
+            {contact?.email || contact?.phone ? (
+              <div className="text-xs space-y-1 font-medium">
+                {contact.email ? (
+                  <p><a href={`mailto:${contact.email}`} className="hover:text-[#7C005A] transition-colors">{contact.email}</a></p>
+                ) : null}
+                {contact.phone ? (
+                  <p><a href={`tel:${contact.phone.replace(/s/g, '')}`} className="hover:text-[#7C005A] transition-colors">{contact.phone}</a></p>
+                ) : null}
+              </div>
+            ) : null}
             <div className="flex flex-wrap items-center gap-3 pt-2">
               <Link
                 to="/privacy"

@@ -2112,3 +2112,32 @@ model BillingInvoiceCounter {
 
   @@map("billing_invoice_counter")
 }
+
+// A message sent from the public website's Contact form (web).
+// Separate from Enquiry on purpose: an Enquiry is a parent asking one school
+// about admission; this is a visitor asking EduWand itself (pricing, demos,
+// support) and is only ever seen by platform_admin. status is one of: new,
+// in_progress, resolved, spam. kind is contact (the Contact form) or
+// waitlist (the "Request Priority Access" email box on the home page; name is
+// then the email address). ackSent records whether the "we got your
+// message" email to the visitor went out.
+model WebsiteEnquiry {
+  id              String    @id @default(uuid()) @db.Uuid
+  kind            String    @default("contact")
+  name            String
+  email           String
+  schoolName      String?   @map("school_name")
+  role            String?
+  subject         String?
+  message         String
+  status          String    @default("new")
+  internalNote    String?   @map("internal_note")
+  handledByUserId String?   @map("handled_by_user_id") @db.Uuid
+  handledAt       DateTime? @map("handled_at")
+  ackSent         Boolean   @default(false) @map("ack_sent")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@index([status, createdAt])
+  @@map("website_enquiry")
+}

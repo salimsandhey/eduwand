@@ -2,12 +2,14 @@ import React, { useState, useRef, useEffect } from 'react'
 import confetti from 'canvas-confetti'
 import { CheckCircle2, ArrowRight, ChevronDown, GraduationCap, School, Users, Check } from 'lucide-react'
 import { CatMascotWeb } from './CatMascotWeb'
+import { joinWaitlist } from '../lib/api'
 
 export const HeroSection: React.FC = () => {
   const [role, setRole] = useState<'teacher' | 'leadership' | 'parent'>('teacher')
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [email, setEmail] = useState('')
   const [submitted, setSubmitted] = useState(false)
+  const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
   const dropdownRef = useRef<HTMLDivElement>(null)
 
@@ -22,13 +24,23 @@ export const HeroSection: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (sending) return
     if (!email || !email.includes('@')) {
       setError('Please enter a valid email address.')
       return
     }
     setError('')
+    setSending(true)
+    try {
+      await joinWaitlist({ email: email.trim(), role })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not join the waitlist. Please try again.')
+      setSending(false)
+      return
+    }
+    setSending(false)
     setSubmitted(true)
 
     try {
@@ -144,9 +156,10 @@ export const HeroSection: React.FC = () => {
                     {/* Submit CTA */}
                     <button
                       type="submit"
-                      className="btn-press px-5 py-2.5 rounded-lg bg-[#7C005A] hover:bg-[#600045] text-white font-extrabold text-sm shadow-xs flex items-center justify-center gap-2 cursor-pointer flex-shrink-0"
+                      disabled={sending}
+                      className="btn-press px-5 py-2.5 rounded-lg bg-[#7C005A] hover:bg-[#600045] disabled:opacity-60 disabled:cursor-not-allowed text-white font-extrabold text-sm shadow-xs flex items-center justify-center gap-2 cursor-pointer flex-shrink-0"
                     >
-                      <span>Join Waitlist</span>
+                      <span>{sending ? 'Joining…' : 'Join Waitlist'}</span>
                       <ArrowRight className="w-4 h-4" />
                     </button>
                   </div>
@@ -159,7 +172,7 @@ export const HeroSection: React.FC = () => {
                   <div>
                     <h4 className="font-bold text-[#1F1F1F] text-sm sm:text-base">Waitlist Registration Confirmed</h4>
                     <p className="text-xs text-[#5C5358]">
-                      Your early access request has been recorded. We will contact you with onboarding details.
+                      Your early access request has been recorded. Check your inbox for a confirmation, and we will contact you with onboarding details.
                     </p>
                   </div>
                 </div>

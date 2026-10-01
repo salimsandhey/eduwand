@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --brand-plum: #7C005A;
+    --brand-plum-dark: #5B0042;
+    --brand-amber: #FBAA0A;
+    --brand-ivory: #F4F1E8;
+    --brand-coral: #FB5F7E;
+    --brand-charcoal: #1F1F1F;
+    --brand-teal: #52DFD6;
+  }
+
+  body {
+    background-color: #F7F5F1;
+    color: #1F1F1F;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* EduWand App Design System Shadow (softCardShadow from tokens.ts) */
+.card-shadow {
+  box-shadow: 0 8px 30px -4px rgba(31, 31, 31, 0.08);
+}
+
+.card-shadow-lg {
+  box-shadow: 0 16px 40px -6px rgba(31, 31, 31, 0.1);
+}
+
+/* App Button Pressed Opacity transition */
+.btn-press {
+  transition: all 0.15s ease-in-out;
+}
+
+.btn-press:active {
+  transform: scale(0.97);
+  opacity: 0.85;
+}
+
+/* Renders markdown from the content pages (Privacy, Terms). Tailwind's preflight
+   strips list/heading styles, and marked's output has no classes to hook, so
+   these are plain element selectors. */
+.markdown-body { font-size: 15px; line-height: 1.75; color: #4a4348; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3 { color: #1f1f1f; font-weight: 800; letter-spacing: -0.01em; }
+.markdown-body h1 { font-size: 26px; margin: 32px 0 12px; }
+.markdown-body h2 { font-size: 20px; margin: 36px 0 12px; padding-bottom: 8px; border-bottom: 1px solid #e8e2d9; }
+.markdown-body h3 { font-size: 16px; margin: 24px 0 8px; }
+.markdown-body > :first-child { margin-top: 0; }
+.markdown-body p { margin: 0 0 14px; }
+.markdown-body ul, .markdown-body ol { margin: 0 0 14px; padding-left: 22px; }
+.markdown-body ul { list-style: disc; }
+.markdown-body ol { list-style: decimal; }
+.markdown-body li { margin-bottom: 6px; }
+.markdown-body a { color: #7c005a; font-weight: 600; }
+.markdown-body a:hover { text-decoration: underline; }
+.markdown-body strong { color: #1f1f1f; }
+.markdown-body blockquote { margin: 0 0 14px; padding: 8px 16px; border-left: 3px solid #fbaa0a; background: #fff6e5; border-radius: 0 8px 8px 0; }
+.markdown-body table { display: block; overflow-x: auto; width: 100%; border-collapse: collapse; font-size: 14px; margin: 14px 0; }
+.markdown-body th { background: #f7e6f2; color: #5b0042; font-weight: 700; text-align: left; padding: 10px 14px; border-bottom: 1px solid #e8e2d9; }
+.markdown-body td { padding: 10px 14px; border-bottom: 1px solid #e8e2d9; vertical-align: top; }
+.markdown-body code { background: #f7e6f2; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+.markdown-body hr { border: 0; border-top: 1px solid #e8e2d9; margin: 28px 0; }

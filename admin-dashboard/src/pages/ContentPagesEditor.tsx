@@ -7,6 +7,7 @@ import type { ContentPage } from "../api/client";
 import { Card } from "../components/Card";
 import { PageHeader } from "../components/PageHeader";
 import { ContactCards } from "../components/ContactCards";
+import { hasWebsite, websiteUrl } from "../utils/website";
 
 // Every key ContentPage is seeded with (prisma/content-pages/*.md) - shown
 // even if a row is somehow missing, so there's always an obvious way to
@@ -125,9 +126,13 @@ export function ContentPagesEditor() {
         <>
           <Card title={selectedMeta.label}>
             <div style={styles.metaRow}>
-              <a href={selectedMeta.publicPath} target="_blank" rel="noreferrer" style={styles.publicLink}>
-                View public page ({selectedMeta.publicPath}) &rarr;
-              </a>
+              {hasWebsite ? (
+                <a href={websiteUrl(selectedMeta.publicPath)} target="_blank" rel="noreferrer" style={styles.publicLink}>
+                  View on the website ({selectedMeta.publicPath}) &rarr;
+                </a>
+              ) : (
+                <span style={styles.metaText}>Set VITE_WEBSITE_URL to link to the live page.</span>
+              )}
               {selectedPage ? (
                 <span style={styles.metaText}>
                   Version {selectedPage.version} · Last updated {new Date(selectedPage.updatedAt).toLocaleString()}

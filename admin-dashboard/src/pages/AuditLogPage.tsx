@@ -14,6 +14,7 @@ const ACTION_LABELS: Record<string, string> = {
   "trust.delete": "Deleted trust",
   "school.status_change": "Changed school status",
   "school.delete": "Deleted school",
+  "website_enquiry.status_changed": "Changed website enquiry status",
 };
 
 function describeMetadata(entry: AuditLogEntry): string | null {
