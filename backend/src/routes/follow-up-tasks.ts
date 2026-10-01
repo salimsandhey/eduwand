@@ -1,5 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
+import { Validator } from "../lib/validation";
 import { sendFollowUpTask, FollowUpSendError } from "../lib/follow-up";
 
 const VALID_CHANNELS = ["sms", "email", "whatsapp"];
@@ -156,6 +157,12 @@ export async function followUpTaskRoutes(app: FastifyInstance) {
 
       const body = request.body ?? {};
 
+      const v = new Validator();
+      const dueAt = body.dueAt !== undefined ? v.date("dueAt", body.dueAt, "Due date") : undefined;
+      const nextFollowUpAt = body.nextFollowUpAt ? v.date("nextFollowUpAt", body.nextFollowUpAt, "Next follow-up date") : undefined;
+      const outcome = body.outcome !== undefined ? v.note("outcome", body.outcome, "Outcome", { max: 500 }) : undefined;
+      if (v.hasErrors) return v.reject(reply);
+
       if (body.status && body.status !== "cancelled") {
         return reply.code(400).send({
           data: null,
@@ -166,10 +173,10 @@ export async function followUpTaskRoutes(app: FastifyInstance) {
       const updated = await prisma.followUpTask.update({
         where: { id: task.id },
         data: {
-          dueAt: body.dueAt ? new Date(body.dueAt) : undefined,
+          dueAt,
           status: body.status,
-          outcome: body.outcome,
-          nextFollowUpAt: body.nextFollowUpAt ? new Date(body.nextFollowUpAt) : undefined,
+          outcome,
+          nextFollowUpAt,
         },
       });
 

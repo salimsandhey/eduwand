@@ -10,6 +10,9 @@ import { Screen } from "../../components/Screen";
 import { StudentAvatar } from "../../components/StudentAvatar";
 import { api, AssignmentDetail, SubmissionRecord } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
+import { FieldError } from "../../components/FieldError";
+import { useFormErrors } from "../../hooks/useForm";
+import { rules } from "../../utils/validation";
 
 type Props = NativeStackScreenProps<RootStackParamList, "GradingReview">;
 type Filter = "all" | "needs_review" | "graded";
@@ -33,6 +36,11 @@ export function GradingReviewScreen({ route }: Props) {
   const [overridingSubmissionId, setOverridingSubmissionId] = useState<string | null>(null);
   const [overrideScore, setOverrideScore] = useState("");
   const [overrideFeedback, setOverrideFeedback] = useState("");
+  // Rules mirror backend/src/lib/validation.ts; the score is a 0-100 percentage.
+  const overrideV = useFormErrors(
+    { finalScore: overrideScore, finalFeedback: overrideFeedback },
+    { finalScore: rules.integer("Score", 0, 100, false), finalFeedback: rules.note("Feedback", false, 1000) }
+  );
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -82,6 +90,7 @@ export function GradingReviewScreen({ route }: Props) {
   }
 
   function startOverride(submissionId: string, currentScore: number | null, currentFeedback: string | null) {
+    overrideV.clear();
     setOverridingSubmissionId(submissionId);
     setOverrideScore(currentScore !== null ? String(currentScore) : "");
     setOverrideFeedback(currentFeedback ?? "");
@@ -89,6 +98,7 @@ export function GradingReviewScreen({ route }: Props) {
 
   async function confirmOverride(gradeId: string) {
     if (!accessToken) return;
+    if (!overrideV.submit()) return;
     setBusyId(gradeId);
     setError(null);
     try {
@@ -99,7 +109,7 @@ export function GradingReviewScreen({ route }: Props) {
       setOverridingSubmissionId(null);
       load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to override grade");
+      if (!overrideV.applyServerError(err)) setError(err instanceof Error ? err.message : "Failed to override grade");
     } finally {
       setBusyId(null);
     }
@@ -278,21 +288,27 @@ export function GradingReviewScreen({ route }: Props) {
                       <View style={styles.overrideBox}>
                         <Text style={[styles.overrideLabel, { color: colors.textMuted }]}>Score (0-100)</Text>
                         <TextInput
-                          style={[styles.scoreInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
+                          style={[styles.scoreInput, { backgroundColor: colors.surfaceRaised, borderColor: overrideV.error("finalScore") ? colors.danger : colors.border, color: colors.textPrimary }]}
                           keyboardType="number-pad"
                           value={overrideScore}
-                          onChangeText={setOverrideScore}
+                          onChangeText={(t) => setOverrideScore(t.replace(/\D/g, "").slice(0, 3))}
+                          onBlur={() => overrideV.blur("finalScore")}
                           placeholder="Score"
                           placeholderTextColor={colors.textMuted}
+                          maxLength={3}
                         />
+                        <FieldError message={overrideV.error("finalScore")} />
                         <TextInput
-                          style={[styles.feedbackInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
+                          style={[styles.feedbackInput, { backgroundColor: colors.surfaceRaised, borderColor: overrideV.error("finalFeedback") ? colors.danger : colors.border, color: colors.textPrimary }]}
                           value={overrideFeedback}
                           onChangeText={setOverrideFeedback}
+                          onBlur={() => overrideV.blur("finalFeedback")}
                           placeholder="Feedback"
                           placeholderTextColor={colors.textMuted}
+                          maxLength={1000}
                           multiline
                         />
+                        <FieldError message={overrideV.error("finalFeedback")} />
                         <View style={styles.actionRow}>
                           <Pressable style={({ pressed }) => [styles.smallButton, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]} onPress={() => setOverridingSubmissionId(null)} accessibilityRole="button">
                             <Text style={[styles.smallButtonText, { color: colors.textSecondary }]}>Cancel</Text>

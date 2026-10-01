@@ -27,5 +27,6 @@ export async function loadStudentMe(studentId: string) {
     board: null,
     hasSeenOnboardingTour: true,
     hasDismissedProfilePrompt: true,
+    hasSeenMascotWelcome: true,
   };
 }

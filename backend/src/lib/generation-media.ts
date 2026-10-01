@@ -58,6 +58,14 @@ export function buildMediaItems(
     if (!source.fileLocation || (source.sourceType !== "image" && source.sourceType !== "pdf")) {
       return { error: "Only uploaded images and PDFs can be used as-is" };
     }
+    // Copyright compliance: "use as-is" embeds the real file byte-for-byte
+    // into generated output, which is only ever appropriate for the
+    // teacher's own material. A source with an attribution was found by AI
+    // Research on the open web (see topics.ts's importRemoteFile) - it may
+    // only ever be referenced as text context for the model, never embedded.
+    if (source.attribution) {
+      return { error: "Sources found by AI Research can't be embedded as-is - only images and PDFs you upload yourself can be used this way" };
+    }
 
     const name = humanizeName(source.originalFilename);
     const context = short(source.extractedText, 160);

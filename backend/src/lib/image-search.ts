@@ -5,6 +5,16 @@
 //  - Wikimedia Commons - always on, needs no key, and gives real author /
 //    licence metadata for the credit line.
 // Gemini's web-search tool returns pages, not images, so it can't do this.
+//
+// Neither provider does any relevance ranking of its own - it's a plain
+// keyword search against the open web/Commons, so a short or ambiguous
+// topic name reliably pulls same-word-different-meaning results. Every
+// merged candidate is checked with ai.ts's isImageUsableForTopic (one vision
+// call covering both content safety - Commons is deliberately uncensored, so
+// an innocuous-looking query like "human body system" can surface a real
+// anatomical/nude image - and topic relevance) before being returned.
+
+import { isImageUsableForTopic } from "./ai";
 
 export interface ImageHit {
   url: string;
@@ -111,7 +121,12 @@ async function searchGoogle(query: string, limit: number): Promise<ImageHit[]> {
   return hits;
 }
 
-export async function searchImages(query: string, limit = 8): Promise<ImageHit[]> {
+// Pure search, no vision check - a caller combining several query variants
+// (see context-research.ts's findImageCandidates) should merge/dedupe across
+// ALL of them first, then run filterImagesUsableForTopic once on the unique
+// result. Checking here (per query) would vision-check the same image twice
+// whenever two query variants both surface it.
+export async function searchImages(query: string, limit: number): Promise<ImageHit[]> {
   const perProvider = process.env.GOOGLE_CSE_KEY && process.env.GOOGLE_CSE_CX ? Math.ceil(limit / 2) : limit;
   // One provider failing (rate limit, outage) must not sink the others.
   const settled = await Promise.allSettled([searchGoogle(query, perProvider), searchCommons(query, perProvider)]);
@@ -126,4 +141,17 @@ export async function searchImages(query: string, limit = 8): Promise<ImageHit[]
     }
   }
   return merged.slice(0, limit);
+}
+
+// topicName/subject/classLabel drive the relevance+grade-fit half of
+// isImageUsableForTopic. Call this once, after merging/deduping every query
+// variant's searchImages() results, not per-query.
+export async function filterImagesUsableForTopic(candidates: ImageHit[], topicName: string, subject: string, classLabel: string): Promise<ImageHit[]> {
+  // A check failure excludes that one image rather than the whole search -
+  // one flaky call shouldn't cost the teacher every result.
+  const checks = await Promise.allSettled(candidates.map((hit) => isImageUsableForTopic(hit.thumbnailUrl, topicName, subject, classLabel)));
+  return candidates.filter((_, i) => {
+    const check = checks[i];
+    return check.status === "fulfilled" && check.value;
+  });
 }

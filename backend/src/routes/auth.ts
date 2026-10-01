@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { prisma } from "../lib/prisma";
 import { loadStudentMe } from "../lib/student-me";
+import { Validator } from "../lib/validation";
 import { AppJwtPayload } from "../types/fastify-jwt";
 import { sendEmail, sendEmailInBackground } from "../lib/email/sender";
 import { loginCodeEmail, securityAlertEmail } from "../lib/email/templates";
@@ -177,6 +178,7 @@ export async function authRoutes(app: FastifyInstance) {
         avatarKey: true,
         hasSeenOnboardingTour: true,
         hasDismissedProfilePrompt: true,
+        hasSeenMascotWelcome: true,
         school: { select: { accountType: true, board: true } },
       },
     });
@@ -197,13 +199,9 @@ export async function authRoutes(app: FastifyInstance) {
     "/auth/request-password-reset",
     { config: { rateLimit: { max: 6, timeWindow: "1 minute" } } },
     async (request, reply) => {
-    const email = request.body?.email?.trim().toLowerCase();
-    if (!email) {
-      return reply.code(400).send({
-        data: null,
-        error: { code: "validation_error", message: "email is required" },
-      });
-    }
+    const resetValidator = new Validator();
+    const email = resetValidator.email("email", request.body?.email);
+    if (resetValidator.hasErrors || !email) return resetValidator.reject(reply);
 
     const user = await prisma.appUser.findUnique({ where: { email } });
 
@@ -236,16 +234,12 @@ export async function authRoutes(app: FastifyInstance) {
     "/auth/reset-password",
     { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
     async (request, reply) => {
-    const email = request.body?.email?.trim().toLowerCase();
-    const code = request.body?.code?.trim();
-    const newPassword = request.body?.newPassword;
-
-    if (!email || !code || !newPassword || newPassword.length < 8) {
-      return reply.code(400).send({
-        data: null,
-        error: { code: "validation_error", message: "email, code, and a newPassword of at least 8 characters are required" },
-      });
-    }
+    const v = new Validator();
+    const email = v.email("email", request.body?.email);
+    const code = typeof request.body?.code === "string" ? request.body.code.trim() : "";
+    if (!/^\d{6}$/.test(code)) v.fail("code", "Enter the 6-digit code from your email");
+    const newPassword = v.password("newPassword", request.body?.newPassword, "New password");
+    if (v.hasErrors || !email || !newPassword) return v.reject(reply);
 
     const resetRequest = await prisma.passwordResetRequest.findFirst({
       where: { email, consumedAt: null, expiresAt: { gt: new Date() } },

@@ -54,13 +54,17 @@ export type RootStackParamList = {
   Profile: undefined;
   HelpSupport: undefined;
   Pipeline: undefined;
-  StudentAssignmentSubmit: { assignmentId: string; questions: AssignmentQuestion[]; title: string };
+  StudentAssignmentSubmit: { assignmentId: string; questions: AssignmentQuestion[]; personalisedQuestions?: AssignmentQuestion[]; title: string };
   CreateFirstClass: undefined;
   Credits: undefined;
   RequestSubjectChange: undefined;
   RequestClassChange: undefined;
+  RequestWorkspaceNameChange: undefined;
   Students: undefined;
-  AddStudent: undefined;
+  // classSectionId preselects that class's chip (still switchable) when
+  // reached from a specific class (e.g. TopicListScreen's "Add student"
+  // button) rather than the general Students roster's "+".
+  AddStudent: { classSectionId?: string } | undefined;
   StartNewAcademicYear: undefined;
   FormatTemplate: undefined;
   GettingStarted: undefined;

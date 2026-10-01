@@ -6,6 +6,7 @@ import { radius, spacing, typography } from "../../../theme/tokens";
 import { CustomActivityContent } from "./content";
 import { NumberedEditCard, EditActionRow } from "./NumberedEditCard";
 import { extractBloom, BloomTile } from "./LessonPlanView";
+import { FormattedText } from "./richText";
 
 interface Props {
   content: CustomActivityContent;
@@ -31,14 +32,14 @@ function splitBulletText(text: string): string[] | null {
 // one prose string and render exactly as they always have.
 function BulletsOrText({ text, colors }: { text: string | string[]; colors: any }) {
   if (!Array.isArray(text)) {
-    return text ? <Text style={[styles.bodyText, { color: colors.textSecondary }]}>{text}</Text> : null;
+    return text ? <FormattedText style={[styles.bodyText, { color: colors.textSecondary }]}>{text}</FormattedText> : null;
   }
   return (
     <View style={{ gap: 3 }}>
       {text.map((step, i) => (
         <View key={i} style={styles.bulletRow}>
           <View style={[styles.bulletDot, { backgroundColor: colors.textMuted }]} />
-          <Text style={[styles.bodyText, { color: colors.textSecondary, flex: 1 }]}>{cleanBulletText(step)}</Text>
+          <FormattedText style={[styles.bodyText, { color: colors.textSecondary, flex: 1 }]}>{cleanBulletText(step)}</FormattedText>
         </View>
       ))}
     </View>
@@ -92,7 +93,7 @@ export function CustomActivityView({ content, editable, onChange }: Props) {
               renderView={() => (
                 <View>
                   {bloom ? <BloomTile bloom={bloom} /> : null}
-                  <Text style={[styles.bodyText, { color: colors.textPrimary, marginTop: bloom ? 6 : 0 }]}>{bloom ? bloom.rest : obj}</Text>
+                  <FormattedText style={[styles.bodyText, { color: colors.textPrimary, marginTop: bloom ? 6 : 0 }]}>{bloom ? bloom.rest : obj}</FormattedText>
                 </View>
               )}
               renderEditor={(done, cancel) => (

@@ -9,6 +9,9 @@ import { useTheme } from "../../theme/ThemeContext";
 import { spacing, softCardShadow } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { api, ClassSection } from "../../api/client";
+import { FieldError } from "../../components/FieldError";
+import { useFormErrors } from "../../hooks/useForm";
+import { rules } from "../../utils/validation";
 import { capitalizeFirst } from "../../utils/text";
 
 // Submits a class change request for individual-account teachers - "add"
@@ -56,10 +59,23 @@ export function RequestClassChangeScreen({ navigation }: Props) {
     }, [load])
   );
 
-  const canSave = className.trim() && sectionName.trim() && (changeType === "add" || !!targetClassSectionId);
+  // Rules mirror backend/src/lib/validation.ts; field names match the API's.
+  const v = useFormErrors(
+    { requestedClassName: className, requestedSectionName: sectionName, note },
+    {
+      requestedClassName: rules.label("Class name"),
+      requestedSectionName: rules.label("Section name"),
+      note: rules.note("Note", false, 500),
+    }
+  );
 
   async function submit() {
-    if (!accessToken || !user?.schoolId || !canSave) return;
+    if (!accessToken || !user?.schoolId) return;
+    if (changeType === "replace" && !targetClassSectionId) {
+      setError("Choose the class you want to replace");
+      return;
+    }
+    if (!v.submit()) return;
     setIsSaving(true);
     setError(null);
     try {
@@ -72,7 +88,7 @@ export function RequestClassChangeScreen({ navigation }: Props) {
       });
       setSubmitted(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to submit request");
+      if (!v.applyServerError(err)) setError(err instanceof Error ? err.message : "Failed to submit request");
     } finally {
       setIsSaving(false);
     }
@@ -146,38 +162,47 @@ export function RequestClassChangeScreen({ navigation }: Props) {
 
             <Text style={[styles.label, { color: colors.textPrimary }]}>New class name</Text>
             <TextInput
-              style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+              style={[styles.input, { color: colors.textPrimary, borderColor: v.error("requestedClassName") ? colors.danger : colors.border }]}
               placeholder="e.g. Grade 6"
               placeholderTextColor={colors.textMuted}
               value={className}
               onChangeText={setClassName}
+              onBlur={() => v.blur("requestedClassName")}
+              maxLength={40}
             />
+            <FieldError message={v.error("requestedClassName")} />
 
             <Text style={[styles.label, { color: colors.textPrimary }]}>Section</Text>
             <TextInput
-              style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+              style={[styles.input, { color: colors.textPrimary, borderColor: v.error("requestedSectionName") ? colors.danger : colors.border }]}
               placeholder="e.g. A"
               placeholderTextColor={colors.textMuted}
               value={sectionName}
               onChangeText={setSectionName}
+              onBlur={() => v.blur("requestedSectionName")}
+              maxLength={40}
             />
+            <FieldError message={v.error("requestedSectionName")} />
 
             <Text style={[styles.label, { color: colors.textPrimary }]}>Note (optional)</Text>
             <TextInput
-              style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+              style={[styles.input, { color: colors.textPrimary, borderColor: v.error("note") ? colors.danger : colors.border }]}
               placeholder="Why are you making this change?"
               placeholderTextColor={colors.textMuted}
               value={note}
               onChangeText={setNote}
+              onBlur={() => v.blur("note")}
+              maxLength={500}
               multiline
             />
+            <FieldError message={v.error("note")} />
 
             {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
             <Pressable
               onPress={submit}
-              disabled={!canSave || isSaving}
-              style={[styles.saveButton, { backgroundColor: colors.accent }, (!canSave || isSaving) && { opacity: 0.5 }]}
+              disabled={isSaving}
+              style={[styles.saveButton, { backgroundColor: colors.accent }, isSaving && { opacity: 0.5 }]}
               accessibilityRole="button"
             >
               {isSaving ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.saveButtonText, { color: colors.accentOn }]}>Submit request</Text>}

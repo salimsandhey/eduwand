@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyRequest } from "fastify";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { Validator } from "../lib/validation";
 import { findPossibleDuplicates, buildActivityFeed, admissionCompletionPercent } from "../lib/enquiries";
 import { requireRoles, hasAnyRole } from "../lib/rbac";
 import { storage } from "../lib/storage";
@@ -315,19 +316,16 @@ export async function enquiryRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const body = request.body ?? ({} as CreateEnquiryBody);
 
-      if (!body.contactName || !body.contactPhone || !body.source) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: "contactName, contactPhone, and source are required" },
-        });
-      }
-
-      if (!VALID_SOURCES.includes(body.source)) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: `source must be one of ${VALID_SOURCES.join(", ")}` },
-        });
-      }
+      const v = new Validator();
+      const contactName = v.personName("contactName", body.contactName, "Contact name");
+      const contactPhone = v.phone("contactPhone", body.contactPhone, true, "Contact phone number");
+      const contactEmail = v.email("contactEmail", body.contactEmail, false, "Contact email");
+      const studentName = v.personName("studentName", body.studentName, "Student name", false);
+      const studentDateOfBirth = v.dateOfBirth("studentDateOfBirth", body.studentDateOfBirth, "Date of birth", 0, false);
+      const gradeInterest = v.label("gradeInterest", body.gradeInterest, "Grade of interest", false, 60);
+      if (!body.source) v.fail("source", "Source is required");
+      else if (!VALID_SOURCES.includes(body.source)) v.fail("source", `Source must be one of ${VALID_SOURCES.join(", ")}`);
+      if (v.hasErrors || !contactName || !contactPhone) return v.reject(reply);
 
       const academicYearId = await resolveAcademicYearId(request.schoolId, body.academicYearId);
       if (!academicYearId) {
@@ -372,15 +370,15 @@ export async function enquiryRoutes(app: FastifyInstance) {
           schoolId: request.schoolId,
           academicYearId,
           familyId: body.familyId,
-          contactName: body.contactName,
-          contactPhone: body.contactPhone,
-          contactEmail: body.contactEmail,
+          contactName,
+          contactPhone,
+          contactEmail,
           source: body.source,
-          gradeInterest: body.gradeInterest,
+          gradeInterest,
           ownerUserId: body.ownerUserId ?? request.user.sub,
           consentCaptured: body.consentCaptured ?? false,
-          studentName: body.studentName,
-          studentDateOfBirth: body.studentDateOfBirth ? new Date(body.studentDateOfBirth) : undefined,
+          studentName,
+          studentDateOfBirth,
           guardianRelation: body.guardianRelation,
           formResponses: body.formResponses as Prisma.InputJsonValue | undefined,
           status: "new",
@@ -434,12 +432,15 @@ export async function enquiryRoutes(app: FastifyInstance) {
         const row = rows[i] ?? ({} as CreateEnquiryBody);
         const rowNumber = i + 1;
 
-        if (!row.contactName || !row.contactPhone || !row.source) {
-          errors.push({ row: rowNumber, message: "contactName, contactPhone, and source are required" });
-          continue;
-        }
-        if (!VALID_SOURCES.includes(row.source)) {
-          errors.push({ row: rowNumber, message: `source must be one of ${VALID_SOURCES.join(", ")}` });
+        const rv = new Validator();
+        const rowName = rv.personName("contactName", row.contactName, "Contact name");
+        const rowPhone = rv.phone("contactPhone", row.contactPhone, true, "Contact phone number");
+        const rowEmail = rv.email("contactEmail", row.contactEmail, false, "Contact email");
+        const rowGrade = rv.label("gradeInterest", row.gradeInterest, "Grade of interest", false, 60);
+        if (!row.source) rv.fail("source", "Source is required");
+        else if (!VALID_SOURCES.includes(row.source)) rv.fail("source", `Source must be one of ${VALID_SOURCES.join(", ")}`);
+        if (rv.hasErrors || !rowName || !rowPhone) {
+          errors.push({ row: rowNumber, message: Object.values(rv.errors).join("; ") });
           continue;
         }
         const academicYearId = row.academicYearId
@@ -454,11 +455,11 @@ export async function enquiryRoutes(app: FastifyInstance) {
           data: {
             schoolId: request.schoolId,
             academicYearId,
-            contactName: row.contactName,
-            contactPhone: row.contactPhone,
-            contactEmail: row.contactEmail,
+            contactName: rowName,
+            contactPhone: rowPhone,
+            contactEmail: rowEmail,
             source: row.source,
-            gradeInterest: row.gradeInterest,
+            gradeInterest: rowGrade,
             ownerUserId: row.ownerUserId ?? request.user.sub,
             consentCaptured: row.consentCaptured ?? false,
             status: "new",
@@ -568,6 +569,17 @@ export async function enquiryRoutes(app: FastifyInstance) {
 
       const body = request.body ?? {};
 
+      const v = new Validator();
+      const patchName = body.contactName !== undefined ? v.personName("contactName", body.contactName, "Contact name") : undefined;
+      const patchPhone = body.contactPhone !== undefined ? v.phone("contactPhone", body.contactPhone, true, "Contact phone number") : undefined;
+      // Clearing the email (empty string) is allowed; anything else must be valid.
+      const patchEmail = body.contactEmail !== undefined ? (v.email("contactEmail", body.contactEmail, false, "Contact email") ?? null) : undefined;
+      const patchStudentName = body.studentName !== undefined ? v.personName("studentName", body.studentName, "Student name", false) : undefined;
+      const patchStudentDob = body.studentDateOfBirth ? v.dateOfBirth("studentDateOfBirth", body.studentDateOfBirth, "Date of birth", 0, false) : undefined;
+      const patchGrade = body.gradeInterest !== undefined ? v.label("gradeInterest", body.gradeInterest, "Grade of interest", false, 60) : undefined;
+      if (body.lostReason !== undefined) v.note("lostReason", body.lostReason, "Lost reason", { max: 500 });
+      if (v.hasErrors) return v.reject(reply);
+
       if (body.status !== undefined) {
         const validStatuses = await validStatusKeys(request.schoolId);
         if (!validStatuses.has(body.status)) {
@@ -643,17 +655,17 @@ export async function enquiryRoutes(app: FastifyInstance) {
       const updated = await prisma.enquiry.update({
         where: { id: existing.id },
         data: {
-          contactName: body.contactName,
-          contactPhone: body.contactPhone,
-          contactEmail: body.contactEmail,
+          contactName: patchName,
+          contactPhone: patchPhone,
+          contactEmail: patchEmail,
           source: body.source,
-          gradeInterest: body.gradeInterest,
+          gradeInterest: patchGrade,
           ownerUserId: body.ownerUserId,
           consentCaptured: body.consentCaptured,
           status: body.status,
           lostReason: body.lostReason,
-          studentName: body.studentName,
-          studentDateOfBirth: body.studentDateOfBirth ? new Date(body.studentDateOfBirth) : undefined,
+          studentName: patchStudentName,
+          studentDateOfBirth: patchStudentDob,
           guardianRelation: body.guardianRelation,
           feePlanId: body.feePlanId,
           formResponses: mergedFormResponses as Prisma.InputJsonValue | undefined,
@@ -679,15 +691,10 @@ export async function enquiryRoutes(app: FastifyInstance) {
     "/enquiries/:id/notes",
     { onRequest: scoped(app) },
     async (request, reply) => {
-      const body = request.body?.body?.trim();
+      const nv = new Validator();
+      const body = nv.note("body", request.body?.body, "Note", { required: true, max: 2000 });
       const type = request.body?.type ?? "lead_note";
-
-      if (!body) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: "body is required" },
-        });
-      }
+      if (nv.hasErrors || !body) return nv.reject(reply);
 
       if (!VALID_NOTE_TYPES.includes(type)) {
         return reply.code(400).send({
@@ -1035,14 +1042,20 @@ export async function enquiryRoutes(app: FastifyInstance) {
         include: { studentStub: true },
       });
 
-      const dateOfBirth = body.dateOfBirth ?? (enquiry?.studentDateOfBirth ? enquiry.studentDateOfBirth.toISOString().slice(0, 10) : undefined);
+      const dobInput = body.dateOfBirth ?? (enquiry?.studentDateOfBirth ? enquiry.studentDateOfBirth.toISOString().slice(0, 10) : undefined);
 
-      if (!dateOfBirth || !body.classSectionId || !body.admissionDate) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: "dateOfBirth, classSectionId, and admissionDate are required" },
-        });
-      }
+      // fullName / guardian fields fall back to the enquiry's own values below,
+      // so they are only validated when the caller sends them.
+      const cv = new Validator();
+      const confirmName = body.fullName ? cv.personName("fullName", body.fullName, "Student name") : undefined;
+      const confirmDob = cv.dateOfBirth("dateOfBirth", dobInput, "Date of birth", 0);
+      const confirmGuardian = body.guardianName ? cv.personName("guardianName", body.guardianName, "Guardian name") : undefined;
+      const confirmContact = body.guardianContact ? cv.phone("guardianContact", body.guardianContact, true, "Guardian phone number") : undefined;
+      const confirmEmail = body.email ? cv.email("email", body.email, false, "Student email") : undefined;
+      const confirmAdmissionDate = cv.date("admissionDate", body.admissionDate, "Admission date");
+      cv.dateNotBefore("admissionDate", confirmAdmissionDate, confirmDob, "Admission date", "the date of birth");
+      if (!body.classSectionId) cv.fail("classSectionId", "Choose a class");
+      if (cv.hasErrors || !confirmDob || !body.classSectionId || !confirmAdmissionDate) return cv.reject(reply);
 
       if (!enquiry) {
         return reply.code(404).send({ data: null, error: { code: "not_found", message: "Enquiry not found" } });
@@ -1115,15 +1128,15 @@ export async function enquiryRoutes(app: FastifyInstance) {
           data: {
             schoolId: request.schoolId,
             sourceEnquiryId: enquiry.id,
-            fullName: body.fullName ?? enquiry.studentName ?? enquiry.contactName,
-            dateOfBirth: new Date(dateOfBirth),
+            fullName: confirmName ?? enquiry.studentName ?? enquiry.contactName,
+            dateOfBirth: confirmDob,
             classSectionId: classSection.id,
-            guardianName: body.guardianName ?? enquiry.contactName,
-            guardianContact: body.guardianContact ?? enquiry.contactPhone,
+            guardianName: confirmGuardian ?? enquiry.contactName,
+            guardianContact: confirmContact ?? enquiry.contactPhone,
             // The student's own sign-in email; optional at admission, the
             // school can add it later from the student's record.
-            email: body.email?.trim().toLowerCase() || null,
-            admissionDate: new Date(body.admissionDate),
+            email: confirmEmail ?? null,
+            admissionDate: confirmAdmissionDate,
           },
         }),
         prisma.enquiry.update({

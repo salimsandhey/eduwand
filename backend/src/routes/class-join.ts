@@ -3,6 +3,7 @@ import { sendEmailInBackground } from "../lib/email/sender";
 import { joinRequestReceivedEmail, joinRequestDecidedEmail, classLabel } from "../lib/email/templates";
 import { prisma } from "../lib/prisma";
 import { markOnboardingTaskComplete } from "../lib/onboarding";
+import { Validator } from "../lib/validation";
 
 // Class join-link flow - a student/parent uses the public, unauthenticated
 // link (ClassSection.joinCode) to submit a ClassJoinRequest. This NEVER
@@ -72,31 +73,23 @@ export async function classJoinRoutes(app: FastifyInstance) {
       }
 
       const body = request.body ?? ({} as SubmitJoinRequestBody);
-      if (!body.studentName?.trim() || !body.dateOfBirth || !body.guardianName?.trim() || !body.guardianContact?.trim()) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: "studentName, dateOfBirth, guardianName, and guardianContact are required" },
-        });
-      }
-      const dob = new Date(body.dateOfBirth);
-      if (Number.isNaN(dob.getTime())) {
-        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "Invalid dateOfBirth" } });
-      }
-
+      const v = new Validator();
+      const studentName = v.personName("studentName", body.studentName, "Student name");
+      const dob = v.dateOfBirth("dateOfBirth", body.dateOfBirth);
+      const guardianName = v.personName("guardianName", body.guardianName, "Guardian name");
+      const guardianContact = v.phone("guardianContact", body.guardianContact, true, "Guardian phone number");
       // Optional here so older join forms keep working, but without it the
       // student can't sign in until the teacher adds an email.
-      const studentEmail = body.studentEmail?.trim().toLowerCase();
-      if (studentEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(studentEmail)) {
-        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "studentEmail is not a valid email" } });
-      }
+      const studentEmail = v.email("studentEmail", body.studentEmail, false, "Student email");
+      if (v.hasErrors || !studentName || !dob || !guardianName || !guardianContact) return v.reject(reply);
 
       const created = await prisma.classJoinRequest.create({
         data: {
           classSectionId: classSection.id,
-          studentName: body.studentName.trim(),
+          studentName,
           dateOfBirth: dob,
-          guardianName: body.guardianName.trim(),
-          guardianContact: body.guardianContact.trim(),
+          guardianName,
+          guardianContact,
           studentEmail: studentEmail || null,
         },
       });

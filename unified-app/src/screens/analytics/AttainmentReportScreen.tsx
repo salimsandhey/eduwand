@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import { useFocusEffect } from "@react-navigation/native";
@@ -9,11 +9,7 @@ import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
-import { StudentAvatar } from "../../components/StudentAvatar";
-
-const STUDENT_AVATAR_SIZE = 36;
-import { SheetModal } from "../../components/SheetModal";
-import { api, AttainmentReportRecord, SubjectAttainmentReport, StudentAttainmentRow, GenerationOutputType } from "../../api/client";
+import { api, AttainmentReportRecord, SubjectAttainmentReport, GenerationOutputType } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
 import { OUTPUT_TYPE_ICONS } from "../studio/generation/outputTypeMeta";
 
@@ -35,7 +31,7 @@ function formatRelativeTime(dateString: string): string {
   return past.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 }
 
-type ReportTab = "class" | "students" | "topics";
+type ReportTab = "class" | "topics";
 type ClassSubTab = "overview" | "notes" | "stages";
 
 function displayScore(score: number | null) {
@@ -56,7 +52,6 @@ export function AttainmentReportScreen({ route, navigation }: Props) {
   const [activeTab, setActiveTab] = useState<ReportTab>("class");
   const [classSubTab, setClassSubTab] = useState<ClassSubTab>("overview");
   const [viewingPhoto, setViewingPhoto] = useState<string | null>(null);
-  const [selectedStudent, setSelectedStudent] = useState<StudentAttainmentRow | null>(null);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
 
   const load = useCallback(async () => {
@@ -115,12 +110,14 @@ export function AttainmentReportScreen({ route, navigation }: Props) {
 
   const hasScores = report.averageScore !== null;
   const brandAccent = branding?.primaryColor || colors.accent;
+  // Class view only - no per-student drill-down here (that lives in the
+  // Performance report instead). Subject mode keeps its "Topic report" tab -
+  // that's a per-topic breakdown, not identified student data.
   const tabs: { key: ReportTab; label: string }[] = isTopicMode
-    ? [{ key: "class", label: "Class report" }, { key: "students", label: "Student report" }]
-    : [{ key: "class", label: "Class report" }, { key: "students", label: "Student report" }, { key: "topics", label: "Topic report" }];
+    ? []
+    : [{ key: "class", label: "Class report" }, { key: "topics", label: "Topic report" }];
 
   const insight = isTopicMode ? topicReport!.improvementNotes ?? "No teacher observations recorded for this topic." : null;
-  const studentAttainment: StudentAttainmentRow[] = report.studentAttainment;
 
   return (
     <Screen edges={["top", "bottom"]}>
@@ -152,18 +149,20 @@ export function AttainmentReportScreen({ route, navigation }: Props) {
           {branding?.logoUrl ? <Image source={{ uri: branding.logoUrl }} style={styles.brandLogo} resizeMode="contain" /> : null}
         </View>
 
-        <View style={[styles.reportTabs, { backgroundColor: colors.backgroundMuted }]}>
-          {tabs.map((tab) => (
-            <Pressable
-              key={tab.key}
-              style={[styles.reportTab, activeTab === tab.key && { backgroundColor: brandAccent }]}
-              onPress={() => setActiveTab(tab.key)}
-              accessibilityRole="tab"
-            >
-              <Text style={[styles.reportTabText, { color: activeTab === tab.key ? "#FFFFFF" : colors.textMuted }]}>{tab.label}</Text>
-            </Pressable>
-          ))}
-        </View>
+        {tabs.length > 0 ? (
+          <View style={[styles.reportTabs, { backgroundColor: colors.backgroundMuted }]}>
+            {tabs.map((tab) => (
+              <Pressable
+                key={tab.key}
+                style={[styles.reportTab, activeTab === tab.key && { backgroundColor: brandAccent }]}
+                onPress={() => setActiveTab(tab.key)}
+                accessibilityRole="tab"
+              >
+                <Text style={[styles.reportTabText, { color: activeTab === tab.key ? "#FFFFFF" : colors.textMuted }]}>{tab.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
 
         {activeTab === "class" ? (
           <>
@@ -245,7 +244,28 @@ export function AttainmentReportScreen({ route, navigation }: Props) {
 
                 <View style={[styles.card, { backgroundColor: colors.surface }, cardShadow]}>
                   <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Objective based analysis</Text>
-                  {topicReport!.objectiveCoverage.length > 0 ? (
+                  {topicReport!.objectiveAttainment.length > 0 ? (
+                    <>
+                      <Text style={[styles.overallSummary, { color: colors.textSecondary, marginBottom: 4 }]}>
+                        Each objective's benchmark vs. the class's actual average on questions that assess it. Tap a
+                        benchmark to change it.
+                      </Text>
+                      {topicReport!.objectiveAttainment.map((o) => (
+                        <ObjectiveAttainmentRow
+                          key={o.id}
+                          objective={o}
+                          colors={colors}
+                          onSaved={(benchmarkPercent) =>
+                            setTopicReport((prev) =>
+                              prev
+                                ? { ...prev, objectiveAttainment: prev.objectiveAttainment.map((x) => (x.id === o.id ? { ...x, benchmarkPercent, met: x.classAveragePercent === null ? null : x.classAveragePercent >= benchmarkPercent } : x)) }
+                                : prev
+                            )
+                          }
+                        />
+                      ))}
+                    </>
+                  ) : topicReport!.objectiveCoverage.length > 0 ? (
                     topicReport!.objectiveCoverage.map((o, i) => <ObjectiveRow key={i} objective={o.objective} stage={o.stage} colors={colors} />)
                   ) : (
                     <Text style={[styles.emptyChartText, { color: colors.textMuted }]}>No objectives recorded for this topic yet.</Text>
@@ -254,12 +274,6 @@ export function AttainmentReportScreen({ route, navigation }: Props) {
               </View>
             ) : null}
           </>
-        ) : null}
-
-        {activeTab === "students" ? (
-          <View style={styles.tabContentTop}>
-            <StudentList students={studentAttainment} colors={colors} pressedOpacity={pressedOpacity} onOpenStudent={setSelectedStudent} />
-          </View>
         ) : null}
 
         {activeTab === "topics" && !isTopicMode ? (
@@ -279,34 +293,6 @@ export function AttainmentReportScreen({ route, navigation }: Props) {
           {viewingPhoto ? <Image source={{ uri: viewingPhoto }} style={styles.photoModalImage} resizeMode="contain" /> : null}
         </Pressable>
       </Modal>
-
-      <SheetModal
-        visible={selectedStudent !== null}
-        onClose={() => setSelectedStudent(null)}
-        closeLabel="Close student detail"
-        maxHeightRatio={0.75}
-      >
-        {selectedStudent ? (
-          <>
-            <View style={styles.studentModalHeader}>
-              <StudentAvatar studentId={selectedStudent.studentStubId} picture={selectedStudent} size={STUDENT_AVATAR_SIZE} />
-              <View style={styles.studentCopy}>
-                <Text style={[styles.studentName, { color: colors.textPrimary }]}>{capitalizeFirst(selectedStudent.fullName)}</Text>
-                <Text style={[styles.studentMeta, { color: colors.textMuted }]}>{selectedStudent.submissionCount} submission{selectedStudent.submissionCount === 1 ? "" : "s"} · {Math.round(selectedStudent.averageScore)}% average</Text>
-              </View>
-            </View>
-            <Text style={[styles.studentModalSectionLabel, { color: colors.textMuted }]}>{isTopicMode ? "By assignment" : "By topic"}</Text>
-            <ScrollView style={styles.studentModalScroll} showsVerticalScrollIndicator={false}>
-              {selectedStudent.breakdown.map((item, index) => (
-                <View key={`${item.label}-${index}`} style={styles.breakdownRow}>
-                  <Text style={[styles.breakdownLabel, { color: colors.textSecondary }]}>{capitalizeFirst(item.label)}</Text>
-                  <Text style={[styles.breakdownScore, { color: item.averageScore < 60 ? colors.danger : colors.textPrimary }]}>{displayScore(item.averageScore)}</Text>
-                </View>
-              ))}
-            </ScrollView>
-          </>
-        ) : null}
-      </SheetModal>
     </Screen>
   );
 }
@@ -358,6 +344,77 @@ function StageBar({ stage, count, max, colors }: { stage: string; count: number;
   );
 }
 
+type ObjectiveAttainment = AttainmentReportRecord["objectiveAttainment"][number];
+
+function ObjectiveAttainmentRow({ objective, colors, onSaved }: { objective: ObjectiveAttainment; colors: ReturnType<typeof useTheme>["colors"]; onSaved: (benchmarkPercent: number) => void }) {
+  const { accessToken } = useAuth();
+  const style = objective.bloomsStage ? LEARNING_STAGE_STYLE[objective.bloomsStage] : null;
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState(String(Math.round(objective.benchmarkPercent)));
+  const [isSaving, setIsSaving] = useState(false);
+
+  async function save() {
+    if (!accessToken) return;
+    const value = Math.max(0, Math.min(100, Math.round(Number(draft)) || 0));
+    setIsSaving(true);
+    try {
+      await api.updateTopicObjectiveBenchmark(accessToken, objective.id, value);
+      onSaved(value);
+      setIsEditing(false);
+    } catch {
+      // Silently keep the editor open - the value just wasn't saved.
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  const metColor = objective.met === null ? colors.textMuted : objective.met ? "#18A957" : colors.danger;
+  return (
+    <View style={styles.objectiveRow}>
+      {style && objective.bloomsStage ? (
+        <View style={[styles.stageTile, { backgroundColor: `${style.color}22` }]}>
+          <Ionicons name={style.icon} size={11} color={style.color} />
+          <Text style={[styles.stageTileText, { color: style.color }]}>{objective.bloomsStage.toUpperCase()}</Text>
+        </View>
+      ) : null}
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.bodyText, { color: colors.textPrimary }]}>{objective.text}</Text>
+        <View style={styles.objectiveAttainmentRow}>
+          {isEditing ? (
+            <>
+              <Text style={[styles.objectiveAttainmentText, { color: colors.textMuted }]}>Benchmark:</Text>
+              <TextInput
+                value={draft}
+                onChangeText={setDraft}
+                keyboardType="number-pad"
+                autoFocus
+                style={[styles.benchmarkInput, { color: colors.textPrimary, borderColor: colors.border }]}
+                maxLength={3}
+              />
+              <Text style={[styles.objectiveAttainmentText, { color: colors.textMuted }]}>%</Text>
+              <Pressable onPress={save} disabled={isSaving} hitSlop={8} accessibilityRole="button" accessibilityLabel="Save benchmark">
+                {isSaving ? <ActivityIndicator size="small" color={colors.accent} /> : <Ionicons name="checkmark-circle" size={20} color={colors.accent} />}
+              </Pressable>
+            </>
+          ) : (
+            <Pressable onPress={() => setIsEditing(true)} accessibilityRole="button" accessibilityLabel="Edit benchmark">
+              <Text style={[styles.objectiveAttainmentText, { color: colors.textMuted }]}>
+                Benchmark: <Text style={{ fontWeight: "800", textDecorationLine: "underline" }}>{Math.round(objective.benchmarkPercent)}%</Text>
+              </Text>
+            </Pressable>
+          )}
+          <Text style={[styles.objectiveAttainmentText, { color: colors.textMuted }]}>
+            · Class average: {objective.classAveragePercent === null ? "no graded data yet" : `${Math.round(objective.classAveragePercent)}%`}
+          </Text>
+          {objective.met !== null ? (
+            <Text style={[styles.objectiveAttainmentText, { color: metColor, fontWeight: "800" }]}>· {objective.met ? "Met" : "Not met"}</Text>
+          ) : null}
+        </View>
+      </View>
+    </View>
+  );
+}
+
 function ObjectiveRow({ objective, stage, colors }: { objective: string; stage: string | null; colors: ReturnType<typeof useTheme>["colors"] }) {
   const style = stage ? LEARNING_STAGE_STYLE[stage] : null;
   return (
@@ -402,33 +459,6 @@ function WhatWasDoneSection({ items, colors }: { items: AttainmentReportRecord["
           </View>
         ))
       )}
-    </View>
-  );
-}
-
-function StudentList({ students, colors, pressedOpacity, onOpenStudent }: { students: StudentAttainmentRow[]; colors: ReturnType<typeof useTheme>["colors"]; pressedOpacity: number; onOpenStudent: (student: StudentAttainmentRow) => void }) {
-  const { cardShadow } = useTheme();
-  if (students.length === 0) {
-    return <Text style={[styles.emptyText, { color: colors.textMuted }]}>No graded submissions yet.</Text>;
-  }
-  return (
-    <View>
-      {students.map((student) => (
-        <Pressable
-          key={student.studentStubId}
-          style={({ pressed }) => [styles.studentRow, { backgroundColor: colors.surface }, cardShadow, pressed && { opacity: pressedOpacity }]}
-          onPress={() => onOpenStudent(student)}
-          accessibilityRole="button"
-        >
-          <StudentAvatar studentId={student.studentStubId} picture={student} size={STUDENT_AVATAR_SIZE} />
-          <View style={styles.studentCopy}>
-            <Text style={[styles.studentName, { color: colors.textPrimary }]}>{capitalizeFirst(student.fullName)}</Text>
-            <Text style={[styles.studentMeta, { color: colors.textMuted }]}>{student.submissionCount} submission{student.submissionCount === 1 ? "" : "s"}</Text>
-          </View>
-          <Text style={[styles.studentScore, { color: student.averageScore < 60 ? colors.danger : colors.accent }]}>{Math.round(student.averageScore)}%</Text>
-          <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
-        </Pressable>
-      ))}
     </View>
   );
 }
@@ -500,6 +530,9 @@ const styles = StyleSheet.create({
   barRow: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 15 }, barLabel: { width: 105, fontSize: 12, fontWeight: "500" }, barTrack: { flex: 1, height: 10, borderRadius: 6, overflow: "hidden" }, barFill: { height: "100%", borderRadius: 6 }, barValue: { width: 36, textAlign: "right", fontSize: 12, fontWeight: "800" }, emptyChartText: { marginTop: 20, fontSize: 13, lineHeight: 19, textAlign: "center" },
   stageBarLabel: { width: 105, flexDirection: "row", alignItems: "center", gap: 5 }, stageBarLabelText: { fontSize: 12, fontWeight: "500", flexShrink: 1 },
   objectiveRow: { flexDirection: "row", alignItems: "flex-start", gap: 8, marginTop: 14 }, bodyText: { fontSize: 13, lineHeight: 19, fontWeight: "500" },
+  objectiveAttainmentRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 6 },
+  objectiveAttainmentText: { fontSize: 11, fontWeight: "600" },
+  benchmarkInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2, minWidth: 40, fontSize: 12, fontWeight: "800" },
   stageTile: { flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start", borderRadius: 999, paddingHorizontal: 9, paddingVertical: 4, marginTop: 1 }, stageTileText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.3 },
   insightCard: { flexDirection: "row", borderRadius: 18, padding: 18, marginBottom: 24 }, insightIcon: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center", marginRight: 13 }, insightCopy: { flex: 1 }, insightTitle: { fontSize: 14, fontWeight: "800" }, insightText: { marginTop: 5, fontSize: 12, lineHeight: 19, fontWeight: "500" }, insightChip: { alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 5, height: 34, paddingHorizontal: 12, borderWidth: 1, borderRadius: 18, marginTop: 13 }, insightChipText: { fontSize: 11, fontWeight: "800" },
   reportNote: { borderRadius: 16, padding: 16, marginBottom: 12 }, reportNoteTitle: { fontSize: 13, fontWeight: "800", marginBottom: 6 }, reportNoteBody: { fontSize: 12, lineHeight: 19, fontWeight: "500" },

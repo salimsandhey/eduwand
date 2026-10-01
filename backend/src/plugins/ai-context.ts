@@ -22,6 +22,17 @@ export const aiContextPlugin = fp(async (app: FastifyInstance) => {
       request.log.warn({ reason: error.reason, limit: error.limitKey }, "AI call refused by spend guard");
       return reply.code(503).send({ data: null, error: { code: "ai_unavailable", message: error.message } });
     }
-    return reply.send(error);
+    // Any other uncaught error (a bug, a Prisma failure, etc.) would
+    // otherwise fall through to Fastify's own default handler, whose
+    // response shape ({statusCode, error: "<status text>", message}) doesn't
+    // match this app's envelope ({data, error: {code, message}}) - the
+    // client's ApiError parsing reads body.error.message, finds body.error
+    // is a plain string there, and silently falls back to a generic
+    // "Request failed" with the real cause discarded. Wrap it into the same
+    // envelope shape here so the actual message always reaches the client.
+    const err = error as Error & { statusCode?: number };
+    const statusCode = err.statusCode ?? 500;
+    if (statusCode >= 500) request.log.error({ err }, "Unhandled error");
+    return reply.code(statusCode).send({ data: null, error: { code: "internal_error", message: err.message || "Something went wrong" } });
   });
 });

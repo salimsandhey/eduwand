@@ -9,6 +9,9 @@ import { useTheme } from "../../theme/ThemeContext";
 import { spacing, softCardShadow } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { api, Subject } from "../../api/client";
+import { FieldError } from "../../components/FieldError";
+import { useFormErrors } from "../../hooks/useForm";
+import { rules } from "../../utils/validation";
 
 // Submits a fixed-set subject swap request for individual-account teachers.
 // The 6-month cooldown is enforced server-side; this screen just surfaces
@@ -47,10 +50,22 @@ export function RequestSubjectChangeScreen({ navigation }: Props) {
     }, [load])
   );
 
-  const canSave = subjectOne.trim() && subjectTwo.trim() && subjectOne.trim() !== subjectTwo.trim();
+  // Rules mirror backend/src/lib/validation.ts. The two subjects go to the API
+  // as one list, so a server error for "requestedSubjects" shows under the first.
+  const v = useFormErrors(
+    { subjectOne, subjectTwo, note },
+    {
+      subjectOne: rules.label("Subject name"),
+      subjectTwo: (value) =>
+        rules.label("Subject name")(value) ??
+        (value.trim().toLowerCase() === subjectOne.trim().toLowerCase() ? "The two subjects must be different" : null),
+      note: rules.note("Note", false, 500),
+    }
+  );
 
   async function submit() {
-    if (!accessToken || !user?.schoolId || !canSave) return;
+    if (!accessToken || !user?.schoolId) return;
+    if (!v.submit()) return;
     setIsSaving(true);
     setError(null);
     try {
@@ -60,7 +75,7 @@ export function RequestSubjectChangeScreen({ navigation }: Props) {
       });
       setSubmitted(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to submit request");
+      if (!v.applyServerError(err, { requestedSubjects: "subjectOne" })) setError(err instanceof Error ? err.message : "Failed to submit request");
     } finally {
       setIsSaving(false);
     }
@@ -100,38 +115,47 @@ export function RequestSubjectChangeScreen({ navigation }: Props) {
 
             <Text style={[styles.label, { color: colors.textPrimary }]}>New subject 1</Text>
             <TextInput
-              style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+              style={[styles.input, { color: colors.textPrimary, borderColor: v.error("subjectOne") ? colors.danger : colors.border }]}
               placeholder="e.g. English"
               placeholderTextColor={colors.textMuted}
               value={subjectOne}
               onChangeText={setSubjectOne}
+              onBlur={() => v.blur("subjectOne")}
+              maxLength={40}
             />
+            <FieldError message={v.error("subjectOne")} />
 
             <Text style={[styles.label, { color: colors.textPrimary }]}>New subject 2</Text>
             <TextInput
-              style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+              style={[styles.input, { color: colors.textPrimary, borderColor: v.error("subjectTwo") ? colors.danger : colors.border }]}
               placeholder="e.g. History"
               placeholderTextColor={colors.textMuted}
               value={subjectTwo}
               onChangeText={setSubjectTwo}
+              onBlur={() => v.blur("subjectTwo")}
+              maxLength={40}
             />
+            <FieldError message={v.error("subjectTwo")} />
 
             <Text style={[styles.label, { color: colors.textPrimary }]}>Note (optional)</Text>
             <TextInput
-              style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+              style={[styles.input, { color: colors.textPrimary, borderColor: v.error("note") ? colors.danger : colors.border }]}
               placeholder="Why are you changing subjects?"
               placeholderTextColor={colors.textMuted}
               value={note}
               onChangeText={setNote}
+              onBlur={() => v.blur("note")}
+              maxLength={500}
               multiline
             />
+            <FieldError message={v.error("note")} />
 
             {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
             <Pressable
               onPress={submit}
-              disabled={!canSave || isSaving}
-              style={[styles.saveButton, { backgroundColor: colors.accent }, (!canSave || isSaving) && { opacity: 0.5 }]}
+              disabled={isSaving}
+              style={[styles.saveButton, { backgroundColor: colors.accent }, isSaving && { opacity: 0.5 }]}
               accessibilityRole="button"
             >
               {isSaving ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.saveButtonText, { color: colors.accentOn }]}>Submit request</Text>}

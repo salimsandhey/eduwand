@@ -15,6 +15,7 @@ import { CreateFirstClassScreen } from "../screens/studio/CreateFirstClassScreen
 import { CreditsScreen } from "../screens/studio/CreditsScreen";
 import { RequestSubjectChangeScreen } from "../screens/studio/RequestSubjectChangeScreen";
 import { RequestClassChangeScreen } from "../screens/studio/RequestClassChangeScreen";
+import { RequestWorkspaceNameChangeScreen } from "../screens/studio/RequestWorkspaceNameChangeScreen";
 import { StudentsScreen } from "../screens/studio/StudentsScreen";
 import { AddStudentScreen } from "../screens/studio/AddStudentScreen";
 import { StartNewAcademicYearScreen } from "../screens/studio/StartNewAcademicYearScreen";
@@ -180,6 +181,7 @@ export function AppNavigator() {
         <Stack.Screen name="Credits" component={CreditsScreen} options={{ headerShown: false }} />
         <Stack.Screen name="RequestSubjectChange" component={RequestSubjectChangeScreen} options={{ headerShown: false }} />
         <Stack.Screen name="RequestClassChange" component={RequestClassChangeScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="RequestWorkspaceNameChange" component={RequestWorkspaceNameChangeScreen} options={{ headerShown: false }} />
         <Stack.Screen name="Students" component={StudentsScreen} options={{ headerShown: false }} />
         <Stack.Screen name="AddStudent" component={AddStudentScreen} options={{ headerShown: false }} />
         <Stack.Screen name="StartNewAcademicYear" component={StartNewAcademicYearScreen} options={{ headerShown: false }} />

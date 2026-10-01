@@ -3,6 +3,10 @@ import { prisma } from "../lib/prisma";
 import { PLATFORM_ADMIN_ROLE } from "../lib/roles";
 import { resolveClassLimit, resolveSubjectLimit } from "../lib/limits";
 import { markOnboardingTaskComplete } from "../lib/onboarding";
+import { Validator } from "../lib/validation";
+
+const MAX_BULK_CLASS_NAMES = 30;
+const MAX_BULK_SECTION_NAMES = 15;
 
 interface CreateAcademicYearBody {
   label: string;
@@ -97,6 +101,7 @@ export async function academicStructureRoutes(app: FastifyInstance) {
         where: { schoolId: request.params.schoolId },
         include: {
           classSections: {
+            where: { deletedAt: null },
             orderBy: [{ className: "asc" }, { sectionName: "asc" }],
             include: {
               teacherAssignments: {
@@ -119,12 +124,15 @@ export async function academicStructureRoutes(app: FastifyInstance) {
       if (!(await authorizeForSchool(request, reply, request.params.schoolId))) return;
 
       const body = request.body ?? ({} as CreateAcademicYearBody);
-      if (!body.label || !body.startDate || !body.endDate) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: "label, startDate, and endDate are required" },
-        });
+      const yv = new Validator();
+      const yearLabel = yv.label("label", body.label, "Academic year label", true, 20);
+      const yearStart = yv.date("startDate", body.startDate, "Start date");
+      const yearEnd = yv.date("endDate", body.endDate, "End date");
+      if (yearStart && yearEnd) {
+        if (yearEnd.getTime() <= yearStart.getTime()) yv.fail("endDate", "End date must be after the start date");
+        else if (yearEnd.getTime() - yearStart.getTime() > 2 * 366 * 24 * 60 * 60 * 1000) yv.fail("endDate", "An academic year cannot be longer than two years");
       }
+      if (yv.hasErrors || !yearLabel || !yearStart || !yearEnd) return yv.reject(reply);
 
       const schoolId = request.params.schoolId;
       const existingCount = await prisma.academicYear.count({ where: { schoolId } });
@@ -137,9 +145,9 @@ export async function academicStructureRoutes(app: FastifyInstance) {
         const created = await tx.academicYear.create({
           data: {
             schoolId,
-            label: body.label,
-            startDate: new Date(body.startDate),
-            endDate: new Date(body.endDate),
+            label: yearLabel,
+            startDate: yearStart,
+            endDate: yearEnd,
             isCurrent,
           },
         });
@@ -224,12 +232,11 @@ export async function academicStructureRoutes(app: FastifyInstance) {
       if (!(await authorizeForSchool(request, reply, request.params.schoolId))) return;
 
       const body = request.body ?? ({} as CreateClassSectionBody);
-      if (!body.academicYearId || !body.className || !body.sectionName) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: "academicYearId, className, and sectionName are required" },
-        });
-      }
+      const cv = new Validator();
+      const className = cv.label("className", body.className, "Class name");
+      const sectionName = cv.label("sectionName", body.sectionName, "Section name");
+      if (!body.academicYearId) cv.fail("academicYearId", "Choose an academic year");
+      if (cv.hasErrors || !className || !sectionName) return cv.reject(reply);
 
       const academicYear = await prisma.academicYear.findFirst({
         where: { id: body.academicYearId, schoolId: request.params.schoolId },
@@ -260,8 +267,22 @@ export async function academicStructureRoutes(app: FastifyInstance) {
         }
       }
 
+      const duplicate = await prisma.classSection.findFirst({
+        where: {
+          academicYearId: academicYear.id,
+          deletedAt: null,
+          className: { equals: className, mode: "insensitive" },
+          sectionName: { equals: sectionName, mode: "insensitive" },
+        },
+        select: { id: true },
+      });
+      if (duplicate) {
+        cv.fail("sectionName", `${className} ${sectionName} already exists in this academic year`);
+        return cv.reject(reply);
+      }
+
       const classSection = await prisma.classSection.create({
-        data: { academicYearId: academicYear.id, className: body.className, sectionName: body.sectionName },
+        data: { academicYearId: academicYear.id, className, sectionName },
       });
 
       if (request.user.role === "teacher") {
@@ -293,27 +314,39 @@ export async function academicStructureRoutes(app: FastifyInstance) {
         return reply.code(404).send({ data: null, error: { code: "not_found", message: "Academic year not found for this school" } });
       }
 
-      const classNames = [...new Set(body.classNames.map((name) => name.trim()).filter((name) => name.length > 0))];
-      const sectionNames = [...new Set(body.sectionNames.map((name) => name.trim()).filter((name) => name.length > 0))];
+      const bv = new Validator();
+      const cleanNames = (field: string, names: unknown[], label: string): string[] => {
+        const seen = new Set<string>();
+        const out: string[] = [];
+        for (const raw of names) {
+          const name = bv.label(field, raw, label, false);
+          if (name && !seen.has(name.toLowerCase())) {
+            seen.add(name.toLowerCase());
+            out.push(name);
+          }
+        }
+        return out;
+      };
+      const classNames = cleanNames("classNames", body.classNames, "Class name");
+      const sectionNames = cleanNames("sectionNames", body.sectionNames, "Section name");
 
-      if (classNames.length === 0 || sectionNames.length === 0) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: "At least one class name and one section name are required" },
-        });
-      }
+      if (classNames.length === 0) bv.fail("classNames", "Enter at least one class name");
+      if (sectionNames.length === 0) bv.fail("sectionNames", "Enter at least one section name");
+      if (classNames.length > MAX_BULK_CLASS_NAMES) bv.fail("classNames", `Add at most ${MAX_BULK_CLASS_NAMES} classes at a time`);
+      if (sectionNames.length > MAX_BULK_SECTION_NAMES) bv.fail("sectionNames", `Add at most ${MAX_BULK_SECTION_NAMES} sections at a time`);
+      if (bv.hasErrors) return bv.reject(reply);
 
       const existingSections = await prisma.classSection.findMany({
         where: { academicYearId: academicYear.id },
         select: { className: true, sectionName: true },
       });
-      const existingKeys = new Set(existingSections.map((section) => `${section.className} ${section.sectionName}`));
+      const existingKeys = new Set(existingSections.map((section) => `${section.className} ${section.sectionName}`.toLowerCase()));
 
       const pairsToCreate: { className: string; sectionName: string }[] = [];
       let skipped = 0;
       for (const className of classNames) {
         for (const sectionName of sectionNames) {
-          const key = `${className} ${sectionName}`;
+          const key = `${className} ${sectionName}`.toLowerCase();
           if (existingKeys.has(key)) {
             skipped += 1;
             continue;

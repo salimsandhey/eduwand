@@ -3,6 +3,7 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { uploadKey, detectImageMime, imageKey, IMAGE_ONLY_ERROR } from "../lib/upload";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
+import { Validator } from "../lib/validation";
 import { storage } from "../lib/storage";
 import { MAX_EXTRACTED_CHARS, downloadRemoteFile } from "../lib/extraction";
 import {
@@ -39,6 +40,32 @@ function safeFilename(title: string, ext: string): string {
   return `${base}.${ext}`;
 }
 
+// Runs extraction unawaited and writes the result onto the source once done -
+// shared by the initial upload and retry-extraction routes, both of which
+// return the (still "pending") row immediately rather than making the
+// teacher wait on a URL scrape + AI cleanup or an image vision call.
+function runExtractionInBackground(
+  contextSourceId: string,
+  params: Parameters<typeof runContextExtraction>[0]
+): void {
+  runContextExtraction(params)
+    .then((extraction) =>
+      prisma.contextSource.update({
+        where: { id: contextSourceId },
+        data: {
+          pageCount: extraction.pageCount ?? null,
+          extractionStatus: extraction.extractionStatus,
+          extractedText: extraction.extractedText,
+          extractionError: extraction.extractionError,
+          // Only a URL/YouTube source discovers its title here, after the
+          // fetch - undefined leaves an upload's already-set filename citation alone.
+          ...(extraction.title ? { citation: extraction.title } : {}),
+        },
+      })
+    )
+    .catch((err) => console.error(`[topics] background extraction failed for context source ${contextSourceId}:`, err));
+}
+
 const FILE_CONTENT_TYPES: Record<string, string> = {
   pdf: "application/pdf",
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -66,6 +93,11 @@ interface CreateObservationBody {
   body: string;
 }
 
+interface UpdateObservationBody {
+  body?: string;
+  removePhoto?: boolean;
+}
+
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope, requireRoles("teacher")];
 
 export async function topicRoutes(app: FastifyInstance) {
@@ -87,12 +119,11 @@ export async function topicRoutes(app: FastifyInstance) {
   app.post<{ Body: CreateTopicBody }>("/topics", { onRequest: scoped(app) }, async (request, reply) => {
     const body = request.body ?? ({} as CreateTopicBody);
 
-    if (!body.classSectionId || !body.subject || !body.name) {
-      return reply.code(400).send({
-        data: null,
-        error: { code: "validation_error", message: "classSectionId, subject, and name are required" },
-      });
-    }
+    const v = new Validator();
+    const subject = v.label("subject", body.subject, "Subject", true, 60);
+    const topicName = v.label("name", body.name, "Topic name", true, 120);
+    if (!body.classSectionId) v.fail("classSectionId", "Choose a class");
+    if (v.hasErrors || !subject || !topicName) return v.reject(reply);
 
     const classSection = await prisma.classSection.findFirst({
       where: { id: body.classSectionId, academicYear: { schoolId: request.schoolId } },
@@ -106,8 +137,8 @@ export async function topicRoutes(app: FastifyInstance) {
         schoolId: request.schoolId,
         teacherUserId: request.user.sub,
         classSectionId: body.classSectionId,
-        subject: body.subject,
-        name: body.name,
+        subject,
+        name: topicName,
         status: "active",
       },
     });
@@ -176,8 +207,10 @@ export async function topicRoutes(app: FastifyInstance) {
             error: { code: "validation_error", message: `sourceType must be one of ${VALID_SOURCE_TYPES.join(", ")}` },
           });
         }
-        if (body.sourceType === "url" && !body.sourceUrl) {
-          return reply.code(400).send({ data: null, error: { code: "validation_error", message: "sourceUrl is required for sourceType url" } });
+        if (body.sourceType === "url") {
+          const uv = new Validator();
+          uv.url("sourceUrl", body.sourceUrl, true, "Link");
+          if (uv.hasErrors) return uv.reject(reply);
         }
         if (body.sourceType === "idream_k12" && !body.idreamK12ReferenceId) {
           return reply.code(400).send({
@@ -204,8 +237,11 @@ export async function topicRoutes(app: FastifyInstance) {
         throw err;
       }
 
-      const extraction = await runContextExtraction({ sourceType, fileLocation, sourceUrl, buffer: fileBuffer });
-
+      // Created with the default "pending" status right away and returned
+      // immediately - extraction (a URL scrape + AI cleanup, or an image
+      // vision call) can take many seconds and shouldn't block the teacher.
+      // It runs in the background below; the client polls GET /topics/:id
+      // until this row's extractionStatus changes.
       const contextSource = await prisma.contextSource.create({
         data: {
           topicId: topic.id,
@@ -214,10 +250,6 @@ export async function topicRoutes(app: FastifyInstance) {
           originalFilename,
           sourceUrl,
           idreamK12ReferenceId,
-          pageCount: extraction.pageCount ?? null,
-          extractionStatus: extraction.extractionStatus,
-          extractedText: extraction.extractedText,
-          extractionError: extraction.extractionError,
           citation: originalFilename,
         },
       });
@@ -231,6 +263,8 @@ export async function topicRoutes(app: FastifyInstance) {
           data: { schoolId: request.schoolId, teacherUserId: request.user.sub, fileName: originalFilename },
         });
       }
+
+      runExtractionInBackground(contextSource.id, { sourceType, fileLocation, sourceUrl, buffer: fileBuffer });
 
       return reply.code(201).send({ data: contextSource, meta: {} });
     }
@@ -254,22 +288,20 @@ export async function topicRoutes(app: FastifyInstance) {
         return reply.code(404).send({ data: null, error: { code: "not_found", message: "Context source not found" } });
       }
 
-      const extraction = await runContextExtraction({
+      // Same background pattern as the initial upload - flip back to
+      // "pending" and return immediately, extraction runs unawaited below.
+      const reset = await prisma.contextSource.update({
+        where: { id: source.id },
+        data: { extractionStatus: "pending", extractionError: null },
+      });
+
+      runExtractionInBackground(source.id, {
         sourceType: source.sourceType,
         fileLocation: source.fileLocation,
         sourceUrl: source.sourceUrl,
       });
 
-      const updated = await prisma.contextSource.update({
-        where: { id: source.id },
-        data: {
-          extractedText: extraction.extractedText,
-          extractionError: extraction.extractionError,
-          extractionStatus: extraction.extractionStatus,
-        },
-      });
-
-      return { data: updated, meta: {} };
+      return { data: reset, meta: {} };
     }
   );
 
@@ -539,6 +571,10 @@ export async function topicRoutes(app: FastifyInstance) {
               extractionStatus: extraction.extractionStatus,
               extractedText: extraction.extractedText,
               extractionError: extraction.extractionError,
+              // AI Research already had a title for this result; a freshly
+              // scraped page title (more reliable than the model's guess) wins
+              // when both exist.
+              citation: extraction.title || candidate.title || null,
             },
           });
           return { ...candidate, status: "approved", contextSourceId: contextSource.id };
@@ -601,7 +637,12 @@ export async function topicRoutes(app: FastifyInstance) {
         fileLocation: location,
         originalFilename: filename,
         sourceUrl: candidate.sourcePageUrl ?? downloaded.finalUrl,
-        attribution: candidate.attribution ?? (host ? `From ${host}` : null),
+        // Never null here - a web-research-found source must always be
+        // distinguishable from a teacher upload (see generation-media.ts's
+        // buildMediaItems, which refuses to embed a source with an
+        // attribution directly into generated output).
+        attribution: candidate.attribution ?? (host ? `From ${host}` : "Found via web search"),
+        citation: candidate.title || null,
         pageCount: extraction.pageCount ?? null,
         extractionStatus: extraction.extractionStatus,
         extractedText: extraction.extractedText,
@@ -801,9 +842,9 @@ export async function topicRoutes(app: FastifyInstance) {
         bodyText = body.body ?? "";
       }
 
-      if (!bodyText.trim()) {
-        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "body is required" } });
-      }
+      const ov = new Validator();
+      const noteText = ov.note("body", bodyText, "Note", { required: true, max: 4000 });
+      if (ov.hasErrors || !noteText) return ov.reject(reply);
 
       const topic = await prisma.topic.findFirst({ where: { id: request.params.id, schoolId: request.schoolId } });
       if (!topic) {
@@ -811,10 +852,64 @@ export async function topicRoutes(app: FastifyInstance) {
       }
 
       const observation = await prisma.observation.create({
-        data: { topicId: topic.id, authorUserId: request.user.sub, body: bodyText.trim(), photoUrl },
+        data: { topicId: topic.id, authorUserId: request.user.sub, body: noteText, photoUrl },
       });
 
       return reply.code(201).send({ data: observation, meta: {} });
+    }
+  );
+
+  // Edit an existing note - text, and/or the photo (replace with a new file,
+  // or drop it with removePhoto). Same multipart-or-JSON shape as create.
+  app.patch<{ Params: { id: string; observationId: string }; Body: UpdateObservationBody }>(
+    "/topics/:id/observations/:observationId",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const existing = await prisma.observation.findFirst({
+        where: { id: request.params.observationId, topicId: request.params.id, topic: { schoolId: request.schoolId } },
+      });
+      if (!existing) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Note not found" } });
+      }
+
+      let bodyText: string | undefined;
+      let newPhotoUrl: string | undefined;
+      let removePhoto = false;
+
+      if (request.isMultipart?.()) {
+        const fields: Record<string, string> = {};
+        for await (const part of request.parts()) {
+          if (part.type === "file") {
+            const buffer = await part.toBuffer();
+            const imageMime = detectImageMime(buffer);
+            if (!imageMime) return reply.code(400).send(IMAGE_ONLY_ERROR);
+            const { location } = await storage.save(imageKey("observations", imageMime), buffer);
+            newPhotoUrl = location;
+          } else {
+            fields[part.fieldname] = part.value as string;
+          }
+        }
+        if (fields.body !== undefined) bodyText = fields.body;
+        if (fields.removePhoto === "true") removePhoto = true;
+      } else {
+        const body = request.body ?? ({} as UpdateObservationBody);
+        if (body.body !== undefined) bodyText = body.body;
+        if (body.removePhoto) removePhoto = true;
+      }
+
+      const ev = new Validator();
+      const editedText = bodyText !== undefined ? ev.note("body", bodyText, "Note", { required: true, max: 4000 }) : undefined;
+      if (ev.hasErrors) return ev.reject(reply);
+
+      const updated = await prisma.observation.update({
+        where: { id: existing.id },
+        data: {
+          ...(editedText !== undefined ? { body: editedText } : {}),
+          ...(newPhotoUrl !== undefined ? { photoUrl: newPhotoUrl } : removePhoto ? { photoUrl: null } : {}),
+        },
+      });
+
+      return { data: updated, meta: {} };
     }
   );
 }

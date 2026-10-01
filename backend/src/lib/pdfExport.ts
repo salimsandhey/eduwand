@@ -181,14 +181,220 @@ function drawBarRows(doc: PDFKit.PDFDocument, rows: { label: string; value: numb
   doc.y += 6;
 }
 
+// One row per student: name, submission count, average score - used by the
+// class Performance PDF's "share all students' data" table. Sorted the same
+// way ai-analytics.ts already returns them (weakest-first), so a teacher
+// scanning top-to-bottom sees who needs attention first.
+function drawStudentTable(doc: PDFKit.PDFDocument, students: { fullName: string; averageScore: number; submissionCount: number }[]) {
+  if (students.length === 0) {
+    bodyText(doc, "No graded submissions yet for this class.");
+    doc.y += 8;
+    return;
+  }
+  const scoreW = 60;
+  const countW = 110;
+  const nameW = contentWidth(doc) - scoreW - countW;
+  students.forEach((s) => {
+    ensureSpace(doc, 22);
+    const y = doc.y;
+    doc.font("Helvetica").fontSize(10).fillColor(TEXT_PRIMARY).text(s.fullName, PAGE_MARGIN, y, { width: nameW - 10, height: 14, ellipsis: true });
+    doc
+      .font("Helvetica")
+      .fontSize(9)
+      .fillColor(TEXT_MUTED)
+      .text(`${s.submissionCount} submission${s.submissionCount === 1 ? "" : "s"}`, PAGE_MARGIN + nameW, y, { width: countW });
+    doc.font("Helvetica-Bold").fontSize(10).fillColor(TEXT_PRIMARY).text(displayScore(s.averageScore), PAGE_MARGIN + nameW + countW, y, { width: scoreW, align: "right" });
+    doc.x = PAGE_MARGIN;
+    doc.y = y + 20;
+  });
+  doc.y += 6;
+}
+
+// One row per assignment: title, submitted date, score - used by the
+// per-student Performance PDF's submission history.
+function drawHistoryTable(doc: PDFKit.PDFDocument, history: { assignmentTitle: string; score: number | null; submittedAt: string }[]) {
+  if (history.length === 0) {
+    bodyText(doc, "No graded submissions yet.");
+    doc.y += 8;
+    return;
+  }
+  const scoreW = 60;
+  const dateW = 90;
+  const titleW = contentWidth(doc) - scoreW - dateW;
+  history.forEach((h) => {
+    ensureSpace(doc, 22);
+    const y = doc.y;
+    doc.font("Helvetica").fontSize(10).fillColor(TEXT_PRIMARY).text(h.assignmentTitle, PAGE_MARGIN, y, { width: titleW - 10, height: 14, ellipsis: true });
+    doc
+      .font("Helvetica")
+      .fontSize(9)
+      .fillColor(TEXT_MUTED)
+      .text(new Date(h.submittedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" }), PAGE_MARGIN + titleW, y, { width: dateW });
+    doc.font("Helvetica-Bold").fontSize(10).fillColor(TEXT_PRIMARY).text(displayScore(h.score), PAGE_MARGIN + titleW + dateW, y, { width: scoreW, align: "right" });
+    doc.x = PAGE_MARGIN;
+    doc.y = y + 20;
+  });
+  doc.y += 6;
+}
+
+export interface ClassPerformancePdfInput {
+  className: string;
+  sectionName: string;
+  // "All subjects", a subject name, or a topic name - whatever scope the
+  // Analytics tab's picker was set to when this was exported.
+  scopeLabel: string;
+  classAverage: number | null;
+  submissionCount: number;
+  scoreBands: { above80: number; between60And80: number; below60: number };
+  struggleAreas: { assignmentId: string; title: string; averageScore: number }[];
+  weeklyTrend: { label: string; score: number | null }[];
+  students: { fullName: string; averageScore: number; submissionCount: number }[];
+}
+
+export async function buildClassPerformancePdf(input: ClassPerformancePdfInput): Promise<Buffer> {
+  const doc = new PDFDocument({ margin: PAGE_MARGIN, size: "A4", bufferPages: true });
+  doc.on("pageAdded", () => drawContinuationHeader(doc));
+
+  drawBanner(doc, "Performance Report", `${input.className} - ${input.sectionName}`, input.scopeLabel);
+
+  drawMetrics(doc, [
+    { label: "Students graded", value: String(input.students.length) },
+    { label: "Average attainment", value: displayScore(input.classAverage) },
+    { label: "Graded work", value: String(input.submissionCount) },
+  ]);
+
+  sectionTitle(doc, "Overall attainment", AMBER);
+  drawScoreOverview(doc, input.classAverage, input.scoreBands);
+
+  sectionTitle(doc, "Attainment by assignment", AMBER);
+  drawBarRows(
+    doc,
+    input.struggleAreas.map((a) => ({ label: a.title, value: a.averageScore })),
+    "No graded assignments yet."
+  );
+
+  sectionTitle(doc, "Learning momentum (last 7 days)", AMBER);
+  drawBarRows(
+    doc,
+    input.weeklyTrend.map((d) => ({ label: d.label, value: d.score })),
+    "No graded work in the last 7 days."
+  );
+
+  sectionTitle(doc, "Students", AMBER);
+  drawStudentTable(doc, input.students);
+
+  drawFooters(doc);
+  return docToBuffer(doc);
+}
+
+export interface StudentPerformancePdfInput {
+  fullName: string;
+  className: string;
+  sectionName: string;
+  scopeLabel: string;
+  averageScore: number | null;
+  history: { assignmentTitle: string; score: number | null; submittedAt: string }[];
+  insights: {
+    byObjective: { text: string; averagePercent: number; questionCount: number }[];
+    byDifficulty: { difficulty: string; averagePercent: number; questionCount: number }[];
+    byTopic: { topicName: string; averagePercent: number; questionCount: number }[];
+    strongest: { label: string; averagePercent: number }[];
+    weakest: { label: string; averagePercent: number }[];
+    aiSummary: string;
+    aiNextStep: string;
+  };
+}
+
+export async function buildStudentPerformancePdf(input: StudentPerformancePdfInput): Promise<Buffer> {
+  const doc = new PDFDocument({ margin: PAGE_MARGIN, size: "A4", bufferPages: true });
+  doc.on("pageAdded", () => drawContinuationHeader(doc));
+
+  drawBanner(doc, input.fullName, `${input.className} - ${input.sectionName}`, input.scopeLabel);
+
+  doc.font("Helvetica-Oblique").fontSize(8).fillColor(TEXT_MUTED).text("Confidential - contains individual student performance data.", PAGE_MARGIN, doc.y, { width: contentWidth(doc) });
+  doc.x = PAGE_MARGIN;
+  doc.y += 12;
+
+  drawMetrics(doc, [
+    { label: "Average score", value: displayScore(input.averageScore) },
+    { label: "Graded submissions", value: String(input.history.length) },
+  ]);
+
+  sectionTitle(doc, "Insights", AMBER);
+  bodyText(doc, input.insights.aiSummary);
+  doc.y += 8;
+  doc.font("Helvetica-Bold").fontSize(10).fillColor(PLUM).text("Suggested next step: ", PAGE_MARGIN, doc.y, { continued: true });
+  doc.font("Helvetica").fontSize(10).fillColor(TEXT_PRIMARY).text(input.insights.aiNextStep);
+  doc.x = PAGE_MARGIN;
+  doc.y += 14;
+
+  if (input.insights.strongest.length > 0 || input.insights.weakest.length > 0) {
+    for (const s of input.insights.strongest) {
+      ensureSpace(doc, 16);
+      doc.font("Helvetica").fontSize(10).fillColor("#18A957").text(`+ Strong on: ${s.label} (${Math.round(s.averagePercent)}%)`, PAGE_MARGIN, doc.y, { width: contentWidth(doc) });
+      doc.x = PAGE_MARGIN;
+      doc.y += 4;
+    }
+    for (const w of input.insights.weakest) {
+      ensureSpace(doc, 16);
+      doc.font("Helvetica").fontSize(10).fillColor("#C0392B").text(`- Needs work on: ${w.label} (${Math.round(w.averagePercent)}%)`, PAGE_MARGIN, doc.y, { width: contentWidth(doc) });
+      doc.x = PAGE_MARGIN;
+      doc.y += 4;
+    }
+    doc.y += 10;
+  }
+
+  if (input.insights.byObjective.length > 0) {
+    sectionTitle(doc, "By learning objective", AMBER);
+    drawBarRows(
+      doc,
+      input.insights.byObjective.map((o) => ({ label: o.text, value: o.averagePercent })),
+      "Not enough graded, tagged questions yet."
+    );
+  }
+
+  if (input.insights.byDifficulty.length > 0) {
+    sectionTitle(doc, "By difficulty", AMBER);
+    drawBarRows(
+      doc,
+      input.insights.byDifficulty.map((d) => ({ label: d.difficulty.charAt(0).toUpperCase() + d.difficulty.slice(1), value: d.averagePercent })),
+      "Not enough graded questions yet."
+    );
+  }
+
+  if (input.insights.byTopic.length > 0) {
+    sectionTitle(doc, "By topic", AMBER);
+    drawBarRows(
+      doc,
+      input.insights.byTopic.map((t) => ({ label: t.topicName, value: t.averagePercent })),
+      "Not enough graded questions yet."
+    );
+  }
+
+  sectionTitle(doc, "Submission history", AMBER);
+  drawHistoryTable(doc, input.history);
+
+  drawFooters(doc);
+  return docToBuffer(doc);
+}
+
 function drawFooters(doc: PDFKit.PDFDocument) {
   const range = doc.bufferedPageRange();
   for (let i = range.start; i < range.start + range.count; i++) {
     doc.switchToPage(i);
     const y = doc.page.height - PAGE_MARGIN + 14;
+    // y sits deliberately inside the bottom margin whitespace (below the
+    // content boundary) - PDFKit's .text() auto-paginates whenever y exceeds
+    // page.height - margins.bottom, so left at its real value this silently
+    // appended a whole new blank page per line of footer text instead of
+    // drawing here. Zeroing the bottom margin just for these two draws lifts
+    // that check without affecting anything else on the page.
+    const originalBottomMargin = doc.page.margins.bottom;
+    doc.page.margins.bottom = 0;
     doc.moveTo(PAGE_MARGIN, y - 8).lineTo(doc.page.width - PAGE_MARGIN, y - 8).strokeColor(BORDER).lineWidth(1).stroke();
     doc.font("Helvetica").fontSize(8).fillColor(TEXT_MUTED).text("Generated with Eduwand", PAGE_MARGIN, y, { width: 200, lineBreak: false });
     doc.text(`Page ${i - range.start + 1} of ${range.count}`, doc.page.width - PAGE_MARGIN - 150, y, { width: 150, align: "right", lineBreak: false });
+    doc.page.margins.bottom = originalBottomMargin;
   }
 }
 

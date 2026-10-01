@@ -22,6 +22,10 @@ import { BlinkingMascot } from "../../components/BlinkingMascot";
 import { StudentAvatar } from "../../components/StudentAvatar";
 import { capitalizeFirst } from "../../utils/text";
 import { BOARDS } from "../../constants/boards";
+import { rules } from "../../utils/validation";
+import { useFormErrors } from "../../hooks/useForm";
+import { FieldError } from "../../components/FieldError";
+import { PasswordChecklist } from "../../components/PasswordChecklist";
 
 type AuthTab = "staff" | "student";
 type StaffMode = "login" | "forgot-request" | "forgot-reset" | "signup";
@@ -74,6 +78,7 @@ export function AuthScreen() {
   const [resetEmail, setResetEmail] = useState("");
   const [resetCode, setResetCode] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [isResetLoading, setIsResetLoading] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
   const [resetMessage, setResetMessage] = useState<string | null>(null);
@@ -86,6 +91,7 @@ export function AuthScreen() {
   const [signupFullName, setSignupFullName] = useState("");
   const [signupEmail, setSignupEmail] = useState("");
   const [signupPassword, setSignupPassword] = useState("");
+  const [showSignupPassword, setShowSignupPassword] = useState(false);
   const [signupWorkspaceName, setSignupWorkspaceName] = useState("");
   const [signupBoard, setSignupBoard] = useState<string>(BOARDS[0]);
   const [boardConfirmed, setBoardConfirmed] = useState(false);
@@ -106,6 +112,25 @@ export function AuthScreen() {
   const [pickerToken, setPickerToken] = useState<string | null>(null);
   const [resendCooldown, setResendCooldown] = useState(0);
   const codeInputs = useRef<Array<TextInput | null>>([]);
+
+  // Inline validation (rules mirror backend/src/lib/validation.ts). The sign-in
+  // password is only required, not strength-checked - existing accounts may
+  // pre-date the current password rules.
+  const loginV = useFormErrors({ email, password }, { email: rules.email(), password: rules.required("Password") });
+  const resetRequestV = useFormErrors({ resetEmail }, { resetEmail: rules.email() });
+  const resetV = useFormErrors({ resetCode, newPassword }, { resetCode: rules.otp(), newPassword: rules.newPassword("New password") });
+  const signupV = useFormErrors(
+    { signupFullName, signupEmail, signupPassword, signupWorkspaceName },
+    {
+      signupFullName: rules.personName("Full name"),
+      signupEmail: rules.email(),
+      signupPassword: rules.newPassword(),
+      signupWorkspaceName: rules.label("Workspace name", false, 60),
+    }
+  );
+  const [boardError, setBoardError] = useState(false);
+  const signupCodeV = useFormErrors({ signupCode }, { signupCode: rules.otp() });
+  const studentEmailV = useFormErrors({ studentEmail }, { studentEmail: rules.email() });
 
   useEffect(() => {
     Animated.parallel([
@@ -192,7 +217,7 @@ export function AuthScreen() {
           accessibilityRole="button"
         >
           <Text style={authTab === "staff" ? [styles.authToggleActiveText, { color: colors.accent }] : [styles.authToggleText, { color: colors.textMuted }]}>
-            Login
+            Teacher login
           </Text>
         </Pressable>
         <Pressable
@@ -212,10 +237,11 @@ export function AuthScreen() {
   // --- Staff login handlers ---
 
   async function handleRequestReset() {
+    if (!resetRequestV.submit()) return;
     setIsResetLoading(true);
     setResetError(null);
     try {
-      const result = await api.requestPasswordReset(resetEmail);
+      const result = await api.requestPasswordReset(resetEmail.trim());
       setDevResetOtp(result.devOtp ?? null);
       setStaffMode("forgot-reset");
     } catch (err) {
@@ -226,10 +252,11 @@ export function AuthScreen() {
   }
 
   async function handleResetPassword() {
+    if (!resetV.submit()) return;
     setIsResetLoading(true);
     setResetError(null);
     try {
-      await api.resetPassword(resetEmail, resetCode, newPassword);
+      await api.resetPassword(resetEmail.trim(), resetCode.trim(), newPassword);
       setResetMessage("Password updated. You can log in now.");
       setStaffMode("login");
       setPassword("");
@@ -258,6 +285,9 @@ export function AuthScreen() {
   }
 
   async function handleSignup() {
+    const boardOk = boardConfirmed;
+    setBoardError(!boardOk);
+    if (!signupV.submit() || !boardOk) return;
     try {
       const devCode = await requestTeacherSignupOtp({
         fullName: signupFullName.trim(),
@@ -275,15 +305,13 @@ export function AuthScreen() {
   }
 
   async function handleVerifySignup() {
+    if (!signupCodeV.submit()) return;
     try {
       await verifyTeacherSignupOtp(signupEmail.trim(), signupCode);
     } catch {
       // Shown via the auth context error.
     }
   }
-
-  const signupValid =
-    signupFullName.trim().length >= 2 && signupEmail.includes("@") && signupPassword.length >= 8 && boardConfirmed;
 
   // --- Student login handlers ---
 
@@ -301,6 +329,7 @@ export function AuthScreen() {
   }
 
   async function handleRequestOtp() {
+    if (!studentEmailV.submit()) return;
     try {
       const code = await requestStudentOtp(studentEmail.trim());
       setDevOtp(code ?? null);
@@ -346,9 +375,9 @@ export function AuthScreen() {
 
   const footerButton =
     authTab === "staff" && staffMode === "login"
-      ? { label: "Continue", onPress: () => login(email, password), disabled: false }
+      ? { label: "Continue", onPress: () => { if (loginV.submit()) login(email.trim(), password); }, disabled: false }
       : authTab === "student" && studentStep === "email"
-      ? { label: "Send code", onPress: handleRequestOtp, disabled: !studentEmail.includes("@") }
+      ? { label: "Send code", onPress: handleRequestOtp, disabled: false }
       : authTab === "student" && studentStep === "code"
       ? { label: "Verify and continue", onPress: handleVerifyOtp, disabled: !codeComplete }
       : null;
@@ -384,7 +413,7 @@ export function AuthScreen() {
                   >
                     <Ionicons name="arrow-back" size={19} color={colors.textPrimary} />
                   </Pressable>
-                  <Text style={[styles.simplePill, { color: colors.accent }]}>Secure reset</Text>
+                  {staffMode !== "signup" ? <Text style={[styles.simplePill, { color: colors.accent }]}>Secure reset</Text> : null}
                 </View>
               ) : (
                 <View style={styles.hero}>
@@ -447,7 +476,7 @@ export function AuthScreen() {
                           styles.inputRow,
                           {
                             backgroundColor: colors.surface,
-                            borderColor: emailFocused ? colors.accent : colors.border,
+                            borderColor: loginV.error("email") ? colors.danger : emailFocused ? colors.accent : colors.border,
                           },
                         ]}
                       >
@@ -456,11 +485,17 @@ export function AuthScreen() {
                           placeholder="you@schoolname.com"
                           placeholderTextColor={colors.textMuted}
                           autoCapitalize="none"
+                          autoCorrect={false}
+                          autoComplete="email"
                           keyboardType="email-address"
+                          maxLength={254}
                           value={email}
                           onChangeText={setEmail}
                           onFocus={() => setEmailFocused(true)}
-                          onBlur={() => setEmailFocused(false)}
+                          onBlur={() => {
+                            setEmailFocused(false);
+                            loginV.blur("email");
+                          }}
                         />
                         {email.length > 0 && (
                           <Pressable onPress={() => setEmail("")} hitSlop={8} style={styles.clearButton}>
@@ -468,6 +503,7 @@ export function AuthScreen() {
                           </Pressable>
                         )}
                       </View>
+                      <FieldError message={loginV.error("email")} />
 
                       <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Password</Text>
                       <View
@@ -475,19 +511,26 @@ export function AuthScreen() {
                           styles.inputRow,
                           {
                             backgroundColor: colors.surface,
-                            borderColor: passwordFocused ? colors.accent : colors.border,
+                            borderColor: loginV.error("password") ? colors.danger : passwordFocused ? colors.accent : colors.border,
                           },
                         ]}
                       >
                         <TextInput
                           style={[styles.input, { color: colors.textPrimary }]}
-                          placeholder="Password 1234"
+                          placeholder="Your password"
                           placeholderTextColor={colors.textMuted}
                           secureTextEntry={!showPassword}
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          autoComplete="current-password"
+                          maxLength={128}
                           value={password}
                           onChangeText={setPassword}
                           onFocus={() => setPasswordFocused(true)}
-                          onBlur={() => setPasswordFocused(false)}
+                          onBlur={() => {
+                            setPasswordFocused(false);
+                            loginV.blur("password");
+                          }}
                         />
                         <Pressable
                           style={({ pressed }) => [styles.eyeButton, pressed && { opacity: pressedOpacity }]}
@@ -499,6 +542,7 @@ export function AuthScreen() {
                           <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={20} color={colors.textMuted} />
                         </Pressable>
                       </View>
+                      <FieldError message={loginV.error("password")} />
 
                       <Pressable hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} onPress={() => setStaffMode("forgot-request")} style={styles.forgotPasswordButton}>
                         <Text style={[styles.forgotPasswordText, { color: colors.accent }]}>Forgot password?</Text>
@@ -554,18 +598,23 @@ export function AuthScreen() {
                   {staffMode === "forgot-request" ? (
                     <View style={[styles.formContainer, styles.authCard, { backgroundColor: colors.surface }]}>
                       <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Email</Text>
-                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: resetRequestV.error("resetEmail") ? colors.danger : colors.border }]}>
                         <Ionicons name="mail-outline" size={20} color={colors.accent} style={styles.inputIcon} />
                         <TextInput
                           style={[styles.input, { color: colors.textPrimary }]}
                           placeholder="Enter your account email"
                           placeholderTextColor={colors.textMuted}
                           autoCapitalize="none"
+                          autoCorrect={false}
+                          autoComplete="email"
                           keyboardType="email-address"
+                          maxLength={254}
                           value={resetEmail}
                           onChangeText={setResetEmail}
+                          onBlur={() => resetRequestV.blur("resetEmail")}
                         />
                       </View>
+                      <FieldError message={resetRequestV.error("resetEmail")} />
 
                       {resetError ? (
                         <View style={styles.errorRow}>
@@ -576,7 +625,7 @@ export function AuthScreen() {
 
                       <Pressable
                         onPress={handleRequestReset}
-                        disabled={isResetLoading || !resetEmail}
+                        disabled={isResetLoading}
                         accessibilityRole="button"
                         style={[styles.saveButton, { backgroundColor: colors.accent }, isResetLoading && styles.buttonDisabled]}
                       >
@@ -592,31 +641,50 @@ export function AuthScreen() {
                   {staffMode === "forgot-reset" ? (
                     <View style={[styles.formContainer, styles.authCard, { backgroundColor: colors.surface }]}>
                       <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Reset code</Text>
-                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: resetV.error("resetCode") ? colors.danger : colors.border }]}>
                         <Ionicons name="key-outline" size={20} color={colors.accent} style={styles.inputIcon} />
                         <TextInput
                           style={[styles.input, { color: colors.textPrimary }]}
                           placeholder="6-digit code"
                           placeholderTextColor={colors.textMuted}
                           keyboardType="number-pad"
+                          autoComplete="one-time-code"
                           maxLength={6}
                           value={resetCode}
-                          onChangeText={setResetCode}
+                          onChangeText={(v) => setResetCode(v.replace(/\D/g, ""))}
+                          onBlur={() => resetV.blur("resetCode")}
                         />
                       </View>
+                      <FieldError message={resetV.error("resetCode")} />
 
                       <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>New password</Text>
-                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: resetV.error("newPassword") ? colors.danger : colors.border }]}>
                         <Ionicons name="lock-closed-outline" size={20} color={colors.accent} style={styles.inputIcon} />
                         <TextInput
                           style={[styles.input, { color: colors.textPrimary }]}
-                          placeholder="At least 8 characters"
+                          placeholder="8-64 characters, letters and numbers"
                           placeholderTextColor={colors.textMuted}
-                          secureTextEntry
+                          secureTextEntry={!showNewPassword}
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          autoComplete="new-password"
+                          maxLength={64}
                           value={newPassword}
                           onChangeText={setNewPassword}
+                          onBlur={() => resetV.blur("newPassword")}
                         />
+                        <Pressable
+                          style={({ pressed }) => [styles.eyeButton, pressed && { opacity: pressedOpacity }]}
+                          onPress={() => setShowNewPassword((v) => !v)}
+                          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                          accessibilityLabel={showNewPassword ? "Hide password" : "Show password"}
+                          accessibilityRole="button"
+                        >
+                          <Ionicons name={showNewPassword ? "eye-off-outline" : "eye-outline"} size={20} color={colors.textMuted} />
+                        </Pressable>
                       </View>
+                      <PasswordChecklist password={newPassword} colors={colors} />
+                      <FieldError message={resetV.error("newPassword")} />
 
                       {resetError ? (
                         <View style={styles.errorRow}>
@@ -627,7 +695,7 @@ export function AuthScreen() {
 
                       <Pressable
                         onPress={handleResetPassword}
-                        disabled={isResetLoading || resetCode.length < 6 || newPassword.length < 8}
+                        disabled={isResetLoading}
                         accessibilityRole="button"
                         style={[styles.saveButton, { backgroundColor: colors.accent }, isResetLoading && styles.buttonDisabled]}
                       >
@@ -649,17 +717,32 @@ export function AuthScreen() {
                   {staffMode === "signup" && signupStep === "code" ? (
                     <View style={[styles.formContainer, styles.authCard, { backgroundColor: colors.surface }]}>
                       <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Verification code</Text>
-                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: signupCodeV.error("signupCode") ? colors.danger : colors.border }]}>
                         <Ionicons name="keypad-outline" size={20} color={colors.accent} style={styles.inputIcon} />
                         <TextInput
                           style={[styles.input, { color: colors.textPrimary, letterSpacing: 6 }]}
                           placeholder="000000"
                           placeholderTextColor={colors.textMuted}
                           keyboardType="number-pad"
+                          autoComplete="one-time-code"
                           maxLength={CODE_LENGTH}
                           value={signupCode}
                           onChangeText={(v) => setSignupCode(v.replace(/[^0-9]/g, ""))}
+                          onBlur={() => signupCodeV.blur("signupCode")}
                         />
+                      </View>
+                      <FieldError message={signupCodeV.error("signupCode")} />
+
+                      {/* Deliberately shown to everyone, not just accounts that already
+                          exist - the request-otp response can't reveal that without
+                          letting this screen be used to check who's registered (see
+                          backend/src/routes/auth-signup.ts). A code that never arrives
+                          is the one symptom an existing account actually has here. */}
+                      <View style={styles.signupCodeHintRow}>
+                        <Ionicons name="information-circle-outline" size={14} color={colors.textMuted} />
+                        <Text style={[styles.signupCodeHintText, { color: colors.textMuted }]}>
+                          Already have an account with this email? We've sent a sign-in reminder there instead of a code - check your inbox.
+                        </Text>
                       </View>
 
                       {error ? (
@@ -671,9 +754,9 @@ export function AuthScreen() {
 
                       <Pressable
                         onPress={handleVerifySignup}
-                        disabled={isLoading || signupCode.length < CODE_LENGTH}
+                        disabled={isLoading}
                         accessibilityRole="button"
-                        style={[styles.saveButton, { backgroundColor: colors.accent }, (isLoading || signupCode.length < CODE_LENGTH) && styles.buttonDisabled]}
+                        style={[styles.saveButton, { backgroundColor: colors.accent }, isLoading && styles.buttonDisabled]}
                       >
                         {isLoading ? (
                           <ActivityIndicator color={colors.accentOn} />
@@ -700,55 +783,84 @@ export function AuthScreen() {
                   {staffMode === "signup" && signupStep === "form" ? (
                     <View style={[styles.formContainer, styles.authCard, { backgroundColor: colors.surface }]}>
                       <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Full name</Text>
-                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: signupV.error("signupFullName") ? colors.danger : colors.border }]}>
                         <Ionicons name="person-outline" size={20} color={colors.accent} style={styles.inputIcon} />
                         <TextInput
                           style={[styles.input, { color: colors.textPrimary }]}
                           placeholder="Your full name"
                           placeholderTextColor={colors.textMuted}
+                          autoCapitalize="words"
+                          autoComplete="name"
+                          maxLength={80}
                           value={signupFullName}
                           onChangeText={setSignupFullName}
+                          onBlur={() => signupV.blur("signupFullName")}
                         />
                       </View>
+                      <FieldError message={signupV.error("signupFullName")} />
 
                       <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Email</Text>
-                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: signupV.error("signupEmail") ? colors.danger : colors.border }]}>
                         <Ionicons name="mail-outline" size={20} color={colors.accent} style={styles.inputIcon} />
                         <TextInput
                           style={[styles.input, { color: colors.textPrimary }]}
                           placeholder="you@example.com"
                           placeholderTextColor={colors.textMuted}
                           autoCapitalize="none"
+                          autoCorrect={false}
+                          autoComplete="email"
                           keyboardType="email-address"
+                          maxLength={254}
                           value={signupEmail}
                           onChangeText={setSignupEmail}
+                          onBlur={() => signupV.blur("signupEmail")}
                         />
                       </View>
+                      <FieldError message={signupV.error("signupEmail")} />
 
                       <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Password</Text>
-                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: signupV.error("signupPassword") ? colors.danger : colors.border }]}>
                         <Ionicons name="lock-closed-outline" size={20} color={colors.accent} style={styles.inputIcon} />
                         <TextInput
                           style={[styles.input, { color: colors.textPrimary }]}
-                          placeholder="At least 8 characters"
+                          placeholder="8-64 characters, letters and numbers"
                           placeholderTextColor={colors.textMuted}
-                          secureTextEntry
+                          secureTextEntry={!showSignupPassword}
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          autoComplete="new-password"
+                          maxLength={64}
                           value={signupPassword}
                           onChangeText={setSignupPassword}
+                          onBlur={() => signupV.blur("signupPassword")}
                         />
+                        <Pressable
+                          style={({ pressed }) => [styles.eyeButton, pressed && { opacity: pressedOpacity }]}
+                          onPress={() => setShowSignupPassword((v) => !v)}
+                          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                          accessibilityLabel={showSignupPassword ? "Hide password" : "Show password"}
+                          accessibilityRole="button"
+                        >
+                          <Ionicons name={showSignupPassword ? "eye-off-outline" : "eye-outline"} size={20} color={colors.textMuted} />
+                        </Pressable>
                       </View>
+                      <PasswordChecklist password={signupPassword} colors={colors} />
+                      <FieldError message={signupV.error("signupPassword")} />
 
                       <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Workspace name (optional)</Text>
-                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: signupV.error("signupWorkspaceName") ? colors.danger : colors.border }]}>
                         <Ionicons name="home-outline" size={20} color={colors.accent} style={styles.inputIcon} />
                         <TextInput
                           style={[styles.input, { color: colors.textPrimary }]}
                           placeholder={signupFullName ? `${signupFullName}'s Classroom` : "e.g. My Classroom"}
                           placeholderTextColor={colors.textMuted}
+                          maxLength={60}
                           value={signupWorkspaceName}
                           onChangeText={setSignupWorkspaceName}
+                          onBlur={() => signupV.blur("signupWorkspaceName")}
                         />
                       </View>
+                      <FieldError message={signupV.error("signupWorkspaceName")} />
 
                       <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Board</Text>
                       <View style={styles.quickLoginGrid}>
@@ -778,7 +890,10 @@ export function AuthScreen() {
                       </View>
 
                       <Pressable
-                        onPress={() => setBoardConfirmed((v) => !v)}
+                        onPress={() => {
+                          setBoardConfirmed((v) => !v);
+                          setBoardError(false);
+                        }}
                         style={[styles.errorRow, { marginTop: 14 }]}
                         accessibilityRole="checkbox"
                         accessibilityState={{ checked: boardConfirmed }}
@@ -792,6 +907,7 @@ export function AuthScreen() {
                           I understand the board ({signupBoard}) is permanent and can't be changed later.
                         </Text>
                       </Pressable>
+                      <FieldError message={boardError && !boardConfirmed ? "Please confirm the board to continue" : null} />
 
                       {error ? (
                         <View style={styles.errorRow}>
@@ -802,9 +918,9 @@ export function AuthScreen() {
 
                       <Pressable
                         onPress={handleSignup}
-                        disabled={isLoading || !signupValid}
+                        disabled={isLoading}
                         accessibilityRole="button"
-                        style={[styles.saveButton, { backgroundColor: colors.accent }, (isLoading || !signupValid) && styles.buttonDisabled]}
+                        style={[styles.saveButton, { backgroundColor: colors.accent }, isLoading && styles.buttonDisabled]}
                       >
                         {isLoading ? (
                           <ActivityIndicator color={colors.accentOn} />
@@ -820,7 +936,7 @@ export function AuthScreen() {
                   {studentStep === "email" ? (
                     <View style={styles.form}>
                       <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Email</Text>
-                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: studentEmailV.error("studentEmail") ? colors.danger : colors.border }]}>
                         <Ionicons name="mail-outline" size={20} color={colors.accent} style={styles.inputIcon} />
                         <TextInput
                           style={[styles.input, { color: colors.textPrimary }]}
@@ -828,12 +944,16 @@ export function AuthScreen() {
                           placeholderTextColor={colors.textMuted}
                           autoCapitalize="none"
                           autoCorrect={false}
+                          autoComplete="email"
                           keyboardType="email-address"
+                          maxLength={254}
                           value={studentEmail}
                           onChangeText={setStudentEmail}
+                          onBlur={() => studentEmailV.blur("studentEmail")}
                         />
                         {studentEmail ? <Pressable onPress={() => setStudentEmail("")} hitSlop={8}><Ionicons name="close-circle" size={18} color={colors.textMuted} /></Pressable> : null}
                       </View>
+                      <FieldError message={studentEmailV.error("studentEmail")} />
 
                       <ErrorMessage message={error} />
                     </View>
@@ -1121,6 +1241,18 @@ const styles = StyleSheet.create({
     fontFamily: typography.semiBold,
     fontSize: 10,
     letterSpacing: 0.5,
+  },
+  signupCodeHintRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    marginTop: 10,
+  },
+  signupCodeHintText: {
+    flex: 1,
+    fontFamily: typography.medium,
+    fontSize: 12,
+    lineHeight: 17,
   },
   quickLoginSection: {
     marginTop: 28,

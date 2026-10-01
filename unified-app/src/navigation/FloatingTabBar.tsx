@@ -34,7 +34,7 @@ export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssist
   const scrollScale = useTabBarScale();
   const resetTabBarScroll = useTabBarScrollReset();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
-  const { isFlying, isMascotDocked, welcomeCount, completeWelcome, finishWelcomeSequence, setDockCoordinates } = useWelcomeMascot();
+  const { isWelcomeActive, isFlying, isMascotDocked, completeWelcome, finishWelcomeSequence, setDockCoordinates } = useWelcomeMascot();
   const aiButtonRef = useRef<View>(null);
 
   // A custom tabBar has to honour tabBarHideOnKeyboard itself (only the
@@ -56,8 +56,13 @@ export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssist
   const spotlightOpacity = useRef(new Animated.Value(0)).current;
   const badgeScale = useRef(new Animated.Value(0.92)).current;
   const badgeOpacity = useRef(new Animated.Value(0)).current;
-  const lastSpotlightWelcomeCount = useRef(0);
+  // The "I'm always here to help" badge is independent of the one-time,
+  // new-registration-only welcome sequence - it shows once per app session
+  // (i.e. once per time this bar mounts) for every teacher, whether or not
+  // the mascot intro ever played.
+  const hasShownSpotlightRef = useRef(false);
   const spotlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const spotlightShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const badgeTranslateY = badgeScale.interpolate({
     inputRange: [0.92, 1],
@@ -182,7 +187,59 @@ export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssist
     });
   }, [setDockCoordinates]);
 
-  const dockScale = useRef(new Animated.Value(isMascotDocked ? 1 : 0)).current;
+  // Starts visible (1) - the button is a permanent nav element, not
+  // something that waits to be "revealed". Only a genuinely new
+  // registration's fly-in briefly drives this down to 0 and back up as a
+  // flourish (see the effect below); a returning teacher never touches it.
+  const dockScale = useRef(new Animated.Value(1)).current;
+
+  // Shows the "I'm always here to help" badge - once per app session
+  // (hasShownSpotlightRef), for every teacher regardless of whether the
+  // (new-registration-only) fly-in intro ever played this session.
+  const showSpotlight = useCallback(
+    (delay: number) => {
+      if (hasShownSpotlightRef.current) return;
+      hasShownSpotlightRef.current = true;
+
+      const t = setTimeout(() => {
+        isDismissingSpotlightRef.current = false;
+        setIsSpotlightVisible(true);
+        spotlightOpacity.setValue(0);
+        badgeOpacity.setValue(0);
+        badgeScale.setValue(0.92);
+        badgeExit.setValue(0);
+
+        Animated.parallel([
+          Animated.timing(spotlightOpacity, {
+            toValue: 1,
+            duration: 300,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(badgeOpacity, {
+            toValue: 1,
+            duration: 240,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(badgeScale, {
+            toValue: 1,
+            duration: 260,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+          }),
+        ]).start();
+
+        // Auto-hide after 5.5 seconds (5-6 seconds)
+        spotlightTimerRef.current = setTimeout(() => {
+          dismissSpotlight();
+        }, 5500);
+      }, delay);
+
+      spotlightShowTimerRef.current = t;
+    },
+    [spotlightOpacity, badgeOpacity, badgeScale, badgeExit, dismissSpotlight]
+  );
 
   useEffect(() => {
     if (isMascotDocked) {
@@ -194,56 +251,41 @@ export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssist
         useNativeDriver: true,
       }).start();
 
-      // Trigger spotlight backdrop & funny message badge once docked
-      if (welcomeCount > 0 && lastSpotlightWelcomeCount.current !== welcomeCount) {
-        lastSpotlightWelcomeCount.current = welcomeCount;
-
-        const t = setTimeout(() => {
-          isDismissingSpotlightRef.current = false;
-          setIsSpotlightVisible(true);
-          spotlightOpacity.setValue(0);
-          badgeOpacity.setValue(0);
-          badgeScale.setValue(0.92);
-          badgeExit.setValue(0);
-
-          Animated.parallel([
-            Animated.timing(spotlightOpacity, {
-              toValue: 1,
-              duration: 300,
-              easing: Easing.out(Easing.quad),
-              useNativeDriver: true,
-            }),
-            Animated.timing(badgeOpacity, {
-              toValue: 1,
-              duration: 240,
-              easing: Easing.out(Easing.quad),
-              useNativeDriver: true,
-            }),
-            Animated.timing(badgeScale, {
-              toValue: 1,
-              duration: 260,
-              easing: Easing.out(Easing.quad),
-              useNativeDriver: true,
-            }),
-          ]).start();
-
-          // Auto-hide after 5.5 seconds (5-6 seconds)
-          spotlightTimerRef.current = setTimeout(() => {
-            dismissSpotlight();
-          }, 5500);
-        }, 320);
-
-        return () => {
-          clearTimeout(t);
-          if (spotlightTimerRef.current) {
-            clearTimeout(spotlightTimerRef.current);
-          }
-        };
-      }
-    } else {
+      // Post-fly-in beat, for a new registration whose intro just landed.
+      showSpotlight(320);
+    } else if (isFlying) {
+      // Hide the static button icon only while the flying mascot animates in
+      // on top of it - NOT whenever isMascotDocked simply hasn't been set
+      // true yet, which is the steady state for a returning teacher (who
+      // never plays the intro at all) and must leave the button visible.
       dockScale.setValue(0);
     }
-  }, [isMascotDocked, welcomeCount, dockScale, spotlightOpacity, badgeOpacity, badgeScale, badgeExit, dismissSpotlight]);
+  }, [isMascotDocked, isFlying, dockScale, showSpotlight]);
+
+  // A returning teacher never plays the fly-in (isMascotDocked never flips),
+  // so the badge gets its own independent one-shot trigger here. The delay
+  // gives a genuinely new registration's startWelcome()/fly-in a head start -
+  // if that's already under way (or just landed) by the time this fires,
+  // showSpotlight's internal hasShownSpotlightRef guard makes this a no-op.
+  useEffect(() => {
+    // No AI assistant on this tab bar at all (e.g. a student's) - nothing to
+    // point the badge at.
+    if (!onAiAssistPress) return;
+    const t = setTimeout(() => {
+      if (!isWelcomeActive && !isFlying && !isMascotDocked) {
+        showSpotlight(0);
+      }
+    }, 900);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onAiAssistPress]);
+
+  useEffect(() => {
+    return () => {
+      if (spotlightShowTimerRef.current) clearTimeout(spotlightShowTimerRef.current);
+      if (spotlightTimerRef.current) clearTimeout(spotlightTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     const t1 = setTimeout(measureAiButton, 60);
@@ -456,16 +498,11 @@ export function FloatingTabBar({ state, descriptors, navigation, icons, aiAssist
           >
             <Pressable
               onPress={onAiAssistPress}
-              style={({ pressed }) => [
-                styles.aiAssistPressable,
-                pressed && { opacity: pressedOpacity },
-                !isMascotDocked && { opacity: 0 },
-              ]}
-              disabled={!isMascotDocked}
+              style={({ pressed }) => [styles.aiAssistPressable, pressed && { opacity: pressedOpacity }]}
               accessibilityRole="button"
               accessibilityLabel={`Open ${AI_ASSISTANT_NAME}`}
             >
-              {aiAssistIcon && isMascotDocked ? (
+              {aiAssistIcon ? (
                 <Animated.View
                   style={[
                     styles.aiAssistIcon,

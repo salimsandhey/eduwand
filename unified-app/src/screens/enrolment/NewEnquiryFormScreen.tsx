@@ -9,6 +9,9 @@ import { Screen } from "../../components/Screen";
 import { DatePicker } from "../../components/DatePicker";
 import { ProfilePhotoPicker, PickedPhoto } from "../../components/ProfilePhotoPicker";
 import { DynamicFormFields } from "../../components/DynamicFormFields";
+import { FieldError } from "../../components/FieldError";
+import { useFormErrors } from "../../hooks/useForm";
+import { rules, phoneInput } from "../../utils/validation";
 import { api, EnquirySource, GuardianRelation, PossibleDuplicate, ClassSection, FormField } from "../../api/client";
 import { capitalizeFirst, formatEnumLabel } from "../../utils/text";
 
@@ -66,6 +69,19 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
     return options;
   }, [classSections]);
 
+  // Rules mirror backend/src/lib/validation.ts; field names match the API's.
+  const v = useFormErrors(
+    { contactName, contactPhone, contactEmail, studentName, studentDateOfBirth, gradeInterest },
+    {
+      contactName: rules.personName("Contact name"),
+      contactPhone: rules.phone(true, "Phone number"),
+      contactEmail: rules.email(false, "Email"),
+      studentName: rules.personName("Student name", false),
+      studentDateOfBirth: rules.dateOfBirth("Date of birth", 0, false),
+      gradeInterest: rules.label("Grade of interest", false, 60),
+    }
+  );
+
   const [nameFocused, setNameFocused] = useState(false);
   const [phoneFocused, setPhoneFocused] = useState(false);
   const [emailFocused, setEmailFocused] = useState(false);
@@ -90,20 +106,20 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
 
   async function save() {
     if (!accessToken) return;
-    if (!contactName || !contactPhone) {
-      setError("Contact name and phone are required");
+    if (!v.submit()) {
+      setError("Please fix the highlighted fields");
       return;
     }
     setIsSaving(true);
     setError(null);
     try {
       const res = await api.createEnquiry(accessToken, {
-        contactName,
-        contactPhone,
-        contactEmail: contactEmail || undefined,
+        contactName: contactName.trim(),
+        contactPhone: contactPhone.trim(),
+        contactEmail: contactEmail.trim() || undefined,
         source,
-        gradeInterest: gradeInterest || undefined,
-        studentName: studentName || undefined,
+        gradeInterest: gradeInterest.trim() || undefined,
+        studentName: studentName.trim() || undefined,
         studentDateOfBirth: studentDateOfBirth || undefined,
         guardianRelation: guardianRelation ?? undefined,
         consentCaptured,
@@ -126,7 +142,8 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
         navigation.replace("EnquiryDetail", { enquiryId });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save enquiry");
+      if (v.applyServerError(err)) setError("Please fix the highlighted fields");
+      else setError(err instanceof Error ? err.message : "Failed to save enquiry");
     } finally {
       setIsSaving(false);
     }
@@ -175,7 +192,7 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
           <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Student details</Text>
 
           <Text style={[styles.label, { color: colors.textSecondary }]}>Student name (optional)</Text>
-          <View style={[styles.inputRow, { backgroundColor: colors.surfaceRaised, borderColor: studentNameFocused ? colors.accent : colors.border }]}>
+          <View style={[styles.inputRow, { backgroundColor: colors.surfaceRaised, borderColor: v.error("studentName") ? colors.danger : studentNameFocused ? colors.accent : colors.border }]}>
             <Ionicons name="happy-outline" size={16} color={studentNameFocused ? colors.accent : colors.textMuted} style={styles.inputIcon} />
             <TextInput
               style={[styles.input, { color: colors.textPrimary }]}
@@ -183,13 +200,27 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
               placeholderTextColor={colors.textMuted}
               value={studentName}
               onChangeText={setStudentName}
+              autoCapitalize="words"
+              maxLength={80}
               onFocus={() => setStudentNameFocused(true)}
-              onBlur={() => setStudentNameFocused(false)}
+              onBlur={() => {
+                setStudentNameFocused(false);
+                v.blur("studentName");
+              }}
             />
           </View>
+          <FieldError message={v.error("studentName")} />
 
           <Text style={[styles.label, { color: colors.textSecondary }]}>Student date of birth (optional)</Text>
-          <DatePicker value={studentDateOfBirth} onChange={setStudentDateOfBirth} placeholder="Select date of birth" />
+          <DatePicker
+            value={studentDateOfBirth}
+            onChange={(d) => {
+              setStudentDateOfBirth(d);
+              v.blur("studentDateOfBirth");
+            }}
+            placeholder="Select date of birth"
+          />
+          <FieldError message={v.error("studentDateOfBirth")} />
         </View> : null}
 
         {}
@@ -197,7 +228,7 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
           <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Lead details</Text>
 
           <Text style={[styles.label, { color: colors.textSecondary }]}>Contact name</Text>
-          <View style={[styles.inputRow, { backgroundColor: colors.surfaceRaised, borderColor: nameFocused ? colors.accent : colors.border }]}>
+          <View style={[styles.inputRow, { backgroundColor: colors.surfaceRaised, borderColor: v.error("contactName") ? colors.danger : nameFocused ? colors.accent : colors.border }]}>
             <Ionicons name="person-outline" size={16} color={nameFocused ? colors.accent : colors.textMuted} style={styles.inputIcon} />
             <TextInput
               style={[styles.input, { color: colors.textPrimary }]}
@@ -205,28 +236,41 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
               placeholderTextColor={colors.textMuted}
               value={contactName}
               onChangeText={setContactName}
+              autoCapitalize="words"
+              autoComplete="name"
+              maxLength={80}
               onFocus={() => setNameFocused(true)}
-              onBlur={() => setNameFocused(false)}
+              onBlur={() => {
+                setNameFocused(false);
+                v.blur("contactName");
+              }}
             />
           </View>
+          <FieldError message={v.error("contactName")} />
 
           <Text style={[styles.label, { color: colors.textSecondary }]}>Phone number</Text>
-          <View style={[styles.inputRow, { backgroundColor: colors.surfaceRaised, borderColor: phoneFocused ? colors.accent : colors.border }]}>
+          <View style={[styles.inputRow, { backgroundColor: colors.surfaceRaised, borderColor: v.error("contactPhone") ? colors.danger : phoneFocused ? colors.accent : colors.border }]}>
             <Ionicons name="call-outline" size={16} color={phoneFocused ? colors.accent : colors.textMuted} style={styles.inputIcon} />
             <TextInput
               style={[styles.input, { color: colors.textPrimary }]}
-              placeholder="Contact phone number"
+              placeholder="10-digit mobile number"
               placeholderTextColor={colors.textMuted}
               value={contactPhone}
-              onChangeText={setContactPhone}
+              onChangeText={(t) => setContactPhone(phoneInput(t))}
               keyboardType="phone-pad"
+              autoComplete="tel"
+              maxLength={16}
               onFocus={() => setPhoneFocused(true)}
-              onBlur={() => setPhoneFocused(false)}
+              onBlur={() => {
+                setPhoneFocused(false);
+                v.blur("contactPhone");
+              }}
             />
           </View>
+          <FieldError message={v.error("contactPhone")} />
 
           <Text style={[styles.label, { color: colors.textSecondary }]}>Email address (optional)</Text>
-          <View style={[styles.inputRow, { backgroundColor: colors.surfaceRaised, borderColor: emailFocused ? colors.accent : colors.border }]}>
+          <View style={[styles.inputRow, { backgroundColor: colors.surfaceRaised, borderColor: v.error("contactEmail") ? colors.danger : emailFocused ? colors.accent : colors.border }]}>
             <Ionicons name="mail-outline" size={16} color={emailFocused ? colors.accent : colors.textMuted} style={styles.inputIcon} />
             <TextInput
               style={[styles.input, { color: colors.textPrimary }]}
@@ -236,10 +280,17 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
               onChangeText={setContactEmail}
               keyboardType="email-address"
               autoCapitalize="none"
+              autoCorrect={false}
+              autoComplete="email"
+              maxLength={254}
               onFocus={() => setEmailFocused(true)}
-              onBlur={() => setEmailFocused(false)}
+              onBlur={() => {
+                setEmailFocused(false);
+                v.blur("contactEmail");
+              }}
             />
           </View>
+          <FieldError message={v.error("contactEmail")} />
 
           <Text style={[styles.label, { color: colors.textSecondary }]}>Relationship to student (optional)</Text>
           <View style={styles.chipRow}>
@@ -310,7 +361,7 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
               })}
             </View>
           ) : (
-            <View style={[styles.inputRow, { backgroundColor: colors.surfaceRaised, borderColor: gradeFocused ? colors.accent : colors.border }]}>
+            <View style={[styles.inputRow, { backgroundColor: colors.surfaceRaised, borderColor: v.error("gradeInterest") ? colors.danger : gradeFocused ? colors.accent : colors.border }]}>
               <Ionicons name="school-outline" size={16} color={gradeFocused ? colors.accent : colors.textMuted} style={styles.inputIcon} />
               <TextInput
                 style={[styles.input, { color: colors.textPrimary }]}
@@ -318,11 +369,16 @@ export function NewEnquiryFormScreen({ navigation }: Props) {
                 placeholderTextColor={colors.textMuted}
                 value={gradeInterest}
                 onChangeText={setGradeInterest}
+                maxLength={60}
                 onFocus={() => setGradeFocused(true)}
-                onBlur={() => setGradeFocused(false)}
+                onBlur={() => {
+                  setGradeFocused(false);
+                  v.blur("gradeInterest");
+                }}
               />
             </View>
           )}
+          <FieldError message={v.error("gradeInterest")} />
         </View>
 
         {}

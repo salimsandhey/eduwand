@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Animated, Pressable, ScrollView, Share, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Animated, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import * as FileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../../theme/ThemeContext";
 import { useAuth } from "../../context/AuthContext";
 import { Screen } from "../../components/Screen";
 import { StudentAvatar } from "../../components/StudentAvatar";
-import { api, ClassAnalytics, ClassSection, StudentAnalytics } from "../../api/client";
+import { SheetModal } from "../../components/SheetModal";
+import { api, ClassAnalytics, ClassSection, StudentAnalytics, Topic } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
 import { useTabBarClearance } from "../../navigation/useTabBarClearance";
 import { useTabBarScrollHandler } from "../../navigation/TabBarScrollContext";
 
 type AnalyticsTab = "class" | "students";
+type ReportType = "performance" | "attainment";
 // Side padding of the page - full-bleed rows offset by exactly this much.
 const PAGE_PADDING = 24;
 const BAND_COLORS = ["#18A957", "#7C3AED", "#F97316"];
@@ -46,6 +50,19 @@ export function TeacherAnalyticsScreen() {
   const [isLoadingClasses, setIsLoadingClasses] = useState(true);
   const [isLoadingAnalytics, setIsLoadingAnalytics] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [isExporting, setIsExporting] = useState<"class-pdf" | "class-csv" | "student-pdf" | null>(null);
+
+  // Scope picker: null subject = "All subjects" (today's whole-class-section
+  // view). A subject narrows to it; a topic narrows further to just that
+  // topic. Attainment only makes sense once a subject/topic is chosen - see
+  // reportType below.
+  const [topics, setTopics] = useState<Topic[]>([]);
+  const [scopeSubject, setScopeSubject] = useState<string | null>(null);
+  const [scopeTopicId, setScopeTopicId] = useState<string | null>(null);
+  const [reportType, setReportType] = useState<ReportType>("performance");
+  const subjects = [...new Set(topics.map((t) => t.subject))];
+  const topicsInSubject = scopeSubject ? topics.filter((t) => t.subject === scopeSubject) : [];
 
   const loadClasses = useCallback(async () => {
     if (!accessToken) return;
@@ -67,21 +84,37 @@ export function TeacherAnalyticsScreen() {
   useEffect(() => {
     if (!accessToken || !classSectionId) return;
     let cancelled = false;
+    api
+      .listTopics(accessToken, { classSectionId })
+      .then((result) => { if (!cancelled) setTopics(result); })
+      .catch(() => { if (!cancelled) setTopics([]); });
+    return () => { cancelled = true; };
+  }, [accessToken, classSectionId]);
+
+  useEffect(() => {
+    if (!accessToken || !classSectionId) return;
+    let cancelled = false;
     setIsLoadingAnalytics(true);
     setError(null);
     api
-      .getClassAnalytics(accessToken, classSectionId)
+      .getClassAnalytics(accessToken, classSectionId, { subject: scopeSubject ?? undefined, topicId: scopeTopicId ?? undefined })
       .then((result) => { if (!cancelled) setAnalytics(result); })
       .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load analytics"); })
       .finally(() => { if (!cancelled) setIsLoadingAnalytics(false); });
     return () => { cancelled = true; };
-  }, [accessToken, classSectionId]);
+  }, [accessToken, classSectionId, scopeSubject, scopeTopicId]);
+
+  function selectScopeSubject(subject: string | null) {
+    setScopeSubject(subject);
+    setScopeTopicId(null);
+    if (subject === null) setReportType("performance");
+  }
 
   async function viewStudent(studentStubId: string) {
     if (!accessToken) return;
     setStudentDetailLoading(true);
     try {
-      setStudentDetail(await api.getStudentAnalytics(accessToken, studentStubId));
+      setStudentDetail(await api.getStudentAnalytics(accessToken, studentStubId, { subject: scopeSubject ?? undefined, topicId: scopeTopicId ?? undefined }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load student history");
     } finally {
@@ -90,18 +123,61 @@ export function TeacherAnalyticsScreen() {
   }
 
   const selectedClass = classSections.find((section) => section.id === classSectionId);
-  const bands = analytics ? {
-    above80: analytics.students.filter((student) => student.averageScore >= 80).length,
-    between60And80: analytics.students.filter((student) => student.averageScore >= 60 && student.averageScore < 80).length,
-    below60: analytics.students.filter((student) => student.averageScore < 60).length,
-  } : null;
+  // Uses the school's real ClassBandConfig thresholds (computed server-side)
+  // instead of a hardcoded 80/60 - see ai-analytics.ts.
+  const bands = analytics ? analytics.scoreBands : null;
   const weakestArea = analytics?.struggleAreas[0];
   const trendPercent = analytics ? weeklyTrendPercent(analytics.weeklyTrend) : null;
 
-  const shareAnalytics = useCallback(async () => {
-    if (!analytics || !selectedClass) return;
-    await Share.share({ message: `${capitalizeFirst(selectedClass.className)} ${capitalizeFirst(selectedClass.sectionName)} analytics\nClass average: ${scoreText(analytics.classAverage)}\nGraded submissions: ${analytics.submissionCount}` });
-  }, [analytics, selectedClass]);
+  // Downloads a file from the backend (PDF or CSV) and hands it to the
+  // native share sheet - same pattern AttainmentReportScreen's shareReport
+  // uses, so a report actually leaves the phone as a real file instead of a
+  // plain text blurb.
+  async function downloadAndShare(url: string, fileName: string, mimeType: string, dialogTitle: string) {
+    if (!accessToken) return;
+    setError(null);
+    try {
+      const fileUri = `${FileSystem.cacheDirectory}${fileName}`;
+      await FileSystem.downloadAsync(url, fileUri, { headers: { Authorization: `Bearer ${accessToken}` } });
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(fileUri, { mimeType, dialogTitle, UTI: mimeType === "application/pdf" ? "com.adobe.pdf" : "public.comma-separated-values-text" });
+      } else {
+        setError(`Report saved to ${fileUri}`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to export report");
+    }
+  }
+
+  async function exportClassPdf() {
+    if (!classSectionId || !selectedClass) return;
+    setShowExportMenu(false);
+    setIsExporting("class-pdf");
+    const scope = { subject: scopeSubject ?? undefined, topicId: scopeTopicId ?? undefined };
+    const fileName = `${selectedClass.className}-${selectedClass.sectionName}-performance-report.pdf`.replace(/\s+/g, "-");
+    await downloadAndShare(api.classPerformancePdfUrl(classSectionId, scope), fileName, "application/pdf", "Share performance report");
+    setIsExporting(null);
+  }
+
+  async function exportClassCsv() {
+    if (!classSectionId || !selectedClass) return;
+    setShowExportMenu(false);
+    setIsExporting("class-csv");
+    const scope = { subject: scopeSubject ?? undefined, topicId: scopeTopicId ?? undefined };
+    const fileName = `${selectedClass.className}-${selectedClass.sectionName}-performance-report.csv`.replace(/\s+/g, "-");
+    await downloadAndShare(api.classPerformanceCsvUrl(classSectionId, scope), fileName, "text/csv", "Share performance report (CSV)");
+    setIsExporting(null);
+  }
+
+  async function exportStudentPdf() {
+    if (!studentDetail) return;
+    setIsExporting("student-pdf");
+    const scope = { subject: scopeSubject ?? undefined, topicId: scopeTopicId ?? undefined };
+    const fileName = `${studentDetail.fullName}-performance-report.pdf`.replace(/\s+/g, "-");
+    await downloadAndShare(api.studentPerformancePdfUrl(studentDetail.studentStubId, scope), fileName, "application/pdf", "Share student performance report");
+    setIsExporting(null);
+  }
 
   return (
     <Screen edges={["top"]}>
@@ -114,9 +190,18 @@ export function TeacherAnalyticsScreen() {
       >
         <View style={styles.topRow}>
           <Text style={[styles.pageTitle, { color: colors.textPrimary }]}>Analytics</Text>
-          <Pressable style={({ pressed }) => [styles.shareButton, { borderColor: colors.accentSoftAlt }, pressed && { opacity: pressedOpacity }]} onPress={shareAnalytics} disabled={!analytics} accessibilityRole="button">
-            <Ionicons name="share-social-outline" size={16} color={colors.accent} />
-            <Text style={[styles.shareButtonText, { color: colors.accent }]}>Share</Text>
+          <Pressable
+            style={({ pressed }) => [styles.shareButton, { borderColor: colors.accentSoftAlt }, (!analytics || isExporting !== null || pressed) && { opacity: pressedOpacity }]}
+            onPress={() => setShowExportMenu(true)}
+            disabled={!analytics || isExporting !== null}
+            accessibilityRole="button"
+          >
+            {isExporting === "class-pdf" || isExporting === "class-csv" ? (
+              <ActivityIndicator size="small" color={colors.accent} />
+            ) : (
+              <Ionicons name="share-social-outline" size={16} color={colors.accent} />
+            )}
+            <Text style={[styles.shareButtonText, { color: colors.accent }]}>Export</Text>
           </Pressable>
         </View>
         <Text style={[styles.subtitle, { color: colors.textMuted }]}>Turn class performance into the next best teaching step.</Text>
@@ -125,7 +210,7 @@ export function TeacherAnalyticsScreen() {
 
         {classSections.length > 0 ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.classPicker}>{classSections.map((section) => {
           const active = classSectionId === section.id;
-          return <Pressable key={section.id} style={({ pressed }) => [styles.classChip, { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border }, pressed && { opacity: pressedOpacity }]} onPress={() => { setClassSectionId(section.id); setStudentDetail(null); setActiveTab("class"); }} accessibilityRole="button"><Text style={[styles.classChipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{capitalizeFirst(section.className)} {capitalizeFirst(section.sectionName)}</Text></Pressable>;
+          return <Pressable key={section.id} style={({ pressed }) => [styles.classChip, { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border }, pressed && { opacity: pressedOpacity }]} onPress={() => { setClassSectionId(section.id); setStudentDetail(null); setActiveTab("class"); setScopeSubject(null); setScopeTopicId(null); setReportType("performance"); }} accessibilityRole="button"><Text style={[styles.classChipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{capitalizeFirst(section.className)} {capitalizeFirst(section.sectionName)}</Text></Pressable>;
         })}</ScrollView> : null}
 
         {isLoadingClasses ? <ActivityIndicator color={colors.accent} style={styles.loader} /> : null}
@@ -137,9 +222,74 @@ export function TeacherAnalyticsScreen() {
           </View>
         ) : null}
 
+        {classSectionId && subjects.length > 0 ? (
+          <>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.classPicker}>
+              <Pressable style={({ pressed }) => [styles.classChip, { backgroundColor: scopeSubject === null ? colors.accent : colors.surfaceRaised, borderColor: scopeSubject === null ? colors.accent : colors.border }, pressed && { opacity: pressedOpacity }]} onPress={() => selectScopeSubject(null)} accessibilityRole="button">
+                <Text style={[styles.classChipText, { color: scopeSubject === null ? colors.accentOn : colors.textSecondary }]}>All subjects</Text>
+              </Pressable>
+              {subjects.map((subject) => {
+                const active = scopeSubject === subject;
+                return <Pressable key={subject} style={({ pressed }) => [styles.classChip, { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border }, pressed && { opacity: pressedOpacity }]} onPress={() => selectScopeSubject(subject)} accessibilityRole="button"><Text style={[styles.classChipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{capitalizeFirst(subject)}</Text></Pressable>;
+              })}
+            </ScrollView>
+            {scopeSubject && topicsInSubject.length > 0 ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.classPicker}>
+                <Pressable style={({ pressed }) => [styles.classChip, { backgroundColor: scopeTopicId === null ? colors.accent : colors.surfaceRaised, borderColor: scopeTopicId === null ? colors.accent : colors.border }, pressed && { opacity: pressedOpacity }]} onPress={() => setScopeTopicId(null)} accessibilityRole="button">
+                  <Text style={[styles.classChipText, { color: scopeTopicId === null ? colors.accentOn : colors.textSecondary }]}>All topics</Text>
+                </Pressable>
+                {topicsInSubject.map((topic) => {
+                  const active = scopeTopicId === topic.id;
+                  return <Pressable key={topic.id} style={({ pressed }) => [styles.classChip, { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border }, pressed && { opacity: pressedOpacity }]} onPress={() => setScopeTopicId(topic.id)} accessibilityRole="button"><Text style={[styles.classChipText, { color: active ? colors.accentOn : colors.textSecondary }]} numberOfLines={1}>{capitalizeFirst(topic.name)}</Text></Pressable>;
+                })}
+              </ScrollView>
+            ) : null}
+
+            <View style={[styles.reportTabs, { backgroundColor: colors.backgroundMuted }]}>
+              <Pressable style={[styles.reportTab, reportType === "performance" && { backgroundColor: colors.accent }]} onPress={() => setReportType("performance")} accessibilityRole="tab">
+                <Text style={[styles.reportTabText, { color: reportType === "performance" ? colors.accentOn : colors.textMuted }]}>Performance</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.reportTab, reportType === "attainment" && { backgroundColor: colors.accent }, scopeSubject === null && { opacity: 0.4 }]}
+                onPress={() => scopeSubject !== null && setReportType("attainment")}
+                disabled={scopeSubject === null}
+                accessibilityRole="tab"
+                accessibilityState={{ disabled: scopeSubject === null }}
+              >
+                <Text style={[styles.reportTabText, { color: reportType === "attainment" ? colors.accentOn : colors.textMuted }]}>Attainment</Text>
+              </Pressable>
+            </View>
+            {scopeSubject === null ? <Text style={[styles.reportMeta, { color: colors.textMuted, marginTop: -14, marginBottom: 14 }]}>Pick a subject or topic above to see its Attainment Report.</Text> : null}
+          </>
+        ) : null}
+
+        {reportType === "attainment" && scopeSubject !== null ? (
+          <Pressable
+            style={({ pressed }) => [styles.card, { backgroundColor: colors.surface, flexDirection: "row", alignItems: "center", gap: 12 }, cardShadow, pressed && { opacity: pressedOpacity }]}
+            onPress={() =>
+              scopeTopicId
+                ? navigation.navigate("AttainmentReport", { topicId: scopeTopicId })
+                : navigation.navigate("AttainmentReport", {
+                    classSectionId: classSectionId!,
+                    subject: scopeSubject,
+                    className: selectedClass?.className ?? "",
+                    sectionName: selectedClass?.sectionName ?? "",
+                  })
+            }
+            accessibilityRole="button"
+          >
+            <View style={[styles.metricIcon, { backgroundColor: colors.accentSoft }]}><Ionicons name="school-outline" size={18} color={colors.accent} /></View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Open Attainment Report</Text>
+              <Text style={[styles.reportMeta, { color: colors.textMuted }]}>What was taught, observed, and whether objectives met their benchmark.</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+          </Pressable>
+        ) : null}
+
         {isLoadingAnalytics ? <ActivityIndicator color={colors.accent} style={styles.loader} /> : null}
 
-        {!isLoadingAnalytics && analytics ? <>
+        {reportType === "performance" && !isLoadingAnalytics && analytics ? <>
           <ReportTabs activeTab={activeTab} onChange={setActiveTab} colors={colors} />
 
           {activeTab === "class" ? <>
@@ -194,10 +344,83 @@ export function TeacherAnalyticsScreen() {
             <Text style={[styles.studentHeading, { color: colors.textPrimary }]}>Student attainment</Text>
             {analytics.students.length === 0 ? <Text style={[styles.emptyText, { color: colors.textMuted }]}>No graded submissions yet for this class.</Text> : analytics.students.map((student) => <Pressable key={student.studentStubId} style={({ pressed }) => [styles.studentRow, { backgroundColor: colors.surface }, cardShadow, pressed && { opacity: pressedOpacity }]} onPress={() => viewStudent(student.studentStubId)} accessibilityRole="button"><StudentAvatar studentId={student.studentStubId} picture={student} size={36} /><View style={styles.studentCopy}><Text style={[styles.studentName, { color: colors.textPrimary }]}>{capitalizeFirst(student.fullName)}</Text><Text style={[styles.studentMeta, { color: colors.textMuted }]}>{student.submissionCount} submission{student.submissionCount === 1 ? "" : "s"}</Text></View><Text style={[styles.studentScore, { color: student.averageScore < 60 ? colors.danger : colors.accent }]}>{Math.round(student.averageScore)}%</Text><Ionicons name="chevron-forward" size={16} color={colors.textMuted} /></Pressable>)}
             {studentDetailLoading ? <ActivityIndicator color={colors.accent} style={styles.loader} /> : null}
-            {studentDetail ? <View style={[styles.detailCard, { backgroundColor: colors.surfaceRaised }, cardShadow]}><View style={styles.detailHeading}><Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{capitalizeFirst(studentDetail.fullName)}</Text><Pressable onPress={() => setStudentDetail(null)} hitSlop={8}><Ionicons name="close" size={18} color={colors.textMuted} /></Pressable></View>{studentDetail.history.length === 0 ? <Text style={[styles.emptyText, { color: colors.textMuted }]}>No graded submissions yet.</Text> : studentDetail.history.map((history, index) => <View key={`${history.assignmentTitle}-${index}`} style={styles.historyRow}><Text style={[styles.historyTitle, { color: colors.textSecondary }]} numberOfLines={1}>{history.assignmentTitle}</Text><Text style={[styles.historyScore, { color: colors.textPrimary }]}>{scoreText(history.score)}</Text></View>)}</View> : null}
+            {studentDetail ? (
+              <View style={[styles.detailCard, { backgroundColor: colors.surfaceRaised }, cardShadow]}>
+                <View style={styles.detailHeading}>
+                  <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{capitalizeFirst(studentDetail.fullName)}</Text>
+                  <View style={styles.detailHeadingActions}>
+                    <Pressable onPress={exportStudentPdf} disabled={isExporting !== null} hitSlop={8} accessibilityRole="button" accessibilityLabel="Export this student's report as PDF">
+                      {isExporting === "student-pdf" ? <ActivityIndicator size="small" color={colors.accent} /> : <Ionicons name="download-outline" size={18} color={colors.accent} />}
+                    </Pressable>
+                    <Pressable onPress={() => setStudentDetail(null)} hitSlop={8}><Ionicons name="close" size={18} color={colors.textMuted} /></Pressable>
+                  </View>
+                </View>
+
+                {studentDetail.insights.strongest.length > 0 || studentDetail.insights.weakest.length > 0 ? (
+                  <View style={styles.insightTagRow}>
+                    {studentDetail.insights.strongest.map((s, i) => (
+                      <View key={`strong-${i}`} style={[styles.insightTag, { backgroundColor: "#18A95722" }]}>
+                        <Ionicons name="trending-up" size={11} color="#18A957" />
+                        <Text style={[styles.insightTagText, { color: "#18A957" }]} numberOfLines={1}>{capitalizeFirst(s.label)}</Text>
+                      </View>
+                    ))}
+                    {studentDetail.insights.weakest.map((w, i) => (
+                      <View key={`weak-${i}`} style={[styles.insightTag, { backgroundColor: `${colors.danger}22` }]}>
+                        <Ionicons name="trending-down" size={11} color={colors.danger} />
+                        <Text style={[styles.insightTagText, { color: colors.danger }]} numberOfLines={1}>{capitalizeFirst(w.label)}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+
+                <Text style={[styles.studentInsightText, { color: colors.textSecondary }]}>{studentDetail.insights.aiSummary}</Text>
+                <View style={[styles.nextStepRow, { backgroundColor: colors.accentSoft }]}>
+                  <Ionicons name="bulb-outline" size={14} color={colors.accent} />
+                  <Text style={[styles.nextStepText, { color: colors.textPrimary }]}>{studentDetail.insights.aiNextStep}</Text>
+                </View>
+
+                <Text style={[styles.studentModalSectionLabel, { color: colors.textMuted }]}>History</Text>
+                {studentDetail.history.length === 0 ? (
+                  <Text style={[styles.emptyText, { color: colors.textMuted }]}>No graded submissions yet.</Text>
+                ) : (
+                  studentDetail.history.map((history, index) => (
+                    <View key={`${history.assignmentTitle}-${index}`} style={styles.historyRow}>
+                      <Text style={[styles.historyTitle, { color: colors.textSecondary }]} numberOfLines={1}>{history.assignmentTitle}</Text>
+                      <Text style={[styles.historyScore, { color: colors.textPrimary }]}>{scoreText(history.score)}</Text>
+                    </View>
+                  ))
+                )}
+              </View>
+            ) : null}
           </>}
         </> : null}
       </ScrollView>
+
+      <SheetModal visible={showExportMenu} onClose={() => setShowExportMenu(false)} closeLabel="Close export menu">
+        <View style={styles.modalHeader}>
+          <View>
+            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Export performance report</Text>
+            <Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>Every student currently listed, in one file.</Text>
+          </View>
+          <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setShowExportMenu(false)} accessibilityRole="button">
+            <Ionicons name="close" size={20} color={colors.textPrimary} />
+          </Pressable>
+        </View>
+        <Pressable style={({ pressed }) => [styles.exportOptionRow, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]} onPress={exportClassPdf} accessibilityRole="button">
+          <View style={[styles.exportOptionIcon, { backgroundColor: colors.accentSoft }]}><Ionicons name="document-text-outline" size={19} color={colors.accent} /></View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.exportOptionTitle, { color: colors.textPrimary }]}>Export as PDF</Text>
+            <Text style={[styles.exportOptionDetail, { color: colors.textMuted }]}>A formatted report - overview, trends, and every student's score.</Text>
+          </View>
+        </Pressable>
+        <Pressable style={({ pressed }) => [styles.exportOptionRow, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]} onPress={exportClassCsv} accessibilityRole="button">
+          <View style={[styles.exportOptionIcon, { backgroundColor: colors.accentSoft }]}><Ionicons name="grid-outline" size={19} color={colors.accent} /></View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.exportOptionTitle, { color: colors.textPrimary }]}>Export as CSV</Text>
+            <Text style={[styles.exportOptionDetail, { color: colors.textMuted }]}>Just the student list and scores, for a spreadsheet.</Text>
+          </View>
+        </Pressable>
+      </SheetModal>
     </Screen>
   );
 }
@@ -286,5 +509,20 @@ const styles = StyleSheet.create({
   barRow: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 15 }, barLabel: { width: 104, fontSize: 12, fontWeight: "500" }, barTrack: { flex: 1, height: 10, borderRadius: 6, overflow: "hidden" }, barFill: { height: "100%", borderRadius: 6 }, barValue: { width: 36, textAlign: "right", fontSize: 12, fontWeight: "800" }, emptyText: { marginTop: 18, fontSize: 13, lineHeight: 19, textAlign: "center" },
   chartHeading: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between" }, chartCaption: { marginTop: 2, fontSize: 11, fontWeight: "500" }, trendBadge: { height: 27, paddingHorizontal: 9, borderRadius: 14, flexDirection: "row", alignItems: "center", gap: 4 }, trendBadgeText: { fontSize: 10, fontWeight: "800" }, barChart: { height: 162, flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", paddingTop: 15 }, chartColumn: { flex: 1, height: "100%", alignItems: "center", justifyContent: "flex-end" }, chartValue: { fontSize: 10, fontWeight: "800", marginBottom: 5 }, chartTrack: { width: 22, height: 104, borderRadius: 11, justifyContent: "flex-end", overflow: "hidden" }, chartFill: { width: "100%", borderRadius: 11 }, chartLabel: { marginTop: 7, fontSize: 10, fontWeight: "700" },
   insightCard: { flexDirection: "row", borderRadius: 18, padding: 18, marginBottom: 24 }, insightIcon: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center", marginRight: 13 }, insightCopy: { flex: 1 }, insightTitle: { fontSize: 14, fontWeight: "800" }, insightText: { marginTop: 5, fontSize: 12, lineHeight: 19, fontWeight: "500" }, insightChip: { alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 5, height: 34, paddingHorizontal: 12, borderWidth: 1, borderRadius: 18, marginTop: 13 }, insightChipText: { fontSize: 11, fontWeight: "800" },
-  studentHeading: { fontSize: 20, lineHeight: 26, fontWeight: "800", letterSpacing: -0.35, marginBottom: 14 }, studentRow: { minHeight: 70, borderRadius: 16, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 9 }, studentCopy: { flex: 1 }, studentName: { fontSize: 13, fontWeight: "800" }, studentMeta: { marginTop: 2, fontSize: 11, fontWeight: "500" }, studentScore: { fontSize: 16, fontWeight: "800" }, detailCard: { borderRadius: 16, padding: 16, marginTop: 8 }, detailHeading: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, historyRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 13 }, historyTitle: { flex: 1, fontSize: 12, fontWeight: "500" }, historyScore: { fontSize: 12, fontWeight: "800" },
+  studentHeading: { fontSize: 20, lineHeight: 26, fontWeight: "800", letterSpacing: -0.35, marginBottom: 14 }, studentRow: { minHeight: 70, borderRadius: 16, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 9 }, studentCopy: { flex: 1 }, studentName: { fontSize: 13, fontWeight: "800" }, studentMeta: { marginTop: 2, fontSize: 11, fontWeight: "500" }, studentScore: { fontSize: 16, fontWeight: "800" }, detailCard: { borderRadius: 16, padding: 16, marginTop: 8 }, detailHeading: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, detailHeadingActions: { flexDirection: "row", alignItems: "center", gap: 16 }, historyRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 13 }, historyTitle: { flex: 1, fontSize: 12, fontWeight: "500" }, historyScore: { fontSize: 12, fontWeight: "800" },
+  modalHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
+  modalTitle: { fontSize: 17, fontWeight: "800" },
+  modalSubtitle: { marginTop: 3, fontSize: 12, fontWeight: "500" },
+  closeButton: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
+  exportOptionRow: { flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderRadius: 14, padding: 14, marginTop: 16 },
+  exportOptionIcon: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center" },
+  exportOptionTitle: { fontSize: 14, fontWeight: "800" },
+  exportOptionDetail: { marginTop: 2, fontSize: 11, lineHeight: 15, fontWeight: "500" },
+  insightTagRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 14 },
+  insightTag: { flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 12, paddingHorizontal: 9, paddingVertical: 5, maxWidth: 160 },
+  insightTagText: { fontSize: 11, fontWeight: "700" },
+  studentInsightText: { marginTop: 12, fontSize: 12, lineHeight: 18, fontWeight: "500" },
+  nextStepRow: { flexDirection: "row", alignItems: "flex-start", gap: 8, borderRadius: 12, padding: 10, marginTop: 10 },
+  nextStepText: { flex: 1, fontSize: 12, lineHeight: 17, fontWeight: "600" },
+  studentModalSectionLabel: { fontSize: 11, fontWeight: "800", letterSpacing: 0.3, textTransform: "uppercase", marginTop: 16, marginBottom: 4 },
 });

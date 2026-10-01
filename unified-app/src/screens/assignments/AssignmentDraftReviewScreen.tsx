@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Modal, KeyboardAvoidingView, Platform } from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Modal, KeyboardAvoidingView, Platform, Switch } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useAiGenerating } from "../../context/AiAssistantGlowContext";
+import { useTricklingProgress } from "../../hooks/useTricklingProgress";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, AssignmentQuestion, AnswerKeyEntry, QuestionDifficulty, AssignmentDetail } from "../../api/client";
+import { sanitizeQuestion } from "./questionText";
+import { stripBoldMarkers } from "../studio/generation/richText";
 
 type Props = NativeStackScreenProps<RootStackParamList, "AssignmentDraftReview">;
 
@@ -34,12 +37,17 @@ export function AssignmentDraftReviewScreen({ route, navigation }: Props) {
   const [answerKeys, setAnswerKeys] = useState<AnswerKeyEntry[]>([]);
   const [questions, setQuestions] = useState<AssignmentQuestion[]>([]);
   const [answerTextById, setAnswerTextById] = useState<Record<string, string>>({});
+  const [personalisationEnabled, setPersonalisationEnabled] = useState(false);
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [isGeneratingKey, setIsGeneratingKey] = useState(false);
-  useAiGenerating(regeneratingId !== null || isGeneratingKey);
+  const generateProgress = useTricklingProgress(
+    regeneratingId !== null || isGeneratingKey,
+    regeneratingId !== null ? "Regenerating this question…" : "Generating the answer key…"
+  );
+  useAiGenerating(regeneratingId !== null || isGeneratingKey, undefined, generateProgress);
   const [error, setError] = useState<string | null>(null);
 
   const [regenerateTargetId, setRegenerateTargetId] = useState<string | null>(null);
@@ -68,11 +76,12 @@ export function AssignmentDraftReviewScreen({ route, navigation }: Props) {
         api.getAnswerKey(accessToken, assignmentId),
       ]);
       setAssignment(a);
-      setQuestions(a.questions);
+      setQuestions(a.questions.map(sanitizeQuestion));
       setOriginalQuestionCount((prev) => prev ?? a.questions.length);
+      setPersonalisationEnabled(a.personalisationEnabled);
       setAnswerKeys(keys);
       const byId = new Map(keys.map((k) => [k.questionId, k]));
-      setAnswerTextById(Object.fromEntries(a.questions.map((q) => [q.id, answerTextFor(byId.get(q.id))])));
+      setAnswerTextById(Object.fromEntries(a.questions.map((q) => [q.id, stripBoldMarkers(answerTextFor(byId.get(q.id)))])));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load assignment");
     } finally {
@@ -181,12 +190,13 @@ export function AssignmentDraftReviewScreen({ route, navigation }: Props) {
       const updated = await api.regenerateAssignmentQuestion(accessToken, assignmentId, questionId, regenerateInstruction.trim() || undefined);
       const replacement = updated.questions.find((q) => q.id === questionId);
       if (replacement) {
-        setQuestions((prev) => prev.map((q) => (q.id === questionId ? replacement : q)));
+        const sanitized = sanitizeQuestion(replacement);
+        setQuestions((prev) => prev.map((q) => (q.id === questionId ? sanitized : q)));
       }
       const keys = await api.getAnswerKey(accessToken, assignmentId);
       setAnswerKeys(keys);
       const entry = keys.find((k) => k.questionId === questionId);
-      setAnswerTextById((prev) => ({ ...prev, [questionId]: entry?.aiAnswer ?? prev[questionId] ?? "" }));
+      setAnswerTextById((prev) => ({ ...prev, [questionId]: stripBoldMarkers(entry?.aiAnswer ?? prev[questionId] ?? "") }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Regenerate failed");
     } finally {
@@ -230,7 +240,10 @@ export function AssignmentDraftReviewScreen({ route, navigation }: Props) {
     setIsSaving(true);
     setError(null);
     try {
-      await api.updateAssignment(accessToken, assignmentId, { questions: filledQuestions });
+      await api.updateAssignment(accessToken, assignmentId, {
+        questions: filledQuestions,
+        personalisationEnabled: assignment.topicId ? personalisationEnabled : false,
+      });
 
       const existingIds = new Set(answerKeys.map((k) => k.questionId));
       const hasNewQuestions = filledQuestions.some((q) => !existingIds.has(q.id));
@@ -297,6 +310,25 @@ export function AssignmentDraftReviewScreen({ route, navigation }: Props) {
           <Text style={[styles.subtitle, { color: colors.textMuted }]}>
             Review each question and its model answer. Edit, regenerate, or remove anything before continuing.
           </Text>
+
+          <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
+            <View style={styles.toggleRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.smallLabel, { color: colors.textSecondary, fontSize: 13 }]}>Personalise for each student</Text>
+                <Text style={[styles.subtitle, { color: colors.textMuted, marginTop: 4, marginBottom: 0 }]}>
+                  {assignment.topicId
+                    ? "Every student gets all of the questions below, unchanged. On publish, this also generates an extra, difficulty-matched section for students with enough grading history to calibrate it - you review and approve each one before it's added."
+                    : "Only available for a single-topic assignment."}
+                </Text>
+              </View>
+              <Switch
+                value={personalisationEnabled}
+                onValueChange={setPersonalisationEnabled}
+                disabled={!assignment.topicId}
+                trackColor={{ true: colors.accent }}
+              />
+            </View>
+          </View>
 
           {questions.map((q, i) => (
             <View
@@ -539,6 +571,7 @@ const styles = StyleSheet.create({
   aiBadge: { flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4 },
   aiBadgeText: { fontSize: 11, fontWeight: "700" },
   card: { borderWidth: 1, borderRadius: 16, padding: 16, marginBottom: 14 },
+  toggleRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   cardHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   questionNumber: { fontSize: 13, fontWeight: "800" },
   cardHeaderActions: { flexDirection: "row", alignItems: "center", gap: 16 },

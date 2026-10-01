@@ -218,11 +218,18 @@ export function HomeScreen() {
   // Getting-started lives in the More menu now (not a banner on home); this
   // just puts a small dot on the profile avatar while steps are outstanding.
   const setupIncomplete = !!onboardingTasks && onboardingTasks.completedCount < onboardingTasks.totalCount;
+  // dockCoordinates = the AI button where the welcome cat docks - the profile
+  // popup's entrance orb launches from there, as if the cat delivers it.
+  const { isWelcomeSequenceComplete, dockCoordinates } = useWelcomeMascot();
   // Shows once per teacher, on first login only - hasSeenOnboardingTour is
   // persisted server-side (set by markOnboardingTourSeen below) and never
   // resets itself. splashDone keeps it from popping up over the splash
   // animation, which runs in its own native layer always on top.
-  const showTour = isTeacher && !!user && splashDone && !user.hasSeenOnboardingTour;
+  // isWelcomeSequenceComplete keeps it from popping up UNDER/over the
+  // full-screen mascot welcome too - for a brand-new account both start
+  // out "not seen" at once, and without this the tour's slides and the
+  // cat's full-screen intro would render on screen simultaneously.
+  const showTour = isTeacher && !!user && splashDone && isWelcomeSequenceComplete && !user.hasSeenOnboardingTour;
 
   // "Complete your profile" prompt. Waits its turn behind everything else
   // that greets the user on open (splash, the whole cat welcome - intro,
@@ -231,9 +238,6 @@ export function HomeScreen() {
   // permanent (saved server-side); "Complete profile" and Android back only
   // hide it for this session, so an abandoned profile gets one more nudge on
   // a later launch. A complete profile never qualifies, so no flag is needed.
-  // dockCoordinates = the AI button where the welcome cat docks - the popup's
-  // entrance orb launches from there, as if the cat delivers it.
-  const { isWelcomeSequenceComplete, dockCoordinates } = useWelcomeMascot();
   const [profilePromptHiddenThisSession, setProfilePromptHiddenThisSession] = useState(false);
   const [showProfilePrompt, setShowProfilePrompt] = useState(false);
   // Separate from the popup: the progress ring around the header avatar stays

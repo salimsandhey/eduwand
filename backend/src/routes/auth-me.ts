@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma";
 import { storage } from "../lib/storage";
 import { recordAuditEvent } from "../lib/audit";
 import { loadStudentMe } from "../lib/student-me";
+import { Validator } from "../lib/validation";
 import { sendEmailInBackground } from "../lib/email/sender";
 import { securityAlertEmail } from "../lib/email/templates";
 
@@ -31,6 +32,7 @@ const ME_SELECT = {
   avatarKey: true,
   hasSeenOnboardingTour: true,
   hasDismissedProfilePrompt: true,
+  hasSeenMascotWelcome: true,
   school: { select: { accountType: true } },
 } as const;
 
@@ -73,7 +75,6 @@ async function updateStudentPicture(
   await prisma.studentStub.update({ where: { id: studentId }, data });
   return loadStudentMe(studentId);
 }
-const MIN_PASSWORD_LENGTH = 8;
 
 interface UpdateMeBody {
   fullName?: string;
@@ -125,22 +126,18 @@ export async function authMeRoutes(app: FastifyInstance) {
 
       const body = request.body ?? {};
       const data: { fullName?: string; phone?: string | null } = {};
+      const v = new Validator();
 
       if (body.fullName !== undefined) {
-        const trimmed = body.fullName.trim();
-        if (trimmed.length < 2) {
-          return reply.code(400).send({
-            data: null,
-            error: { code: "validation_error", message: "fullName must be at least 2 characters" },
-          });
-        }
-        data.fullName = trimmed;
+        const fullName = v.personName("fullName", body.fullName, "Full name");
+        if (fullName) data.fullName = fullName;
       }
 
       if (body.phone !== undefined) {
-        const trimmed = body.phone?.trim() ?? "";
-        data.phone = trimmed.length > 0 ? trimmed : null;
+        // Empty clears the phone number; anything else must be a valid Indian mobile.
+        data.phone = v.phone("phone", body.phone, false) ?? null;
       }
+      if (v.hasErrors) return v.reject(reply);
 
       if (Object.keys(data).length === 0) {
         return reply.code(400).send({
@@ -179,15 +176,10 @@ export async function authMeRoutes(app: FastifyInstance) {
 
       const { currentPassword, newPassword } = request.body ?? {};
 
-      if (!currentPassword || !newPassword || newPassword.length < MIN_PASSWORD_LENGTH) {
-        return reply.code(400).send({
-          data: null,
-          error: {
-            code: "validation_error",
-            message: `currentPassword and a newPassword of at least ${MIN_PASSWORD_LENGTH} characters are required`,
-          },
-        });
-      }
+      const v = new Validator();
+      if (!currentPassword) v.fail("currentPassword", "Current password is required");
+      v.password("newPassword", newPassword, "New password");
+      if (v.hasErrors || !currentPassword || !newPassword) return v.reject(reply);
 
       const user = await prisma.appUser.findUnique({ where: { id: request.user.sub } });
       if (!user || !user.passwordHash) {
@@ -461,5 +453,18 @@ export async function authMeRoutes(app: FastifyInstance) {
       data: { hasDismissedProfilePrompt: true },
     });
     return { data: { hasDismissedProfilePrompt: true }, meta: {} };
+  });
+
+  // The animated mascot welcome ("Hi, I'm ...") - called once the sequence
+  // finishes playing, so a genuinely new account only ever sees it the once.
+  // Existing accounts start with this already true (see the migration) and
+  // never call this route at all.
+  app.post("/auth/me/mascot-welcome-seen", { onRequest: [app.authenticate] }, async (request, reply) => {
+    if (rejectStudents(request, reply)) return;
+    await prisma.appUser.update({
+      where: { id: request.user.sub },
+      data: { hasSeenMascotWelcome: true },
+    });
+    return { data: { hasSeenMascotWelcome: true }, meta: {} };
   });
 }

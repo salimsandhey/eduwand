@@ -7,6 +7,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useAiGenerating } from "../../context/AiAssistantGlowContext";
+import { useTricklingProgress } from "../../hooks/useTricklingProgress";
 import { useTheme } from "../../theme/ThemeContext";
 import { radius } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
@@ -21,6 +22,17 @@ type Props = NativeStackScreenProps<RootStackParamList, "GenerationSetup">;
 const SETUP_OUTPUT_ORDER: GenerationOutputType[] = ["lesson_plan", "presentation", "flashcards", "custom_activity_report"];
 const OUTPUT_TYPES: { key: GenerationOutputType; label: string; caption: string; icon: keyof typeof Ionicons.glyphMap }[] =
   SETUP_OUTPUT_ORDER.map((key) => ({ key, label: OUTPUT_TYPE_LABELS[key], caption: OUTPUT_TYPE_CAPTIONS[key], icon: OUTPUT_TYPE_ICONS[key] }));
+
+// Shown by the generating overlay while the (single, blocking) create-generation
+// request is in flight - there's no server-side stage to report here (unlike
+// AI Research's job/poll setup), so the progress bar trickles against elapsed
+// time rather than a real checkpoint.
+export const GENERATION_PROGRESS_LABELS: Record<GenerationOutputType, string> = {
+  lesson_plan: "Writing the lesson plan…",
+  flashcards: "Building your flashcards…",
+  presentation: "Designing your presentation…",
+  custom_activity_report: "Writing the activity report…",
+};
 // A lesson plan already covers every goal bucket, so the section is disabled
 // (not hidden - keeps the layout stable) when it's the selected output.
 const LEARNING_GOALS = ["Understand the concept", "Explain the process", "Apply the concept", "Evaluate"];
@@ -133,7 +145,8 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
   const [embedRanges, setEmbedRanges] = useState<Record<string, PageRange>>({});
   const [assembleOnlyChoice, setAssembleOnlyChoice] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  useAiGenerating(isGenerating);
+  const generateProgress = useTricklingProgress(isGenerating, GENERATION_PROGRESS_LABELS[outputType]);
+  useAiGenerating(isGenerating, undefined, generateProgress);
   const [error, setError] = useState<string | null>(null);
   const [topic, setTopic] = useState<TopicDetail | null>(null);
   const [savedBranding, setSavedBranding] = useState<{ logoUrl: string | null; primaryColor: string | null; secondaryColor: string | null } | null>(null);
@@ -433,7 +446,11 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
             {shownSources.length === 0 ? <Text style={[styles.sourceHint, { color: colors.textMuted }]}>No sources of this type on the topic.</Text> : null}
             {shownSources.map((source) => {
               const selected = selectedSourceIds.has(source.id);
-              const canEmbed = (source.sourceType === "pdf" || source.sourceType === "image") && !!source.fileLocation;
+              // Sources found by AI Research (attribution set) can only ever be
+              // referenced as text context for the model, never embedded
+              // as-is - that would put a real web image/PDF page straight
+              // into the output. Only a teacher's own upload can be shown as-is.
+              const canEmbed = (source.sourceType === "pdf" || source.sourceType === "image") && !!source.fileLocation && !source.attribution;
               const embedded = embedIds.has(source.id);
               const embedRange = embedRanges[source.id];
               const label = source.originalFilename ?? source.sourceUrl ?? source.idreamK12ReferenceId ?? source.sourceType;
@@ -548,7 +565,7 @@ export function GenerationSetupScreen({ route, navigation }: Props) {
             ) : null}
           </View>
           <Text style={[styles.inputLabel, { color: colors.textPrimary, marginTop: 14 }]}>Anything specific to include? (optional)</Text>
-          <TextInput style={[styles.focusInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]} value={customPrompt} onChangeText={setCustomPrompt} placeholder="e.g. include a hands-on group activity, focus on real-world examples..." placeholderTextColor={colors.textMuted} multiline textAlignVertical="top" />
+          <TextInput style={[styles.focusInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]} value={customPrompt} onChangeText={setCustomPrompt} maxLength={1000} placeholder="e.g. include a hands-on group activity, focus on real-world examples..." placeholderTextColor={colors.textMuted} multiline textAlignVertical="top" />
         </View>
 
         {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}

@@ -4,7 +4,11 @@ import { api, ApiError } from "../../api/client";
 import type { AcademicYear, ClassSection, Student } from "../../api/client";
 import { Card } from "../../components/Card";
 import { Modal, ModalFooter } from "../../components/Modal";
+import { FieldError, invalidInput } from "../../components/FieldError";
+import { useFormErrors } from "../../hooks/useForm";
+import { rules, phoneInput } from "../../utils/validation";
 import type { SchoolOutletContext } from "./SchoolLayout";
+import { btn } from "../../components/buttons";
 
 interface StudentFormState {
   fullName: string;
@@ -50,6 +54,18 @@ export function SchoolStudentsTab() {
   const [form, setForm] = useState<StudentFormState>(EMPTY_FORM);
   const [formError, setFormError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  // Rules mirror backend/src/lib/validation.ts; field names match the API's. An
+  // unchanged date of birth isn't re-checked, so older records stay editable.
+  const originalDob = editingId ? students?.find((s) => s.id === editingId)?.dateOfBirth.slice(0, 10) : undefined;
+  const v = useFormErrors(form, {
+    fullName: rules.personName("Student name"),
+    dateOfBirth: (value) => (originalDob && value === originalDob ? null : rules.dateOfBirth("Date of birth")(value)),
+    classSectionId: rules.required("Class section"),
+    guardianName: rules.personName("Guardian name"),
+    guardianContact: rules.phone(true, "Guardian phone number"),
+    email: rules.email(true, "Student email"),
+    seatNumber: rules.integer("Clicker number", 1, 40, false),
+  });
 
   const sections = useMemo<ClassSection[]>(() => {
     if (!academicYears) return [];
@@ -94,6 +110,7 @@ export function SchoolStudentsTab() {
   }, [loadStudents]);
 
   function openCreate() {
+    v.clear();
     setForm({ ...EMPTY_FORM, classSectionId });
     setFormError(null);
     setEditingId(null);
@@ -101,6 +118,7 @@ export function SchoolStudentsTab() {
   }
 
   function openEdit(s: Student) {
+    v.clear();
     setForm({
       fullName: s.fullName,
       dateOfBirth: s.dateOfBirth.slice(0, 10),
@@ -125,16 +143,12 @@ export function SchoolStudentsTab() {
 
   async function saveStudent() {
     if (!accessToken) return;
-    if (!form.fullName.trim() || !form.dateOfBirth || !form.classSectionId || !form.guardianName.trim() || !form.guardianContact.trim() || !form.email.includes("@")) {
-      setFormError("Full name, date of birth, class section, guardian name, guardian phone, and a valid student email are all required.");
+    if (!v.submit()) {
+      setFormError("Please fix the highlighted fields.");
       return;
     }
     const trimmedSeat = form.seatNumber.trim();
     const seatNumber = trimmedSeat === "" ? null : Number(trimmedSeat);
-    if (seatNumber !== null && (!Number.isInteger(seatNumber) || seatNumber < 1 || seatNumber > 40)) {
-      setFormError("Clicker number must be a whole number from 1 to 40, or left blank.");
-      return;
-    }
 
     setIsSaving(true);
     setFormError(null);
@@ -142,7 +156,7 @@ export function SchoolStudentsTab() {
       if (showForm === "edit" && editingId) {
         await api.updateStudent(accessToken, id, editingId, {
           fullName: form.fullName.trim(),
-          dateOfBirth: form.dateOfBirth,
+          ...(form.dateOfBirth !== originalDob ? { dateOfBirth: form.dateOfBirth } : {}),
           classSectionId: form.classSectionId,
           guardianName: form.guardianName.trim(),
           guardianContact: form.guardianContact.trim(),
@@ -164,7 +178,8 @@ export function SchoolStudentsTab() {
       closeForm();
       loadStudents();
     } catch (err) {
-      setFormError(err instanceof ApiError ? err.message : "Failed to save student");
+      if (err instanceof ApiError && v.applyServerError(err)) setFormError("Please fix the highlighted fields.");
+      else setFormError(err instanceof ApiError ? err.message : "Failed to save student");
     } finally {
       setIsSaving(false);
     }
@@ -261,20 +276,28 @@ export function SchoolStudentsTab() {
             <div style={styles.field}>
               <label style={styles.label}>Full name</label>
               <input
-                style={styles.input}
+                style={{ ...styles.input, ...invalidInput(!!v.error("fullName")) }}
                 value={form.fullName}
                 onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
+                onBlur={() => v.blur("fullName")}
+                maxLength={80}
+                aria-invalid={!!v.error("fullName")}
                 autoFocus
               />
+              <FieldError message={v.error("fullName")} />
             </div>
             <div style={styles.field}>
               <label style={styles.label}>Date of birth</label>
               <input
-                style={styles.input}
+                style={{ ...styles.input, ...invalidInput(!!v.error("dateOfBirth")) }}
                 type="date"
                 value={form.dateOfBirth}
+                max={new Date().toISOString().slice(0, 10)}
                 onChange={(e) => setForm((f) => ({ ...f, dateOfBirth: e.target.value }))}
+                onBlur={() => v.blur("dateOfBirth")}
+                aria-invalid={!!v.error("dateOfBirth")}
               />
+              <FieldError message={v.error("dateOfBirth")} />
             </div>
             <div style={styles.field}>
               <label style={styles.label}>Class section</label>
@@ -301,47 +324,65 @@ export function SchoolStudentsTab() {
             <div style={styles.field}>
               <label style={styles.label}>Guardian name</label>
               <input
-                style={styles.input}
+                style={{ ...styles.input, ...invalidInput(!!v.error("guardianName")) }}
                 value={form.guardianName}
                 onChange={(e) => setForm((f) => ({ ...f, guardianName: e.target.value }))}
+                onBlur={() => v.blur("guardianName")}
+                maxLength={80}
+                aria-invalid={!!v.error("guardianName")}
               />
+              <FieldError message={v.error("guardianName")} />
             </div>
             <div style={styles.field}>
               <label style={styles.label}>Guardian phone</label>
               <input
-                style={styles.input}
+                style={{ ...styles.input, ...invalidInput(!!v.error("guardianContact")) }}
                 value={form.guardianContact}
-                onChange={(e) => setForm((f) => ({ ...f, guardianContact: e.target.value }))}
-                placeholder="For calls and records"
+                onChange={(e) => setForm((f) => ({ ...f, guardianContact: phoneInput(e.target.value) }))}
+                onBlur={() => v.blur("guardianContact")}
+                inputMode="tel"
+                autoComplete="tel"
+                maxLength={16}
+                aria-invalid={!!v.error("guardianContact")}
+                placeholder="10-digit mobile number"
               />
+              <FieldError message={v.error("guardianContact")} />
             </div>
             <div style={styles.field}>
               <label style={styles.label}>Student email</label>
               <input
-                style={styles.input}
+                style={{ ...styles.input, ...invalidInput(!!v.error("email")) }}
                 type="email"
                 value={form.email}
                 onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                onBlur={() => v.blur("email")}
+                maxLength={254}
+                aria-invalid={!!v.error("email")}
                 placeholder="Used for the student's OTP login"
               />
+              <FieldError message={v.error("email")} />
             </div>
             {showForm === "edit" ? (
               <div style={styles.field}>
                 <label style={styles.label}>Clicker # (for live quick checks)</label>
                 <input
-                  style={styles.input}
+                  style={{ ...styles.input, ...invalidInput(!!v.error("seatNumber")) }}
                   type="number"
                   min={1}
                   max={40}
+                  step={1}
                   value={form.seatNumber}
                   onChange={(e) => setForm((f) => ({ ...f, seatNumber: e.target.value }))}
+                  onBlur={() => v.blur("seatNumber")}
+                  aria-invalid={!!v.error("seatNumber")}
                   placeholder="Not assigned"
                 />
+                <FieldError message={v.error("seatNumber")} />
               </div>
             ) : null}
           </div>
           <p style={styles.hint}>
-            The guardian's phone number is what the student (or their guardian) uses to log in - a wrong number here
+            The student email is what the student uses to log in (email + one-time code) - a wrong address here
             means they can't get in.
           </p>
           {formError ? <p style={styles.error}>{formError}</p> : null}
@@ -366,9 +407,9 @@ const styles: Record<string, React.CSSProperties> = {
   field: { display: "flex", flexDirection: "column", gap: 6, flex: 1, minWidth: 200 },
   label: { fontSize: 12, fontWeight: 700, color: "var(--text-muted)" },
   input: { padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 14 },
-  button: { background: "var(--accent)", color: "#fff", border: "none", borderRadius: 8, padding: "10px 16px", fontWeight: 600, cursor: "pointer", fontSize: 14 },
-  secondaryButton: { background: "var(--bg-page)", color: "var(--text-primary)", border: "1px solid var(--border)", borderRadius: 8, padding: "10px 16px", fontWeight: 600, cursor: "pointer", fontSize: 14 },
-  smallButton: { padding: "6px 12px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg-page)", color: "var(--text-primary)", fontSize: 13, fontWeight: 600, cursor: "pointer" },
+  button: btn.primary,
+  secondaryButton: btn.secondary,
+  smallButton: btn.small,
   error: { color: "var(--status-critical)", fontSize: 13, marginTop: 12, marginBottom: 0 },
   table: { width: "100%", borderCollapse: "collapse" },
   th: { textAlign: "left", fontSize: 12, color: "var(--text-muted)", fontWeight: 600, padding: "0 12px 10px 0", borderBottom: "1px solid var(--border)" },

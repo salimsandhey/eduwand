@@ -45,6 +45,7 @@ function TextField({
         placeholder={field.label}
         placeholderTextColor={colors.textMuted}
         multiline={multiline}
+        maxLength={multiline ? 2000 : 200}
         keyboardType={keyboardType}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}

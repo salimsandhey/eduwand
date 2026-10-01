@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { buildTopicAttainmentReportPdf, buildSubjectAttainmentReportPdf } from "../lib/pdfExport";
 import { getSchoolBoard } from "../lib/boards";
+import { getClassBandThresholds, ClassBandThresholds } from "../lib/classBands";
 
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope, requireRoles("teacher", "leadership", "admin")];
 
@@ -71,7 +72,7 @@ function extractStage(text: string): { stage: string | null; text: string } {
   return { stage, text: text.slice(match[0].length).trim() };
 }
 
-interface ObjectiveCoverageEntry {
+export interface ObjectiveCoverageEntry {
   objective: string;
   stage: string | null;
   outputType: string;
@@ -80,9 +81,12 @@ interface ObjectiveCoverageEntry {
 // "Objective based analysis" + "learning stage" segments of the attainment
 // report (client requirement: Activity Report Format iii/iv) - this is
 // COVERAGE (which objectives/stages this topic's material actually
-// addresses), not performance. Scoring by objective/stage isn't possible yet
-// since assignment/assessment questions don't record which one they target.
-function collectObjectiveCoverage(generations: { outputType: string; aiOutput: string; editedOutput: string | null; generationStatus: string }[]): ObjectiveCoverageEntry[] {
+// addresses), not performance. Real benchmark-vs-actual scoring is a
+// separate thing built on top of this - see TopicObjective and
+// assignments.ts's materialiseTopicObjectives, which upserts this exact
+// output into real rows the moment a single-topic AI assignment is
+// generated (older/untagged topics keep showing this coverage-only view).
+export function collectObjectiveCoverage(generations: { outputType: string; aiOutput: string; editedOutput: string | null; generationStatus: string }[]): ObjectiveCoverageEntry[] {
   const entries: ObjectiveCoverageEntry[] = [];
   for (const g of generations) {
     if (g.generationStatus !== "succeeded") continue;
@@ -173,12 +177,80 @@ function buildStudentBreakdown(buckets: StudentBreakdownBucket[]) {
     .sort((a, b) => a.averageScore - b.averageScore);
 }
 
-function bandsOf(scores: number[]) {
+// Band field names/labels stay "80"/"60" everywhere they're displayed - only
+// the actual cutoffs used to sort scores into them now come from the
+// school's real ClassBandConfig (falling back to those same 80/50 defaults),
+// instead of being hardcoded independently here and in ai-analytics.ts/
+// TeacherAnalyticsScreen.tsx as they were before.
+function bandsOf(scores: number[], thresholds: ClassBandThresholds) {
   return {
-    above80: scores.filter((score) => score >= 80).length,
-    between60And80: scores.filter((score) => score >= 60 && score < 80).length,
-    below60: scores.filter((score) => score < 60).length,
+    above80: scores.filter((score) => score >= thresholds.level1MinPercent).length,
+    between60And80: scores.filter((score) => score >= thresholds.level2MinPercent && score < thresholds.level1MinPercent).length,
+    below60: scores.filter((score) => score < thresholds.level2MinPercent).length,
   };
+}
+
+interface ObjectiveAttainmentRow {
+  id: string;
+  text: string;
+  bloomsStage: string | null;
+  benchmarkPercent: number;
+  classAveragePercent: number | null;
+  met: boolean | null;
+}
+
+interface AssignmentForObjectiveAttainment {
+  questions: unknown;
+  answerKeys: { questionId: string; marks: number }[];
+  submissions: { grade: { questionDetails: unknown } | null }[];
+}
+
+// Real benchmark-vs-actual scoring, built on top of the topic's materialized
+// TopicObjective rows (see assignments.ts's materialiseTopicObjectives) - a
+// topic with none yet (no single-topic AI assignment generated since that
+// shipped) simply returns [] and the Objectives tab falls back to the plain
+// objectiveCoverage list below, unchanged.
+async function computeObjectiveAttainment(topicId: string, assignments: AssignmentForObjectiveAttainment[]): Promise<ObjectiveAttainmentRow[]> {
+  const objectives = await prisma.topicObjective.findMany({ where: { topicId } });
+  if (objectives.length === 0) return [];
+
+  const questionMeta = new Map<string, { objectiveId: string; marks: number }>();
+  for (const a of assignments) {
+    const questions = (a.questions as { id: string; objectiveId?: string }[] | null) ?? [];
+    const marksByQuestion = new Map(a.answerKeys.map((k) => [k.questionId, k.marks]));
+    for (const q of questions) {
+      if (!q.objectiveId) continue;
+      questionMeta.set(q.id, { objectiveId: q.objectiveId, marks: marksByQuestion.get(q.id) ?? 1 });
+    }
+  }
+
+  const earnedByObjective = new Map<string, number>();
+  const maxByObjective = new Map<string, number>();
+  for (const a of assignments) {
+    for (const s of a.submissions) {
+      const details = (s.grade?.questionDetails as { questionId: string; marksAwarded?: number; correct?: boolean | null }[] | null) ?? [];
+      for (const d of details) {
+        const meta = questionMeta.get(d.questionId);
+        if (!meta) continue;
+        const awarded = typeof d.marksAwarded === "number" ? d.marksAwarded : d.correct ? meta.marks : 0;
+        earnedByObjective.set(meta.objectiveId, (earnedByObjective.get(meta.objectiveId) ?? 0) + awarded);
+        maxByObjective.set(meta.objectiveId, (maxByObjective.get(meta.objectiveId) ?? 0) + meta.marks);
+      }
+    }
+  }
+
+  return objectives.map((o) => {
+    const max = maxByObjective.get(o.id) ?? 0;
+    const classAveragePercent = max > 0 ? Math.round((100 * (earnedByObjective.get(o.id) ?? 0)) / max) : null;
+    return {
+      id: o.id,
+      text: o.text,
+      bloomsStage: o.bloomsStage,
+      benchmarkPercent: o.benchmarkPercent,
+      classAveragePercent,
+      met: classAveragePercent === null ? null : classAveragePercent >= o.benchmarkPercent,
+    };
+  });
 }
 
 // Extracted so both the JSON route and the PDF route compute the exact same
@@ -198,7 +270,10 @@ export async function computeTopicReport(topicId: string, schoolId: string) {
         },
       },
       assignments: {
-        include: { submissions: { include: { grade: true, studentStub: STUDENT_FOR_REPORT } } },
+        include: {
+          submissions: { include: { grade: true, studentStub: STUDENT_FOR_REPORT } },
+          answerKeys: { select: { questionId: true, marks: true } },
+        },
       },
     },
   });
@@ -224,7 +299,9 @@ export async function computeTopicReport(topicId: string, schoolId: string) {
   const gradedWithScore = allSubmissions.filter((s) => scoreOf(s.grade) != null);
   const scores = gradedWithScore.map((s) => scoreOf(s.grade)!);
   const averageScore = scores.length > 0 ? scores.reduce((total, score) => total + score, 0) / scores.length : null;
-  const scoreBands = bandsOf(scores);
+  const thresholds = await getClassBandThresholds(schoolId);
+  const scoreBands = bandsOf(scores, thresholds);
+  const objectiveAttainment = await computeObjectiveAttainment(topic.id, topic.assignments);
   const studentAttainment = buildStudentBreakdown(topic.assignments.map((a) => ({ id: a.id, label: a.title, submissions: a.submissions })));
   const assignmentAttainment = topic.assignments
     .map((assignment) => {
@@ -277,9 +354,12 @@ export async function computeTopicReport(topicId: string, schoolId: string) {
     studentAttainment,
     generationSummaries,
     // "Objective based analysis" + "Learning stage" segments - coverage, not
-    // performance (see collectObjectiveCoverage above).
+    // performance (see collectObjectiveCoverage above). objectiveAttainment
+    // is the real benchmark-vs-actual scoring, empty for a topic with no
+    // materialized TopicObjective rows yet.
     objectiveCoverage,
     stageCoverage,
+    objectiveAttainment,
     observations: topic.observations.map((o) => ({ id: o.id, body: o.body, photoUrl: o.photoUrl, recordedAt: o.recordedAt })),
   };
 }
@@ -311,7 +391,7 @@ export async function computeSubjectReport(classSectionId: string, subject: stri
   const gradedWithScore = allSubmissions.filter((s) => scoreOf(s.grade) != null);
   const scores = gradedWithScore.map((s) => scoreOf(s.grade)!);
   const averageScore = scores.length > 0 ? scores.reduce((total, score) => total + score, 0) / scores.length : null;
-  const scoreBands = bandsOf(scores);
+  const scoreBands = bandsOf(scores, await getClassBandThresholds(schoolId));
   const studentAttainment = buildStudentBreakdown(
     topics.map((topic) => ({ id: topic.id, label: topic.name, submissions: topic.assignments.flatMap((a) => a.submissions) }))
   );
@@ -343,7 +423,34 @@ export async function computeSubjectReport(classSectionId: string, subject: stri
 
 export type SubjectAttainmentReport = NonNullable<Awaited<ReturnType<typeof computeSubjectReport>>>;
 
+interface UpdateTopicObjectiveBody {
+  benchmarkPercent: number;
+}
+
 export async function attainmentReportRoutes(app: FastifyInstance) {
+  app.patch<{ Params: { id: string }; Body: UpdateTopicObjectiveBody }>(
+    "/topic-objectives/:id",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const body = request.body ?? ({} as UpdateTopicObjectiveBody);
+      const benchmarkPercent = Number(body.benchmarkPercent);
+      if (!Number.isFinite(benchmarkPercent) || benchmarkPercent < 0 || benchmarkPercent > 100) {
+        return reply.code(400).send({
+          data: null,
+          error: { code: "validation_error", message: "benchmarkPercent must be a number between 0 and 100" },
+        });
+      }
+      const objective = await prisma.topicObjective.findFirst({
+        where: { id: request.params.id, topic: { schoolId: request.schoolId } },
+      });
+      if (!objective) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Objective not found" } });
+      }
+      const updated = await prisma.topicObjective.update({ where: { id: objective.id }, data: { benchmarkPercent } });
+      return { data: updated, meta: {} };
+    }
+  );
+
   app.get<{ Params: { id: string } }>("/topics/:id/attainment-report", { onRequest: scoped(app) }, async (request, reply) => {
     const report = await computeTopicReport(request.params.id, request.schoolId);
     if (!report) {

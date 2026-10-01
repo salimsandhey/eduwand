@@ -5,6 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useAiGenerating } from "../../context/AiAssistantGlowContext";
+import { useTricklingProgress } from "../../hooks/useTricklingProgress";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, PresentationDensity } from "../../api/client";
@@ -23,7 +24,8 @@ export function PresentationDensityScreen({ route, navigation }: Props) {
   const [density, setDensity] = useState<PresentationDensity>("balanced");
   const [customPrompt, setCustomPrompt] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
-  useAiGenerating(isGenerating);
+  const generateProgress = useTricklingProgress(isGenerating, "Designing your presentation outline…");
+  useAiGenerating(isGenerating, undefined, generateProgress);
   const [error, setError] = useState<string | null>(null);
 
   // Revision decks always run dense (spec: "Revision decks ignore the
@@ -108,6 +110,7 @@ export function PresentationDensityScreen({ route, navigation }: Props) {
           style={[styles.focusInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
           value={customPrompt}
           onChangeText={setCustomPrompt}
+          maxLength={500}
           placeholder="e.g. focus on the diagram-based questions, keep the tone simple..."
           placeholderTextColor={colors.textMuted}
           multiline

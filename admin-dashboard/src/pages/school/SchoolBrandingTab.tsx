@@ -4,6 +4,7 @@ import { api } from "../../api/client";
 import type { SchoolBranding } from "../../api/client";
 import { Card } from "../../components/Card";
 import type { SchoolOutletContext } from "./SchoolLayout";
+import { btn } from "../../components/buttons";
 
 const DEFAULT_COLOR = "#4C4CE0";
 
@@ -203,16 +204,7 @@ const styles: Record<string, React.CSSProperties> = {
     boxSizing: "border-box",
   },
   actionRow: { display: "flex", gap: 8, marginTop: 24 },
-  button: {
-    background: "var(--accent)",
-    color: "#fff",
-    border: "none",
-    borderRadius: 8,
-    padding: "10px 16px",
-    fontWeight: 600,
-    cursor: "pointer",
-    fontSize: 14,
-  },
+  button: btn.primary,
   success: { color: "var(--status-good)", fontSize: 13, marginTop: 8, marginBottom: 0 },
   error: { color: "var(--status-critical)", fontSize: 13, marginTop: 8, marginBottom: 0 },
 };

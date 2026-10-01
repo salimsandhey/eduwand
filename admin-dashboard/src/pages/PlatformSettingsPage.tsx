@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import type { AiFeature, Plan, PlatformSetting } from "../api/client";
 import { Card } from "../components/Card";
 import { PageHeader } from "../components/PageHeader";
+import { rules } from "../utils/validation";
 
 // Individual-teacher onboarding + credits/billing
 // (Docs/superpowers/plans/2026-09-09-individual-teacher-onboarding-and-
@@ -51,7 +52,11 @@ export function PlatformSettingsPage() {
   }, [load]);
 
   async function updateSetting(key: string, value: string) {
-    if (!accessToken || !value.trim()) return;
+    if (!accessToken) return;
+    if (!value.trim()) {
+      setError("A setting cannot be empty");
+      return;
+    }
     setSavingKey(key);
     try {
       await api.updatePlatformSetting(accessToken, key, value.trim());
@@ -81,11 +86,12 @@ export function PlatformSettingsPage() {
   }
 
   function updateAiFeatureCost(feature: AiFeature, value: string) {
-    const parsed = Number(value);
-    if (!Number.isInteger(parsed) || parsed < 0) {
-      setError("Cost must be a whole number of 0 or more");
+    const problem = rules.integer("Cost", 0, 100_000)(value);
+    if (problem) {
+      setError(problem);
       return;
     }
+    const parsed = Number(value);
     updateAiFeature(feature, { cost: parsed });
   }
 
@@ -103,8 +109,13 @@ export function PlatformSettingsPage() {
   }
 
   async function updateCredits(plan: Plan, credits: string) {
+    const problem = rules.integer("Credits per teacher seat", 0, 10_000_000)(credits);
+    if (problem) {
+      setError(problem);
+      return;
+    }
     const parsed = Number(credits);
-    if (!accessToken || !Number.isFinite(parsed) || parsed < 0 || parsed === plan.creditsPerTeacherSeat) return;
+    if (!accessToken || parsed === plan.creditsPerTeacherSeat) return;
     setSavingPlanId(plan.id);
     try {
       await api.updatePlan(accessToken, plan.id, { creditsPerTeacherSeat: parsed });
@@ -117,8 +128,13 @@ export function PlatformSettingsPage() {
   }
 
   async function updateSeatLimit(plan: Plan, seats: string) {
+    const problem = rules.integer("Teacher seat limit", 1, 100_000)(seats);
+    if (problem) {
+      setError(problem);
+      return;
+    }
     const parsed = Number(seats);
-    if (!accessToken || !Number.isFinite(parsed) || parsed < 1 || parsed === plan.teacherSeatLimit) return;
+    if (!accessToken || parsed === plan.teacherSeatLimit) return;
     setSavingPlanId(plan.id);
     try {
       await api.updatePlan(accessToken, plan.id, { teacherSeatLimit: parsed });
@@ -131,17 +147,17 @@ export function PlatformSettingsPage() {
   }
 
   async function addPlan() {
-    if (!accessToken || !newPlanName.trim()) return;
+    if (!accessToken) return;
+    const problem =
+      rules.label("Plan name", true, 60)(newPlanName) ??
+      rules.integer("Credits per teacher seat", 0, 10_000_000)(newPlanCredits) ??
+      rules.integer("Teacher seat limit", 1, 100_000)(newPlanSeats);
+    if (problem) {
+      setAddError(problem);
+      return;
+    }
     const credits = Number(newPlanCredits);
     const seats = Number(newPlanSeats);
-    if (!Number.isFinite(credits) || credits < 0) {
-      setAddError("Credits per teacher seat must be a non-negative number");
-      return;
-    }
-    if (!Number.isFinite(seats) || seats < 1) {
-      setAddError("Teacher seat limit must be at least 1");
-      return;
-    }
     setAddError(null);
     try {
       await api.createPlan(accessToken, { name: newPlanName.trim(), creditsPerTeacherSeat: credits, teacherSeatLimit: seats });

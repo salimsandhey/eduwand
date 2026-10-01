@@ -23,9 +23,17 @@ interface WelcomeMascotContextValue {
 const WelcomeMascotContext = createContext<WelcomeMascotContextValue | undefined>(undefined);
 
 export function WelcomeMascotProvider({ children }: { children: React.ReactNode }) {
-  // Always active on every app load / refresh for testing
-  const [isWelcomeActive, setIsWelcomeActive] = useState<boolean>(true);
+  // Off until App.tsx's Root() explicitly calls startWelcome() for a
+  // genuinely new registration (see hasSeenMascotWelcome) - this used to
+  // default true "for testing", which is what made the animation replay on
+  // every app load/refresh for every account.
+  const [isWelcomeActive, setIsWelcomeActive] = useState<boolean>(false);
   const [isFlying, setIsFlying] = useState<boolean>(false);
+  // Purely an animation-sequencing flag (did the fly-in land yet) - NOT what
+  // gates the AI nav-bar button's visibility (see FloatingTabBar, which
+  // renders the button unconditionally now; it used to wait on this, which
+  // is what hid the button entirely for a returning teacher who never plays
+  // startWelcome()).
   const [isMascotDocked, setIsMascotDocked] = useState<boolean>(false);
   const [isWelcomeSequenceComplete, setIsWelcomeSequenceComplete] = useState<boolean>(false);
   const [welcomeCount, setWelcomeCount] = useState<number>(1);
@@ -85,7 +93,7 @@ export function WelcomeMascotProvider({ children }: { children: React.ReactNode 
 }
 
 const DEFAULT_VALUE: WelcomeMascotContextValue = {
-  isWelcomeActive: true,
+  isWelcomeActive: false,
   isFlying: false,
   isMascotDocked: false,
   isWelcomeSequenceComplete: false,

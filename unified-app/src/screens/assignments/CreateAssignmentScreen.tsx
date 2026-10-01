@@ -5,10 +5,15 @@ import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useAiGenerating } from "../../context/AiAssistantGlowContext";
+import { useTricklingProgress } from "../../hooks/useTricklingProgress";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, ApiError, ClassSection, AssignmentQuestion, QuestionDifficulty } from "../../api/client";
+import { sanitizeQuestion } from "./questionText";
 import { capitalizeFirst } from "../../utils/text";
+import { FieldError } from "../../components/FieldError";
+import { useFormErrors } from "../../hooks/useForm";
+import { rules, assignmentQuestionProblem } from "../../utils/validation";
 
 type Props = NativeStackScreenProps<RootStackParamList, "CreateAssignment">;
 
@@ -30,13 +35,21 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
   const [personalisationEnabled, setPersonalisationEnabled] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
-  useAiGenerating(isGeneratingSuggestions);
+  const suggestionsProgress = useTricklingProgress(isGeneratingSuggestions, "Personalizing question suggestions…");
+  useAiGenerating(isGeneratingSuggestions, undefined, suggestionsProgress);
   const [error, setError] = useState<string | null>(null);
 
   const [isLoadingExisting, setIsLoadingExisting] = useState(isEditMode);
   const [blockedReason, setBlockedReason] = useState<string | null>(null);
 
-  const isSaveDisabled = isSaving || !title.trim() || (!isEditMode && !classSectionId);
+  const isSaveDisabled = isSaving || (!isEditMode && !classSectionId);
+
+  // Inline validation - rules mirror backend/src/lib/validation.ts. Blank
+  // question rows are ignored on save (as before); a question that has text
+  // must be complete (options + a correct answer, full pairs, and so on).
+  const titleV = useFormErrors({ title }, { title: rules.label("Title", true, 120) });
+  const [showQuestionErrors, setShowQuestionErrors] = useState(false);
+  const questionErrors = questions.map((q) => (q.prompt.trim() ? assignmentQuestionProblem(q) : null));
 
   useEffect(() => {
     if (!accessToken) return;
@@ -61,7 +74,7 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
         }
         setTitle(a.title);
         setClassSectionId(a.classSectionId);
-        setQuestions(a.questions.length > 0 ? a.questions.map((q) => ({ ...q, difficulty: q.difficulty ?? "medium" })) : questions);
+        setQuestions(a.questions.length > 0 ? a.questions.map((q) => sanitizeQuestion({ ...q, difficulty: q.difficulty ?? "medium" })) : questions);
         setPersonalisationEnabled(a.personalisationEnabled);
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load assignment"))
@@ -77,6 +90,65 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
     setQuestions((prev) => prev.map((q) => (q.id === id ? { ...q, difficulty } : q)));
   }
 
+  // MCQ/true_false, match_following and sequencing question types carry
+  // extra structured fields (options, pairs, items) beyond the plain prompt
+  // this screen otherwise only edits - same shape and mutators as
+  // AssignmentDraftReviewScreen.tsx, so a teacher editing an already-created
+  // assignment sees and can change the same detail they saw when it was
+  // first drafted, not just the prompt text.
+  function updateOption(id: string, index: number, text: string) {
+    setQuestions((prev) =>
+      prev.map((q) => (q.id === id ? { ...q, options: (q.options ?? []).map((o, i) => (i === index ? text : o)) } : q))
+    );
+  }
+  function setCorrectOption(id: string, index: number) {
+    setQuestions((prev) => prev.map((q) => (q.id === id ? { ...q, correctOptionIndex: index } : q)));
+  }
+  function addOption(id: string) {
+    setQuestions((prev) =>
+      prev.map((q) => (q.id === id && (q.options?.length ?? 0) < 5 ? { ...q, options: [...(q.options ?? []), ""] } : q))
+    );
+  }
+  function removeOption(id: string, index: number) {
+    setQuestions((prev) =>
+      prev.map((q) => {
+        if (q.id !== id || (q.options?.length ?? 0) <= 2) return q;
+        const options = (q.options ?? []).filter((_, i) => i !== index);
+        const correctOptionIndex =
+          q.correctOptionIndex === index ? 0 : q.correctOptionIndex! > index ? q.correctOptionIndex! - 1 : q.correctOptionIndex;
+        return { ...q, options, correctOptionIndex };
+      })
+    );
+  }
+  function updatePair(id: string, index: number, side: "left" | "right", text: string) {
+    setQuestions((prev) =>
+      prev.map((q) => (q.id === id ? { ...q, pairs: (q.pairs ?? []).map((p, i) => (i === index ? { ...p, [side]: text } : p)) } : q))
+    );
+  }
+  function addPair(id: string) {
+    setQuestions((prev) =>
+      prev.map((q) => (q.id === id && (q.pairs?.length ?? 0) < 5 ? { ...q, pairs: [...(q.pairs ?? []), { left: "", right: "" }] } : q))
+    );
+  }
+  function removePair(id: string, index: number) {
+    setQuestions((prev) =>
+      prev.map((q) => (q.id === id && (q.pairs?.length ?? 0) > 2 ? { ...q, pairs: (q.pairs ?? []).filter((_, i) => i !== index) } : q))
+    );
+  }
+  function updateItem(id: string, index: number, text: string) {
+    setQuestions((prev) => prev.map((q) => (q.id === id ? { ...q, items: (q.items ?? []).map((it, i) => (i === index ? text : it)) } : q)));
+  }
+  function addItem(id: string) {
+    setQuestions((prev) =>
+      prev.map((q) => (q.id === id && (q.items?.length ?? 0) < 5 ? { ...q, items: [...(q.items ?? []), ""] } : q))
+    );
+  }
+  function removeItem(id: string, index: number) {
+    setQuestions((prev) =>
+      prev.map((q) => (q.id === id && (q.items?.length ?? 0) > 2 ? { ...q, items: (q.items ?? []).filter((_, i) => i !== index) } : q))
+    );
+  }
+
   function addQuestion() {
     setQuestions((prev) => [...prev, { id: `q${nextQuestionId++}`, prompt: "", difficulty: "medium" }]);
   }
@@ -86,7 +158,10 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
   }
 
   async function save(publish: boolean) {
-    if (!accessToken || !title.trim()) return;
+    if (!accessToken) return;
+    const titleValid = titleV.submit();
+    setShowQuestionErrors(true);
+    if (!titleValid) return;
     if (!classSectionId) {
       setError(
         classSections.length === 0
@@ -98,6 +173,10 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
     const filledQuestions = questions.filter((q) => q.prompt.trim().length > 0);
     if (filledQuestions.length === 0) {
       setError("Add at least one question");
+      return;
+    }
+    if (questionErrors.some(Boolean)) {
+      setError("Please fix the highlighted questions");
       return;
     }
 
@@ -220,12 +299,15 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
         <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           <Text style={[styles.label, { color: colors.textSecondary }]}>Title</Text>
           <TextInput
-            style={[styles.input, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
+            style={[styles.input, { backgroundColor: colors.surfaceRaised, borderColor: titleV.error("title") ? colors.danger : colors.border, color: colors.textPrimary }]}
             value={title}
             onChangeText={setTitle}
+            onBlur={() => titleV.blur("title")}
             placeholder="e.g. Fractions Practice"
             placeholderTextColor={colors.textMuted}
+            maxLength={120}
           />
+          <FieldError message={titleV.error("title")} />
 
           <Text style={[styles.label, { color: colors.textSecondary }]}>Class</Text>
           {classSections.length === 0 ? (
@@ -263,8 +345,9 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
             <View style={{ flex: 1 }}>
               <Text style={[styles.label, { color: colors.textSecondary, marginTop: 0 }]}>Personalise for each student</Text>
               <Text style={[styles.meta, { color: colors.textMuted, marginBottom: 0 }]}>
-                On publish, suggests a difficulty mix per student - the approved mix determines which of the questions below they
-                actually receive.
+                Every student gets all of the questions below, unchanged. On publish, this also generates an extra,
+                difficulty-matched section of questions for students with enough grading history to calibrate it - you
+                review and approve each one before it's added.
               </Text>
             </View>
             <Switch value={personalisationEnabled} onValueChange={setPersonalisationEnabled} trackColor={{ true: colors.accent }} />
@@ -283,11 +366,12 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
               <View style={styles.questionRow}>
                 <Text style={[styles.questionNumber, { color: colors.textMuted }]}>{i + 1}.</Text>
                 <TextInput
-                  style={[styles.questionInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
+                  style={[styles.questionInput, { backgroundColor: colors.surfaceRaised, borderColor: showQuestionErrors && questionErrors[i] ? colors.danger : colors.border, color: colors.textPrimary }]}
                   value={q.prompt}
                   onChangeText={(text) => updateQuestion(q.id, text)}
                   placeholder="Question prompt"
                   placeholderTextColor={colors.textMuted}
+                  maxLength={1000}
                   multiline
                 />
                 {questions.length > 1 ? (
@@ -296,6 +380,7 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
                   </Pressable>
                 ) : null}
               </View>
+              <FieldError message={showQuestionErrors ? questionErrors[i] : null} />
               {personalisationEnabled ? (
                 <View style={styles.difficultyRow}>
                   {DIFFICULTIES.map((level) => {
@@ -315,6 +400,109 @@ export function CreateAssignmentScreen({ navigation, route }: Props) {
                       </Pressable>
                     );
                   })}
+                </View>
+              ) : null}
+
+              {q.type === "mcq" || q.type === "true_false" ? (
+                <View style={styles.optionsBlock}>
+                  <Text style={[styles.smallLabel, { color: colors.textMuted }]}>Options - tap ✓ to mark the correct one</Text>
+                  {typeof q.correctOptionIndex !== "number" || q.correctOptionIndex < 0 || q.correctOptionIndex >= (q.options?.length ?? 0) ? (
+                    <View style={styles.warningRow}>
+                      <Ionicons name="alert-circle" size={14} color={colors.danger} />
+                      <Text style={[styles.warningText, { color: colors.danger }]}>No correct answer selected yet</Text>
+                    </View>
+                  ) : null}
+                  {(q.options ?? []).map((option, idx) => {
+                    const correct = q.correctOptionIndex === idx;
+                    return (
+                      <View key={idx} style={styles.optionRow}>
+                        <Pressable
+                          onPress={() => setCorrectOption(q.id, idx)}
+                          style={[styles.optionCheck, { borderColor: correct ? colors.accent : colors.border, backgroundColor: correct ? colors.accent : "transparent" }]}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Mark option ${idx + 1} correct`}
+                        >
+                          {correct ? <Ionicons name="checkmark" size={13} color={colors.accentOn} /> : null}
+                        </Pressable>
+                        <TextInput
+                          style={[styles.optionInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
+                          value={option}
+                          onChangeText={(text) => updateOption(q.id, idx, text)}
+                          placeholder={`Option ${idx + 1}`}
+                          placeholderTextColor={colors.textMuted}
+                          editable={q.type !== "true_false"}
+                        />
+                        {q.type === "mcq" && (q.options?.length ?? 0) > 2 ? (
+                          <Pressable onPress={() => removeOption(q.id, idx)} hitSlop={8} accessibilityRole="button">
+                            <Ionicons name="close-circle-outline" size={18} color={colors.textMuted} />
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    );
+                  })}
+                  {q.type === "mcq" && (q.options?.length ?? 0) < 5 ? (
+                    <Pressable onPress={() => addOption(q.id)} hitSlop={8} accessibilityRole="button">
+                      <Text style={[styles.addOptionText, { color: colors.accent }]}>+ Add option</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : q.type === "match_following" ? (
+                <View style={styles.optionsBlock}>
+                  <Text style={[styles.smallLabel, { color: colors.textMuted }]}>Pairs</Text>
+                  {(q.pairs ?? []).map((pair, idx) => (
+                    <View key={idx} style={styles.optionRow}>
+                      <TextInput
+                        style={[styles.optionInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary, flex: 1 }]}
+                        value={pair.left}
+                        onChangeText={(text) => updatePair(q.id, idx, "left", text)}
+                        placeholder="Left item"
+                        placeholderTextColor={colors.textMuted}
+                      />
+                      <TextInput
+                        style={[styles.optionInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary, flex: 1 }]}
+                        value={pair.right}
+                        onChangeText={(text) => updatePair(q.id, idx, "right", text)}
+                        placeholder="Matching right item"
+                        placeholderTextColor={colors.textMuted}
+                      />
+                      {(q.pairs?.length ?? 0) > 2 ? (
+                        <Pressable onPress={() => removePair(q.id, idx)} hitSlop={8} accessibilityRole="button">
+                          <Ionicons name="close-circle-outline" size={18} color={colors.textMuted} />
+                        </Pressable>
+                      ) : null}
+                    </View>
+                  ))}
+                  {(q.pairs?.length ?? 0) < 5 ? (
+                    <Pressable onPress={() => addPair(q.id)} hitSlop={8} accessibilityRole="button">
+                      <Text style={[styles.addOptionText, { color: colors.accent }]}>+ Add pair</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : q.type === "sequencing" ? (
+                <View style={styles.optionsBlock}>
+                  <Text style={[styles.smallLabel, { color: colors.textMuted }]}>Steps, in the correct order</Text>
+                  {(q.items ?? []).map((item, idx) => (
+                    <View key={idx} style={styles.optionRow}>
+                      <Text style={[styles.smallLabel, { color: colors.textMuted, marginTop: 0 }]}>{idx + 1}.</Text>
+                      <TextInput
+                        style={[styles.optionInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
+                        value={item}
+                        onChangeText={(text) => updateItem(q.id, idx, text)}
+                        placeholder={`Step ${idx + 1}`}
+                        placeholderTextColor={colors.textMuted}
+                      />
+                      {(q.items?.length ?? 0) > 2 ? (
+                        <Pressable onPress={() => removeItem(q.id, idx)} hitSlop={8} accessibilityRole="button">
+                          <Ionicons name="close-circle-outline" size={18} color={colors.textMuted} />
+                        </Pressable>
+                      ) : null}
+                    </View>
+                  ))}
+                  {(q.items?.length ?? 0) < 5 ? (
+                    <Pressable onPress={() => addItem(q.id)} hitSlop={8} accessibilityRole="button">
+                      <Text style={[styles.addOptionText, { color: colors.accent }]}>+ Add step</Text>
+                    </Pressable>
+                  ) : null}
                 </View>
               ) : null}
             </View>
@@ -379,6 +567,14 @@ const styles = StyleSheet.create({
   difficultyRow: { flexDirection: "row", gap: 6, marginTop: 6, marginLeft: 22 },
   difficultyChip: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 },
   difficultyChipText: { fontSize: 11, fontWeight: "700", textTransform: "capitalize" },
+  optionsBlock: { marginTop: 10, marginLeft: 22 },
+  smallLabel: { fontSize: 11, fontWeight: "700" },
+  optionRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
+  optionCheck: { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, alignItems: "center", justifyContent: "center" },
+  optionInput: { flex: 1, borderWidth: 1, borderRadius: 8, padding: 8, fontSize: 13 },
+  addOptionText: { fontSize: 12, fontWeight: "700", marginTop: 8 },
+  warningRow: { flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 8 },
+  warningText: { fontSize: 12, fontWeight: "700" },
   error: { textAlign: "center", marginBottom: 12 },
   actionRow: { flexDirection: "row", gap: 10 },
   secondaryButton: { flex: 1, borderWidth: 1, borderRadius: 10, height: 48, alignItems: "center", justifyContent: "center" },

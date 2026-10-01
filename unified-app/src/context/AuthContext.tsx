@@ -39,6 +39,7 @@ interface AuthContextValue {
   removeProfilePhoto: () => Promise<void>;
   markOnboardingTourSeen: () => Promise<void>;
   dismissProfilePrompt: () => Promise<void>;
+  markMascotWelcomeSeen: () => Promise<void>;
   deleteAccount: (password: string) => Promise<void>;
 }
 
@@ -287,6 +288,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  async function markMascotWelcomeSeen() {
+    if (!accessToken || !user) return;
+    setUser({ ...user, hasSeenMascotWelcome: true });
+    try {
+      await api.markMascotWelcomeSeen(accessToken);
+    } catch {
+      // Non-critical - worst case the animation plays once more next login.
+    }
+  }
+
   return (
     <AuthContext.Provider
       value={{
@@ -309,6 +320,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         removeProfilePhoto,
         markOnboardingTourSeen,
         dismissProfilePrompt,
+        markMascotWelcomeSeen,
         deleteAccount,
       }}
     >

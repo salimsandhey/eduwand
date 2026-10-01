@@ -264,6 +264,15 @@ export function CreditsScreen({ navigation }: Props) {
                   <Text style={[styles.linkText, { color: colors.textPrimary }]}>Request a class change</Text>
                   <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
                 </Pressable>
+                <Pressable
+                  onPress={() => navigation.navigate("RequestWorkspaceNameChange")}
+                  style={({ pressed }) => [styles.linkRow, { backgroundColor: colors.surface }, cardShadow, pressed && { opacity: pressedOpacity }]}
+                  accessibilityRole="button"
+                >
+                  <Ionicons name="create-outline" size={18} color={colors.textMuted} />
+                  <Text style={[styles.linkText, { color: colors.textPrimary }]}>Request a workspace name change</Text>
+                  <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+                </Pressable>
               </>
             ) : null}
           </>

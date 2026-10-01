@@ -21,6 +21,7 @@ import { api, CalendarDay, CalendarPeriod, CalendarTask } from "../api/client";
 import { capitalizeFirst } from "../utils/text";
 import { softCardShadow } from "../theme/tokens";
 import { SheetModal } from "./SheetModal";
+import { TimePicker } from "./TimePicker";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const toIso = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -96,7 +97,10 @@ export function TeacherCalendar({
   const [showAgenda, setShowAgenda] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [newTitle, setNewTitle] = useState("");
+  const [newTaskType, setNewTaskType] = useState<"quick" | "scheduled">("quick");
+  const [newDueTime, setNewDueTime] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
 
   // Active slider thumb position & grab scale
   const indicatorX = useRef(new Animated.Value(0)).current;
@@ -378,11 +382,16 @@ export function TeacherCalendar({
 
   async function addTask() {
     const title = newTitle.trim();
+    const dueTime = newTaskType === "scheduled" ? newDueTime : null;
     if (!accessToken || !title || isSaving) return;
+    if (newTaskType === "scheduled" && !dueTime) {
+      setAddError("Pick a time for this task");
+      return;
+    }
     setIsSaving(true);
-    setError(null);
+    setAddError(null);
     try {
-      const created = await api.createCalendarTask(accessToken, { title, taskDate: selectedIso });
+      const created = await api.createCalendarTask(accessToken, { title, taskDate: selectedIso, dueTime });
       patchDay(selectedIso, (day) => ({
         ...day,
         tasks: sortTasks([
@@ -397,8 +406,11 @@ export function TeacherCalendar({
         ]),
       }));
       setNewTitle("");
+      setNewDueTime("");
+      setNewTaskType("quick");
+      setShowAdd(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to add task");
+      setAddError(err instanceof Error ? err.message : "Failed to add task");
     } finally {
       setIsSaving(false);
     }
@@ -742,50 +754,125 @@ export function TeacherCalendar({
             ))}
 
             {showAdd ? (
-              <View style={styles.addRow}>
-                <TextInput
-                  value={newTitle}
-                  onChangeText={setNewTitle}
-                  placeholder="Task title..."
-                  placeholderTextColor={colors.textMuted}
-                  autoFocus
-                  style={[
-                    styles.addInput,
-                    {
-                      color: colors.textPrimary,
-                      borderColor: colors.border,
-                      backgroundColor: colors.surfaceRaised,
-                    },
-                  ]}
-                  onSubmitEditing={addTask}
-                  returnKeyType="done"
-                />
-                <Pressable
-                  onPress={addTask}
-                  disabled={!newTitle.trim() || isSaving}
-                  style={({ pressed }) => [
-                    styles.addButton,
-                    {
-                      backgroundColor: colors.accent,
-                      opacity: !newTitle.trim() || isSaving ? 0.5 : pressed ? pressedOpacity : 1,
-                    },
-                  ]}
-                  accessibilityRole="button"
-                  accessibilityLabel="Save task"
-                >
-                  {isSaving ? (
-                    <ActivityIndicator size="small" color={colors.accentOn} />
-                  ) : (
-                    <Ionicons name="checkmark" size={20} color={colors.accentOn} />
-                  )}
-                </Pressable>
+              <View style={styles.addBlock}>
+                <View style={styles.typeToggleRow}>
+                  {(
+                    [
+                      { key: "quick" as const, label: "Quick task" },
+                      { key: "scheduled" as const, label: "With time" },
+                    ]
+                  ).map((opt) => {
+                    const active = newTaskType === opt.key;
+                    return (
+                      <Pressable
+                        key={opt.key}
+                        onPress={() => setNewTaskType(opt.key)}
+                        style={[
+                          styles.typeToggleChip,
+                          {
+                            backgroundColor: active ? colors.accent : colors.surfaceRaised,
+                            borderColor: active ? colors.accent : colors.border,
+                          },
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: active }}
+                      >
+                        <Text
+                          style={[
+                            styles.typeToggleText,
+                            { color: active ? colors.accentOn : colors.textMuted },
+                          ]}
+                        >
+                          {opt.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                <View style={styles.addRow}>
+                  <TextInput
+                    value={newTitle}
+                    onChangeText={setNewTitle}
+                    placeholder={newTaskType === "scheduled" ? "e.g. Meeting with Principal" : "Task title..."}
+                    placeholderTextColor={colors.textMuted}
+                    maxLength={120}
+                    autoFocus
+                    style={[
+                      styles.addInput,
+                      {
+                        color: colors.textPrimary,
+                        borderColor: colors.border,
+                        backgroundColor: colors.surfaceRaised,
+                      },
+                    ]}
+                    onSubmitEditing={newTaskType === "quick" ? addTask : undefined}
+                    returnKeyType="done"
+                  />
+                  {newTaskType === "quick" ? (
+                    <Pressable
+                      onPressIn={addTask}
+                      disabled={!newTitle.trim() || isSaving}
+                      style={({ pressed }) => [
+                        styles.addButton,
+                        {
+                          backgroundColor: colors.accent,
+                          opacity: !newTitle.trim() || isSaving ? 0.5 : pressed ? pressedOpacity : 1,
+                        },
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityLabel="Save task"
+                    >
+                      {isSaving ? (
+                        <ActivityIndicator size="small" color={colors.accentOn} />
+                      ) : (
+                        <Ionicons name="checkmark" size={20} color={colors.accentOn} />
+                      )}
+                    </Pressable>
+                  ) : null}
+                </View>
+
+                {newTaskType === "scheduled" ? (
+                  <View style={styles.scheduledRow}>
+                    <View style={styles.scheduledTimeField}>
+                      <TimePicker value={newDueTime} onChange={setNewDueTime} placeholder="Select time" />
+                    </View>
+                    <Pressable
+                      onPressIn={addTask}
+                      disabled={!newTitle.trim() || !newDueTime || isSaving}
+                      style={({ pressed }) => [
+                        styles.addButton,
+                        {
+                          backgroundColor: colors.accent,
+                          opacity: !newTitle.trim() || !newDueTime || isSaving ? 0.5 : pressed ? pressedOpacity : 1,
+                        },
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityLabel="Save task"
+                    >
+                      {isSaving ? (
+                        <ActivityIndicator size="small" color={colors.accentOn} />
+                      ) : (
+                        <Ionicons name="checkmark" size={20} color={colors.accentOn} />
+                      )}
+                    </Pressable>
+                  </View>
+                ) : null}
+
+                {addError ? <Text style={[styles.errorText, { color: colors.danger }]}>{addError}</Text> : null}
               </View>
             ) : null}
           </View>
 
           <View style={styles.footerRow}>
             <Pressable
-              onPress={() => setShowAdd((v) => !v)}
+              onPress={() => {
+                setShowAdd((v) => !v);
+                setNewTitle("");
+                setNewDueTime("");
+                setNewTaskType("quick");
+                setAddError(null);
+              }}
               style={styles.footerAction}
               accessibilityRole="button"
             >
@@ -1025,10 +1112,35 @@ const styles = StyleSheet.create({
   taskDone: {
     textDecorationLine: "line-through",
   },
+  addBlock: {
+    gap: 8,
+  },
+  typeToggleRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  typeToggleChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  typeToggleText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
   addRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+  },
+  scheduledRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  scheduledTimeField: {
+    flex: 1,
   },
   addInput: {
     flex: 1,

@@ -4,6 +4,7 @@ import { api } from "../../api/client";
 import type { AcademicYear, AppUserSummary, ClassSection, Subject, TimetableSlot } from "../../api/client";
 import { Card } from "../../components/Card";
 import type { SchoolOutletContext } from "./SchoolLayout";
+import { btn } from "../../components/buttons";
 
 const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
@@ -66,6 +67,18 @@ export function SchoolTimetableTab() {
     if (!accessToken || !form || !teacherId) return;
     if (!form.classSectionId || !form.subject.trim() || !form.startTime || !form.endTime) {
       setError("Class, subject, start time and end time are required");
+      return;
+    }
+    if (form.startTime >= form.endTime) {
+      setError("End time must be after the start time");
+      return;
+    }
+    if (form.subject.trim().length > 60) {
+      setError("Subject must be at most 60 characters");
+      return;
+    }
+    if (form.room.trim().length > 20) {
+      setError("Room must be at most 20 characters");
       return;
     }
     setIsSaving(true);
@@ -232,7 +245,7 @@ export function SchoolTimetableTab() {
                       ))}
                     </select>
                   ) : (
-                    <input style={styles.input} value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} placeholder="e.g. Science" />
+                    <input style={styles.input} value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} placeholder="e.g. Science" maxLength={60} />
                   )}
                 </label>
                 <label style={styles.label}>
@@ -245,7 +258,7 @@ export function SchoolTimetableTab() {
                 </label>
                 <label style={styles.label}>
                   Room (optional)
-                  <input style={styles.input} value={form.room} onChange={(e) => setForm({ ...form, room: e.target.value })} placeholder="e.g. 204" />
+                  <input style={styles.input} value={form.room} onChange={(e) => setForm({ ...form, room: e.target.value })} placeholder="e.g. 204" maxLength={20} />
                 </label>
               </div>
               <div style={styles.row}>
@@ -272,10 +285,10 @@ const styles: Record<string, React.CSSProperties> = {
   dayHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
   slotRow: { display: "flex", alignItems: "center", gap: 12, padding: "6px 0" },
   slotTime: { width: 110, fontSize: 13, fontWeight: 700, color: "var(--text-primary)" },
-  linkButton: { background: "transparent", border: "none", color: "var(--accent)", cursor: "pointer", fontSize: 13, fontWeight: 600, padding: 0 },
+  linkButton: btn.link,
   formBox: { marginTop: 20, padding: 16, borderRadius: 12, border: "1px solid var(--border)", background: "var(--bg-page)" },
   formGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginTop: 12 },
-  button: { background: "var(--accent)", color: "#fff", border: "none", borderRadius: 8, padding: "10px 16px", fontWeight: 600, cursor: "pointer", fontSize: 14 },
-  secondaryButton: { background: "var(--bg-page)", color: "var(--text-primary)", border: "1px solid var(--border)", borderRadius: 8, padding: "10px 16px", fontWeight: 600, cursor: "pointer", fontSize: 14 },
+  button: btn.primary,
+  secondaryButton: btn.secondary,
   error: { color: "var(--status-critical)", fontSize: 13, marginTop: 8, marginBottom: 0 },
 };

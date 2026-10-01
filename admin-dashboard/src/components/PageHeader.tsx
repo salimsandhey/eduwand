@@ -10,12 +10,12 @@ export function PageHeader({
   action?: ReactNode;
 }) {
   return (
-    <div style={styles.row}>
+    <div className="ui-page-header" style={styles.row}>
       <div>
-        <h1 style={styles.title}>{title}</h1>
+        <h1 className="ui-page-title" style={styles.title}>{title}</h1>
         {subtitle ? <p style={styles.subtitle}>{subtitle}</p> : null}
       </div>
-      {action ? <div style={styles.action}>{action}</div> : null}
+      {action ? <div className="ui-page-action" style={styles.action}>{action}</div> : null}
     </div>
   );
 }

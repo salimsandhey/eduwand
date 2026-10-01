@@ -21,6 +21,8 @@ import { decorativeAssets } from "../../theme/decorativeAssets";
 import { useTabBarScrollHandler } from "../../navigation/TabBarScrollContext";
 import { useTabBarClearance } from "../../navigation/useTabBarClearance";
 import { softCardShadow } from "../../theme/tokens";
+import { FieldError } from "../../components/FieldError";
+import { rules } from "../../utils/validation";
 
 type QueueFilter = "today" | "overdue" | "upcoming" | "all";
 type Tone = "overdue" | "today" | "upcoming";
@@ -454,6 +456,10 @@ function TaskCard({
   const [rescheduling, setRescheduling] = useState(false);
   const [newDate, setNewDate] = useState("");
   const [inputFocused, setInputFocused] = useState(false);
+  const [dateTouched, setDateTouched] = useState(false);
+  // Same rule as the backend's date check, plus "not in the past" for a follow-up.
+  const today = new Date().toISOString().slice(0, 10);
+  const dateError = rules.date("Date")(newDate) ?? (newDate < today ? "Pick today or a later date" : null);
 
   const historyLabel = getHistoryLabel(task.enquiryId);
   const isUrgent = tone !== "today";
@@ -467,11 +473,12 @@ function TaskCard({
   const time = new Date(task.dueAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
 
   const rescheduleRow = (
+    <View>
     <View style={styles.rescheduleRow}>
       <View
         style={[
           styles.rescheduleInputWrap,
-          { backgroundColor: colors.surfaceRaised, borderColor: inputFocused ? colors.accent : colors.border },
+          { backgroundColor: colors.surfaceRaised, borderColor: dateTouched && dateError ? colors.danger : inputFocused ? colors.accent : colors.border },
         ]}
       >
         <Ionicons name="calendar-outline" size={14} color={colors.textMuted} />
@@ -480,15 +487,23 @@ function TaskCard({
           placeholder="YYYY-MM-DD"
           placeholderTextColor={colors.textMuted}
           value={newDate}
-          onChangeText={setNewDate}
+          onChangeText={(t) => setNewDate(t.replace(/[^0-9-]/g, "").slice(0, 10))}
+          keyboardType="numbers-and-punctuation"
+          maxLength={10}
           onFocus={() => setInputFocused(true)}
-          onBlur={() => setInputFocused(false)}
+          onBlur={() => {
+            setInputFocused(false);
+            setDateTouched(true);
+          }}
         />
       </View>
       <Pressable
         onPress={() => {
-          if (newDate) onReschedule(task.id, newDate);
+          setDateTouched(true);
+          if (dateError) return;
+          onReschedule(task.id, newDate);
           setNewDate("");
+          setDateTouched(false);
           setRescheduling(false);
         }}
         style={({ pressed }) => [styles.iconButton, { backgroundColor: colors.accent }, pressed && { opacity: pressedOpacity }]}
@@ -498,6 +513,7 @@ function TaskCard({
       <Pressable
         onPress={() => {
           setNewDate("");
+          setDateTouched(false);
           setRescheduling(false);
         }}
         style={({ pressed }) => [
@@ -508,6 +524,8 @@ function TaskCard({
       >
         <Ionicons name="close" size={16} color={colors.textSecondary} />
       </Pressable>
+    </View>
+    <FieldError message={dateTouched ? dateError : null} />
     </View>
   );
 

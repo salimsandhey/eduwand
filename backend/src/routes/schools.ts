@@ -6,7 +6,12 @@ import { BOARDS, isValidBoard } from "../lib/boards";
 import { seedDefaultPipelineStages } from "../lib/pipeline-stages";
 import { seedDefaultFormDefinitions } from "../lib/form-definitions";
 import { recordAuditEvent } from "../lib/audit";
+import { Validator } from "../lib/validation";
 import { seedDefaultApprovalChain } from "../lib/approval-chain";
+
+// An explicitly empty string clears an optional text column; otherwise the
+// validated value (or undefined = leave untouched).
+const orBlank = <T>(raw: unknown, value: T | undefined): T | "" | undefined => (raw === "" ? "" : value);
 
 interface CreateSchoolBody {
   trustId?: string;
@@ -84,24 +89,17 @@ export async function schoolRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const body = request.body ?? ({} as CreateSchoolBody);
 
-      if (!body.name || !body.board) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: "name and board are required" },
-        });
-      }
-      if (!isValidBoard(body.board)) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: `board must be one of ${BOARDS.join(", ")}` },
-        });
-      }
-      if (!body.trustId) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: "trustId is required" },
-        });
-      }
+      const v = new Validator();
+      const name = v.label("name", body.name, "School name", true, 120);
+      if (!body.board) v.fail("board", "Board is required");
+      else if (!isValidBoard(body.board)) v.fail("board", `Board must be one of ${BOARDS.join(", ")}`);
+      if (!body.trustId) v.fail("trustId", "Trust is required");
+      const address = v.note("address", body.address, "Address", { max: 300 });
+      const principalName = v.personName("principalName", body.principalName, "Principal name", false);
+      const principalPhone = v.phone("principalPhone", body.principalPhone, false, "Principal phone number");
+      const strength = v.number("expectedStudentStrength", body.expectedStudentStrength, "Expected student strength", { integer: true, min: 0, max: 100000 });
+      const timezone = v.timezone("timezone", body.timezone);
+      if (v.hasErrors || !name || !body.trustId) return v.reject(reply);
 
       const trust = await prisma.trust.findUnique({ where: { id: body.trustId } });
       if (!trust) {
@@ -109,7 +107,7 @@ export async function schoolRoutes(app: FastifyInstance) {
       }
 
       const duplicate = await prisma.school.findFirst({
-        where: { trustId: body.trustId, name: { equals: body.name.trim(), mode: "insensitive" } },
+        where: { trustId: body.trustId, name: { equals: name, mode: "insensitive" } },
       });
       if (duplicate) {
         return reply.code(400).send({
@@ -121,13 +119,13 @@ export async function schoolRoutes(app: FastifyInstance) {
       const school = await prisma.school.create({
         data: {
           trustId: body.trustId,
-          name: body.name.trim(),
+          name,
           board: body.board,
-          address: body.address,
-          timezone: body.timezone ?? "Asia/Kolkata",
-          principalName: body.principalName,
-          principalPhone: body.principalPhone,
-          expectedStudentStrength: body.expectedStudentStrength,
+          address,
+          timezone: timezone ?? "Asia/Kolkata",
+          principalName,
+          principalPhone,
+          expectedStudentStrength: strength,
           status: "onboarding",
         },
       });
@@ -209,12 +207,17 @@ export async function schoolRoutes(app: FastifyInstance) {
       const caller = request.user;
       const body = request.body ?? ({} as UpdateSchoolBody);
 
-      if (body.status && !SCHOOL_STATUSES.includes(body.status)) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: `status must be one of ${SCHOOL_STATUSES.join(", ")}` },
-        });
-      }
+      const v = new Validator();
+      const name = body.name !== undefined ? v.label("name", body.name, "School name", true, 120) : undefined;
+      const address = body.address !== undefined ? v.note("address", body.address, "Address", { max: 300 }) : undefined;
+      const principalName = body.principalName !== undefined ? v.personName("principalName", body.principalName, "Principal name", false) : undefined;
+      const principalPhone = body.principalPhone !== undefined ? v.phone("principalPhone", body.principalPhone, false, "Principal phone number") : undefined;
+      const strength = v.number("expectedStudentStrength", body.expectedStudentStrength, "Expected student strength", { integer: true, min: 0, max: 100000 });
+      const updatedTimezone = body.timezone !== undefined ? v.timezone("timezone", body.timezone) : undefined;
+      if (body.classLimit !== undefined && body.classLimit !== null) v.number("classLimit", body.classLimit, "Class limit", { integer: true, min: 0, max: 200 });
+      if (body.subjectLimit !== undefined && body.subjectLimit !== null) v.number("subjectLimit", body.subjectLimit, "Subject limit", { integer: true, min: 0, max: 200 });
+      if (body.status && !SCHOOL_STATUSES.includes(body.status)) v.fail("status", `Status must be one of ${SCHOOL_STATUSES.join(", ")}`);
+      if (v.hasErrors) return v.reject(reply);
 
       const existing = await prisma.school.findUnique({ where: { id: request.params.id } });
       if (!existing) {
@@ -255,13 +258,13 @@ export async function schoolRoutes(app: FastifyInstance) {
       const school = await prisma.school.update({
         where: { id: request.params.id },
         data: {
-          name: body.name ?? undefined,
+          name,
           board: body.board ?? undefined,
-          address: body.address ?? undefined,
-          timezone: body.timezone ?? undefined,
-          principalName: body.principalName ?? undefined,
-          principalPhone: body.principalPhone ?? undefined,
-          expectedStudentStrength: body.expectedStudentStrength ?? undefined,
+          address: orBlank(body.address, address),
+          timezone: updatedTimezone,
+          principalName: orBlank(body.principalName, principalName),
+          principalPhone: orBlank(body.principalPhone, principalPhone),
+          expectedStudentStrength: strength,
           status: body.status ?? undefined,
           // Explicit null clears the override; omitted key leaves it untouched.
           classLimit: body.classLimit !== undefined ? body.classLimit : undefined,

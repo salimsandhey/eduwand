@@ -23,19 +23,21 @@ import { lockPortrait } from "./src/utils/safeOrientation";
 applyGlobalTypography();
 
 function Root() {
-  const { user, isRestoring } = useAuth();
+  const { user, isRestoring, markMascotWelcomeSeen } = useAuth();
   const { mode } = useTheme();
   const [splashDone, setSplashDone] = useState(false);
-  const { startWelcome, welcomeCount } = useWelcomeMascot();
+  const { startWelcome, welcomeCount, isMascotDocked } = useWelcomeMascot();
   const blurTargetRef = useRef<View>(null);
 
   useEffect(() => {
     lockPortrait();
   }, []);
 
-  // Once per signed-in account, every role alike. Cleared on logout, so
-  // logging in as someone else (e.g. a student after a teacher) in the same
-  // app session still gets the intro - a one-shot boolean skipped it.
+  // Only ever for a genuinely new registration, and only the once - gated on
+  // the server-persisted hasSeenMascotWelcome (false only for an account that
+  // was just created; every pre-existing account defaults to true). The ref
+  // is just a same-session dedup so a re-render before the flag round-trips
+  // back from the server can't fire this twice.
   const welcomedUserIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!user) {
@@ -44,11 +46,21 @@ function Root() {
     }
     // Students have no AI assistant, so no mascot intro either.
     if (user.role === "student") return;
+    if (user.hasSeenMascotWelcome) return;
     if (splashDone && welcomedUserIdRef.current !== user.id) {
       welcomedUserIdRef.current = user.id;
       startWelcome();
     }
   }, [splashDone, user, startWelcome]);
+
+  // The mascot docking near the AI button is the sequence's true end -
+  // persist it right then so the animation can never replay, even if the
+  // app is killed before the user navigates anywhere else.
+  useEffect(() => {
+    if (isMascotDocked && user && !user.hasSeenMascotWelcome) {
+      markMascotWelcomeSeen();
+    }
+  }, [isMascotDocked, user, markMascotWelcomeSeen]);
 
   return (
     <SplashDoneProvider done={splashDone}>

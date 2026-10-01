@@ -11,11 +11,12 @@ import { getBusinessDetails } from "../lib/billing";
 // and whether payments are set up. Cheap counts only - polled by the dashboard.
 export async function adminStatusRoutes(app: FastifyInstance) {
   app.get("/admin/status", { onRequest: [app.authenticate, requireRoles(PLATFORM_ADMIN_ROLE)] }, async () => {
-    const [cfg, subject, classChange, board, today, business] = await Promise.all([
+    const [cfg, subject, classChange, board, name, today, business] = await Promise.all([
       loadGuardConfig(),
       prisma.subjectChangeRequest.count({ where: { status: "pending" } }),
       prisma.classChangeRequest.count({ where: { status: "pending" } }),
       prisma.boardChangeTicket.count({ where: { status: "pending" } }),
+      prisma.schoolNameChangeTicket.count({ where: { status: "pending" } }),
       prisma.aiSpendCounter.findUnique({ where: { scope_periodKey: { scope: "global", periodKey: periodKeys().day } } }),
       getBusinessDetails(),
     ]);
@@ -23,7 +24,7 @@ export async function adminStatusRoutes(app: FastifyInstance) {
     const dayLimit = cfg.limits.get("spend_day_global");
     return {
       data: {
-        approvals: { subject, class: classChange, board, total: subject + classChange + board },
+        approvals: { subject, class: classChange, board, name, total: subject + classChange + board + name },
         ai: {
           paused: cfg.paused,
           spentTodayInr: Math.round(((today?.spentUsd ?? 0) + (today?.reservedUsd ?? 0)) * cfg.usdInr * 100) / 100,

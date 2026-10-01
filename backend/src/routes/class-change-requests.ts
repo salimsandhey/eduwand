@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { PLATFORM_ADMIN_ROLE } from "../lib/roles";
+import { Validator } from "../lib/validation";
 
 // Individual-account class change workflow - same "request only" pattern as
 // SubjectChangeRequest. changeType "add" requests one more class beyond the
@@ -47,8 +48,11 @@ export async function classChangeRequestRoutes(app: FastifyInstance) {
       }
 
       const body = request.body ?? ({} as CreateClassChangeRequestBody);
-      const requestedClassName = body.requestedClassName?.trim();
-      const requestedSectionName = body.requestedSectionName?.trim();
+      const cv = new Validator();
+      const requestedClassName = cv.label("requestedClassName", body.requestedClassName, "Class name");
+      const requestedSectionName = cv.label("requestedSectionName", body.requestedSectionName, "Section name");
+      const requestNote = cv.note("note", body.note, "Reason", { max: 500 });
+      if (cv.hasErrors) return cv.reject(reply);
       if (body.changeType !== "add" && body.changeType !== "replace") {
         return reply.code(400).send({ data: null, error: { code: "validation_error", message: "changeType must be add or replace" } });
       }
@@ -104,7 +108,7 @@ export async function classChangeRequestRoutes(app: FastifyInstance) {
           targetClassSectionId: body.changeType === "replace" ? body.targetClassSectionId : undefined,
           requestedClassName,
           requestedSectionName,
-          note: body.note?.trim() || undefined,
+          note: requestNote,
         },
       });
 

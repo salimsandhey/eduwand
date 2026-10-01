@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
+import { Validator } from "../lib/validation";
 import { publish } from "../lib/realtime";
 
 interface SendToStudentBody {
@@ -46,9 +47,10 @@ export async function communicationRoutes(app: FastifyInstance) {
 
   app.post<{ Body: SendToStudentBody }>("/communications/teacher-to-student", { onRequest: scoped(app) }, async (request, reply) => {
     const body = request.body ?? ({} as SendToStudentBody);
-    if (!body.studentStubId || !body.body?.trim()) {
-      return reply.code(400).send({ data: null, error: { code: "validation_error", message: "studentStubId and body are required" } });
-    }
+    const v = new Validator();
+    const text = v.note("body", body.body, "Message", { required: true, max: 2000 });
+    if (!body.studentStubId) v.fail("studentStubId", "Choose a student");
+    if (v.hasErrors || !text) return v.reject(reply);
 
     const student = await prisma.studentStub.findFirst({ where: { id: body.studentStubId, schoolId: request.schoolId } });
     if (!student) {
@@ -61,7 +63,7 @@ export async function communicationRoutes(app: FastifyInstance) {
         channel: "teacher_to_student",
         senderUserId: request.user.sub,
         recipientStudentStubId: student.id,
-        body: body.body.trim(),
+        body: text,
         deliveryStatus: "sent",
         sentAt: new Date(),
       },
@@ -73,9 +75,10 @@ export async function communicationRoutes(app: FastifyInstance) {
 
   app.post<{ Body: SendToClassBody }>("/communications/teacher-to-class", { onRequest: scoped(app) }, async (request, reply) => {
     const body = request.body ?? ({} as SendToClassBody);
-    if (!body.classSectionId || !body.body?.trim()) {
-      return reply.code(400).send({ data: null, error: { code: "validation_error", message: "classSectionId and body are required" } });
-    }
+    const v = new Validator();
+    const text = v.note("body", body.body, "Message", { required: true, max: 2000 });
+    if (!body.classSectionId) v.fail("classSectionId", "Choose a class");
+    if (v.hasErrors || !text) return v.reject(reply);
 
     const classSection = await prisma.classSection.findFirst({
       where: { id: body.classSectionId, academicYear: { schoolId: request.schoolId } },
@@ -90,7 +93,7 @@ export async function communicationRoutes(app: FastifyInstance) {
         channel: "teacher_to_class",
         senderUserId: request.user.sub,
         recipientClassSectionId: classSection.id,
-        body: body.body.trim(),
+        body: text,
         deliveryStatus: "sent",
         sentAt: new Date(),
       },

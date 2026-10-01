@@ -3,10 +3,10 @@ import { detectImageMime, imageKey, IMAGE_ONLY_ERROR } from "../lib/upload";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
+import { Validator } from "../lib/validation";
 import { publish } from "../lib/realtime";
 import { storage } from "../lib/storage";
 import { aiProvider } from "../lib/ai";
-import { selectQuestionsForMix } from "../lib/personalisation";
 
 interface CreateStudentSubmissionBody {
   assignmentId: string;
@@ -22,13 +22,19 @@ interface StoredQuestion {
   type?: string;
   options?: string[];
   correctOptionIndex?: number;
+  pairs?: { left: string; right: string }[];
+  items?: string[];
+  // Personalised extra questions only - never delivered to the student, same
+  // reason as correctOptionIndex below.
+  modelAnswer?: string;
 }
 
-// The stored question JSON carries correctOptionIndex for MCQ questions - it
-// must never reach the student client (it would hand them the answer key).
-// Options themselves are kept; only the marker of which one is right is dropped.
+// The stored question JSON carries correctOptionIndex (mcq/true_false) and,
+// for personalised extra questions, modelAnswer - neither must ever reach
+// the student client, since either would hand them the answer key. Options/
+// pairs/items themselves are kept; only the answer markers are dropped.
 function sanitiseQuestionForStudent(question: StoredQuestion) {
-  const { correctOptionIndex: _drop, ...safe } = question;
+  const { correctOptionIndex: _drop, modelAnswer: _drop2, ...safe } = question;
   return safe;
 }
 
@@ -63,15 +69,18 @@ export async function studentPortalRoutes(app: FastifyInstance) {
       },
     });
 
-    // Personalisation actually takes effect here: a student with an
-    // approved/overridden PersonalisationSuggestion sees only the subset of
-    // questions their mix selects, not the full assignment (see
-    // lib/personalisation.ts - previously the mix was decided and stored but
-    // nothing ever read it back).
+    // Personalisation ADDS to what a student is shown, never subtracts - the
+    // assignment's own (already teacher-reviewed) questions are always
+    // delivered in full to every student; a student with an approved/
+    // overridden PersonalisationSuggestion additionally gets that
+    // suggestion's extraQuestions as a second, clearly separate section (see
+    // the schema comment on PersonalisationSuggestion.extraQuestions).
     const suggestions = await prisma.personalisationSuggestion.findMany({
       where: { studentStubId: student.id, assignmentId: { in: assignments.map((a) => a.id) } },
     });
-    const mixByAssignment = new Map(suggestions.map((s) => [s.assignmentId, s.appliedMix as Record<string, number> | null]));
+    const extraByAssignment = new Map(
+      suggestions.map((s) => [s.assignmentId, (s.extraQuestions as unknown as StoredQuestion[] | null) ?? []])
+    );
 
     const data = assignments.map((assignment) => {
       const submission = assignment.submissions[0] ?? null;
@@ -86,15 +95,16 @@ export async function studentPortalRoutes(app: FastifyInstance) {
           : null;
 
       const allQuestions = assignment.questions as unknown as StoredQuestion[];
-      const selected = assignment.personalisationEnabled
-        ? selectQuestionsForMix(allQuestions, mixByAssignment.get(assignment.id))
-        : allQuestions;
-      const questions = selected.map(sanitiseQuestionForStudent);
+      const questions = allQuestions.map(sanitiseQuestionForStudent);
+      const personalisedQuestions = assignment.personalisationEnabled
+        ? (extraByAssignment.get(assignment.id) ?? []).map(sanitiseQuestionForStudent)
+        : [];
 
       return {
         id: assignment.id,
         title: assignment.title,
         questions,
+        personalisedQuestions,
         publishedAt: assignment.publishedAt,
         submissionStatus: submission ? (grade ? "graded" : "submitted") : "not_submitted",
         grade,
@@ -163,16 +173,14 @@ export async function studentPortalRoutes(app: FastifyInstance) {
     let ocrConfidence: number | null = null;
     if (submissionType === "photo" && photoFileLocation) {
       const allQuestions = assignment.questions as unknown as { id: string; prompt: string; difficulty?: string }[];
-      const questionsForOcr = assignment.personalisationEnabled
-        ? selectQuestionsForMix(
-            allQuestions,
-            (
-              await prisma.personalisationSuggestion.findUnique({
-                where: { assignmentId_studentStubId: { assignmentId: assignment.id, studentStubId: student.id } },
-              })
-            )?.appliedMix as Record<string, number> | null | undefined
-          )
-        : allQuestions;
+      const extraQuestions = assignment.personalisationEnabled
+        ? ((
+            await prisma.personalisationSuggestion.findUnique({
+              where: { assignmentId_studentStubId: { assignmentId: assignment.id, studentStubId: student.id } },
+            })
+          )?.extraQuestions as unknown as { id: string; prompt: string; difficulty?: string }[] | null) ?? []
+        : [];
+      const questionsForOcr = [...allQuestions, ...extraQuestions];
       const ocr = await aiProvider.extractTextFromPhoto({ fileLocation: photoFileLocation, questions: questionsForOcr });
       ocrExtractedText = ocr.perQuestion ? JSON.stringify(ocr.perQuestion) : ocr.text;
       ocrConfidence = ocr.confidence;
@@ -412,9 +420,9 @@ export async function studentPortalRoutes(app: FastifyInstance) {
 
   app.post<{ Body: { body: string } }>("/student/communications", { onRequest: scoped(app) }, async (request, reply) => {
     const body = request.body ?? ({} as { body: string });
-    if (!body.body || !body.body.trim()) {
-      return reply.code(400).send({ data: null, error: { code: "validation_error", message: "body is required" } });
-    }
+    const v = new Validator();
+    const text = v.note("body", body.body, "Message", { required: true, max: 2000 });
+    if (v.hasErrors || !text) return v.reject(reply);
 
     const student = await prisma.studentStub.findFirst({
       where: { id: request.user.sub, schoolId: request.schoolId },
@@ -429,7 +437,7 @@ export async function studentPortalRoutes(app: FastifyInstance) {
         channel: "student_to_teacher",
         senderStudentStubId: student.id,
         recipientClassSectionId: student.classSectionId,
-        body: body.body.trim(),
+        body: text,
         deliveryStatus: "sent",
         sentAt: new Date(),
       },

@@ -4,12 +4,15 @@ import { assignmentPublishedEmail, classLabel } from "../lib/email/templates";
 import { studentRecipientsForClass } from "../lib/email/recipients";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { Validator, validateAssignmentQuestions } from "../lib/validation";
 import { requireRoles } from "../lib/rbac";
 import { aiProvider, logAiUsage, AssignmentGenInput, GeneratedAssignmentQuestion, AssignmentQuestionType, ALL_QUESTION_TYPES } from "../lib/ai";
 import { hasSufficientCredits, getFeatureCost } from "../lib/credits";
 import { buildTaughtContentText, buildContextSourceText } from "../lib/generation-content";
 import { markOnboardingTaskComplete } from "../lib/onboarding";
 import { getSchoolBoard } from "../lib/boards";
+import { getClassBandThresholds } from "../lib/classBands";
+import { collectObjectiveCoverage } from "./attainment-reports";
 
 interface Question {
   id: string;
@@ -61,6 +64,10 @@ interface CreateAssignmentDraftBody {
   // Empty/omitted = the AI may use any format.
   questionTypes?: string[];
   focusPrompt?: string;
+  // Ignored (forced false) when this draft spans more than one topic -
+  // personalisationEligible() requires a single-topic assignment, so a
+  // multi-topic one could never generate any extra questions anyway.
+  personalisationEnabled?: boolean;
 }
 
 interface RegenerateQuestionBody {
@@ -106,7 +113,17 @@ function toStoredQuestion(q: GeneratedAssignmentQuestion, id: string) {
   } else if (q.type === "sequencing") {
     base.items = q.items ?? [];
   }
+  // Single-topic AI generation only - see AssignmentGenInput.objectiveOptions.
+  if (q.objectiveId) base.objectiveId = q.objectiveId;
   return base;
+}
+
+function normaliseDifficultyMix(mix: Record<string, number> | null | undefined): DifficultyMix {
+  return {
+    easy: Math.max(0, Math.round(Number(mix?.easy)) || 0),
+    medium: Math.max(0, Math.round(Number(mix?.medium)) || 0),
+    hard: Math.max(0, Math.round(Number(mix?.hard)) || 0),
+  };
 }
 
 function mixFromDifficulty(difficulty: string): DifficultyMix {
@@ -115,6 +132,96 @@ function mixFromDifficulty(difficulty: string): DifficultyMix {
     medium: difficulty === "hard" || difficulty === "easy" ? 0 : 1,
     hard: difficulty === "hard" ? 1 : 0,
   };
+}
+
+// Adds modelAnswer/marks on top of toStoredQuestion's shape - a personalised
+// extra question has no separate per-student AnswerKey row (that table is
+// keyed per-assignment, shared across every student), so its own generated
+// modelAnswer travels with it and IS the answer key for grading purposes.
+function toStoredExtraQuestion(q: GeneratedAssignmentQuestion, id: string) {
+  return { ...toStoredQuestion(q, id), modelAnswer: q.modelAnswer, marks: 1 };
+}
+
+type ExtraQuestionGenBase = Omit<AssignmentGenInput, "questionCount" | "difficultyMix" | "questionTypes" | "focusPrompt"> | null;
+
+// The shared, per-assignment half of the extra-question generator input -
+// topic content doesn't vary per student, only the difficulty mix does.
+// null when there's no single topic to generate from (personalisationEligible
+// already requires one, but a topic that's since been deleted, or with no
+// taught content yet, still needs to degrade to "no extra questions"
+// gracefully rather than failing the whole publish).
+async function buildExtraQuestionGenInput(schoolId: string, topicId: string | null, classSectionId: string): Promise<ExtraQuestionGenBase> {
+  if (!topicId) return null;
+  const topic = await prisma.topic.findFirst({
+    where: { id: topicId, schoolId },
+    include: { contextSources: true, generations: { orderBy: { generatedAt: "desc" } } },
+  });
+  if (!topic) return null;
+
+  const taught = buildTaughtContentText(topic.generations);
+  const taughtContent = taught.text || buildContextSourceText(topic.contextSources);
+  if (!taughtContent) return null;
+
+  const classSection = await prisma.classSection.findFirst({ where: { id: classSectionId, academicYear: { schoolId } } });
+  if (!classSection) return null;
+
+  const formatTemplate = await prisma.schoolFormatTemplate.findUnique({
+    where: { schoolId_appliesTo: { schoolId, appliesTo: "generation" } },
+  });
+
+  return {
+    taughtContent,
+    objectives: taught.objectives,
+    subject: topic.subject,
+    board: await getSchoolBoard(schoolId),
+    classLabel: `${classSection.className} ${classSection.sectionName}`,
+    schoolFormatInstructions: formatTemplate?.templateBody ?? null,
+  };
+}
+
+// Generates the actual extra questions for one student's mix. Returns []
+// (not an error) whenever there's nothing to generate from, or the mix asks
+// for zero questions - a student in that state simply has no personalised
+// section, same as one who was never eligible.
+async function generateExtraQuestions(base: ExtraQuestionGenBase, mix: DifficultyMix, studentStubId: string) {
+  const count = mix.easy + mix.medium + mix.hard;
+  if (!base || count === 0) return [];
+  const { questions: generated } = await aiProvider.generateAssignmentFromTopic({
+    ...base,
+    questionCount: count,
+    difficultyMix: mix,
+    questionTypes: [],
+    focusPrompt: null,
+  });
+  // Prefixed and scoped to this student so an id can never collide with the
+  // assignment's own question ids or another student's extra questions.
+  return generated.map((q, i) => toStoredExtraQuestion(q, `p-${studentStubId}-${i + 1}`));
+}
+
+// Upserts whatever objectives collectObjectiveCoverage() currently finds for
+// this topic into real TopicObjective rows, matched by exact text, so a
+// generated question can reference one by a stable id and a teacher can set
+// a real benchmark for it. Regenerating for the same topic reuses existing
+// rows (and any benchmark a teacher already edited) rather than duplicating
+// them - see the design spec for why this isn't done up front at
+// lesson-generation time instead.
+async function materialiseTopicObjectives(schoolId: string, topicId: string): Promise<{ id: string; text: string }[]> {
+  const topic = await prisma.topic.findFirst({ where: { id: topicId, schoolId }, include: { generations: true } });
+  if (!topic) return [];
+  const coverage = collectObjectiveCoverage(topic.generations);
+  if (coverage.length === 0) return [];
+
+  const { level1MinPercent } = await getClassBandThresholds(schoolId);
+  const rows = await Promise.all(
+    coverage.map((entry) =>
+      prisma.topicObjective.upsert({
+        where: { topicId_text: { topicId, text: entry.objective } },
+        create: { topicId, text: entry.objective, bloomsStage: entry.stage, benchmarkPercent: level1MinPercent },
+        update: { bloomsStage: entry.stage },
+      })
+    )
+  );
+  return rows.map((r) => ({ id: r.id, text: r.text }));
 }
 
 async function personalisationEligible(schoolId: string, topicId: string | null, studentStubId: string): Promise<boolean> {
@@ -135,12 +242,11 @@ export async function assignmentRoutes(app: FastifyInstance) {
   app.post<{ Body: CreateAssignmentBody }>("/assignments", { onRequest: scoped(app) }, async (request, reply) => {
     const body = request.body ?? ({} as CreateAssignmentBody);
 
-    if (!body.title || !body.classSectionId || !Array.isArray(body.questions) || body.questions.length === 0) {
-      return reply.code(400).send({
-        data: null,
-        error: { code: "validation_error", message: "title, classSectionId, and at least one question are required" },
-      });
-    }
+    const v = new Validator();
+    const title = v.label("title", body.title, "Title", true, 120);
+    if (!body.classSectionId) v.fail("classSectionId", "Choose a class");
+    validateAssignmentQuestions(v, "questions", body.questions);
+    if (v.hasErrors || !title) return v.reject(reply);
 
     const classSection = await prisma.classSection.findFirst({
       where: { id: body.classSectionId, academicYear: { schoolId: request.schoolId } },
@@ -162,7 +268,7 @@ export async function assignmentRoutes(app: FastifyInstance) {
         topicId: body.topicId ?? null,
         teacherUserId: request.user.sub,
         classSectionId: body.classSectionId,
-        title: body.title,
+        title,
         questions: body.questions as unknown as Prisma.InputJsonValue,
         personalisationEnabled: body.personalisationEnabled ?? false,
         status: "draft",
@@ -214,14 +320,15 @@ export async function assignmentRoutes(app: FastifyInstance) {
         error: { code: "validation_error", message: "Only a draft assignment can be edited - unpublish it first" },
       });
     }
-    if (body.questions && (!Array.isArray(body.questions) || body.questions.length === 0)) {
-      return reply.code(400).send({ data: null, error: { code: "validation_error", message: "At least one question is required" } });
-    }
+    const uv = new Validator();
+    const updatedTitle = body.title !== undefined ? uv.label("title", body.title, "Title", true, 120) : undefined;
+    if (body.questions !== undefined) validateAssignmentQuestions(uv, "questions", body.questions);
+    if (uv.hasErrors) return uv.reject(reply);
 
     const updated = await prisma.assignment.update({
       where: { id: assignment.id },
       data: {
-        title: body.title?.trim() || undefined,
+        title: updatedTitle,
         questions: body.questions ? (body.questions as unknown as Prisma.InputJsonValue) : undefined,
         personalisationEnabled: body.personalisationEnabled,
       },
@@ -304,6 +411,13 @@ export async function assignmentRoutes(app: FastifyInstance) {
         });
       }
 
+      // personalisationEligible() already requires a single-topic assignment
+      // (topicId set), so there's exactly one topic's content to build the
+      // extra-question generator from, once, shared across every student -
+      // only the difficulty mix (and so the questions themselves) differs
+      // per student.
+      const extraGenBase = await buildExtraQuestionGenInput(request.schoolId, assignment.topicId, assignment.classSectionId);
+
       const created = [];
       const skipped: { studentStubId: string; reason: string }[] = [];
       for (const student of students) {
@@ -347,6 +461,12 @@ export async function assignmentRoutes(app: FastifyInstance) {
           questionCount: (assignment.questions as unknown as { id: string }[]).length,
         });
 
+        // The personalised section itself - additional questions matched to
+        // the suggested mix, on top of (never instead of) the assignment's
+        // own questions. See the schema comment on
+        // PersonalisationSuggestion.extraQuestions.
+        const extraQuestions = await generateExtraQuestions(extraGenBase, normaliseDifficultyMix(suggestedMix), student.id);
+
         const suggestion = await prisma.personalisationSuggestion.create({
           data: {
             assignmentId: assignment.id,
@@ -354,6 +474,7 @@ export async function assignmentRoutes(app: FastifyInstance) {
             suggestedMix,
             reasoning,
             status: "pending",
+            extraQuestions: extraQuestions as unknown as Prisma.InputJsonValue,
           },
         });
         created.push(suggestion);
@@ -497,6 +618,7 @@ export async function assignmentRoutes(app: FastifyInstance) {
 
       const suggestion = await prisma.personalisationSuggestion.findFirst({
         where: { id: request.params.id, assignment: { schoolId: request.schoolId } },
+        include: { assignment: true },
       });
       if (!suggestion) {
         return reply.code(404).send({ data: null, error: { code: "not_found", message: "Personalisation suggestion not found" } });
@@ -515,11 +637,27 @@ export async function assignmentRoutes(app: FastifyInstance) {
           ? (body.appliedMix as Prisma.InputJsonValue)
           : (suggestion.suggestedMix as Prisma.InputJsonValue);
 
+      // Approving keeps the extra questions already generated to match
+      // suggestedMix. Overriding to a different mix means those no longer
+      // match, so they're regenerated to match the mix the teacher actually
+      // chose. Opting out clears them - nothing personalised is delivered.
+      const extraQuestions: Prisma.InputJsonValue | typeof Prisma.DbNull =
+        body.status === "opted_out"
+          ? Prisma.DbNull
+          : body.status === "overridden"
+          ? (await generateExtraQuestions(
+              await buildExtraQuestionGenInput(request.schoolId, suggestion.assignment.topicId, suggestion.assignment.classSectionId),
+              normaliseDifficultyMix(body.appliedMix),
+              suggestion.studentStubId
+            )) as unknown as Prisma.InputJsonValue
+          : ((suggestion.extraQuestions as Prisma.InputJsonValue | null) ?? Prisma.DbNull);
+
       const updated = await prisma.personalisationSuggestion.update({
         where: { id: suggestion.id },
         data: {
           status: body.status,
           appliedMix,
+          extraQuestions,
           decidedByUserId: request.user.sub,
           decidedAt: new Date(),
         },
@@ -713,10 +851,12 @@ export async function assignmentRoutes(app: FastifyInstance) {
       const formatTemplate = await prisma.schoolFormatTemplate.findUnique({
         where: { schoolId_appliesTo: { schoolId: request.schoolId, appliesTo: "generation" } },
       });
+      const objectiveOptions = await materialiseTopicObjectives(request.schoolId, topic.id);
 
       const genInput: AssignmentGenInput = {
         taughtContent,
         objectives: objectives.length > 0 ? objectives : taught.objectives,
+        objectiveOptions,
         questionCount,
         difficultyMix,
         questionTypes,
@@ -752,7 +892,7 @@ export async function assignmentRoutes(app: FastifyInstance) {
           title: `${topic.name} - Assignment`,
           questions: storedQuestions as unknown as Prisma.InputJsonValue,
           aiGenParams: aiGenParams as unknown as Prisma.InputJsonValue,
-          personalisationEnabled: false,
+          personalisationEnabled: body.personalisationEnabled ?? false,
           status: "draft",
         },
       });
@@ -927,7 +1067,10 @@ export async function assignmentRoutes(app: FastifyInstance) {
           title,
           questions: storedQuestions as unknown as Prisma.InputJsonValue,
           aiGenParams: aiGenParams as unknown as Prisma.InputJsonValue,
-          personalisationEnabled: false,
+          // Forced off for a genuinely multi-topic draft (topicId null above) -
+          // personalisationEligible() requires a single topic, so it could
+          // never generate anything anyway.
+          personalisationEnabled: topics.length === 1 ? body.personalisationEnabled ?? false : false,
           status: "draft",
         },
       });

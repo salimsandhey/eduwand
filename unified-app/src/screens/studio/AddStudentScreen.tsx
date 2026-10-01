@@ -12,6 +12,9 @@ import { useTheme } from "../../theme/ThemeContext";
 import { spacing, softCardShadow } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { DatePicker } from "../../components/DatePicker";
+import { FieldError } from "../../components/FieldError";
+import { useFormErrors } from "../../hooks/useForm";
+import { rules, phoneInput } from "../../utils/validation";
 import { api, ClassSection, ClassJoinRequest, getClassJoinLink } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
 import { getRelativeDateLabel } from "../../utils/date";
@@ -40,22 +43,31 @@ const STATUS_COLORS: Record<string, string> = {
   rejected: "#F4739C",
 };
 
-export function AddStudentScreen({ navigation }: Props) {
+export function AddStudentScreen({ navigation, route }: Props) {
   const { accessToken } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
+  const preselectedClassSectionId = route.params?.classSectionId;
 
   const [mode, setMode] = useState<Mode>("manual");
   const [classSections, setClassSections] = useState<ClassSection[]>([]);
-  const [classId, setClassId] = useState<string | null>(null);
+  const [classId, setClassId] = useState<string | null>(preselectedClassSectionId ?? null);
   const [isLoadingClasses, setIsLoadingClasses] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [manualForm, setManualForm] = useState(EMPTY_MANUAL_FORM);
+  // Rules mirror backend/src/lib/validation.ts; field names match the API's.
+  const manualV = useFormErrors(manualForm, {
+    fullName: rules.personName("Student name"),
+    dateOfBirth: rules.dateOfBirth("Date of birth"),
+    guardianName: rules.personName("Guardian name"),
+    guardianContact: rules.phone(true, "Guardian phone number"),
+    email: rules.email(true, "Student email"),
+  });
   const [isSavingManual, setIsSavingManual] = useState(false);
   const [addedStudent, setAddedStudent] = useState<string | null>(null);
 
   const [isUploadingCsv, setIsUploadingCsv] = useState(false);
-  const [uploadResult, setUploadResult] = useState<{ created: number; skipped: number } | null>(null);
+  const [uploadResult, setUploadResult] = useState<{ created: number; skipped: number; reasons: string[] } | null>(null);
 
   const [requests, setRequests] = useState<ClassJoinRequest[]>([]);
   const [isLoadingRequests, setIsLoadingRequests] = useState(false);
@@ -102,7 +114,7 @@ export function AddStudentScreen({ navigation }: Props) {
 
   async function saveManualStudent() {
     if (!accessToken || !classId) return;
-    if (!manualForm.fullName.trim() || !manualForm.dateOfBirth || !manualForm.guardianName.trim() || !manualForm.guardianContact.trim() || !manualForm.email.includes("@")) return;
+    if (!manualV.submit()) return;
     setIsSavingManual(true);
     setError(null);
     setAddedStudent(null);
@@ -117,8 +129,9 @@ export function AddStudentScreen({ navigation }: Props) {
       });
       setAddedStudent(manualForm.fullName.trim());
       setManualForm(EMPTY_MANUAL_FORM);
+      manualV.clear();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to add student");
+      if (!manualV.applyServerError(err)) setError(err instanceof Error ? err.message : "Failed to add student");
     } finally {
       setIsSavingManual(false);
     }
@@ -158,7 +171,11 @@ export function AddStudentScreen({ navigation }: Props) {
         return;
       }
       const res = await api.bulkAddStudents(accessToken, classId, rows);
-      setUploadResult({ created: res.created, skipped: res.skipped.length });
+      setUploadResult({
+        created: res.created,
+        skipped: res.skipped.length,
+        reasons: res.skipped.slice(0, 5).map((s) => `Row ${s.row}: ${s.reason}`),
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to upload students");
     } finally {
@@ -245,42 +262,65 @@ export function AddStudentScreen({ navigation }: Props) {
             <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
               <Text style={[styles.label, { color: colors.textPrimary, marginTop: 0 }]}>Full name</Text>
               <TextInput
-                style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+                style={[styles.input, { color: colors.textPrimary, borderColor: manualV.error("fullName") ? colors.danger : colors.border }]}
                 value={manualForm.fullName}
                 onChangeText={(v) => setManualForm((f) => ({ ...f, fullName: v }))}
+                onBlur={() => manualV.blur("fullName")}
                 placeholder="Student's full name"
                 placeholderTextColor={colors.textMuted}
+                autoCapitalize="words"
+                maxLength={80}
               />
+              <FieldError message={manualV.error("fullName")} />
               <Text style={[styles.label, { color: colors.textPrimary }]}>Date of birth</Text>
-              <DatePicker value={manualForm.dateOfBirth} onChange={(v) => setManualForm((f) => ({ ...f, dateOfBirth: v }))} placeholder="Select date of birth" />
+              <DatePicker
+                value={manualForm.dateOfBirth}
+                onChange={(v) => {
+                  setManualForm((f) => ({ ...f, dateOfBirth: v }));
+                  manualV.blur("dateOfBirth");
+                }}
+                placeholder="Select date of birth"
+              />
+              <FieldError message={manualV.error("dateOfBirth")} />
               <Text style={[styles.label, { color: colors.textPrimary }]}>Guardian name</Text>
               <TextInput
-                style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+                style={[styles.input, { color: colors.textPrimary, borderColor: manualV.error("guardianName") ? colors.danger : colors.border }]}
                 value={manualForm.guardianName}
                 onChangeText={(v) => setManualForm((f) => ({ ...f, guardianName: v }))}
+                onBlur={() => manualV.blur("guardianName")}
                 placeholder="Guardian's name"
                 placeholderTextColor={colors.textMuted}
+                autoCapitalize="words"
+                maxLength={80}
               />
+              <FieldError message={manualV.error("guardianName")} />
               <Text style={[styles.label, { color: colors.textPrimary }]}>Guardian phone (for calls and records)</Text>
               <TextInput
-                style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+                style={[styles.input, { color: colors.textPrimary, borderColor: manualV.error("guardianContact") ? colors.danger : colors.border }]}
                 value={manualForm.guardianContact}
-                onChangeText={(v) => setManualForm((f) => ({ ...f, guardianContact: v }))}
-                placeholder="Phone number"
+                onChangeText={(v) => setManualForm((f) => ({ ...f, guardianContact: phoneInput(v) }))}
+                onBlur={() => manualV.blur("guardianContact")}
+                placeholder="10-digit mobile number"
                 placeholderTextColor={colors.textMuted}
                 keyboardType="phone-pad"
+                autoComplete="tel"
+                maxLength={16}
               />
+              <FieldError message={manualV.error("guardianContact")} />
               <Text style={[styles.label, { color: colors.textPrimary }]}>Student email (used to sign in)</Text>
               <TextInput
-                style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+                style={[styles.input, { color: colors.textPrimary, borderColor: manualV.error("email") ? colors.danger : colors.border }]}
                 value={manualForm.email}
                 onChangeText={(v) => setManualForm((f) => ({ ...f, email: v }))}
+                onBlur={() => manualV.blur("email")}
                 placeholder="student@example.com"
                 placeholderTextColor={colors.textMuted}
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoCorrect={false}
+                maxLength={254}
               />
+              <FieldError message={manualV.error("email")} />
               {addedStudent ? <Text style={[styles.hint, { color: colors.accent, marginTop: 10 }]}>Added {addedStudent}.</Text> : null}
               <Pressable
                 onPress={saveManualStudent}
@@ -311,6 +351,7 @@ export function AddStudentScreen({ navigation }: Props) {
                 <Text style={[styles.hint, { color: colors.accent, marginTop: 10 }]}>
                   Added {uploadResult.created} student{uploadResult.created === 1 ? "" : "s"}
                   {uploadResult.skipped > 0 ? `, skipped ${uploadResult.skipped} row(s)` : ""}.
+                  {uploadResult.reasons.length > 0 ? `\n${uploadResult.reasons.join("\n")}${uploadResult.skipped > uploadResult.reasons.length ? "\n…" : ""}` : ""}
                 </Text>
               ) : null}
             </View>

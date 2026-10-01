@@ -3,6 +3,7 @@ import { prisma } from "./lib/prisma";
 import { sendFollowUpTask } from "./lib/follow-up";
 import { runCsvExport } from "./lib/exports";
 import { deleteExpiredContextSources } from "./lib/contextRetention";
+import { purgeExpiredClassSections } from "./lib/class-lifecycle";
 
 const TICK_MS = 60_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -91,12 +92,24 @@ async function processContextRetention() {
   }
 }
 
+// Deleted classes are restorable for CLASS_DELETE_GRACE_DAYS; after that the
+// class and all its data are hard-deleted (see lib/class-lifecycle.ts).
+async function processDeletedClassPurge() {
+  try {
+    const purged = await purgeExpiredClassSections();
+    if (purged > 0) console.log(`[worker] permanently deleted ${purged} expired class(es)`);
+  } catch (err) {
+    console.error("[worker] deleted class purge failed", err);
+  }
+}
+
 async function tick() {
   await processDueFollowUps();
   await processAutoFollowUps();
   await processEscalations();
   await processScheduledExports();
   await processContextRetention();
+  await processDeletedClassPurge();
 }
 
 console.log(`[worker] started, ticking every ${TICK_MS}ms`);

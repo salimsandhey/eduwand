@@ -19,7 +19,7 @@ const STRUCTURED_TYPES = new Set(["match_following", "sequencing"]);
 type Props = NativeStackScreenProps<RootStackParamList, "StudentAssignmentSubmit">;
 
 export function StudentAssignmentSubmitScreen({ route, navigation }: Props) {
-  const { assignmentId, questions, title } = route.params;
+  const { assignmentId, questions, personalisedQuestions, title } = route.params;
   const { accessToken } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
   // The container sits inside <Screen edges={[..., "bottom"]}>, above the navigation bar.
@@ -32,13 +32,18 @@ export function StudentAssignmentSubmitScreen({ route, navigation }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const parsedQuestions: AssignmentQuestion[] = questions;
+  // Extra, difficulty-matched questions on top of the assignment's own set -
+  // see backend's PersonalisationSuggestion.extraQuestions. Answered and
+  // submitted the same way, just shown as a visually separate section below.
+  const extraQuestions: AssignmentQuestion[] = personalisedQuestions ?? [];
+  const allQuestions = [...parsedQuestions, ...extraQuestions];
   // A photo covers handwritten working for free-text questions - it can't
   // capture a multiple-choice pick, a true/false pick, a match, or a tapped
   // order, so don't offer it unless there's at least one free-text question.
-  const allowsPhoto = parsedQuestions.some((q) => !q.type || (!CHOICE_TYPES.has(q.type) && !STRUCTURED_TYPES.has(q.type)));
+  const allowsPhoto = allQuestions.some((q) => !q.type || (!CHOICE_TYPES.has(q.type) && !STRUCTURED_TYPES.has(q.type)));
 
-  const answeredCount = parsedQuestions.filter((q) => (answers[q.id] ?? "").trim().length > 0).length;
-  const totalQuestions = parsedQuestions.length;
+  const answeredCount = allQuestions.filter((q) => (answers[q.id] ?? "").trim().length > 0).length;
+  const totalQuestions = allQuestions.length;
   const answeredPercent = totalQuestions > 0 ? Math.round((answeredCount / totalQuestions) * 100) : 0;
   const progressTarget = photo ? 100 : answeredPercent;
 
@@ -151,73 +156,48 @@ export function StudentAssignmentSubmitScreen({ route, navigation }: Props) {
 
         <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
           {parsedQuestions.map((q, i) => (
-            <View key={q.id} style={[i > 0 && [styles.questionDivider, { borderTopColor: colors.border }]]}>
-              <View style={styles.questionHead}>
-                <Text style={[styles.questionNumber, { color: colors.accent }]}>{String(i + 1).padStart(2, "0")}</Text>
-                <Text style={[styles.questionText, { color: colors.textPrimary }]}>{q.prompt}</Text>
-              </View>
-              {q.type && CHOICE_TYPES.has(q.type) ? (
-                <View style={styles.optionList}>
-                  {(q.options ?? []).map((option, idx) => {
-                    const selected = (answers[q.id] ?? "") === option;
-                    return (
-                      <Pressable
-                        key={idx}
-                        style={[
-                          styles.optionRow,
-                          { borderColor: selected ? colors.accent : colors.border, backgroundColor: selected ? colors.accentSoft : colors.surfaceRaised },
-                        ]}
-                        onPress={() => {
-                          setPhoto(null);
-                          setAnswers((prev) => ({ ...prev, [q.id]: option }));
-                        }}
-                        accessibilityRole="radio"
-                        accessibilityState={{ selected }}
-                      >
-                        <View style={[styles.optionDot, { borderColor: selected ? colors.accent : colors.textMuted }]}>
-                          {selected ? <View style={[styles.optionDotFill, { backgroundColor: colors.accent }]} /> : null}
-                        </View>
-                        <Text style={[styles.optionText, { color: colors.textPrimary }]}>{option}</Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              ) : q.type === "match_following" && q.pairs?.length ? (
-                <MatchingQuestion
-                  pairs={q.pairs}
-                  value={answers[q.id] ?? ""}
-                  onChange={(value) => {
-                    setPhoto(null);
-                    setAnswers((prev) => ({ ...prev, [q.id]: value }));
-                  }}
-                  colors={colors}
-                />
-              ) : q.type === "sequencing" && q.items?.length ? (
-                <SequencingQuestion
-                  items={q.items}
-                  value={answers[q.id] ?? ""}
-                  onChange={(value) => {
-                    setPhoto(null);
-                    setAnswers((prev) => ({ ...prev, [q.id]: value }));
-                  }}
-                  colors={colors}
-                />
-              ) : (
-                <TextInput
-                  style={[styles.answerInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
-                  value={answers[q.id] ?? ""}
-                  onChangeText={(text) => {
-                    setPhoto(null);
-                    setAnswers((prev) => ({ ...prev, [q.id]: text }));
-                  }}
-                  placeholder={q.type === "very_short" ? "One word or short phrase" : q.type === "fill_blank" ? "Fill in the blank" : "Your answer"}
-                  placeholderTextColor={colors.textMuted}
-                  multiline
-                />
-              )}
-            </View>
+            <QuestionEditor
+              key={q.id}
+              question={q}
+              index={i}
+              answer={answers[q.id] ?? ""}
+              onAnswer={(value) => {
+                setPhoto(null);
+                setAnswers((prev) => ({ ...prev, [q.id]: value }));
+              }}
+              colors={colors}
+            />
           ))}
         </View>
+
+        {extraQuestions.length > 0 ? (
+          <>
+            <View style={styles.sectionHeader}>
+              <View style={styles.personalisedTitleRow}>
+                <Ionicons name="sparkles" size={15} color={colors.accent} />
+                <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Personalised for you</Text>
+              </View>
+              <Text style={[styles.sectionHint, { color: colors.textMuted }]}>
+                A few extra questions picked just for you, on top of the assignment above.
+              </Text>
+            </View>
+            <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
+              {extraQuestions.map((q, i) => (
+                <QuestionEditor
+                  key={q.id}
+                  question={q}
+                  index={i}
+                  answer={answers[q.id] ?? ""}
+                  onAnswer={(value) => {
+                    setPhoto(null);
+                    setAnswers((prev) => ({ ...prev, [q.id]: value }));
+                  }}
+                  colors={colors}
+                />
+              ))}
+            </View>
+          </>
+        ) : null}
 
         {allowsPhoto ? (
           <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
@@ -264,6 +244,67 @@ export function StudentAssignmentSubmitScreen({ route, navigation }: Props) {
   );
 }
 
+function QuestionEditor({
+  question: q,
+  index,
+  answer,
+  onAnswer,
+  colors,
+}: {
+  question: AssignmentQuestion;
+  index: number;
+  answer: string;
+  onAnswer: (value: string) => void;
+  colors: any;
+}) {
+  return (
+    <View style={[index > 0 && [styles.questionDivider, { borderTopColor: colors.border }]]}>
+      <View style={styles.questionHead}>
+        <Text style={[styles.questionNumber, { color: colors.accent }]}>{String(index + 1).padStart(2, "0")}</Text>
+        <Text style={[styles.questionText, { color: colors.textPrimary }]}>{q.prompt}</Text>
+      </View>
+      {q.type && CHOICE_TYPES.has(q.type) ? (
+        <View style={styles.optionList}>
+          {(q.options ?? []).map((option, idx) => {
+            const selected = answer === option;
+            return (
+              <Pressable
+                key={idx}
+                style={[
+                  styles.optionRow,
+                  { borderColor: selected ? colors.accent : colors.border, backgroundColor: selected ? colors.accentSoft : colors.surfaceRaised },
+                ]}
+                onPress={() => onAnswer(option)}
+                accessibilityRole="radio"
+                accessibilityState={{ selected }}
+              >
+                <View style={[styles.optionDot, { borderColor: selected ? colors.accent : colors.textMuted }]}>
+                  {selected ? <View style={[styles.optionDotFill, { backgroundColor: colors.accent }]} /> : null}
+                </View>
+                <Text style={[styles.optionText, { color: colors.textPrimary }]}>{option}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : q.type === "match_following" && q.pairs?.length ? (
+        <MatchingQuestion pairs={q.pairs} value={answer} onChange={onAnswer} colors={colors} />
+      ) : q.type === "sequencing" && q.items?.length ? (
+        <SequencingQuestion items={q.items} value={answer} onChange={onAnswer} colors={colors} />
+      ) : (
+        <TextInput
+          style={[styles.answerInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
+          value={answer}
+          onChangeText={onAnswer}
+          maxLength={2000}
+          placeholder={q.type === "very_short" ? "One word or short phrase" : q.type === "fill_blank" ? "Fill in the blank" : "Your answer"}
+          placeholderTextColor={colors.textMuted}
+          multiline
+        />
+      )}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1 },
   content: { padding: 16, paddingTop: 8, paddingBottom: 40 },
@@ -287,9 +328,10 @@ const styles = StyleSheet.create({
   heroTrack: { height: 6, borderRadius: 3, marginTop: 8, overflow: "hidden", backgroundColor: "rgba(255,255,255,0.25)" },
   heroFill: { height: "100%", borderRadius: 3, backgroundColor: "#FFFFFF" },
 
-  sectionHeader: { marginBottom: 10, paddingHorizontal: 2 },
+  sectionHeader: { marginBottom: 10, marginTop: 8, paddingHorizontal: 2 },
   sectionTitle: { fontSize: 17, fontWeight: "800", letterSpacing: -0.3 },
   sectionHint: { marginTop: 2, fontSize: 12, fontWeight: "500" },
+  personalisedTitleRow: { flexDirection: "row", alignItems: "center", gap: 6 },
 
   card: { borderWidth: 1, borderRadius: 18, padding: 16, marginBottom: 14 },
   label: { fontSize: 12, fontWeight: "700" },

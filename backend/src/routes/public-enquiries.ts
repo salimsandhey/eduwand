@@ -1,5 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
+import { Validator } from "../lib/validation";
 
 interface PublicEnquiryBody {
   schoolId: string;
@@ -22,12 +23,13 @@ export async function publicEnquiryRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const body = request.body ?? ({} as PublicEnquiryBody);
 
-      if (!body.schoolId || !body.contactName || !body.contactPhone) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: "schoolId, contactName, and contactPhone are required" },
-        });
-      }
+      const v = new Validator();
+      const contactName = v.personName("contactName", body.contactName, "Your name");
+      const contactPhone = v.phone("contactPhone", body.contactPhone, true, "Phone number");
+      const contactEmail = v.email("contactEmail", body.contactEmail, false, "Email");
+      const gradeInterest = v.label("gradeInterest", body.gradeInterest, "Grade of interest", false, 60);
+      if (!body.schoolId) v.fail("schoolId", "School is required");
+      if (v.hasErrors || !contactName || !contactPhone) return v.reject(reply);
 
       if (body.consentCaptured !== true) {
         return reply.code(400).send({
@@ -56,11 +58,11 @@ export async function publicEnquiryRoutes(app: FastifyInstance) {
         data: {
           schoolId: school.id,
           academicYearId: academicYear.id,
-          contactName: body.contactName,
-          contactPhone: body.contactPhone,
-          contactEmail: body.contactEmail,
+          contactName,
+          contactPhone,
+          contactEmail,
           source: "website",
-          gradeInterest: body.gradeInterest,
+          gradeInterest,
           consentCaptured: true,
           status: "new",
         },

@@ -9,6 +9,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useAiGenerating } from "../../context/AiAssistantGlowContext";
+import { useTricklingProgress } from "../../hooks/useTricklingProgress";
 import { useTheme } from "../../theme/ThemeContext";
 import { ThemeColors, typography, spacing, radius } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
@@ -22,6 +23,7 @@ import { FlashcardsView } from "./generation/FlashcardsView";
 import { PresentationView } from "./generation/PresentationView";
 import { ShareAudienceSheet } from "./generation/ShareAudienceSheet";
 import { OUTPUT_TYPE_LABELS, OUTPUT_TYPE_ICONS } from "./generation/outputTypeMeta";
+import { GENERATION_PROGRESS_LABELS } from "./GenerationSetupScreen";
 import { capitalizeFirst } from "../../utils/text";
 import { OrdinalDate } from "../../components/OrdinalDate";
 
@@ -120,7 +122,8 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
   const [isPublishing, setIsPublishing] = useState(false);
   const [showAudiencePicker, setShowAudiencePicker] = useState(false);
   const [isGeneratingAssessment, setIsGeneratingAssessment] = useState(false);
-  useAiGenerating(isRetrying || isGeneratingAssessment);
+  const retryProgress = useTricklingProgress(isRetrying && !!generation, generation ? GENERATION_PROGRESS_LABELS[generation.outputType] : "");
+  useAiGenerating(isRetrying || isGeneratingAssessment, undefined, retryProgress);
   const [isExportingPptx, setIsExportingPptx] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState(false);
@@ -217,6 +220,21 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
       setGeneration(updated);
     } catch {
       setGeneration((g) => (g ? { ...g, completedSessions: prev } : g));
+    }
+  }
+
+  async function toggleLessonItem(itemKey: string, completed: boolean) {
+    if (!accessToken || !generation) return;
+    const prev = generation.completedLessonItems;
+    setGeneration({
+      ...generation,
+      completedLessonItems: completed ? [...prev, itemKey] : prev.filter((k) => k !== itemKey),
+    });
+    try {
+      const updated = await api.setLessonItemProgress(accessToken, generation.id, itemKey, completed);
+      setGeneration(updated);
+    } catch {
+      setGeneration((g) => (g ? { ...g, completedLessonItems: prev } : g));
     }
   }
 
@@ -484,7 +502,7 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
             </View> : null}
             {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
             {structuredContent.type === "lesson_plan" ? (
-              <LessonPlanView content={structuredContent} editable={isEditing} onChange={handleStructuredChange} sources={generation.contextSources} topicId={generation.topicId} shownAsIsIds={new Set(getAttachedMedia(generation.editedOutput ?? generation.aiOutput).map((m) => m.sourceId))} scrollRef={scrollRef} completedSessions={generation.completedSessions} onToggleSession={toggleSession} />
+              <LessonPlanView content={structuredContent} editable={isEditing} onChange={handleStructuredChange} sources={generation.contextSources} topicId={generation.topicId} shownAsIsIds={new Set(getAttachedMedia(generation.editedOutput ?? generation.aiOutput).map((m) => m.sourceId))} scrollRef={scrollRef} completedSessions={generation.completedSessions} onToggleSession={toggleSession} completedLessonItems={generation.completedLessonItems} onToggleLessonItem={toggleLessonItem} />
             ) : structuredContent.type === "custom_activity_report" ? (
               <CustomActivityView content={structuredContent} editable={isEditing} onChange={handleStructuredChange} />
             ) : structuredContent.type === "flashcards" ? (

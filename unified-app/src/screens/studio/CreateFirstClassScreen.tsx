@@ -8,6 +8,8 @@ import { useTheme } from "../../theme/ThemeContext";
 import { spacing, softCardShadow } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { api } from "../../api/client";
+import { FieldError } from "../../components/FieldError";
+import { rules } from "../../utils/validation";
 
 // First-run setup for individual-account teachers (accountType "individual")
 // - reuses the same admin CRUD endpoints an institutional admin uses via
@@ -46,7 +48,6 @@ export function CreateFirstClassScreen({ navigation }: Props) {
       .then((limits) => {
         setClassLimit(limits.classLimit);
         setSubjectLimit(limits.subjectLimit);
-        setSubjects(Array.from({ length: Math.min(limits.subjectLimit, 2) }, () => ""));
       })
       .catch(() => {})
       .finally(() => setIsLoadingLimits(false));
@@ -81,12 +82,32 @@ export function CreateFirstClassScreen({ navigation }: Props) {
   }
 
   const trimmedSubjects = subjects.map((s) => s.trim()).filter(Boolean);
-  const subjectsValid = trimmedSubjects.length === subjects.length && new Set(trimmedSubjects).size === trimmedSubjects.length;
-  const classesValid = classes.every((c) => c.className.trim() && c.sectionName.trim());
-  const canSave = classesValid && subjectsValid && trimmedSubjects.length > 0;
+
+  // Inline validation - rules mirror backend/src/lib/validation.ts. An error
+  // shows once its field was left or Create was pressed.
+  const [touched, setTouched] = useState<Set<string>>(new Set());
+  const [submitted, setSubmitted] = useState(false);
+  const touch = (key: string) => setTouched((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
+  const shown = (key: string, message: string | null) => ((submitted || touched.has(key)) && message ? message : undefined);
+  const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
+
+  const classErrors = classes.map((c, i) => ({
+    className: rules.label("Class name")(c.className),
+    sectionName:
+      rules.label("Section name")(c.sectionName) ??
+      (c.className.trim() && c.sectionName.trim() && classes.findIndex((o) => norm(o.className) === norm(c.className) && norm(o.sectionName) === norm(c.sectionName)) < i
+        ? "This class and section is already added above"
+        : null),
+  }));
+  const subjectErrors = subjects.map(
+    (s, i) => rules.label("Subject name")(s) ?? (subjects.findIndex((o) => norm(o) === norm(s)) < i ? "This subject is already added above" : null)
+  );
+  const hasErrors = classErrors.some((e) => e.className || e.sectionName) || subjectErrors.some(Boolean);
 
   async function save() {
-    if (!accessToken || !user?.schoolId || !canSave) return;
+    if (!accessToken || !user?.schoolId) return;
+    setSubmitted(true);
+    if (hasErrors) return;
     setIsSaving(true);
     setError(null);
     try {
@@ -134,8 +155,9 @@ export function CreateFirstClassScreen({ navigation }: Props) {
         </View>
 
         <Text style={[styles.subtitle, { color: colors.textMuted }]}>
-          Add up to {classLimit} class{classLimit === 1 ? "" : "es"} and {subjectLimit} subject{subjectLimit === 1 ? "" : "s"}. This is a one-time
-          setup - changing them later needs a request reviewed by an admin.
+          Add at least 1 class and 1 subject to get started - up to {classLimit} class{classLimit === 1 ? "" : "es"} and {subjectLimit}{" "}
+          subject{subjectLimit === 1 ? "" : "s"} total. You can add more anytime from My Classes; changing an existing
+          one needs a request reviewed by an admin.
         </Text>
 
         {isLoadingLimits ? (
@@ -155,20 +177,26 @@ export function CreateFirstClassScreen({ navigation }: Props) {
                     ) : null}
                   </View>
                   <TextInput
-                    style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+                    style={[styles.input, { color: colors.textPrimary, borderColor: shown(`c${index}.className`, classErrors[index].className) ? colors.danger : colors.border }]}
                     placeholder="e.g. Grade 5"
                     placeholderTextColor={colors.textMuted}
                     value={cls.className}
                     onChangeText={(v) => updateClass(index, "className", v)}
+                    onBlur={() => touch(`c${index}.className`)}
+                    maxLength={40}
                   />
+                  <FieldError message={shown(`c${index}.className`, classErrors[index].className)} />
                   <Text style={[styles.label, { color: colors.textPrimary }]}>Section</Text>
                   <TextInput
-                    style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+                    style={[styles.input, { color: colors.textPrimary, borderColor: shown(`c${index}.sectionName`, classErrors[index].sectionName) ? colors.danger : colors.border }]}
                     placeholder="e.g. A"
                     placeholderTextColor={colors.textMuted}
                     value={cls.sectionName}
                     onChangeText={(v) => updateClass(index, "sectionName", v)}
+                    onBlur={() => touch(`c${index}.sectionName`)}
+                    maxLength={40}
                   />
+                  <FieldError message={shown(`c${index}.sectionName`, classErrors[index].sectionName)} />
                 </View>
               ))}
               {classes.length < classLimit ? (
@@ -192,12 +220,15 @@ export function CreateFirstClassScreen({ navigation }: Props) {
                     ) : null}
                   </View>
                   <TextInput
-                    style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+                    style={[styles.input, { color: colors.textPrimary, borderColor: shown(`s${index}`, subjectErrors[index]) ? colors.danger : colors.border }]}
                     placeholder="e.g. Mathematics"
                     placeholderTextColor={colors.textMuted}
                     value={subject}
                     onChangeText={(v) => updateSubject(index, v)}
+                    onBlur={() => touch(`s${index}`)}
+                    maxLength={40}
                   />
+                  <FieldError message={shown(`s${index}`, subjectErrors[index])} />
                 </View>
               ))}
               {subjects.length < subjectLimit ? (
@@ -212,8 +243,8 @@ export function CreateFirstClassScreen({ navigation }: Props) {
 
             <Pressable
               onPress={save}
-              disabled={!canSave || isSaving}
-              style={[styles.saveButton, { backgroundColor: colors.accent }, (!canSave || isSaving) && { opacity: 0.5 }]}
+              disabled={isSaving}
+              style={[styles.saveButton, { backgroundColor: colors.accent }, isSaving && { opacity: 0.5 }]}
               accessibilityRole="button"
             >
               {isSaving ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.saveButtonText, { color: colors.accentOn }]}>Create classes</Text>}

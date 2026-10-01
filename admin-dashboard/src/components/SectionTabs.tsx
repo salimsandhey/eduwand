@@ -16,7 +16,7 @@ export function SectionTabs({ group }: { group: keyof typeof TAB_GROUPS }) {
 
   const counts = status?.approvals;
   return (
-    <nav style={styles.strip} aria-label="Sections">
+    <nav className="app-tabs" style={styles.strip} aria-label="Sections">
       {def.tabs.map((tab) => {
         const pending = tab.badge && counts ? counts[tab.badge] : 0;
         return (
@@ -31,7 +31,7 @@ export function SectionTabs({ group }: { group: keyof typeof TAB_GROUPS }) {
 }
 
 const styles: Record<string, CSSProperties> = {
-  strip: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 22, borderBottom: "1px solid var(--border)", paddingBottom: 0 },
+  strip: { display: "flex", gap: 6, flexWrap: "nowrap", marginBottom: 22, borderBottom: "1px solid var(--border)", paddingBottom: 0 },
   tab: {
     display: "inline-flex",
     alignItems: "center",
@@ -41,6 +41,8 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 600,
     color: "var(--text-secondary)",
     textDecoration: "none",
+    whiteSpace: "nowrap",
+    flexShrink: 0,
     borderBottom: "3px solid transparent",
     marginBottom: -1,
   },

@@ -55,6 +55,12 @@ async function resolveSlot(
   fields: SlotFields,
   excludeId?: string
 ): Promise<{ error: { status: number; code: string; message: string } } | { ok: true }> {
+  if (fields.subject.length > 60) {
+    return { error: { status: 400, code: "validation_error", message: "Subject must be at most 60 characters" } };
+  }
+  if (fields.room && fields.room.length > 20) {
+    return { error: { status: 400, code: "validation_error", message: "Room must be at most 20 characters" } };
+  }
   if (!Number.isInteger(fields.weekday) || fields.weekday < 1 || fields.weekday > 7) {
     return { error: { status: 400, code: "validation_error", message: "weekday must be 1 (Mon) to 7 (Sun)" } };
   }
@@ -93,6 +99,30 @@ async function resolveSlot(
   }
 
   return { ok: true };
+}
+
+// A scheduled task's dueTime is an instant, not a range, so a clash is the
+// due time falling inside a period's [startTime, endTime).
+async function findTimetableClash(schoolId: string, teacherUserId: string, taskDate: Date, dueTime: string) {
+  const weekday = isoWeekday(taskDate);
+  return prisma.timetableSlot.findFirst({
+    where: {
+      schoolId,
+      teacherUserId,
+      weekday,
+      startTime: { lte: dueTime },
+      endTime: { gt: dueTime },
+    },
+    include: slotInclude,
+  });
+}
+
+function timetableClashError(clash: NonNullable<Awaited<ReturnType<typeof findTimetableClash>>>) {
+  return {
+    status: 409,
+    code: "conflict",
+    message: `You have ${clash.subject} with ${clash.classSection.className} ${clash.classSection.sectionName} from ${clash.startTime}-${clash.endTime} then`,
+  };
 }
 
 const slotInclude = { classSection: { select: { className: true, sectionName: true } } } as const;
@@ -258,6 +288,14 @@ export async function timetableRoutes(app: FastifyInstance) {
     if (!body.title?.trim() || !taskDate) return validationError(reply, "title and taskDate (YYYY-MM-DD) are required");
     if (body.dueTime && !TIME_RE.test(body.dueTime)) return validationError(reply, "dueTime must be 24h HH:mm");
 
+    if (body.dueTime) {
+      const clash = await findTimetableClash(request.schoolId, request.user.sub, taskDate, body.dueTime);
+      if (clash) {
+        const err = timetableClashError(clash);
+        return reply.code(err.status).send({ data: null, error: { code: err.code, message: err.message } });
+      }
+    }
+
     const task = await prisma.calendarTask.create({
       data: {
         schoolId: request.schoolId,
@@ -294,6 +332,16 @@ export async function timetableRoutes(app: FastifyInstance) {
     if (body.isDone !== undefined) {
       data.isDone = body.isDone;
       data.completedAt = body.isDone ? new Date() : null;
+    }
+
+    const effectiveDueTime = (data.dueTime as string | null | undefined) !== undefined ? (data.dueTime as string | null) : existing.dueTime;
+    if (effectiveDueTime && (body.dueTime !== undefined || body.taskDate !== undefined)) {
+      const effectiveDate = (data.taskDate as Date | undefined) ?? existing.taskDate;
+      const clash = await findTimetableClash(request.schoolId, request.user.sub, effectiveDate, effectiveDueTime);
+      if (clash) {
+        const err = timetableClashError(clash);
+        return reply.code(err.status).send({ data: null, error: { code: err.code, message: err.message } });
+      }
     }
 
     const task = await prisma.calendarTask.update({ where: { id: existing.id }, data });

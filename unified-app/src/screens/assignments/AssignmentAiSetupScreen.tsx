@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform } from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, Switch } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useAiGenerating } from "../../context/AiAssistantGlowContext";
+import { useTricklingProgress } from "../../hooks/useTricklingProgress";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, AssignmentDraftOptions, QuestionDifficulty, QuestionType } from "../../api/client";
@@ -33,6 +34,23 @@ const DIFFICULTIES: { key: QuestionDifficulty; label: string }[] = [
   { key: "hard", label: "Hard" },
 ];
 
+// Proportionally rescales a difficulty split to a new total, preserving
+// whatever easy/medium/hard ratio it implies (rounding drift is absorbed by
+// medium). Shared by the mix's initial default and selectQuestionCount, so
+// both can never disagree about what "rescaled to N" means.
+function scaleMix(prev: Record<QuestionDifficulty, number>, count: number): Record<QuestionDifficulty, number> {
+  const total = prev.easy + prev.medium + prev.hard;
+  if (total === 0) return { easy: 0, medium: count, hard: 0 };
+  const scaled = {
+    easy: Math.round((prev.easy / total) * count),
+    medium: Math.round((prev.medium / total) * count),
+    hard: Math.round((prev.hard / total) * count),
+  };
+  const drift = count - (scaled.easy + scaled.medium + scaled.hard);
+  scaled.medium += drift;
+  return scaled;
+}
+
 export function AssignmentAiSetupScreen({ route, navigation }: Props) {
   const { topicId } = route.params;
   const { accessToken } = useAuth();
@@ -43,14 +61,20 @@ export function AssignmentAiSetupScreen({ route, navigation }: Props) {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [questionCount, setQuestionCount] = useState(5);
-  const [mix, setMix] = useState<Record<QuestionDifficulty, number>>({ easy: 1, medium: 1, hard: 1 });
+  // Must always sum to questionCount from the very first render - a mix that
+  // starts mismatched (e.g. the old hardcoded {1,1,1} summing to 3 against a
+  // default questionCount of 5) is exactly the "already wrong by default"
+  // bug this screen must never show a teacher.
+  const [mix, setMix] = useState<Record<QuestionDifficulty, number>>(() => scaleMix({ easy: 1, medium: 1, hard: 1 }, 5));
   // Empty = the AI may use any format.
   const [questionTypes, setQuestionTypes] = useState<QuestionType[]>([]);
   const [selectedObjectives, setSelectedObjectives] = useState<string[]>([]);
   const [focusPrompt, setFocusPrompt] = useState("");
+  const [personalisationEnabled, setPersonalisationEnabled] = useState(false);
 
   const [isGenerating, setIsGenerating] = useState(false);
-  useAiGenerating(isGenerating);
+  const generateProgress = useTricklingProgress(isGenerating, "Writing your assignment questions…");
+  useAiGenerating(isGenerating, undefined, generateProgress);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -79,18 +103,7 @@ export function AssignmentAiSetupScreen({ route, navigation }: Props) {
   // relative easy/medium/hard preference survives switching counts.
   function selectQuestionCount(count: number) {
     setQuestionCount(count);
-    setMix((prev) => {
-      const total = prev.easy + prev.medium + prev.hard;
-      if (total === 0) return { easy: 0, medium: count, hard: 0 };
-      const scaled = {
-        easy: Math.round((prev.easy / total) * count),
-        medium: Math.round((prev.medium / total) * count),
-        hard: Math.round((prev.hard / total) * count),
-      };
-      const drift = count - (scaled.easy + scaled.medium + scaled.hard);
-      scaled.medium += drift;
-      return scaled;
-    });
+    setMix((prev) => scaleMix(prev, count));
   }
 
   const mixTotal = mix.easy + mix.medium + mix.hard;
@@ -115,6 +128,7 @@ export function AssignmentAiSetupScreen({ route, navigation }: Props) {
         objectives: selectedObjectives,
         questionTypes,
         focusPrompt: focusPrompt.trim() || undefined,
+        personalisationEnabled,
       });
       navigation.replace("AssignmentDraftReview", { assignmentId: assignment.id });
     } catch (err) {
@@ -263,24 +277,27 @@ export function AssignmentAiSetupScreen({ route, navigation }: Props) {
                 <Text style={[styles.meta, { color: colors.textMuted, marginBottom: 8 }]}>
                   Pulled from what you've already generated for this topic. Leave all unselected to let the AI decide.
                 </Text>
-                <View style={styles.chipRow}>
+                <View style={styles.objectiveList}>
                   {options.objectives.map((objective) => {
                     const active = selectedObjectives.includes(objective);
                     return (
                       <Pressable
                         key={objective}
                         style={({ pressed }) => [
-                          styles.objectiveChip,
-                          { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border },
+                          styles.objectiveRow,
+                          { backgroundColor: active ? colors.accentSoft : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border },
                           pressed && { opacity: pressedOpacity },
                         ]}
                         onPress={() => toggleObjective(objective)}
-                        accessibilityRole="button"
-                        accessibilityState={{ selected: active }}
+                        accessibilityRole="checkbox"
+                        accessibilityState={{ checked: active }}
                       >
-                        <Text style={[styles.objectiveChipText, { color: active ? colors.accentOn : colors.textSecondary }]} numberOfLines={2}>
-                          {objective}
-                        </Text>
+                        <Ionicons
+                          name={active ? "checkbox" : "square-outline"}
+                          size={19}
+                          color={active ? colors.accent : colors.textMuted}
+                        />
+                        <Text style={[styles.objectiveRowText, { color: colors.textPrimary }]}>{objective}</Text>
                       </Pressable>
                     );
                   })}
@@ -294,11 +311,26 @@ export function AssignmentAiSetupScreen({ route, navigation }: Props) {
                 style={[styles.focusInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
                 value={focusPrompt}
                 onChangeText={setFocusPrompt}
+                maxLength={500}
                 placeholder="e.g. focus on real-world examples, keep language simple..."
                 placeholderTextColor={colors.textMuted}
                 multiline
                 textAlignVertical="top"
               />
+            </View>
+
+            <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.label, { color: colors.textSecondary, marginTop: 0 }]}>Personalise for each student</Text>
+                  <Text style={[styles.meta, { color: colors.textMuted, marginBottom: 0 }]}>
+                    Every student gets all of these questions, unchanged. On publish, this also generates an extra,
+                    difficulty-matched section for students with enough grading history to calibrate it - you review and
+                    approve each one before it's added.
+                  </Text>
+                </View>
+                <Switch value={personalisationEnabled} onValueChange={setPersonalisationEnabled} trackColor={{ true: colors.accent }} />
+              </View>
             </View>
 
             {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
@@ -345,8 +377,14 @@ const styles = StyleSheet.create({
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: { borderWidth: 1, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 8 },
   chipText: { fontSize: 13, fontWeight: "700" },
-  objectiveChip: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, maxWidth: "100%" },
-  objectiveChipText: { fontSize: 12, fontWeight: "600" },
+  // A vertical list of full-width rows, not wrapped chips - objective text is
+  // full sentences of very uneven length, which made a chip grid (sized to
+  // its own content) look ragged: tiny one-word chips next to near-full-row
+  // ones in the same wrapped line. A row can wrap its own text cleanly since
+  // it's never fighting neighbors for width.
+  objectiveList: { gap: 8 },
+  objectiveRow: { flexDirection: "row", alignItems: "flex-start", gap: 10, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 },
+  objectiveRowText: { flex: 1, fontSize: 13, lineHeight: 18, fontWeight: "600" },
   mixHeadingRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 14, marginBottom: 8 },
   mixTotalText: { fontSize: 11, fontWeight: "700" },
   mixRow: { flexDirection: "row", gap: 8 },
@@ -355,6 +393,7 @@ const styles = StyleSheet.create({
   mixControls: { flexDirection: "row", alignItems: "center", gap: 8 },
   mixValue: { fontSize: 16, fontWeight: "800", minWidth: 18, textAlign: "center" },
   focusInput: { minHeight: 80, borderWidth: 1, borderRadius: 10, padding: 12, fontSize: 14 },
+  toggleRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   error: { textAlign: "center", marginBottom: 12 },
   primaryButton: { flexDirection: "row", gap: 8, borderRadius: 12, height: 52, alignItems: "center", justifyContent: "center" },
   primaryButtonText: { fontSize: 15, fontWeight: "800" },

@@ -134,3 +134,217 @@ a:hover {
   border-radius: 4px;
   font-size: 12.5px;
 }
+
+/* ---------------------------------------------------------------------------
+   Responsive layer. Most component styles are inline, so the rules below hook
+   onto class names (app-*, ui-*) and, for the few form grids that are defined
+   inline in pages, onto the serialized grid-template-columns value. Inline
+   styles win over normal rules, hence the !important overrides.
+   Breakpoints: 1024 (sidebar becomes a drawer), 768 (tablet/phone spacing,
+   stacked forms, scrollable tables), 480 (small phones).
+   --------------------------------------------------------------------------- */
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+img,
+svg {
+  max-width: 100%;
+}
+
+.app-menu-btn,
+.app-topbar-logo,
+.app-backdrop {
+  display: none;
+}
+
+.app-menu-btn {
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--text-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.app-tabs {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.app-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 1024px) {
+  .app-sidebar {
+    position: fixed !important;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    height: 100dvh;
+    max-height: none !important;
+    width: min(288px, 86vw) !important;
+    z-index: 200;
+    background: #fff !important;
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.2);
+    transform: translateX(-105%);
+    visibility: hidden;
+    transition: transform 0.25s ease, visibility 0s linear 0.25s;
+  }
+  .app-sidebar[data-open="true"] {
+    transform: none;
+    visibility: visible;
+    transition: transform 0.25s ease, visibility 0s;
+  }
+  .app-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 150;
+    background: rgba(31, 31, 31, 0.45);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+  }
+  .app-backdrop[data-open="true"] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .app-menu-btn {
+    display: inline-flex;
+  }
+  .app-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+  .app-topbar-logo {
+    display: block;
+    height: 28px;
+    width: auto;
+  }
+  .app-content {
+    padding: 24px 24px 40px !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .app-content {
+    padding: 18px 16px 32px !important;
+  }
+  .ui-page-header {
+    margin-bottom: 20px !important;
+  }
+  .ui-page-title {
+    font-size: 24px !important;
+    letter-spacing: -0.5px !important;
+  }
+  .ui-page-action {
+    width: 100%;
+  }
+  .ui-page-action > * {
+    max-width: 100%;
+  }
+  .ui-card {
+    padding: 16px !important;
+    border-radius: 14px !important;
+    overflow-x: auto;
+  }
+  .ui-stat {
+    min-width: 140px !important;
+    padding: 16px !important;
+  }
+  .ui-stat > span:first-child {
+    font-size: 28px !important;
+  }
+
+  /* Two-column forms and split layouts stack. */
+  [style*="grid-template-columns: 1fr 1fr"],
+  [style*="grid-template-columns: 1.4fr 1fr"] {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  [style*="grid-column: 1 / -1"] {
+    grid-column: auto !important;
+  }
+
+  /* Inputs at 16px stop iOS from zooming the page on focus. */
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+
+  /* Bare tables (not already in a scroll wrapper) scroll inside their card. */
+  .ui-card table {
+    min-width: 520px;
+  }
+
+  /* Modals become near full-screen sheets. */
+  .ui-modal-backdrop {
+    padding: 10px !important;
+    align-items: flex-end !important;
+  }
+  .ui-modal {
+    max-height: 94vh !important;
+    max-height: 94dvh !important;
+    border-radius: 18px !important;
+  }
+  .ui-modal-header,
+  .ui-modal-body,
+  .ui-modal-footer {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+  .ui-modal-footer {
+    flex-wrap: wrap;
+  }
+
+  .app-profile-text,
+  .app-profile-chevron {
+    display: none !important;
+  }
+  .app-profile-menu {
+    position: fixed !important;
+    top: 68px !important;
+    right: 12px !important;
+    left: 12px !important;
+    width: auto !important;
+  }
+  .ui-school-picker {
+    width: 100%;
+  }
+  .ui-school-picker select {
+    flex: 1;
+    min-width: 0;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .app-content {
+    padding: 14px 12px 28px !important;
+  }
+  .ui-page-title {
+    font-size: 21px !important;
+  }
+}
+
+/* ---- Buttons: shared hover / focus / disabled (looks live in components/buttons.ts) ---- */
+
+button:hover { transform: none; }
+
+button:not(:disabled):hover { filter: brightness(0.96); }
+
+button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.ui-menu-item:not(:disabled):hover { background: var(--accent-wash) !important; filter: none; }

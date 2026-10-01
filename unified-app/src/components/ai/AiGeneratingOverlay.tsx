@@ -107,12 +107,23 @@ interface Props {
 }
 
 export function AiGeneratingOverlay({ blurTarget }: Props) {
-  const { isGlowActive } = useAiAssistantGlow();
+  const { isGlowActive, progress } = useAiAssistantGlow();
   const { colors } = useTheme();
   const [rendered, setRendered] = useState(isGlowActive);
   const [reducedMotion, setReducedMotion] = useState(false);
   const fade = useRef(new Animated.Value(0)).current;
   const clock = useRef(new Animated.Value(0)).current;
+  const progressFraction = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(progressFraction, {
+      toValue: progress?.fraction ?? 0,
+      duration: 420,
+      easing: Easing.out(Easing.cubic),
+      // Animating `width` can't use the native driver.
+      useNativeDriver: false,
+    }).start();
+  }, [progress?.fraction, progressFraction]);
 
   useEffect(() => {
     AccessibilityInfo.isReduceMotionEnabled().then(setReducedMotion).catch(() => {});
@@ -203,7 +214,21 @@ export function AiGeneratingOverlay({ blurTarget }: Props) {
         {/* Dark-theme text colors - the backdrop is dark regardless of the app theme. The name is
             plain white here on purpose, not the two-tone AIWandName wordmark. */}
         <Text style={[styles.title, { color: darkColors.textPrimary }]}>Generating with {AI_ASSISTANT_NAME}</Text>
-        <Text style={[styles.subtitle, { color: darkColors.textMuted }]}>This can take up to a minute</Text>
+        <Text style={[styles.subtitle, { color: darkColors.textMuted }]}>{progress?.label ?? "This can take up to a minute"}</Text>
+
+        {progress ? (
+          <View style={styles.progressTrack} accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: Math.round(progress.fraction * 100) }}>
+            <Animated.View
+              style={[
+                styles.progressFill,
+                {
+                  backgroundColor: colors.accent,
+                  width: progressFraction.interpolate({ inputRange: [0, 1], outputRange: ["0%", "100%"] }),
+                },
+              ]}
+            />
+          </View>
+        ) : null}
       </Animated.View>
     </Animated.View>
   );
@@ -237,5 +262,17 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontFamily: typography.fontFamily,
     fontSize: 12,
+  },
+  progressTrack: {
+    width: 180,
+    height: 5,
+    borderRadius: 3,
+    marginTop: 16,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: 3,
   },
 });

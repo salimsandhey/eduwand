@@ -9,7 +9,11 @@ import { Screen } from "../../components/Screen";
 import { SheetModal } from "../../components/SheetModal";
 import { ProfilePhotoPicker, PickedPhoto } from "../../components/ProfilePhotoPicker";
 import { useKeyboardOverlap } from "../../hooks/useKeyboardOverlap";
-import { api } from "../../api/client";
+import { useFormErrors } from "../../hooks/useForm";
+import { FieldError } from "../../components/FieldError";
+import { PasswordChecklist } from "../../components/PasswordChecklist";
+import { rules, phoneInput } from "../../utils/validation";
+import { api, SchoolSummary } from "../../api/client";
 import { avatarSetForRole, avatarSourceFor, resolveUserImageSource, userImageFillsFrame } from "../../theme/avatars";
 import { describeMissingProfileItems, getProfileCompletion } from "../../utils/profileCompletion";
 
@@ -32,6 +36,16 @@ export function ProfileScreen() {
   const navigation = useNavigation<any>();
   // The container sits inside <Screen edges={["bottom"]}>, above the navigation bar.
   const keyboard = useKeyboardOverlap({ bottomInset: useSafeAreaInsets().bottom });
+
+  // Shown read-only below - the request-a-change screen (Credits, individual
+  // accounts only) lets a teacher ask a platform admin to change it, but
+  // there was previously nowhere in the app that showed the CURRENT name
+  // back to them first.
+  const [school, setSchool] = useState<SchoolSummary | null>(null);
+  useEffect(() => {
+    if (!accessToken) return;
+    api.getMySchool(accessToken).then(setSchool).catch(() => {});
+  }, [accessToken]);
 
   const [fullName, setFullName] = useState(user?.fullName ?? "");
   const [phone, setPhone] = useState(user?.phone ?? "");
@@ -87,6 +101,19 @@ export function ProfileScreen() {
   // line vanishing out from under the user mid-edit.
   const [showCompletion] = useState(() => !!profileCompletion && profileCompletion.percent < 100);
 
+  // Inline validation - rules mirror backend/src/lib/validation.ts. The current
+  // password is only required (existing accounts may pre-date the strength rule).
+  const profileV = useFormErrors({ fullName, phone }, { fullName: rules.personName("Name"), phone: rules.phone(false) });
+  const passwordV = useFormErrors(
+    { currentPassword, newPassword, confirmPassword },
+    {
+      currentPassword: rules.required("Current password"),
+      newPassword: (value) =>
+        rules.newPassword("New password")(value) ?? (value === currentPassword ? "New password must be different from the current one" : null),
+      confirmPassword: rules.matches(() => newPassword, "New passwords do not match"),
+    }
+  );
+
   const photoValue: PickedPhoto = useMemo(() => {
     if (!user) return { type: "none" };
     if (user.photoMimeType && accessToken) {
@@ -122,21 +149,18 @@ export function ProfileScreen() {
   });
   const avatarFills = userImageFillsFrame(user);
   const profileDirty = fullName.trim() !== (user.fullName ?? "") || phone.trim() !== (user.phone ?? "");
-  const canChangePassword = !!currentPassword && !!newPassword && !!confirmPassword && !savingPassword;
+  const canChangePassword = !savingPassword;
   const isIndividualTeacher = user.role === "teacher" && user.accountType === "individual";
 
   async function handleSaveProfile() {
     setProfileMsg(null);
-    if (fullName.trim().length < 2) {
-      setProfileMsg({ tone: "err", text: "Name must be at least 2 characters" });
-      return;
-    }
+    if (!profileV.submit()) return;
     setSavingProfile(true);
     try {
       await updateProfile({ fullName: fullName.trim(), phone: phone.trim() || null });
       setProfileMsg({ tone: "ok", text: "Changes saved" });
     } catch (err) {
-      setProfileMsg({ tone: "err", text: err instanceof Error ? err.message : "Could not save profile" });
+      if (!profileV.applyServerError(err)) setProfileMsg({ tone: "err", text: err instanceof Error ? err.message : "Could not save profile" });
     } finally {
       setSavingProfile(false);
     }
@@ -168,21 +192,14 @@ export function ProfileScreen() {
 
   async function handleChangePassword() {
     setPasswordMsg(null);
-    if (newPassword.length < 8) {
-      setPasswordMsg({ tone: "err", text: "New password must be at least 8 characters" });
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setPasswordMsg({ tone: "err", text: "New passwords do not match" });
-      return;
-    }
+    if (!passwordV.submit()) return;
     setSavingPassword(true);
     try {
       await changePassword(currentPassword, newPassword);
       closePasswordForm();
       setPasswordMsg({ tone: "ok", text: "Password updated" });
     } catch (err) {
-      setPasswordMsg({ tone: "err", text: err instanceof Error ? err.message : "Could not change password" });
+      if (!passwordV.applyServerError(err)) setPasswordMsg({ tone: "err", text: err instanceof Error ? err.message : "Could not change password" });
     } finally {
       setSavingPassword(false);
     }
@@ -274,27 +291,49 @@ export function ProfileScreen() {
           <View style={[styles.card, { backgroundColor: colors.surface }, cardShadow]}>
             <Text style={[styles.label, { color: colors.textSecondary }]}>Full name</Text>
             <TextInput
-              style={inputStyle}
+              style={[inputStyle, profileV.error("fullName") ? { borderColor: colors.danger } : null]}
               value={fullName}
               onChangeText={setFullName}
+              onBlur={() => profileV.blur("fullName")}
               placeholder="Your name"
               placeholderTextColor={colors.textMuted}
               autoCapitalize="words"
+              autoComplete="name"
+              maxLength={80}
             />
+            <FieldError message={profileV.error("fullName")} />
 
             <Text style={[styles.label, styles.labelSpaced, { color: colors.textSecondary }]}>Phone</Text>
             <TextInput
-              style={inputStyle}
+              style={[inputStyle, profileV.error("phone") ? { borderColor: colors.danger } : null]}
               value={phone}
-              onChangeText={setPhone}
-              placeholder="Add your phone number"
+              onChangeText={(t) => setPhone(phoneInput(t))}
+              onBlur={() => profileV.blur("phone")}
+              placeholder="10-digit mobile number"
               placeholderTextColor={colors.textMuted}
               keyboardType="phone-pad"
+              autoComplete="tel"
+              maxLength={16}
             />
+            <FieldError message={profileV.error("phone")} />
 
             <Text style={[styles.label, styles.labelSpaced, { color: colors.textSecondary }]}>Email</Text>
             <Text style={[styles.readOnly, { color: colors.textPrimary }]} numberOfLines={1}>{user.email}</Text>
             <Text style={[styles.helper, { color: colors.textMuted }]}>Only your school admin can change this.</Text>
+
+            {school ? (
+              <>
+                <Text style={[styles.label, styles.labelSpaced, { color: colors.textSecondary }]}>Workspace name</Text>
+                <Text style={[styles.readOnly, { color: colors.textPrimary }]} numberOfLines={1}>{school.name}</Text>
+                {user.accountType === "individual" ? (
+                  <Pressable onPress={() => navigation.navigate("RequestWorkspaceNameChange")} hitSlop={8}>
+                    <Text style={[styles.helper, { color: colors.accent }]}>Request a change</Text>
+                  </Pressable>
+                ) : (
+                  <Text style={[styles.helper, { color: colors.textMuted }]}>Only your school admin can change this.</Text>
+                )}
+              </>
+            ) : null}
 
             {profileMsg ? (
               <Text style={[styles.msg, { color: profileMsg.tone === "ok" ? colors.accent : colors.danger }]}>{profileMsg.text}</Text>
@@ -347,13 +386,17 @@ export function ProfileScreen() {
                 onLayout={(e) => setPasswordFormHeight(Math.ceil(e.nativeEvent.layout.height))}
               >
                 <Text style={[styles.label, { color: colors.textSecondary }]}>Current password</Text>
-                <PasswordField value={currentPassword} onChangeText={setCurrentPassword} visible={showCurrentPassword} onToggleVisibility={() => setShowCurrentPassword((v) => !v)} placeholder="••••••••" inputStyle={inputStyle} />
+                <PasswordField value={currentPassword} onChangeText={setCurrentPassword} onBlur={() => passwordV.blur("currentPassword")} error={!!passwordV.error("currentPassword")} visible={showCurrentPassword} onToggleVisibility={() => setShowCurrentPassword((v) => !v)} placeholder="Your current password" inputStyle={inputStyle} />
+                <FieldError message={passwordV.error("currentPassword")} />
 
                 <Text style={[styles.label, styles.labelSpaced, { color: colors.textSecondary }]}>New password</Text>
-                <PasswordField value={newPassword} onChangeText={setNewPassword} visible={showNewPassword} onToggleVisibility={() => setShowNewPassword((v) => !v)} placeholder="At least 8 characters" inputStyle={inputStyle} />
+                <PasswordField value={newPassword} onChangeText={setNewPassword} onBlur={() => passwordV.blur("newPassword")} error={!!passwordV.error("newPassword")} visible={showNewPassword} onToggleVisibility={() => setShowNewPassword((v) => !v)} placeholder="8-64 characters, letters and numbers" inputStyle={inputStyle} />
+                <PasswordChecklist password={newPassword} />
+                <FieldError message={passwordV.error("newPassword")} />
 
                 <Text style={[styles.label, styles.labelSpaced, { color: colors.textSecondary }]}>Confirm new password</Text>
-                <PasswordField value={confirmPassword} onChangeText={setConfirmPassword} visible={showConfirmPassword} onToggleVisibility={() => setShowConfirmPassword((v) => !v)} placeholder="Re-enter new password" inputStyle={inputStyle} />
+                <PasswordField value={confirmPassword} onChangeText={setConfirmPassword} onBlur={() => passwordV.blur("confirmPassword")} error={!!passwordV.error("confirmPassword")} visible={showConfirmPassword} onToggleVisibility={() => setShowConfirmPassword((v) => !v)} placeholder="Re-enter new password" inputStyle={inputStyle} />
+                <FieldError message={passwordV.error("confirmPassword")} />
 
                 {passwordMsg ? (
                   <Text style={[styles.msg, { color: passwordMsg.tone === "ok" ? colors.accent : colors.danger }]}>{passwordMsg.text}</Text>
@@ -497,9 +540,9 @@ function SettingsRow({
   );
 }
 
-function PasswordField({ value, onChangeText, visible, onToggleVisibility, placeholder, inputStyle }: { value: string; onChangeText: (value: string) => void; visible: boolean; onToggleVisibility: () => void; placeholder: string; inputStyle: any }) {
+function PasswordField({ value, onChangeText, onBlur, error, visible, onToggleVisibility, placeholder, inputStyle }: { value: string; onChangeText: (value: string) => void; onBlur?: () => void; error?: boolean; visible: boolean; onToggleVisibility: () => void; placeholder: string; inputStyle: any }) {
   const { colors, pressedOpacity } = useTheme();
-  return <View style={styles.passwordField}><TextInput style={[inputStyle, styles.passwordInput]} value={value} onChangeText={onChangeText} secureTextEntry={!visible} placeholder={placeholder} placeholderTextColor={colors.textMuted} autoCapitalize="none" autoCorrect={false} /><Pressable style={({ pressed }) => [styles.passwordToggle, pressed && { opacity: pressedOpacity }]} onPress={onToggleVisibility} hitSlop={8} accessibilityRole="button" accessibilityLabel={visible ? "Hide password" : "Show password"}><Ionicons name={visible ? "eye-off-outline" : "eye-outline"} size={19} color={colors.textMuted} /></Pressable></View>;
+  return <View style={styles.passwordField}><TextInput style={[inputStyle, styles.passwordInput, error ? { borderColor: colors.danger } : null]} value={value} onChangeText={onChangeText} onBlur={onBlur} secureTextEntry={!visible} placeholder={placeholder} placeholderTextColor={colors.textMuted} autoCapitalize="none" autoCorrect={false} maxLength={128} /><Pressable style={({ pressed }) => [styles.passwordToggle, pressed && { opacity: pressedOpacity }]} onPress={onToggleVisibility} hitSlop={8} accessibilityRole="button" accessibilityLabel={visible ? "Hide password" : "Show password"}><Ionicons name={visible ? "eye-off-outline" : "eye-outline"} size={19} color={colors.textMuted} /></Pressable></View>;
 }
 
 const styles = StyleSheet.create({

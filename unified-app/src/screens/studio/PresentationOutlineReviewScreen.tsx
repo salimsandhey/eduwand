@@ -5,6 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useAiGenerating } from "../../context/AiAssistantGlowContext";
+import { useTricklingProgress } from "../../hooks/useTricklingProgress";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, PresentationOutlineEntry } from "../../api/client";
@@ -29,7 +30,8 @@ export function PresentationOutlineReviewScreen({ route, navigation }: Props) {
   const [outline, setOutline] = useState<PresentationOutlineEntry[]>([]);
   const [dirty, setDirty] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
-  useAiGenerating(isConfirming);
+  const generateProgress = useTricklingProgress(isConfirming, "Writing your presentation…");
+  useAiGenerating(isConfirming, undefined, generateProgress);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {

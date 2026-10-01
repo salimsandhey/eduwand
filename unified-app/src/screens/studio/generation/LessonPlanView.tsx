@@ -7,6 +7,7 @@ import { ContextSource } from "../../../api/client";
 import { LessonPlanContent, LessonPlanStage } from "./content";
 import { NumberedEditCard, EditActionRow } from "./NumberedEditCard";
 import { UsedSources } from "./UsedSources";
+import { FormattedText } from "./richText";
 
 interface Props {
   content: LessonPlanContent;
@@ -20,6 +21,11 @@ interface Props {
   // when the plan spans more than one class (see stages[].sessions).
   completedSessions?: number[];
   onToggleSession?: (session: number, completed: boolean) => void;
+  // Finer-grained, available regardless of how many classes the plan spans -
+  // one entry per checked activity ("<stageIndex>.<activityIndex>") or
+  // checked description bullet ("<stageIndex>.<activityIndex>.<lineIndex>").
+  completedLessonItems?: string[];
+  onToggleLessonItem?: (itemKey: string, completed: boolean) => void;
 }
 
 // Scrolls the field being edited to the top of the visible (above-keyboard) area, instead of
@@ -112,7 +118,7 @@ export function BloomTile({ bloom, inline }: { bloom: Bloom; inline?: boolean })
   );
 }
 
-export function LessonPlanView({ content, editable, onChange, sources, topicId, shownAsIsIds, scrollRef, completedSessions, onToggleSession }: Props) {
+export function LessonPlanView({ content, editable, onChange, sources, topicId, shownAsIsIds, scrollRef, completedSessions, onToggleSession, completedLessonItems, onToggleLessonItem }: Props) {
   const { colors, cardShadow } = useTheme();
   const [step, setStep] = useState("overview");
   const overviewInputRef = useRef<TextInput>(null);
@@ -123,6 +129,7 @@ export function LessonPlanView({ content, editable, onChange, sources, topicId, 
   const totalSessions = Math.max(1, ...(content.stages ?? []).flatMap((s) => s.sessions ?? []));
   const [selectedSession, setSelectedSession] = useState(1);
   const completedSet = new Set(completedSessions ?? []);
+  const completedItemSet = new Set(completedLessonItems ?? []);
   function stageIsComplete(stage: LessonPlanStage): boolean {
     return !!stage.sessions?.length && stage.sessions.every((s) => completedSet.has(s));
   }
@@ -209,7 +216,7 @@ export function LessonPlanView({ content, editable, onChange, sources, topicId, 
                 multiline
               />
             ) : (
-              <Text style={[styles.bodyText, { color: colors.textSecondary }]}>{content.overview}</Text>
+              <FormattedText style={[styles.bodyText, { color: colors.textSecondary }]}>{content.overview}</FormattedText>
             )}
             <View style={styles.tagRow}>
               <Tag colors={colors} icon="time-outline" label={`${content.durationMinutes} min`} />
@@ -235,7 +242,7 @@ export function LessonPlanView({ content, editable, onChange, sources, topicId, 
                   </View>
                   <View style={styles.objectivePreviewText}>
                     {bloom ? <BloomTile bloom={bloom} inline /> : null}
-                    <Text style={[styles.bodyText, { color: colors.textSecondary, flex: 1 }]} numberOfLines={1}>{bloom ? bloom.rest : obj}</Text>
+                    <FormattedText style={[styles.bodyText, { color: colors.textSecondary, flex: 1 }]} numberOfLines={1}>{bloom ? bloom.rest : obj}</FormattedText>
                   </View>
                 </View>
               );
@@ -272,7 +279,7 @@ export function LessonPlanView({ content, editable, onChange, sources, topicId, 
                 renderView={() => (
                   <View>
                     {bloom ? <BloomTile bloom={bloom} /> : null}
-                    <Text style={[styles.bodyText, { color: colors.textPrimary, marginTop: bloom ? 6 : 0 }]}>{bloom ? bloom.rest : obj}</Text>
+                    <FormattedText style={[styles.bodyText, { color: colors.textPrimary, marginTop: bloom ? 6 : 0 }]}>{bloom ? bloom.rest : obj}</FormattedText>
                   </View>
                 )}
                 renderEditor={(done, cancel) => (
@@ -339,7 +346,7 @@ export function LessonPlanView({ content, editable, onChange, sources, topicId, 
                   multiline
                 />
               ) : (
-                <Text style={[styles.bodyText, { color: colors.textSecondary, marginTop: spacing.sm }]}>{stg.summary}</Text>
+                <FormattedText style={[styles.bodyText, { color: colors.textSecondary, marginTop: spacing.sm }]}>{stg.summary}</FormattedText>
               )}
 
               <View style={{ marginTop: spacing.md }}>
@@ -349,19 +356,50 @@ export function LessonPlanView({ content, editable, onChange, sources, topicId, 
                   index={ai}
                   editable={editable}
                   onRemove={editable ? () => removeStageActivity(si, ai) : undefined}
-                  renderView={() => (
+                  renderView={() => {
+                    const activityKey = `${si}.${ai}`;
+                    const activityDone = completedItemSet.has(activityKey);
+                    return (
                     <View>
-                      <Text style={[styles.itemTitle, { color: colors.textPrimary }]}>{act.title}</Text>
-                      {act.materials.length > 0 ? (
-                        <View style={styles.tagRow}>
-                          {act.materials.map((m, mi) => (
-                            <Tag key={mi} colors={colors} icon="cube-outline" label={m} />
-                          ))}
-                        </View>
-                      ) : null}
-                      <ActivityDescription description={act.description} colors={colors} />
+                      {onToggleLessonItem ? (
+                        <Pressable
+                          style={styles.activityCheckRow}
+                          onPress={() => onToggleLessonItem(activityKey, !activityDone)}
+                          accessibilityRole="checkbox"
+                          accessibilityState={{ checked: activityDone }}
+                          hitSlop={6}
+                        >
+                          <Ionicons name={activityDone ? "checkmark-circle" : "ellipse-outline"} size={18} color={activityDone ? colors.accent : colors.textMuted} />
+                          <Text style={[styles.itemTitle, { color: activityDone ? colors.textMuted : colors.textPrimary, textDecorationLine: activityDone ? "line-through" : "none" }]}>{act.title}</Text>
+                        </Pressable>
+                      ) : (
+                        <Text style={[styles.itemTitle, { color: colors.textPrimary }]}>{act.title}</Text>
+                      )}
+                      {/* Pulled back flush with the card's own edge instead of
+                          following the title's indent (NumberedEditCard's "01"
+                          badge + row gap = 34 + 11) - that indent exists to
+                          make room for the badge next to the title's one
+                          line, not to be repeated as dead space down every
+                          line of materials/steps below it. */}
+                      <View style={styles.subPointsPullLeft}>
+                        {act.materials.length > 0 ? (
+                          <View style={styles.tagRow}>
+                            {act.materials.map((m, mi) => (
+                              <Tag key={mi} colors={colors} icon="cube-outline" label={m} />
+                            ))}
+                          </View>
+                        ) : null}
+                        <ActivityDescription
+                          description={act.description}
+                          colors={colors}
+                          itemKeyPrefix={activityKey}
+                          completedItems={completedItemSet}
+                          onToggleItem={onToggleLessonItem}
+                        />
+                      </View>
                     </View>
-                  )}
+                    );
+                  }}
                   renderEditor={(done, cancel) => (
                     <EditableStageActivity
                       initial={act}
@@ -398,13 +436,15 @@ export function LessonPlanView({ content, editable, onChange, sources, topicId, 
               renderView={() => (
                 <View>
                   <Text style={[styles.itemTitle, { color: colors.textPrimary }]}>{act.title}</Text>
-                  <View style={styles.tagRow}>
-                    <Tag colors={colors} icon="time-outline" label={`${act.durationMinutes} min`} />
-                    {act.materials.map((m, mi) => (
-                      <Tag key={mi} colors={colors} icon="cube-outline" label={m} />
-                    ))}
+                  <View style={styles.subPointsPullLeft}>
+                    <View style={styles.tagRow}>
+                      <Tag colors={colors} icon="time-outline" label={`${act.durationMinutes} min`} />
+                      {act.materials.map((m, mi) => (
+                        <Tag key={mi} colors={colors} icon="cube-outline" label={m} />
+                      ))}
+                    </View>
+                    <ActivityDescription description={act.description} colors={colors} />
                   </View>
-                  <ActivityDescription description={act.description} colors={colors} />
                 </View>
               )}
               renderEditor={(done, cancel) => (
@@ -455,7 +495,7 @@ export function LessonPlanView({ content, editable, onChange, sources, topicId, 
                       </View>
                       <View style={styles.objectivePreviewText}>
                         {bloom ? <BloomTile bloom={bloom} inline /> : null}
-                        <Text style={[styles.bodyText, { color: colors.textPrimary, flex: 1 }]}>{bloom ? bloom.rest : withoutNumber}</Text>
+                        <FormattedText style={[styles.bodyText, { color: colors.textPrimary, flex: 1 }]}>{bloom ? bloom.rest : withoutNumber}</FormattedText>
                       </View>
                     </View>
                   );
@@ -653,18 +693,55 @@ function cleanBulletText(step: string): string {
   return step.replace(/^[\s\-–—*••‣◦]+/, "").trim();
 }
 
-function ActivityDescription({ description, colors }: { description: string | string[]; colors: ThemeColors }) {
+// itemKeyPrefix/completedItems/onToggleItem are only passed for a new (5E)
+// stage activity, whose steps are individually trackable ("<prefix>.<line
+// index>") - the legacy plain-activities shape (content.activities, no stage
+// index to build a key from) renders its steps as plain bullets, unchanged.
+function ActivityDescription({
+  description,
+  colors,
+  itemKeyPrefix,
+  completedItems,
+  onToggleItem,
+}: {
+  description: string | string[];
+  colors: ThemeColors;
+  itemKeyPrefix?: string;
+  completedItems?: Set<string>;
+  onToggleItem?: (itemKey: string, completed: boolean) => void;
+}) {
   if (!Array.isArray(description)) {
-    return description ? <Text style={[styles.bodyText, { color: colors.textSecondary, marginTop: spacing.sm }]}>{description}</Text> : null;
+    return description ? <FormattedText style={[styles.bodyText, { color: colors.textSecondary, marginTop: spacing.sm }]}>{description}</FormattedText> : null;
   }
   return (
     <View style={{ marginTop: spacing.xs, gap: 3 }}>
-      {description.map((step, i) => (
-        <View key={i} style={styles.bulletRow}>
-          <View style={[styles.bulletDot, { backgroundColor: colors.textMuted }]} />
-          <Text style={[styles.bodyText, { color: colors.textSecondary, flex: 1 }]}>{cleanBulletText(step)}</Text>
-        </View>
-      ))}
+      {description.map((step, i) => {
+        const lineKey = itemKeyPrefix ? `${itemKeyPrefix}.${i}` : undefined;
+        const lineDone = !!lineKey && !!completedItems?.has(lineKey);
+        if (lineKey && onToggleItem) {
+          return (
+            <Pressable
+              key={i}
+              style={styles.bulletCheckRow}
+              onPress={() => onToggleItem(lineKey, !lineDone)}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: lineDone }}
+              hitSlop={4}
+            >
+              <Ionicons name={lineDone ? "checkmark-circle" : "ellipse-outline"} size={14} color={lineDone ? colors.accent : colors.textMuted} />
+              <FormattedText style={[styles.bodyText, { color: lineDone ? colors.textMuted : colors.textSecondary, flex: 1, textDecorationLine: lineDone ? "line-through" : "none" }]}>
+                {cleanBulletText(step)}
+              </FormattedText>
+            </Pressable>
+          );
+        }
+        return (
+          <View key={i} style={styles.bulletRow}>
+            <View style={[styles.bulletDot, { backgroundColor: colors.textMuted }]} />
+            <FormattedText style={[styles.bodyText, { color: colors.textSecondary, flex: 1 }]}>{cleanBulletText(step)}</FormattedText>
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -774,6 +851,16 @@ const styles = StyleSheet.create({
   editorHint: { fontSize: 11, fontFamily: typography.medium, marginTop: spacing.xs, marginBottom: 4 },
   bulletRow: { flexDirection: "row", alignItems: "flex-start", gap: 4 },
   bulletDot: { width: 3, height: 3, borderRadius: 1.5, marginTop: 8 },
+  activityCheckRow: { flexDirection: "row", alignItems: "flex-start", gap: 8, marginBottom: 2 },
+  bulletCheckRow: { flexDirection: "row", alignItems: "flex-start", gap: 6, paddingVertical: 2 },
+  // Cancels NumberedEditCard's own badge column (34 width + 11 row gap = 45,
+  // NumberedEditCard.tsx's styles.badge/styles.row) so materials/steps start
+  // flush with the card's left edge instead of repeating the title's
+  // one-line badge indent down every line beneath it. The badge is 34 tall
+  // but the title next to it is only one text line (~20) - marginTop clears
+  // the badge's full height so it doesn't visually collide with what's now
+  // sharing its column right underneath.
+  subPointsPullLeft: { marginLeft: -45, marginTop: 14 },
   addButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: 1.5, borderStyle: "dashed", borderRadius: radius.md, paddingVertical: 12, marginTop: spacing.xs },
   addButtonText: { fontSize: 14, fontFamily: typography.semiBold },
 });

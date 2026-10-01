@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { PLATFORM_ADMIN_ROLE } from "../lib/roles";
+import { Validator } from "../lib/validation";
 
 // Individual-account subject swap workflow - fixed set of exactly 2
 // subjects, changeable only via an approved request, at most once every 6
@@ -42,9 +43,18 @@ export async function subjectChangeRequestRoutes(app: FastifyInstance) {
       }
 
       const body = request.body ?? ({} as CreateSubjectChangeRequestBody);
-      const requestedSubjects = Array.from(
-        new Set((body.requestedSubjects ?? []).map((name) => name.trim()).filter((name) => name.length > 0))
-      );
+      const sv = new Validator();
+      const subjectSeen = new Set<string>();
+      const requestedSubjects: string[] = [];
+      for (const raw of Array.isArray(body.requestedSubjects) ? body.requestedSubjects : []) {
+        const name = sv.label("requestedSubjects", raw, "Subject name", false);
+        if (name && !subjectSeen.has(name.toLowerCase())) {
+          subjectSeen.add(name.toLowerCase());
+          requestedSubjects.push(name);
+        }
+      }
+      const requestNote = sv.note("note", body.note, "Reason", { max: 500 });
+      if (sv.hasErrors) return sv.reject(reply);
       if (requestedSubjects.length !== REQUIRED_SUBJECT_COUNT) {
         return reply.code(400).send({
           data: null,
@@ -88,7 +98,7 @@ export async function subjectChangeRequestRoutes(app: FastifyInstance) {
           schoolId,
           currentSubjects,
           requestedSubjects,
-          note: body.note?.trim() || undefined,
+          note: requestNote,
         },
       });
 

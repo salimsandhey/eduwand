@@ -1,15 +1,16 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Image } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import * as WebBrowser from "expo-web-browser";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
-import { useAiGenerating } from "../../context/AiAssistantGlowContext";
+import { AiGenerationProgress, useAiGenerating } from "../../context/AiAssistantGlowContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { VideoPlayerModal } from "../../components/VideoPlayerModal";
-import { api, ContextResearchJob, ResearchCandidate, ResearchCandidateType } from "../../api/client";
+import { api, ContextResearchJob, ResearchCandidate, ResearchCandidateType, TopicDetail } from "../../api/client";
+import { capitalizeFirst } from "../../utils/text";
 
 // Kept small - "did I already save this exact video" is all this screen
 // needs; the full list with remove/watch lives on the Topic screen.
@@ -22,6 +23,14 @@ const STAGE_LABELS: Record<ContextResearchJob["stage"], string> = {
   searching: "Searching the web…",
   reviewing: "Reviewing what it found…",
   done: "Done",
+};
+
+// Only two real checkpoints exist server-side (see backend/src/lib/context-research.ts),
+// so this is a coarse two-step progress, not a precise percentage.
+const STAGE_PROGRESS: Record<ContextResearchJob["stage"], number> = {
+  searching: 0.45,
+  reviewing: 0.85,
+  done: 1,
 };
 
 const CANDIDATE_TYPE_ICONS: Record<ResearchCandidateType, keyof typeof Ionicons.glyphMap> = {
@@ -63,6 +72,15 @@ function addButtonLabel(candidate: ResearchCandidate): string {
   if (candidate.type === "pdf") return "Add PDF";
   return "Add to topic";
 }
+// Shown above the trickling progress bar while a candidate is being approved -
+// downloading a PDF/image and reading its text/vision content is a single
+// synchronous request with no server-side stage signal, so this is honest
+// about being an estimate rather than claiming a precision the server can't give.
+function approvingLabel(candidate: ResearchCandidate): string {
+  if (candidate.type === "image") return "Saving the image…";
+  if (candidate.type === "pdf") return "Downloading the PDF…";
+  return "Adding to topic…";
+}
 
 export function ContextResearchScreen({ route, navigation }: Props) {
   const { topicId } = route.params;
@@ -70,11 +88,26 @@ export function ContextResearchScreen({ route, navigation }: Props) {
   const { colors, cardShadow, pressedOpacity } = useTheme();
 
   const [job, setJob] = useState<ContextResearchJob | null>(null);
-  useAiGenerating(job?.status === "running");
+  // Fetched purely to confirm to the teacher what grade/subject this search
+  // was actually scoped to (see backend/src/lib/context-research.ts's
+  // classLabel) - never sent anywhere, just displayed.
+  const [topic, setTopic] = useState<TopicDetail | null>(null);
+  const isRunning = job?.status === "running";
+  const researchProgress = useMemo<AiGenerationProgress | null>(() => {
+    if (!isRunning) return null;
+    const stage = job?.stage ?? "searching";
+    return { label: STAGE_LABELS[stage], fraction: STAGE_PROGRESS[stage] };
+  }, [isRunning, job?.stage]);
+  useAiGenerating(isRunning, undefined, researchProgress);
   const [error, setError] = useState<string | null>(null);
   // A Set, not a single id - approving/dismissing one candidate must not
   // block acting on another at the same time.
   const [busyCandidateIds, setBusyCandidateIds] = useState<Set<string>>(new Set());
+  // Trickles toward "almost done" while a candidate's approve request is in
+  // flight - there's no real sub-stage signal for a single request/response,
+  // so this creeps rather than claiming false precision.
+  const [approveFractions, setApproveFractions] = useState<Record<string, number>>({});
+  const approveTrickleRefs = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   // Reference videos are watch-only (see backend/src/lib/youtube-search.ts) -
   // this just opens the in-app player, no server call.
@@ -151,6 +184,7 @@ export function ContextResearchScreen({ route, navigation }: Props) {
       .listSavedVideos(accessToken, topicId)
       .then((videos) => setSavedVideoIds(new Set(videos.map((v) => v.videoId))))
       .catch(() => {});
+    api.getTopic(accessToken, topicId).then(setTopic).catch(() => {});
     return () => {
       cancelled = true;
       stopPolling();
@@ -195,12 +229,29 @@ export function ContextResearchScreen({ route, navigation }: Props) {
     if (!accessToken || !job) return;
     setCandidateBusy(candidate.id, true);
     setError(null);
+
+    setApproveFractions((prev) => ({ ...prev, [candidate.id]: 0.15 }));
+    const trickle = setInterval(() => {
+      setApproveFractions((prev) => {
+        const f = prev[candidate.id] ?? 0.15;
+        return { ...prev, [candidate.id]: Math.min(0.92, f + (0.92 - f) * 0.22) };
+      });
+    }, 350);
+    approveTrickleRefs.current.set(candidate.id, trickle);
+
     try {
       const updated = await api.approveContextResearchCandidate(accessToken, topicId, job.id, candidate.id);
       setJob(updated);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add source");
     } finally {
+      clearInterval(trickle);
+      approveTrickleRefs.current.delete(candidate.id);
+      setApproveFractions((prev) => {
+        const next = { ...prev };
+        delete next[candidate.id];
+        return next;
+      });
       setCandidateBusy(candidate.id, false);
     }
   }
@@ -218,6 +269,12 @@ export function ContextResearchScreen({ route, navigation }: Props) {
       setCandidateBusy(candidate.id, false);
     }
   }
+
+  useEffect(() => {
+    return () => {
+      for (const interval of approveTrickleRefs.current.values()) clearInterval(interval);
+    };
+  }, []);
 
   const approvedCount = job?.candidates.filter((c) => c.status === "approved").length ?? 0;
   const visibleCandidates = (job?.candidates ?? []).filter((c) => c.status !== "dismissed");
@@ -242,6 +299,15 @@ export function ContextResearchScreen({ route, navigation }: Props) {
         </View>
       </View>
 
+      {topic ? (
+        <View style={styles.scopeRow}>
+          <Ionicons name="school-outline" size={13} color={colors.textMuted} />
+          <Text style={[styles.scopeText, { color: colors.textMuted }]} numberOfLines={1}>
+            Scoped to {capitalizeFirst(topic.classSection.className)} - {capitalizeFirst(topic.classSection.sectionName)} · {capitalizeFirst(topic.subject)}
+          </Text>
+        </View>
+      ) : null}
+
       {error && !job ? (
         <View style={styles.centered}>
           <Ionicons name="alert-circle-outline" size={28} color={colors.danger} />
@@ -250,13 +316,15 @@ export function ContextResearchScreen({ route, navigation }: Props) {
             <Text style={[styles.primaryButtonText, { color: colors.accentOn }]}>Try again</Text>
           </Pressable>
         </View>
-      ) : isStarting || !job || job.status === "running" ? (
+      ) : isStarting || !job ? (
         <View style={styles.centered}>
-          {/* Once the job is running the AI generating overlay covers the screen - no spinner behind it. */}
-          {job?.status !== "running" ? <ActivityIndicator color={colors.accent} size="large" /> : null}
-          <Text style={[styles.stateText, { color: colors.textPrimary, marginTop: 16 }]}>{STAGE_LABELS[job?.stage ?? "searching"]}</Text>
-          <Text style={[styles.stateSubtext, { color: colors.textMuted }]}>This can take a couple of minutes.</Text>
+          <ActivityIndicator color={colors.accent} size="large" />
+          <Text style={[styles.stateText, { color: colors.textPrimary, marginTop: 16 }]}>Starting your search…</Text>
         </View>
+      ) : job.status === "running" ? (
+        // The AI generating overlay (with its own stage label + progress bar)
+        // fully covers the screen while a job runs - nothing to show behind it.
+        null
       ) : job.status === "failed" ? (
         <View style={styles.centered}>
           <Ionicons name="alert-circle-outline" size={28} color={colors.danger} />
@@ -379,23 +447,38 @@ export function ContextResearchScreen({ route, navigation }: Props) {
                       </Pressable>
                     </View>
                   ) : !approved ? (
-                    <View style={styles.cardActions}>
-                      <Pressable
-                        style={({ pressed }) => [styles.ghostButton, { borderColor: colors.border }, (busy || pressed) && { opacity: pressedOpacity }]}
-                        onPress={() => dismiss(candidate)}
-                        disabled={busy}
-                        accessibilityRole="button"
-                      >
-                        <Text style={[styles.ghostButtonText, { color: colors.textSecondary }]}>Dismiss</Text>
-                      </Pressable>
-                      <Pressable
-                        style={({ pressed }) => [styles.approveButton, { backgroundColor: colors.accent }, (busy || pressed) && { opacity: pressedOpacity }]}
-                        onPress={() => approve(candidate)}
-                        disabled={busy}
-                        accessibilityRole="button"
-                      >
-                        {busy ? <ActivityIndicator color={colors.accentOn} size="small" /> : <Text style={[styles.approveButtonText, { color: colors.accentOn }]}>{addButtonLabel(candidate)}</Text>}
-                      </Pressable>
+                    <View>
+                      <View style={styles.cardActions}>
+                        <Pressable
+                          style={({ pressed }) => [styles.ghostButton, { borderColor: colors.border }, (busy || pressed) && { opacity: pressedOpacity }]}
+                          onPress={() => dismiss(candidate)}
+                          disabled={busy}
+                          accessibilityRole="button"
+                        >
+                          <Text style={[styles.ghostButtonText, { color: colors.textSecondary }]}>Dismiss</Text>
+                        </Pressable>
+                        <Pressable
+                          style={({ pressed }) => [styles.approveButton, { backgroundColor: colors.accent }, (busy || pressed) && { opacity: pressedOpacity }]}
+                          onPress={() => approve(candidate)}
+                          disabled={busy}
+                          accessibilityRole="button"
+                        >
+                          {busy ? <ActivityIndicator color={colors.accentOn} size="small" /> : <Text style={[styles.approveButtonText, { color: colors.accentOn }]}>{addButtonLabel(candidate)}</Text>}
+                        </Pressable>
+                      </View>
+                      {busy ? (
+                        <View style={styles.approveProgressBlock}>
+                          <Text style={[styles.approveProgressLabel, { color: colors.textMuted }]}>{approvingLabel(candidate)}</Text>
+                          <View style={[styles.approveProgressTrack, { backgroundColor: colors.surfaceRaised }]}>
+                            <View
+                              style={[
+                                styles.approveProgressFill,
+                                { backgroundColor: colors.accent, width: `${Math.round((approveFractions[candidate.id] ?? 0.15) * 100)}%` },
+                              ]}
+                            />
+                          </View>
+                        </View>
+                      ) : null}
                     </View>
                   ) : null}
                 </View>
@@ -426,6 +509,8 @@ export function ContextResearchScreen({ route, navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
+  scopeRow: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 16, paddingBottom: 10 },
+  scopeText: { fontSize: 11, fontWeight: "600" },
   centered: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 32 },
   stateText: { fontSize: 15, fontWeight: "700", textAlign: "center" },
   stateSubtext: { fontSize: 12, marginTop: 4, textAlign: "center" },
@@ -450,6 +535,10 @@ const styles = StyleSheet.create({
   sourceLink: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 8 },
   sourceLinkText: { fontSize: 11, fontWeight: "600", flexShrink: 1 },
   cardActions: { flexDirection: "row", gap: 8, marginTop: 12 },
+  approveProgressBlock: { marginTop: 8 },
+  approveProgressLabel: { fontSize: 11, fontWeight: "600", marginBottom: 5 },
+  approveProgressTrack: { height: 4, borderRadius: 2, overflow: "hidden" },
+  approveProgressFill: { height: "100%", borderRadius: 2 },
   ghostButton: { flex: 1, height: 40, borderWidth: 1, borderRadius: 11, alignItems: "center", justifyContent: "center" },
   ghostButtonText: { fontSize: 13, fontWeight: "700" },
   approveButton: { flex: 1, height: 40, borderRadius: 11, alignItems: "center", justifyContent: "center", flexDirection: "row" },

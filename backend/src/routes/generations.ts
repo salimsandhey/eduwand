@@ -13,7 +13,7 @@ import {
   PresentationReason,
   PresentationDensity,
   PresentationOutlineEntry,
-  MODEL_SONNET,
+  MODEL_HAIKU,
   ActivityGroupSize,
   ACTIVITY_GROUP_SIZE_LABELS,
   ACTIVITY_RESOURCE_OPTIONS,
@@ -198,6 +198,11 @@ interface UpdateGenerationBody {
 
 interface SessionProgressBody {
   session: number;
+  completed: boolean;
+}
+
+interface LessonItemProgressBody {
+  itemKey: string;
   completed: boolean;
 }
 
@@ -559,6 +564,45 @@ export async function generationRoutes(app: FastifyInstance) {
     }
   );
 
+  // Finer-grained than session-progress above: an individual activity or a
+  // single description bullet inside it, checked off independently of
+  // whether the whole class period is marked taught. itemKey is a stable
+  // position-based id the client builds - "<stageIndex>.<activityIndex>" for
+  // an activity, "<stageIndex>.<activityIndex>.<lineIndex>" for one of its
+  // description bullets - never re-derived here, just stored/toggled as an
+  // opaque string. Available on every lesson plan, not just ones spanning
+  // more than one class period - a single-class plan that still spills into
+  // extra real-world days had no tracking at all before this.
+  app.post<{ Params: { id: string }; Body: LessonItemProgressBody }>(
+    "/generations/:id/lesson-item-progress",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const body = request.body ?? ({} as LessonItemProgressBody);
+      if (typeof body.itemKey !== "string" || !body.itemKey || typeof body.completed !== "boolean") {
+        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "itemKey (string) and completed (boolean) are required" } });
+      }
+
+      const generation = await prisma.generation.findFirst({
+        where: { id: request.params.id, topic: { schoolId: request.schoolId } },
+      });
+      if (!generation) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Generation not found" } });
+      }
+
+      const completedLessonItems = body.completed
+        ? [...new Set([...generation.completedLessonItems, body.itemKey])]
+        : generation.completedLessonItems.filter((k) => k !== body.itemKey);
+
+      const updated = await prisma.generation.update({
+        where: { id: generation.id },
+        data: { completedLessonItems },
+        include: { contextSources: true },
+      });
+
+      return { data: updated, meta: {} };
+    }
+  );
+
   app.post<{ Params: { id: string } }>("/generations/:id/retry", { onRequest: scoped(app) }, async (request, reply) => {
     const generation = await prisma.generation.findFirst({
       where: { id: request.params.id, topic: { schoolId: request.schoolId } },
@@ -880,7 +924,7 @@ export async function generationRoutes(app: FastifyInstance) {
           presentationClasses: classes,
           outline: outline as unknown as object,
           aiOutput: "{}", // no slide content yet - non-null column, placeholder until confirm
-          modelUsed: MODEL_SONNET,
+          modelUsed: MODEL_HAIKU,
           generationStatus: "outline",
           customPrompt: body.customPrompt ?? null,
           selectedSources: (body.sources ?? []) as unknown as object,
@@ -892,7 +936,7 @@ export async function generationRoutes(app: FastifyInstance) {
         schoolId: request.schoolId,
         teacherUserId: request.user.sub,
         feature: "generation",
-        model: MODEL_SONNET,
+        model: MODEL_HAIKU,
         durationMs: Date.now() - start,
       });
 
@@ -1011,7 +1055,7 @@ export async function generationRoutes(app: FastifyInstance) {
         schoolId: request.schoolId,
         teacherUserId: request.user.sub,
         feature: "generation",
-        model: MODEL_SONNET,
+        model: MODEL_HAIKU,
         durationMs: Date.now() - start,
       });
 
@@ -1085,7 +1129,7 @@ export async function generationRoutes(app: FastifyInstance) {
         schoolId: request.schoolId,
         teacherUserId: request.user.sub,
         feature: "generation",
-        model: MODEL_SONNET,
+        model: MODEL_HAIKU,
         durationMs: Date.now() - start,
       });
 

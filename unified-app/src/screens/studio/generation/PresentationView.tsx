@@ -179,6 +179,14 @@ function useScaledSlideStyles(scale: number) {
 export function PresentationView({ content, editable, onChange, mediaUrl, onRegenerateSlide }: Props) {
   const { colors } = useTheme();
   const [presentingIndex, setPresentingIndex] = useState<number | null>(null);
+  // Whether the native Modal has actually finished its presentation
+  // animation yet - see the Modal's onShow below for why this gates the
+  // orientation lock.
+  const [presentingShown, setPresentingShown] = useState(false);
+  function closePresenting() {
+    setPresentingIndex(null);
+    setPresentingShown(false);
+  }
   const mediaById = useMemo(() => new Map((content.media ?? []).map((item) => [item.id, item])), [content.media]);
   function mediaFor(slide: PresentationContent["slides"][number]): SlideMedia {
     const item = slide.mediaId ? mediaById.get(slide.mediaId) : undefined;
@@ -321,7 +329,12 @@ export function PresentationView({ content, editable, onChange, mediaUrl, onRege
         })}
       </View>
 
-      <Modal visible={presentingIndex !== null} animationType="fade" onRequestClose={() => setPresentingIndex(null)}>
+      <Modal
+        visible={presentingIndex !== null}
+        animationType="fade"
+        onRequestClose={closePresenting}
+        onShow={() => setPresentingShown(true)}
+      >
         <GestureHandlerRootView style={{ flex: 1 }}>
           {presentingIndex !== null ? (
             <Slideshow
@@ -332,7 +345,8 @@ export function PresentationView({ content, editable, onChange, mediaUrl, onRege
               logoUrl={logoUrl}
               footerLabel={content.footerLabel ?? null}
               mediaFor={mediaFor}
-              onClose={() => setPresentingIndex(null)}
+              readyForOrientationLock={presentingShown}
+              onClose={closePresenting}
             />
           ) : null}
         </GestureHandlerRootView>
@@ -875,6 +889,7 @@ function Slideshow({
   logoUrl,
   footerLabel,
   mediaFor,
+  readyForOrientationLock,
   onClose,
 }: {
   slides: PresentationContent["slides"];
@@ -884,6 +899,9 @@ function Slideshow({
   logoUrl: string | null;
   footerLabel: string | null;
   mediaFor: (slide: PresentationContent["slides"][number]) => SlideMedia;
+  // True once the wrapping Modal's onShow has fired (its presentation
+  // animation is done) - see the effect below for why the lock waits on this.
+  readyForOrientationLock: boolean;
   onClose: () => void;
 }) {
   const [index, setIndex] = useState(initialIndex);
@@ -895,12 +913,21 @@ function Slideshow({
   // widescreen box is always short when width-constrained by a narrow
   // portrait screen. Rotating the device view itself gives the box the full
   // screen to work with, matching how a real presentation viewer behaves.
+  //
+  // This waits for the Modal to actually finish presenting first
+  // (readyForOrientationLock) rather than firing on mount - Slideshow mounts
+  // in the same render as the Modal opening, i.e. before its native
+  // presentation animation has completed. Forcing an interface-orientation
+  // change on iOS while a UIViewController present transition is still in
+  // flight is a hard native crash (no catchable JS error) - Android tolerates
+  // it, which is why this only ever crashed on iOS.
   useEffect(() => {
+    if (!readyForOrientationLock) return;
     lockLandscape();
     return () => {
       lockPortrait();
     };
-  }, []);
+  }, [readyForOrientationLock]);
 
   // useWindowDimensions (not a one-time Dimensions.get) - it re-renders when
   // the orientation lock above actually rotates the screen, so the box is

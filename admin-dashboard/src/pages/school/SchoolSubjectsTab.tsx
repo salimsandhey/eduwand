@@ -4,6 +4,7 @@ import { api } from "../../api/client";
 import type { Subject } from "../../api/client";
 import { Card } from "../../components/Card";
 import type { SchoolOutletContext } from "./SchoolLayout";
+import { btn } from "../../components/buttons";
 
 export function SchoolSubjectsTab() {
   const { id, accessToken, canManageAcademics } = useOutletContext<SchoolOutletContext>();
@@ -145,25 +146,7 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1,
     padding: "0 2px",
   },
-  button: {
-    background: "var(--accent)",
-    color: "#fff",
-    border: "none",
-    borderRadius: 8,
-    padding: "10px 16px",
-    fontWeight: 600,
-    cursor: "pointer",
-    fontSize: 14,
-  },
-  secondaryButton: {
-    background: "var(--bg-page)",
-    color: "var(--text-primary)",
-    border: "1px solid var(--border)",
-    borderRadius: 8,
-    padding: "10px 16px",
-    fontWeight: 600,
-    cursor: "pointer",
-    fontSize: 14,
-  },
+  button: btn.primary,
+  secondaryButton: btn.secondary,
   error: { color: "var(--status-critical)", fontSize: 13, marginTop: 8, marginBottom: 0 },
 };

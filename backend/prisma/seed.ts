@@ -274,7 +274,7 @@ async function main() {
       outputType: "lesson_plan",
       aiOutput:
         "Photosynthesis converts light energy into chemical energy. Plants use sunlight, water, and carbon dioxide to produce glucose and oxygen. Key stages: light-dependent reactions and the Calvin cycle.",
-      modelUsed: "claude-sonnet",
+      modelUsed: "claude-haiku-4-5",
       generationStatus: "succeeded",
     },
   });

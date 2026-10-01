@@ -1,6 +1,6 @@
 export function StatTile({ label, value }: { label: string; value: string }) {
   return (
-    <div style={styles.tile}>
+    <div className="ui-stat" style={styles.tile}>
       <span style={styles.value}>{value}</span>
       <span style={styles.label}>{label}</span>
     </div>

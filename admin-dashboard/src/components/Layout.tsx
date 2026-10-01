@@ -134,15 +134,15 @@ function ProfileMenu() {
     <div ref={ref} style={styles.profileWrap}>
       <button style={styles.profileButton} onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open}>
         <span style={styles.avatar}>{initials}</span>
-        <span style={styles.profileText}>
+        <span className="app-profile-text" style={styles.profileText}>
           <span style={styles.profileName}>{user?.fullName}</span>
           <span style={styles.profileRole}>{formatEnumLabel(user?.role)}</span>
         </span>
-        <span style={{ ...styles.profileChevron, transform: open ? "rotate(180deg)" : "none" }}>▾</span>
+        <span className="app-profile-chevron" style={{ ...styles.profileChevron, transform: open ? "rotate(180deg)" : "none" }}>▾</span>
       </button>
 
       {open ? (
-        <div style={styles.menu} role="menu">
+        <div className="app-profile-menu" style={styles.menu} role="menu">
           <div style={styles.menuHeader}>
             <span style={{ ...styles.avatar, width: 44, height: 44, fontSize: 15 }}>{initials}</span>
             <div style={{ minWidth: 0 }}>
@@ -168,6 +168,16 @@ function ProfileMenu() {
 function LayoutInner() {
   const { user } = useAuth();
   const location = useLocation();
+  const [navOpen, setNavOpen] = useState(false);
+
+  useEffect(() => {
+    if (!navOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setNavOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [navOpen]);
 
   const sections = NAV_SECTIONS.filter((section) => !!user?.role && section.roles.includes(user.role))
     .map((section) => ({
@@ -180,7 +190,16 @@ function LayoutInner() {
 
   return (
     <div style={styles.shell}>
-      <aside style={styles.sidebar}>
+      <div className="app-backdrop" data-open={navOpen} onClick={() => setNavOpen(false)} aria-hidden="true" />
+      <aside
+        className="app-sidebar"
+        data-open={navOpen}
+        style={styles.sidebar}
+        // Picking a destination closes the drawer (a no-op on desktop).
+        onClick={(event) => {
+          if ((event.target as HTMLElement).closest("a")) setNavOpen(false);
+        }}
+      >
         <div style={styles.logo}>
           <img src="/eduwand-logo.png" alt="EduWand" style={styles.logoImage} />
         </div>
@@ -188,14 +207,26 @@ function LayoutInner() {
       </aside>
 
       <div style={styles.main}>
-        <header style={styles.topbar}>
+        <header className="app-topbar" style={styles.topbar}>
           <div style={styles.topLeft}>
+            <button
+              type="button"
+              className="app-menu-btn"
+              onClick={() => setNavOpen(true)}
+              aria-label="Open navigation menu"
+              aria-expanded={navOpen}
+            >
+              <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true">
+                <path d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+            <img src="/eduwand-logo.png" alt="EduWand" className="app-topbar-logo" />
             {showSchoolPicker ? <SchoolPicker /> : null}
           </div>
           <ProfileMenu />
         </header>
 
-        <main style={styles.content}>
+        <main className="app-content" style={styles.content}>
           <Outlet />
         </main>
       </div>
@@ -288,7 +319,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "10px 32px",
     backdropFilter: "blur(18px)",
   },
-  topLeft: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", minWidth: 0 },
+  topLeft: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", minWidth: 0, flex: 1 },
   avatar: {
     width: 38,
     height: 38,

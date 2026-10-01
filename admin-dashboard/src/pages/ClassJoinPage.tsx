@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { publicGetClassJoinInfo, publicSubmitClassJoinRequest, ApiError } from "../api/client";
 import type { ClassJoinInfo } from "../api/client";
+import { FieldError, invalidInput } from "../components/FieldError";
+import { useFormErrors } from "../hooks/useForm";
+import { rules, phoneInput } from "../utils/validation";
 
 // Public, unauthenticated landing page for a class join link
 // (ClassSection.joinCode). Submitting here NEVER grants class entry - it
@@ -22,6 +25,17 @@ export function ClassJoinPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
+  // Rules mirror backend/src/lib/validation.ts; field names match the API's.
+  const v = useFormErrors(
+    { studentName, dateOfBirth, guardianName, guardianContact, studentEmail },
+    {
+      studentName: rules.personName("Student name"),
+      dateOfBirth: rules.dateOfBirth("Date of birth"),
+      guardianName: rules.personName("Guardian name"),
+      guardianContact: rules.phone(true, "Guardian phone number"),
+      studentEmail: rules.email(true, "Student email"),
+    }
+  );
 
   useEffect(() => {
     if (!code) return;
@@ -31,7 +45,8 @@ export function ClassJoinPage() {
   }, [code]);
 
   async function submit() {
-    if (!code || !studentName.trim() || !dateOfBirth || !guardianName.trim() || !guardianContact.trim() || !studentEmail.includes("@")) return;
+    if (!code) return;
+    if (!v.submit()) return;
     setIsSubmitting(true);
     setSubmitError(null);
     try {
@@ -44,7 +59,8 @@ export function ClassJoinPage() {
       });
       setSubmitted(true);
     } catch (err) {
-      setSubmitError(err instanceof ApiError ? err.message : "Failed to submit request");
+      if (err instanceof ApiError && v.applyServerError(err)) setSubmitError("Please fix the highlighted fields.");
+      else setSubmitError(err instanceof ApiError ? err.message : "Failed to submit request");
     } finally {
       setIsSubmitting(false);
     }
@@ -100,23 +116,71 @@ export function ClassJoinPage() {
 
         <div style={styles.field}>
           <label style={styles.label}>Student's full name</label>
-          <input style={styles.input} value={studentName} onChange={(e) => setStudentName(e.target.value)} />
+          <input
+            style={{ ...styles.input, ...invalidInput(!!v.error("studentName")) }}
+            value={studentName}
+            onChange={(e) => setStudentName(e.target.value)}
+            onBlur={() => v.blur("studentName")}
+            maxLength={80}
+            autoComplete="off"
+            aria-invalid={!!v.error("studentName")}
+          />
+          <FieldError message={v.error("studentName")} />
         </div>
         <div style={styles.field}>
           <label style={styles.label}>Date of birth</label>
-          <input style={styles.input} type="date" value={dateOfBirth} onChange={(e) => setDateOfBirth(e.target.value)} />
+          <input
+            style={{ ...styles.input, ...invalidInput(!!v.error("dateOfBirth")) }}
+            type="date"
+            value={dateOfBirth}
+            max={new Date().toISOString().slice(0, 10)}
+            onChange={(e) => setDateOfBirth(e.target.value)}
+            onBlur={() => v.blur("dateOfBirth")}
+            aria-invalid={!!v.error("dateOfBirth")}
+          />
+          <FieldError message={v.error("dateOfBirth")} />
         </div>
         <div style={styles.field}>
           <label style={styles.label}>Guardian's name</label>
-          <input style={styles.input} value={guardianName} onChange={(e) => setGuardianName(e.target.value)} />
+          <input
+            style={{ ...styles.input, ...invalidInput(!!v.error("guardianName")) }}
+            value={guardianName}
+            onChange={(e) => setGuardianName(e.target.value)}
+            onBlur={() => v.blur("guardianName")}
+            maxLength={80}
+            autoComplete="name"
+            aria-invalid={!!v.error("guardianName")}
+          />
+          <FieldError message={v.error("guardianName")} />
         </div>
         <div style={styles.field}>
           <label style={styles.label}>Guardian's phone number</label>
-          <input style={styles.input} value={guardianContact} onChange={(e) => setGuardianContact(e.target.value)} />
+          <input
+            style={{ ...styles.input, ...invalidInput(!!v.error("guardianContact")) }}
+            value={guardianContact}
+            onChange={(e) => setGuardianContact(phoneInput(e.target.value))}
+            onBlur={() => v.blur("guardianContact")}
+            inputMode="tel"
+            autoComplete="tel"
+            maxLength={16}
+            placeholder="10-digit mobile number"
+            aria-invalid={!!v.error("guardianContact")}
+          />
+          <FieldError message={v.error("guardianContact")} />
         </div>
         <div style={styles.field}>
           <label style={styles.label}>Student's email (used to sign in)</label>
-          <input style={styles.input} type="email" value={studentEmail} onChange={(e) => setStudentEmail(e.target.value)} />
+          <input
+            style={{ ...styles.input, ...invalidInput(!!v.error("studentEmail")) }}
+            type="email"
+            value={studentEmail}
+            onChange={(e) => setStudentEmail(e.target.value)}
+            onBlur={() => v.blur("studentEmail")}
+            maxLength={254}
+            autoComplete="email"
+            aria-invalid={!!v.error("studentEmail")}
+          />
+          <FieldError message={v.error("studentEmail")} />
         </div>
 
         {submitError ? <p style={{ color: "var(--status-critical)", fontSize: 13 }}>{submitError}</p> : null}
@@ -124,7 +188,7 @@ export function ClassJoinPage() {
         <button
           style={{ ...styles.button, opacity: isSubmitting ? 0.6 : 1 }}
           onClick={submit}
-          disabled={isSubmitting || !studentName.trim() || !dateOfBirth || !guardianName.trim() || !guardianContact.trim() || !studentEmail.includes("@")}
+          disabled={isSubmitting}
         >
           {isSubmitting ? "Submitting…" : "Request to join"}
         </button>

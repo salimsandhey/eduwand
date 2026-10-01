@@ -7,16 +7,9 @@ import { storage } from "../lib/storage";
 import { requireRoles } from "../lib/rbac";
 import { PLATFORM_ADMIN_ROLE } from "../lib/roles";
 import { markOnboardingTaskComplete } from "../lib/onboarding";
+import { Validator } from "../lib/validation";
 
 const MAX_SEAT_NUMBER = 40; // matches the reference clicker firmware/demo's cap
-
-// Students sign in with their own email + OTP, so it's stored normalised.
-// Returns null for anything that isn't a plausible address.
-function normalizeStudentEmail(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const email = value.trim().toLowerCase();
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
-}
 
 interface ListQuery {
   classSectionId?: string;
@@ -214,16 +207,17 @@ export async function studentRoutes(app: FastifyInstance) {
   // null; nothing else about the record differs from an admissions-created one.
   app.post<{ Body: CreateStudentBody }>("/students", { onRequest: manageScoped(app) }, async (request, reply) => {
     const body = request.body ?? ({} as CreateStudentBody);
-    if (!body.fullName?.trim() || !body.dateOfBirth || !body.classSectionId || !body.guardianName?.trim() || !body.guardianContact?.trim()) {
-      return reply.code(400).send({
-        data: null,
-        error: { code: "validation_error", message: "fullName, dateOfBirth, classSectionId, guardianName, and guardianContact are required" },
-      });
-    }
-    const email = normalizeStudentEmail(body.email);
-    if (!email) {
-      return reply.code(400).send({ data: null, error: { code: "validation_error", message: "A valid student email is required - it's what the student signs in with" } });
-    }
+    const v = new Validator();
+    const fullName = v.personName("fullName", body.fullName, "Student name");
+    const dateOfBirth = v.dateOfBirth("dateOfBirth", body.dateOfBirth);
+    const guardianName = v.personName("guardianName", body.guardianName, "Guardian name");
+    const guardianContact = v.phone("guardianContact", body.guardianContact, true, "Guardian phone number");
+    // The email is what the student signs in with, so it must be a real address.
+    const email = v.email("email", body.email, true, "Student email");
+    const admissionDate = v.date("admissionDate", body.admissionDate, "Admission date", false);
+    v.dateNotBefore("admissionDate", admissionDate, dateOfBirth, "Admission date", "the date of birth");
+    if (!body.classSectionId) v.fail("classSectionId", "Choose a class");
+    if (v.hasErrors || !fullName || !dateOfBirth || !guardianName || !guardianContact || !email) return v.reject(reply);
 
     const classSection = await resolveClassSectionForCaller(request.schoolId!, body.classSectionId, request.user);
     if (!classSection) {
@@ -234,13 +228,13 @@ export async function studentRoutes(app: FastifyInstance) {
       data: {
         schoolId: request.schoolId,
         sourceEnquiryId: null,
-        fullName: body.fullName.trim(),
-        dateOfBirth: new Date(body.dateOfBirth),
+        fullName,
+        dateOfBirth,
         classSectionId: classSection.id,
-        guardianName: body.guardianName.trim(),
-        guardianContact: body.guardianContact.trim(),
+        guardianName,
+        guardianContact,
         email,
-        admissionDate: body.admissionDate ? new Date(body.admissionDate) : new Date(),
+        admissionDate: admissionDate ?? new Date(),
         feeStatus: body.feeStatus ?? "pending",
         createdBy: request.user.sub,
       },
@@ -279,19 +273,15 @@ export async function studentRoutes(app: FastifyInstance) {
     const skipped: { row: number; reason: string }[] = [];
 
     for (let i = 0; i < body.students.length; i++) {
-      const row = body.students[i];
-      if (!row.fullName?.trim() || !row.dateOfBirth || !row.guardianName?.trim() || !row.guardianContact?.trim()) {
-        skipped.push({ row: i + 1, reason: "Missing required field(s)" });
-        continue;
-      }
-      const rowEmail = normalizeStudentEmail(row.email);
-      if (!rowEmail) {
-        skipped.push({ row: i + 1, reason: "Missing or invalid student email" });
-        continue;
-      }
-      const dob = new Date(row.dateOfBirth);
-      if (Number.isNaN(dob.getTime())) {
-        skipped.push({ row: i + 1, reason: "Invalid date of birth" });
+      const row = body.students[i] ?? ({} as BulkStudentRow);
+      const rv = new Validator();
+      const rowName = rv.personName("fullName", row.fullName, "Student name");
+      const dob = rv.dateOfBirth("dateOfBirth", row.dateOfBirth);
+      const rowGuardian = rv.personName("guardianName", row.guardianName, "Guardian name");
+      const rowContact = rv.phone("guardianContact", row.guardianContact, true, "Guardian phone number");
+      const rowEmail = rv.email("email", row.email, true, "Student email");
+      if (rv.hasErrors || !rowName || !dob || !rowGuardian || !rowContact || !rowEmail) {
+        skipped.push({ row: i + 1, reason: Object.values(rv.errors).join("; ") });
         continue;
       }
 
@@ -299,11 +289,11 @@ export async function studentRoutes(app: FastifyInstance) {
         data: {
           schoolId: request.schoolId,
           sourceEnquiryId: null,
-          fullName: row.fullName.trim(),
+          fullName: rowName,
           dateOfBirth: dob,
           classSectionId: classSection.id,
-          guardianName: row.guardianName.trim(),
-          guardianContact: row.guardianContact.trim(),
+          guardianName: rowGuardian,
+          guardianContact: rowContact,
           email: rowEmail,
           admissionDate: new Date(),
           createdBy: request.user.sub,
@@ -343,36 +333,26 @@ export async function studentRoutes(app: FastifyInstance) {
           return reply.code(404).send({ data: null, error: { code: "not_found", message: "Class section not found" } });
         }
       }
-      if (body.fullName !== undefined && !body.fullName.trim()) {
-        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "fullName cannot be empty" } });
+      const v = new Validator();
+      const patchName = body.fullName !== undefined ? v.personName("fullName", body.fullName, "Student name") : undefined;
+      const patchDob = body.dateOfBirth !== undefined ? v.dateOfBirth("dateOfBirth", body.dateOfBirth) : undefined;
+      const patchGuardian = body.guardianName !== undefined ? v.personName("guardianName", body.guardianName, "Guardian name") : undefined;
+      const patchContact = body.guardianContact !== undefined ? v.phone("guardianContact", body.guardianContact, true, "Guardian phone number") : undefined;
+      const patchEmail = body.email !== undefined ? v.email("email", body.email, true, "Student email") : undefined;
+      if (body.seatNumber !== undefined && body.seatNumber !== null) {
+        v.number("seatNumber", body.seatNumber, "Clicker number", { integer: true, min: 1, max: MAX_SEAT_NUMBER });
       }
-      if (body.guardianName !== undefined && !body.guardianName.trim()) {
-        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "guardianName cannot be empty" } });
-      }
-      if (body.guardianContact !== undefined && !body.guardianContact.trim()) {
-        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "guardianContact cannot be empty" } });
-      }
-      let patchEmail: string | undefined;
-      if (body.email !== undefined) {
-        const normalized = normalizeStudentEmail(body.email);
-        if (!normalized) {
-          return reply.code(400).send({ data: null, error: { code: "validation_error", message: "A valid student email is required" } });
-        }
-        patchEmail = normalized;
-      }
-      if (body.seatNumber !== undefined && body.seatNumber !== null && (!Number.isInteger(body.seatNumber) || body.seatNumber < 1 || body.seatNumber > MAX_SEAT_NUMBER)) {
-        return reply.code(400).send({ data: null, error: { code: "validation_error", message: `seatNumber must be an integer from 1 to ${MAX_SEAT_NUMBER}, or null to clear it` } });
-      }
+      if (v.hasErrors) return v.reject(reply);
 
       try {
         const updated = await prisma.studentStub.update({
           where: { id: student.id },
           data: {
-            ...(body.fullName !== undefined ? { fullName: body.fullName.trim() } : {}),
-            ...(body.dateOfBirth !== undefined ? { dateOfBirth: new Date(body.dateOfBirth) } : {}),
+            ...(patchName !== undefined ? { fullName: patchName } : {}),
+            ...(patchDob !== undefined ? { dateOfBirth: patchDob } : {}),
             ...(body.classSectionId !== undefined ? { classSectionId: body.classSectionId } : {}),
-            ...(body.guardianName !== undefined ? { guardianName: body.guardianName.trim() } : {}),
-            ...(body.guardianContact !== undefined ? { guardianContact: body.guardianContact.trim() } : {}),
+            ...(patchGuardian !== undefined ? { guardianName: patchGuardian } : {}),
+            ...(patchContact !== undefined ? { guardianContact: patchContact } : {}),
             ...(patchEmail !== undefined ? { email: patchEmail } : {}),
             ...(patchEmail !== undefined && patchEmail !== student.email ? { tokenVersion: { increment: 1 } } : {}),
             ...(body.feeStatus !== undefined ? { feeStatus: body.feeStatus } : {}),

@@ -125,7 +125,7 @@ export function SchoolLayout() {
         </Card>
       ) : null}
 
-      <nav style={styles.tabNav}>
+      <nav className="app-tabs" style={styles.tabNav}>
         <NavLink
           to={`/schools/${id}`}
           end
@@ -206,6 +206,8 @@ const styles: Record<string, React.CSSProperties> = {
   tabLink: {
     display: "inline-flex",
     alignItems: "center",
+    whiteSpace: "nowrap",
+    flexShrink: 0,
     padding: "10px 18px",
     borderRadius: "8px 8px 0 0",
     color: "var(--text-secondary)",

@@ -6,6 +6,7 @@ import { radius, spacing, typography } from "../../../theme/tokens";
 import { FlashcardsContent } from "./content";
 import { NumberedEditCard, EditActionRow } from "./NumberedEditCard";
 import { pickIconForText, pickIconForCard } from "./topicIcons";
+import { FormattedText, stripBoldMarkers } from "./richText";
 
 interface Props {
   content: FlashcardsContent;
@@ -21,7 +22,7 @@ interface Props {
 // back/front text is only a fallback for cards generated before that field
 // existed.
 function heroIconText(card: FlashcardsContent["cards"][number]): string {
-  return [...(card.keyTerms ?? []), card.back, card.front].join(" ");
+  return stripBoldMarkers([...(card.keyTerms ?? []), card.back, card.front].join(" "));
 }
 
 // Old generations (and an occasionally-disobedient model) can still carry a
@@ -225,7 +226,7 @@ function FlipCard({
               <Text style={[styles.bloomBadgeText, { color: colors.accent }]}>{front.tag.toUpperCase()}</Text>
             </View>
           ) : null}
-          <Text style={[styles.cardText, { color: colors.textPrimary }]}>{front.text}</Text>
+          <FormattedText style={[styles.cardText, { color: colors.textPrimary }]}>{front.text}</FormattedText>
           <View style={[styles.faceDivider, { borderColor: colors.border }]} />
           <View style={styles.flipHintRow}>
             <Ionicons name="sync-outline" size={12} color={FRONT_COLOR} />
@@ -253,7 +254,7 @@ function FlipCard({
               <Text style={[styles.bloomBadgeText, { color: colors.accent }]}>{back.tag.toUpperCase()}</Text>
             </View>
           ) : null}
-          <Text style={[styles.cardText, { color: colors.textPrimary }]}>{back.text}</Text>
+          <FormattedText style={[styles.cardText, { color: colors.textPrimary }]}>{back.text}</FormattedText>
           {card.keyTerms && card.keyTerms.length > 0 ? (
             <View style={styles.keyTermsRow}>
               {card.keyTerms.slice(0, 3).map((term, ti) => (

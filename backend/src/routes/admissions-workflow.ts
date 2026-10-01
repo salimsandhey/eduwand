@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
+import { Validator } from "../lib/validation";
 import { hasAnyRole, requireRoles } from "../lib/rbac";
 
 const scoped = (app: FastifyInstance) => [app.authenticate, app.requireSchoolScope];
@@ -39,12 +40,16 @@ export async function admissionsWorkflowRoutes(app: FastifyInstance) {
     { onRequest: scoped(app) },
     async (request, reply) => {
       const body = request.body ?? ({} as { interviewDate: string; score?: number; maxScore?: number; notes: string });
-      if (!body.interviewDate || !body.notes?.trim() || (body.score != null && body.maxScore != null && body.score > body.maxScore)) {
-        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "interviewDate, notes, and valid scores are required" } });
-      }
+      const v = new Validator();
+      const interviewDate = v.date("interviewDate", body.interviewDate, "Interview date");
+      const notes = v.note("notes", body.notes, "Notes", { required: true, max: 2000 });
+      const score = v.number("score", body.score, "Score", { min: 0, max: 10000 });
+      const maxScore = v.number("maxScore", body.maxScore, "Maximum score", { min: 1, max: 10000 });
+      if (score !== undefined && maxScore !== undefined && score > maxScore) v.fail("score", "Score cannot be more than the maximum");
+      if (v.hasErrors || !interviewDate || !notes) return v.reject(reply);
       const enquiry = await prisma.enquiry.findFirst({ where: { id: request.params.id, schoolId: request.schoolId } });
       if (!enquiry) return reply.code(404).send({ data: null, error: { code: "not_found", message: "Enquiry not found" } });
-      const record = await prisma.interviewRecord.create({ data: { enquiryId: enquiry.id, conductedByUserId: request.user.sub, interviewDate: new Date(body.interviewDate), score: body.score, maxScore: body.maxScore, notes: body.notes.trim() } });
+      const record = await prisma.interviewRecord.create({ data: { enquiryId: enquiry.id, conductedByUserId: request.user.sub, interviewDate, score, maxScore, notes } });
       return reply.code(201).send({ data: record, meta: {} });
     }
   );

@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { PLATFORM_ADMIN_ROLE, INVITABLE_ROLES } from "../lib/roles";
 import { recordAuditEvent } from "../lib/audit";
+import { Validator } from "../lib/validation";
 import { grantInitialCredits } from "../lib/credits";
 import { sendEmailInBackground } from "../lib/email/sender";
 import { staffInviteEmail, adminPasswordResetEmail } from "../lib/email/templates";
@@ -55,19 +56,12 @@ export async function userRoutes(app: FastifyInstance) {
     const body = request.body ?? ({} as InviteUserBody);
     const caller = request.user;
 
-    if (!body.fullName || !body.email || !body.role) {
-      return reply.code(400).send({
-        data: null,
-        error: { code: "validation_error", message: "fullName, email, and role are required" },
-      });
-    }
-
-    if (!INVITABLE_ROLES.includes(body.role)) {
-      return reply.code(400).send({
-        data: null,
-        error: { code: "validation_error", message: `role must be one of ${INVITABLE_ROLES.join(", ")}` },
-      });
-    }
+    const v = new Validator();
+    const inviteName = v.personName("fullName", body.fullName, "Full name");
+    const inviteEmail = v.email("email", body.email);
+    if (!body.role) v.fail("role", "Role is required");
+    else if (!INVITABLE_ROLES.includes(body.role)) v.fail("role", `Role must be one of ${INVITABLE_ROLES.join(", ")}`);
+    if (v.hasErrors || !inviteName || !inviteEmail) return v.reject(reply);
 
     let schoolId: string | null = null;
     let trustId: string | null = null;
@@ -130,7 +124,7 @@ export async function userRoutes(app: FastifyInstance) {
       });
     }
 
-    const existing = await prisma.appUser.findUnique({ where: { email: body.email } });
+    const existing = await prisma.appUser.findUnique({ where: { email: inviteEmail } });
     if (existing) {
       return reply.code(400).send({
         data: null,
@@ -169,11 +163,14 @@ export async function userRoutes(app: FastifyInstance) {
       data: {
         schoolId,
         trustId,
-        fullName: body.fullName,
-        email: body.email,
+        fullName: inviteName,
+        email: inviteEmail,
         role: body.role,
         status: "invited",
         passwordHash,
+        // A genuinely new account - see the schema comment on
+        // hasSeenMascotWelcome for why this must be explicit here.
+        hasSeenMascotWelcome: false,
       },
       select: { id: true, fullName: true, email: true, role: true, status: true },
     });

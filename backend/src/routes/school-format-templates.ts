@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { detectImageMime, imageKey, IMAGE_ONLY_ERROR } from "../lib/upload";
 import { prisma } from "../lib/prisma";
+import { Validator } from "../lib/validation";
 import { storage } from "../lib/storage";
 import { authorizeForSchool } from "./academic-structure";
 
@@ -46,14 +47,14 @@ export async function schoolFormatTemplateRoutes(app: FastifyInstance) {
       }
 
       const body = request.body ?? ({} as SaveTemplateBody);
-      if (!body.templateBody || !body.templateBody.trim()) {
-        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "templateBody is required" } });
-      }
+      const v = new Validator();
+      const templateBody = v.note("templateBody", body.templateBody, "Template", { required: true, max: 4000 });
+      if (v.hasErrors || !templateBody) return v.reject(reply);
 
       const template = await prisma.schoolFormatTemplate.upsert({
         where: { schoolId_appliesTo: { schoolId: request.params.schoolId, appliesTo: request.params.appliesTo } },
-        create: { schoolId: request.params.schoolId, appliesTo: request.params.appliesTo, templateBody: body.templateBody.trim() },
-        update: { templateBody: body.templateBody.trim() },
+        create: { schoolId: request.params.schoolId, appliesTo: request.params.appliesTo, templateBody },
+        update: { templateBody },
       });
 
       return { data: template, meta: {} };

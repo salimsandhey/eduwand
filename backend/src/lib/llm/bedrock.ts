@@ -4,17 +4,15 @@
 
 import { estimateTokens, reserveAiSpend, settleAiSpend } from "./guard";
 
-export type ClaudeTier = "sonnet" | "haiku";
+export type ClaudeTier = "haiku";
 
 // Global inference profiles - overridable so a model upgrade is an env change.
 export const CLAUDE_MODEL_IDS: Record<ClaudeTier, string> = {
-  sonnet: process.env.BEDROCK_SONNET_MODEL_ID || "global.anthropic.claude-sonnet-4-6",
   haiku: process.env.BEDROCK_HAIKU_MODEL_ID || "global.anthropic.claude-haiku-4-5-20251001-v1:0",
 };
 
 // The names prices are stored under (ai_model_price) and calls are logged as.
 export const CLAUDE_MODEL_LABELS: Record<ClaudeTier, string> = {
-  sonnet: "claude-sonnet-4-6",
   haiku: "claude-haiku-4-5",
 };
 

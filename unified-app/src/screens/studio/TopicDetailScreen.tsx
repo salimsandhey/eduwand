@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Easing, View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Linking, Image, RefreshControl, Modal, LayoutAnimation, Alert } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
@@ -9,7 +9,7 @@ import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
-import { useAiGenerating } from "../../context/AiAssistantGlowContext";
+import { AiGenerationProgress, useAiGenerating } from "../../context/AiAssistantGlowContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { spacing, radius } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
@@ -19,6 +19,8 @@ import { VideoPlayerModal } from "../../components/VideoPlayerModal";
 import { parseGenerationContent } from "./generation/content";
 import { OUTPUT_TYPE_LABELS, OUTPUT_TYPE_ICONS, OUTPUT_TYPE_ORDER } from "./generation/outputTypeMeta";
 import { capitalizeFirst } from "../../utils/text";
+import { FieldError } from "../../components/FieldError";
+import { rules } from "../../utils/validation";
 import { useKeyboardHeight } from "../../hooks/useKeyboardHeight";
 import { formatDateShort } from "../../utils/date";
 import { DatePicker, parseISODate } from "../../components/DatePicker";
@@ -26,7 +28,7 @@ import { DatePicker, parseISODate } from "../../components/DatePicker";
 type Props = NativeStackScreenProps<RootStackParamList, "TopicDetail">;
 
 type DetailTab = "context" | "generations" | "assignments" | "observations";
-type SourceFilter = "images" | "pdfs" | "files" | "links";
+type SourceFilter = "all" | "images" | "docs" | "links";
 
 const DETAIL_TABS: DetailTab[] = ["context", "generations", "assignments", "observations"];
 
@@ -129,24 +131,44 @@ const SOURCE_TYPE_COLORS: Record<ContextSource["sourceType"], string> = {
   idream_k12: "#8B5CF6",
 };
 
-const FILE_SOURCE_TYPES: ContextSource["sourceType"][] = ["pdf", "docx", "pptx"];
-
 const STICKY_NOTE_COLORS = ["#FFF3AD", "#FFD3E2", "#CBEFD4", "#CFE4FF", "#FFDFB8"];
 const STICKY_NOTE_ROTATIONS = ["-2.5deg", "2deg", "-1.5deg", "1.5deg"];
 const STICKY_NOTE_INK = "#332E1F";
 const STICKY_NOTE_INK_MUTED = "#7A7359";
 
 const SOURCE_FILTER_OPTIONS: { key: SourceFilter; label: string }[] = [
+  { key: "all", label: "All" },
   { key: "images", label: "Images" },
-  { key: "pdfs", label: "PDFs" },
-  { key: "files", label: "Docs" },
+  { key: "docs", label: "Docs" },
   { key: "links", label: "Links" },
 ];
+
+// PDF/DOCX/PPTX are all "documents" from a teacher's point of view - one
+// filter bucket, not three (matches the "docs" filter key above).
+function matchesSourceFilter(source: ContextSource, filter: SourceFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "images") return source.sourceType === "image";
+  if (filter === "docs") return source.sourceType === "pdf" || source.sourceType === "docx" || source.sourceType === "pptx";
+  return source.sourceType === "url" || source.sourceType === "youtube" || source.sourceType === "idream_k12";
+}
 
 const EXTRACTION_STATUS_LABELS: Record<ContextSource["extractionStatus"], string> = {
   extracted: "Ready",
   pending: "Not read",
   failed_no_text: "No text found",
+};
+
+// Extraction (reading a PDF, analyzing an image, cleaning up a scraped page)
+// runs in the background on the server - this is what the generating overlay
+// shows while a just-added/retried source is still processing.
+const PROCESSING_STAGE_LABELS: Record<ContextSource["sourceType"], string> = {
+  pdf: "Reading the PDF…",
+  docx: "Reading the document…",
+  pptx: "Reading the slides…",
+  image: "Analyzing the image…",
+  url: "Reading the page…",
+  youtube: "Fetching video info…",
+  idream_k12: "Adding source…",
 };
 
 function groupGenerationsByOutputType(generations: Generation[]): { outputType: GenerationOutputType; items: Generation[] }[] {
@@ -158,6 +180,23 @@ function groupGenerationsByOutputType(generations: Generation[]): { outputType: 
 
 function truncate(text: string, max = 110): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+function hostnameOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
+function sourceTitle(c: ContextSource): string {
+  return c.citation || c.originalFilename || `Untitled ${SOURCE_TYPE_LABELS[c.sourceType]}`;
+}
+
+function wordCount(text: string): number {
+  const trimmed = text.trim();
+  return trimmed ? trimmed.split(/\s+/).length : 0;
 }
 
 function generationPreview(g: Generation): string {
@@ -208,19 +247,41 @@ export function TopicDetailScreen({ route, navigation }: Props) {
   const tabIndicatorX = useRef(new Animated.Value(0)).current;
 
   const [contextUrl, setContextUrl] = useState("");
+  const [contextUrlError, setContextUrlError] = useState<string | null>(null);
   const [showAddContextMethod, setShowAddContextMethod] = useState(false);
   const [showAddContext, setShowAddContext] = useState(false);
   const [showUrlInput, setShowUrlInput] = useState(false);
+  // Set true right before closing the method sheet so its onClose (fired
+  // only once its close animation actually finishes) can open the upload
+  // sheet next. Opening it in the same tick as the close would mount two
+  // native <Modal> windows at once - Android then routes touches to the
+  // wrong one and the new sheet looks stuck.
+  const openAddContextAfterMethodCloseRef = useRef(false);
   const [isAddingContext, setIsAddingContext] = useState(false);
-  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("images");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+
+  // A source that was just added or retried and whose extraction (reading a
+  // PDF, analyzing an image, cleaning up a scraped page) is still running in
+  // the background - drives the generating overlay's stage label while
+  // watchSourceProcessing polls for it to finish.
+  const [processingSource, setProcessingSource] = useState<{ id: string; sourceType: ContextSource["sourceType"] } | null>(null);
+  const [processingFraction, setProcessingFraction] = useState(0.15);
+  const processingTrickleRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const processingPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [observationText, setObservationText] = useState("");
   const [showAddObservation, setShowAddObservation] = useState(false);
   const [isAddingObservation, setIsAddingObservation] = useState(false);
+  // Shared by the add-note form and note-detail edit mode (never open at the
+  // same time) - a newly picked photo, pending upload.
   const [notePhoto, setNotePhoto] = useState<{ uri: string; name: string; mimeType: string } | null>(null);
 
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [openObservation, setOpenObservation] = useState<Observation | null>(null);
+  const [isEditingObservation, setIsEditingObservation] = useState(false);
+  const [observationDraft, setObservationDraft] = useState("");
+  const [notePhotoRemoved, setNotePhotoRemoved] = useState(false);
+  const [isSavingObservation, setIsSavingObservation] = useState(false);
   const [generationFilter, setGenerationFilter] = useState<GenerationOutputType | "all">("all");
   const [dateFilterPreset, setDateFilterPreset] = useState<DateFilterPreset>("all");
   const [customFrom, setCustomFrom] = useState("");
@@ -236,7 +297,6 @@ export function TopicDetailScreen({ route, navigation }: Props) {
   const [isEditingSourceText, setIsEditingSourceText] = useState(false);
   const [isSavingSource, setIsSavingSource] = useState(false);
   const [isRetryingSource, setIsRetryingSource] = useState(false);
-  useAiGenerating(isRetryingSource);
   const [deletingSourceIds, setDeletingSourceIds] = useState<Set<string>>(new Set());
   const sourceSwipeRefs = useRef<Map<string, Swipeable>>(new Map());
 
@@ -274,6 +334,60 @@ export function TopicDetailScreen({ route, navigation }: Props) {
       setIsLoading(false);
     }
   }, [accessToken, topicId]);
+
+  const processingProgress = useMemo<AiGenerationProgress | null>(() => {
+    if (!processingSource) return null;
+    return { label: PROCESSING_STAGE_LABELS[processingSource.sourceType], fraction: processingFraction };
+  }, [processingSource, processingFraction]);
+  useAiGenerating(!!processingSource, undefined, processingProgress);
+
+  function stopWatchingSourceProcessing(onDone?: (finalSource?: ContextSource) => void, finalSource?: ContextSource) {
+    if (processingTrickleRef.current) clearInterval(processingTrickleRef.current);
+    if (processingPollRef.current) clearInterval(processingPollRef.current);
+    processingTrickleRef.current = null;
+    processingPollRef.current = null;
+    setProcessingFraction(1);
+    // Let the bar visibly reach 100% before the overlay fades out.
+    setTimeout(() => setProcessingSource(null), 260);
+    onDone?.(finalSource);
+  }
+
+  // Polls the topic until the given (just-added or just-retried) source
+  // finishes background extraction, driving the generating overlay's stage
+  // label + a trickling progress bar in the meantime - there's no real
+  // sub-stage signal from the server for this step, so the bar creeps toward
+  // "almost done" rather than claiming a precision it doesn't have.
+  function watchSourceProcessing(source: ContextSource, onDone?: (finalSource?: ContextSource) => void) {
+    setProcessingSource({ id: source.id, sourceType: source.sourceType });
+    setProcessingFraction(0.15);
+
+    processingTrickleRef.current = setInterval(() => {
+      setProcessingFraction((f) => Math.min(0.92, f + (0.92 - f) * 0.18));
+    }, 900);
+
+    const startedAt = Date.now();
+    processingPollRef.current = setInterval(async () => {
+      if (!accessToken) return;
+      try {
+        const latest = await api.getTopic(accessToken, topicId);
+        setTopic(latest);
+        const match = latest.contextSources.find((s) => s.id === source.id);
+        const stillPending = match?.extractionStatus === "pending";
+        if (!stillPending || Date.now() - startedAt > 90_000) {
+          stopWatchingSourceProcessing(onDone, match);
+        }
+      } catch {
+        stopWatchingSourceProcessing(onDone);
+      }
+    }, 2500);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (processingTrickleRef.current) clearInterval(processingTrickleRef.current);
+      if (processingPollRef.current) clearInterval(processingPollRef.current);
+    };
+  }, []);
 
   function confirmDeleteVideo(video: SavedVideo) {
     if (!accessToken) return;
@@ -353,15 +467,19 @@ export function TopicDetailScreen({ route, navigation }: Props) {
   );
 
   async function addContextUrl() {
-    if (!accessToken || !contextUrl.trim()) return;
+    if (!accessToken) return;
+    const urlProblem = rules.url(true, "Link")(contextUrl);
+    setContextUrlError(urlProblem);
+    if (urlProblem) return;
     setIsAddingContext(true);
     setError(null);
     try {
-      await api.addTopicContextUrl(accessToken, topicId, { sourceType: "url", sourceUrl: contextUrl.trim() });
+      const created = await api.addTopicContextUrl(accessToken, topicId, { sourceType: "url", sourceUrl: contextUrl.trim() });
       setContextUrl("");
       setShowUrlInput(false);
       setShowAddContext(false);
       load();
+      watchSourceProcessing(created);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add context");
     } finally {
@@ -374,9 +492,10 @@ export function TopicDetailScreen({ route, navigation }: Props) {
     setIsAddingContext(true);
     setError(null);
     try {
-      await api.addTopicContextFile(accessToken, topicId, file);
+      const created = await api.addTopicContextFile(accessToken, topicId, file);
       setShowAddContext(false);
       load();
+      watchSourceProcessing(created);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to upload file");
     } finally {
@@ -460,9 +579,15 @@ export function TopicDetailScreen({ route, navigation }: Props) {
       setSourceDraft(updated.extractedText ?? "");
       setIsEditingSourceText(false);
       load();
+      watchSourceProcessing(updated, (finalSource) => {
+        setIsRetryingSource(false);
+        if (finalSource) {
+          setOpenSource(finalSource);
+          setSourceDraft(finalSource.extractedText ?? "");
+        }
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Re-extraction failed");
-    } finally {
       setIsRetryingSource(false);
     }
   }
@@ -515,6 +640,52 @@ export function TopicDetailScreen({ route, navigation }: Props) {
       setError(err instanceof Error ? err.message : "Failed to add observation");
     } finally {
       setIsAddingObservation(false);
+    }
+  }
+
+  function openObservationDetail(o: Observation) {
+    setOpenObservation(o);
+    setIsEditingObservation(false);
+    setObservationDraft(o.body);
+    setNotePhoto(null);
+    setNotePhotoRemoved(false);
+    setError(null);
+  }
+
+  function startEditObservation() {
+    if (!openObservation) return;
+    setObservationDraft(openObservation.body);
+    setNotePhoto(null);
+    setNotePhotoRemoved(false);
+    setIsEditingObservation(true);
+  }
+
+  function cancelEditObservation() {
+    setIsEditingObservation(false);
+    setNotePhoto(null);
+    setNotePhotoRemoved(false);
+    if (openObservation) setObservationDraft(openObservation.body);
+  }
+
+  async function saveObservationEdit() {
+    if (!accessToken || !openObservation || !observationDraft.trim()) return;
+    setIsSavingObservation(true);
+    setError(null);
+    try {
+      const updated = await api.updateTopicObservation(accessToken, topicId, openObservation.id, {
+        body: observationDraft.trim(),
+        removePhoto: notePhotoRemoved && !notePhoto,
+        photo: notePhoto ?? undefined,
+      });
+      setOpenObservation(updated);
+      setIsEditingObservation(false);
+      setNotePhoto(null);
+      setNotePhotoRemoved(false);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save note");
+    } finally {
+      setIsSavingObservation(false);
     }
   }
 
@@ -583,12 +754,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
     );
   }
 
-  const displayedSources = topic.contextSources.filter((source) => {
-    if (sourceFilter === "images") return source.sourceType === "image";
-    if (sourceFilter === "pdfs") return source.sourceType === "pdf";
-    if (sourceFilter === "files") return source.sourceType === "docx" || source.sourceType === "pptx";
-    return source.sourceType === "url" || source.sourceType === "youtube" || source.sourceType === "idream_k12";
-  });
+  const displayedSources = topic.contextSources.filter((source) => matchesSourceFilter(source, sourceFilter));
 
   const activeDateRange = getDateRangeForPreset(dateFilterPreset, customFrom, customTo);
   const dateFilteredGenerations = activeDateRange
@@ -602,6 +768,9 @@ export function TopicDetailScreen({ route, navigation }: Props) {
   );
 
   function sourceStatus(c: ContextSource) {
+    if (processingSource?.id === c.id) {
+      return { statusLabel: "Processing…", statusColor: colors.accent };
+    }
     const statusLabel =
       c.extractionStatus === "failed_no_text"
         ? c.sourceType === "image"
@@ -619,49 +788,11 @@ export function TopicDetailScreen({ route, navigation }: Props) {
     return { statusLabel, statusColor };
   }
 
-  function renderImageCard(c: ContextSource) {
-    const { statusLabel, statusColor } = sourceStatus(c);
-    const typeColor = SOURCE_TYPE_COLORS[c.sourceType];
-    return (
-      <Pressable
-        key={c.id}
-        style={({ pressed }) => [
-          styles.sourceCard,
-          styles.sourceImageCard,
-          { backgroundColor: colors.surface, borderWidth: 0 },
-          cardShadow,
-          pressed && { opacity: pressedOpacity },
-        ]}
-        onPress={() => openSourceDetail(c)}
-        accessibilityRole="button"
-      >
-        <View style={styles.sourceCardTopRow}>
-          <View style={[styles.typeTag, { backgroundColor: `${typeColor}1F` }]}>
-            <Ionicons name={SOURCE_TYPE_ICONS[c.sourceType]} size={11} color={typeColor} />
-            <Text style={[styles.typeTagText, { color: typeColor }]}>{SOURCE_TYPE_LABELS[c.sourceType]}</Text>
-          </View>
-          <View style={[styles.statusBadge, { backgroundColor: colors.surfaceRaised }]}>
-            <Text style={[styles.statusBadgeText, { color: statusColor }]}>{statusLabel}</Text>
-          </View>
-        </View>
-        <View style={[styles.sourcePreview, { backgroundColor: colors.surfaceRaised }]}>
-          <Image
-            source={{ uri: accessToken ? api.contextSourceFileUrl(topicId, c.id, accessToken) : undefined }}
-            style={styles.sourceThumbnail}
-            resizeMode="cover"
-          />
-        </View>
-      </Pressable>
-    );
-  }
-
-  function renderSourceListRow(c: ContextSource) {
-    const label = c.originalFilename ?? c.sourceUrl ?? c.idreamK12ReferenceId ?? c.sourceType;
-    const isFileType = FILE_SOURCE_TYPES.includes(c.sourceType);
-    const snippet =
-      !isFileType && c.extractionStatus === "extracted" && c.extractedText
-        ? c.extractedText.replace(/\s+/g, " ").trim().slice(0, 90)
-        : null;
+  // One card shape for every source type, so a grid mixing images, PDFs and
+  // links never produces uneven rows - only the preview area's content
+  // changes (a thumbnail for images, a big type icon for everything else).
+  function renderSourceCard(c: ContextSource) {
+    const label = c.citation || c.originalFilename || c.idreamK12ReferenceId || (c.sourceUrl ? hostnameOf(c.sourceUrl) : SOURCE_TYPE_LABELS[c.sourceType]);
     const typeColor = SOURCE_TYPE_COLORS[c.sourceType];
     const { statusLabel, statusColor } = sourceStatus(c);
     return (
@@ -673,9 +804,10 @@ export function TopicDetailScreen({ route, navigation }: Props) {
         }}
         overshootRight={false}
         rightThreshold={40}
+        containerStyle={styles.sourceCardSwipeContainer}
         renderRightActions={(_progress, dragX) => (
           <Pressable
-            style={[styles.swipeDeleteAction, { backgroundColor: colors.danger }]}
+            style={[styles.swipeDeleteAction, styles.sourceCardSwipeDeleteAction, { backgroundColor: colors.danger }]}
             onPress={() => confirmDeleteSource(c)}
             accessibilityRole="button"
             accessibilityLabel="Delete source"
@@ -688,7 +820,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
       >
         <Pressable
           style={({ pressed }) => [
-            styles.sourceListRow,
+            styles.sourceCard,
             { backgroundColor: colors.surface, borderWidth: 0 },
             cardShadow,
             pressed && { opacity: pressedOpacity },
@@ -696,19 +828,27 @@ export function TopicDetailScreen({ route, navigation }: Props) {
           onPress={() => openSourceDetail(c)}
           accessibilityRole="button"
         >
-          <View style={[styles.sourceListIcon, { backgroundColor: `${typeColor}1F` }]}>
-            <Ionicons name={SOURCE_TYPE_ICONS[c.sourceType]} size={16} color={typeColor} />
-          </View>
-          <View style={styles.sourceListCopy}>
-            <Text style={[styles.sourceName, { color: colors.textPrimary, marginTop: 0 }]} numberOfLines={1}>{label}</Text>
-            <View style={styles.sourceListMetaRow}>
-              <Text style={[styles.sourceListTypeText, { color: typeColor }]}>{SOURCE_TYPE_LABELS[c.sourceType]}</Text>
-              {snippet ? <Text style={[styles.sourceListSnippet, { color: colors.textMuted }]} numberOfLines={1}>· {snippet}</Text> : null}
+          <View style={styles.sourceCardTopRow}>
+            <View style={[styles.typeTag, { backgroundColor: `${typeColor}1F` }]}>
+              <Ionicons name={SOURCE_TYPE_ICONS[c.sourceType]} size={11} color={typeColor} />
+              <Text style={[styles.typeTagText, { color: typeColor }]}>{SOURCE_TYPE_LABELS[c.sourceType]}</Text>
+            </View>
+            <View style={[styles.statusBadge, { backgroundColor: colors.surfaceRaised }]}>
+              <Text style={[styles.statusBadgeText, { color: statusColor }]}>{statusLabel}</Text>
             </View>
           </View>
-          <View style={[styles.statusBadge, { backgroundColor: colors.surfaceRaised }]}>
-            <Text style={[styles.statusBadgeText, { color: statusColor }]}>{statusLabel}</Text>
+          <View style={[styles.sourcePreview, { backgroundColor: colors.surfaceRaised }]}>
+            {c.sourceType === "image" ? (
+              <Image
+                source={{ uri: accessToken ? api.contextSourceFileUrl(topicId, c.id, accessToken) : undefined }}
+                style={styles.sourceThumbnail}
+                resizeMode="cover"
+              />
+            ) : (
+              <Ionicons name={SOURCE_TYPE_ICONS[c.sourceType]} size={30} color={typeColor} />
+            )}
           </View>
+          <Text style={[styles.sourceCardTitle, { color: colors.textPrimary }]} numberOfLines={2}>{label}</Text>
         </Pressable>
       </Swipeable>
     );
@@ -823,6 +963,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sourceFilterRow}>
                     {SOURCE_FILTER_OPTIONS.map((filter) => {
                       const active = sourceFilter === filter.key;
+                      const count = topic.contextSources.filter((s) => matchesSourceFilter(s, filter.key)).length;
                       return (
                         <Pressable
                           key={filter.key}
@@ -831,18 +972,21 @@ export function TopicDetailScreen({ route, navigation }: Props) {
                           accessibilityRole="button"
                           accessibilityState={{ selected: active }}
                         >
-                          <Text style={[styles.sourceFilterText, { color: active ? colors.accentOn : colors.textMuted }]}>{filter.label}</Text>
+                          <Text style={[styles.sourceFilterText, { color: active ? colors.accentOn : colors.textMuted }]}>{filter.label} {count}</Text>
                         </Pressable>
                       );
                     })}
                   </ScrollView>
                 </View>
                 {displayedSources.length === 0 ? (
-                  <EmptyWorkbench icon="filter-outline" title={`No ${sourceFilter} here`} detail="Choose another source type." colors={colors} />
-                ) : sourceFilter === "images" ? (
-                  <View style={styles.sourceGrid}>{displayedSources.map(renderImageCard)}</View>
+                  <EmptyWorkbench
+                    icon="filter-outline"
+                    title={`No ${SOURCE_FILTER_OPTIONS.find((f) => f.key === sourceFilter)?.label.toLowerCase()} here`}
+                    detail="Choose another source type."
+                    colors={colors}
+                  />
                 ) : (
-                  <View style={styles.sourceList}>{displayedSources.map(renderSourceListRow)}</View>
+                  <View style={styles.sourceGrid}>{displayedSources.map(renderSourceCard)}</View>
                 )}
               </>
             )}
@@ -1051,7 +1195,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
                       },
                       pressed && { opacity: pressedOpacity },
                     ]}
-                    onPress={() => setOpenObservation(o)}
+                    onPress={() => openObservationDetail(o)}
                     accessibilityRole="button"
                   >
                     <View style={styles.stickyNoteTape} />
@@ -1077,7 +1221,13 @@ export function TopicDetailScreen({ route, navigation }: Props) {
 
       <SheetModal
         visible={showAddContextMethod}
-        onClose={() => setShowAddContextMethod(false)}
+        onClose={() => {
+          setShowAddContextMethod(false);
+          if (openAddContextAfterMethodCloseRef.current) {
+            openAddContextAfterMethodCloseRef.current = false;
+            setShowAddContext(true);
+          }
+        }}
         closeLabel="Close add context"
       >
         <View style={styles.modalHeader}>
@@ -1118,9 +1268,9 @@ export function TopicDetailScreen({ route, navigation }: Props) {
           <Pressable
             style={({ pressed }) => [styles.contextMethodRow, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
             onPress={() => {
-              setShowAddContextMethod(false);
               setShowUrlInput(false);
-              setShowAddContext(true);
+              openAddContextAfterMethodCloseRef.current = true;
+              setShowAddContextMethod(false);
             }}
             accessibilityRole="button"
           >
@@ -1162,7 +1312,8 @@ export function TopicDetailScreen({ route, navigation }: Props) {
           <View>
             <Pressable style={styles.backToSources} onPress={() => setShowUrlInput(false)} accessibilityRole="button"><Ionicons name="arrow-back" size={16} color={colors.accent} /><Text style={[styles.backToSourcesText, { color: colors.accent }]}>Choose another source</Text></Pressable>
             <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Source URL</Text>
-            <TextInput style={[styles.input, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]} value={contextUrl} onChangeText={setContextUrl} placeholder="https://..." placeholderTextColor={colors.textMuted} autoCapitalize="none" keyboardType="url" autoFocus />
+            <TextInput style={[styles.input, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]} value={contextUrl} onChangeText={(t) => { setContextUrl(t); setContextUrlError(null); }} placeholder="https://..." placeholderTextColor={colors.textMuted} autoCapitalize="none" autoCorrect={false} keyboardType="url" maxLength={2000} autoFocus />
+            <FieldError message={contextUrlError} />
             <Pressable style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent }, (isAddingContext || !contextUrl.trim() || pressed) && { opacity: pressedOpacity }]} onPress={addContextUrl} disabled={isAddingContext || !contextUrl.trim()} accessibilityRole="button">
               {isAddingContext ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Add link</Text>}
             </Pressable>
@@ -1271,10 +1422,10 @@ export function TopicDetailScreen({ route, navigation }: Props) {
           <View><Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Add teaching note</Text><Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>Capture what happened while it is fresh.</Text></View>
           <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => { setShowAddObservation(false); setNotePhoto(null); }} accessibilityRole="button"><Ionicons name="close" size={20} color={colors.textPrimary} /></Pressable>
         </View>
-        <TextInput style={[styles.input, styles.multilineInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]} value={observationText} onChangeText={setObservationText} placeholder="What happened in class?" placeholderTextColor={colors.textMuted} multiline autoFocus />
+        <TextInput style={[styles.input, styles.multilineInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]} value={observationText} onChangeText={setObservationText} placeholder="What happened in class?" placeholderTextColor={colors.textMuted} maxLength={4000} multiline autoFocus />
         {notePhoto ? (
-          <View style={styles.notePhotoPreviewWrap}>
-            <Image source={{ uri: notePhoto.uri }} style={styles.notePhotoPreview} resizeMode="cover" />
+          <View style={[styles.notePhotoPreviewWrap, { backgroundColor: colors.surfaceRaised }]}>
+            <Image source={{ uri: notePhoto.uri }} style={styles.notePhotoPreview} resizeMode="contain" />
             <Pressable style={styles.notePhotoRemove} onPress={() => setNotePhoto(null)} accessibilityRole="button" accessibilityLabel="Remove photo" hitSlop={8}>
               <Ionicons name="close-circle" size={22} color="#FFFFFF" />
             </Pressable>
@@ -1311,29 +1462,102 @@ export function TopicDetailScreen({ route, navigation }: Props) {
 
       <SheetModal
         visible={openObservation !== null}
-        onClose={() => setOpenObservation(null)}
+        onClose={() => { setOpenObservation(null); setIsEditingObservation(false); }}
         closeLabel="Close note"
         maxHeightRatio={0.88}
       >
         <View style={styles.modalHeader}>
           <View>
-            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Note</Text>
+            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>{isEditingObservation ? "Edit note" : "Note"}</Text>
             <Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>
               {openObservation ? formatRelativeTime(openObservation.recordedAt) : ""}
             </Text>
           </View>
-          <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setOpenObservation(null)} accessibilityRole="button">
-            <Ionicons name="close" size={20} color={colors.textPrimary} />
-          </Pressable>
-        </View>
-        <ScrollView style={styles.noteDetailScroll} showsVerticalScrollIndicator={false}>
-          <Text style={[styles.noteDetailBody, { color: colors.textSecondary }]}>{openObservation?.body}</Text>
-          {openObservation?.photoUrl ? (
-            <Pressable onPress={() => setLightboxUrl(openObservation.photoUrl!)} accessibilityRole="button" accessibilityLabel="View note photo">
-              <Image source={{ uri: openObservation.photoUrl }} style={styles.noteDetailPhoto} resizeMode="cover" />
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            {!isEditingObservation ? (
+              <Pressable
+                style={({ pressed }) => [styles.editTextButton, { backgroundColor: colors.accentSoft }, pressed && { opacity: pressedOpacity }]}
+                onPress={startEditObservation}
+                accessibilityRole="button"
+              >
+                <Ionicons name="pencil-outline" size={13} color={colors.accent} />
+                <Text style={[styles.editTextButtonText, { color: colors.accent }]}>Edit</Text>
+              </Pressable>
+            ) : null}
+            <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => { setOpenObservation(null); setIsEditingObservation(false); }} accessibilityRole="button">
+              <Ionicons name="close" size={20} color={colors.textPrimary} />
             </Pressable>
-          ) : null}
-        </ScrollView>
+          </View>
+        </View>
+
+        {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
+
+        {isEditingObservation ? (
+          <>
+            <TextInput
+              style={[styles.input, styles.multilineInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
+              value={observationDraft}
+              onChangeText={setObservationDraft}
+              placeholder="What happened in class?"
+              placeholderTextColor={colors.textMuted}
+              maxLength={4000}
+              multiline
+              autoFocus
+            />
+            {notePhoto ? (
+              <View style={[styles.notePhotoPreviewWrap, { backgroundColor: colors.surfaceRaised }]}>
+                <Image source={{ uri: notePhoto.uri }} style={styles.notePhotoPreview} resizeMode="contain" />
+                <Pressable style={styles.notePhotoRemove} onPress={() => setNotePhoto(null)} accessibilityRole="button" accessibilityLabel="Remove photo" hitSlop={8}>
+                  <Ionicons name="close-circle" size={22} color="#FFFFFF" />
+                </Pressable>
+              </View>
+            ) : openObservation?.photoUrl && !notePhotoRemoved ? (
+              <View style={[styles.notePhotoPreviewWrap, { backgroundColor: colors.surfaceRaised }]}>
+                <Image source={{ uri: openObservation.photoUrl }} style={styles.notePhotoPreview} resizeMode="contain" />
+                <Pressable style={styles.notePhotoRemove} onPress={() => setNotePhotoRemoved(true)} accessibilityRole="button" accessibilityLabel="Remove photo" hitSlop={8}>
+                  <Ionicons name="close-circle" size={22} color="#FFFFFF" />
+                </Pressable>
+              </View>
+            ) : (
+              <View style={styles.notePhotoActions}>
+                <Pressable style={({ pressed }) => [styles.notePhotoAction, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]} onPress={pickNotePhoto} accessibilityRole="button">
+                  <Ionicons name="camera-outline" size={16} color={colors.accent} />
+                  <Text style={[styles.notePhotoActionText, { color: colors.accent }]}>Take photo</Text>
+                </Pressable>
+                <Pressable style={({ pressed }) => [styles.notePhotoAction, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]} onPress={pickNoteGalleryPhoto} accessibilityRole="button">
+                  <Ionicons name="image-outline" size={16} color={colors.accent} />
+                  <Text style={[styles.notePhotoActionText, { color: colors.accent }]}>Choose photo</Text>
+                </Pressable>
+              </View>
+            )}
+            <View style={styles.sourceEditActionRow}>
+              <Pressable
+                style={({ pressed }) => [styles.sourceGhostButton, { borderColor: colors.border, flexGrow: 0 }, pressed && { opacity: pressedOpacity }]}
+                onPress={cancelEditObservation}
+                accessibilityRole="button"
+              >
+                <Text style={[styles.sourceGhostButtonText, { color: colors.textSecondary }]}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.smallButton, styles.sourceSaveButton, { backgroundColor: colors.accent }, (isSavingObservation || !observationDraft.trim() || pressed) && { opacity: pressedOpacity }]}
+                onPress={saveObservationEdit}
+                disabled={isSavingObservation || !observationDraft.trim()}
+                accessibilityRole="button"
+              >
+                {isSavingObservation ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.smallButtonText, { color: colors.accentOn }]}>Save note</Text>}
+              </Pressable>
+            </View>
+          </>
+        ) : (
+          <ScrollView style={styles.noteDetailScroll} showsVerticalScrollIndicator={false}>
+            <Text style={[styles.noteDetailBody, { color: colors.textSecondary }]}>{openObservation?.body}</Text>
+            {openObservation?.photoUrl ? (
+              <Pressable onPress={() => setLightboxUrl(openObservation.photoUrl!)} accessibilityRole="button" accessibilityLabel="View note photo">
+                <Image source={{ uri: openObservation.photoUrl }} style={styles.noteDetailPhoto} resizeMode="cover" />
+              </Pressable>
+            ) : null}
+          </ScrollView>
+        )}
       </SheetModal>
 
       <SheetModal
@@ -1343,12 +1567,17 @@ export function TopicDetailScreen({ route, navigation }: Props) {
         maxHeightRatio={0.88}
       >
         <View style={styles.modalHeader}>
+          {openSource ? (
+            <View style={[styles.modalTypeIcon, { backgroundColor: `${SOURCE_TYPE_COLORS[openSource.sourceType]}1F` }]}>
+              <Ionicons name={SOURCE_TYPE_ICONS[openSource.sourceType]} size={18} color={SOURCE_TYPE_COLORS[openSource.sourceType]} />
+            </View>
+          ) : null}
           <View style={{ flex: 1, paddingRight: 12 }}>
-            <Text style={[styles.modalTitle, { color: colors.textPrimary }]} numberOfLines={1}>
-              {openSource?.originalFilename ?? openSource?.sourceUrl ?? openSource?.sourceType ?? "Source"}
+            <Text style={[styles.modalTitle, styles.sourceModalTitle, { color: colors.textPrimary }]} numberOfLines={2}>
+              {openSource ? sourceTitle(openSource) : "Source"}
             </Text>
             <Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>
-              {openSource ? (openSource.extractionStatus === "extracted" ? "Text ready — used when you generate" : openSource.extractionStatus === "pending" ? "Not read yet — won't be used until it is" : "No text found — won't be used") : ""}
+              {openSource ? (openSource.extractionStatus === "extracted" ? "Text ready, used when you generate" : openSource.extractionStatus === "pending" ? "Not read yet, won't be used until it is" : "No text found, won't be used") : ""}
             </Text>
           </View>
           <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setOpenSource(null)} accessibilityRole="button">
@@ -1361,8 +1590,40 @@ export function TopicDetailScreen({ route, navigation }: Props) {
         ) : null}
         {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
+        {openSource ? (
+          <View style={[styles.metaTable, { borderColor: colors.border }]}>
+            <View style={[styles.metaTableRow, { borderBottomColor: colors.border }]}>
+              <Text style={[styles.metaTableKey, { color: colors.textMuted }]}>Type</Text>
+              <Text style={[styles.metaTableValue, { color: colors.textPrimary }]}>{SOURCE_TYPE_LABELS[openSource.sourceType]}</Text>
+            </View>
+            <View style={[styles.metaTableRow, { borderBottomColor: colors.border }]}>
+              <Text style={[styles.metaTableKey, { color: colors.textMuted }]}>Status</Text>
+              <Text style={[styles.metaTableValue, { color: colors.textPrimary }]}>{sourceStatus(openSource).statusLabel}</Text>
+            </View>
+            {openSource.sourceUrl ? (
+              <Pressable
+                style={[styles.metaTableRow, styles.metaTableRowLast, { borderBottomColor: colors.border }]}
+                onPress={() => openContextSource(openSource)}
+                accessibilityRole="button"
+                accessibilityLabel={`Open ${openSource.sourceUrl}`}
+              >
+                <Text style={[styles.metaTableKey, { color: colors.textMuted }]}>Source</Text>
+                <View style={styles.metaTableLinkValue}>
+                  <Text style={[styles.metaTableValue, { color: colors.accent }]} numberOfLines={1}>
+                    {hostnameOf(openSource.sourceUrl)}
+                  </Text>
+                  <Ionicons name="open-outline" size={13} color={colors.accent} />
+                </View>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
+
         <View style={styles.sourceDetailActionRow}>
-          {openSource && (openSource.fileLocation || openSource.sourceUrl) ? (
+          {/* For url/youtube sources this would open the exact same link the
+              meta table's "Source" row above already opens - only shown when
+              there's a distinct file/image to open. */}
+          {openSource && (openSource.fileLocation || (openSource.sourceUrl && openSource.sourceType !== "url" && openSource.sourceType !== "youtube")) ? (
             <Pressable
               style={({ pressed }) => [styles.sourceGhostButton, { borderColor: colors.border }, pressed && { opacity: pressedOpacity }]}
               onPress={() => {
@@ -1424,9 +1685,14 @@ export function TopicDetailScreen({ route, navigation }: Props) {
         </View>
 
         <View style={[styles.sourceTextHeaderRow, { borderTopColor: colors.border }]}>
-          <Text style={[styles.fieldLabel, { color: colors.textMuted, marginTop: 0, marginBottom: 0 }]}>
-            {isEditingSourceText ? "Edit extracted text" : "Extracted text"}
-          </Text>
+          <View>
+            <Text style={[styles.fieldLabel, { color: colors.textMuted, marginTop: 0, marginBottom: 0 }]}>
+              {isEditingSourceText ? "Edit extracted text" : "Extracted text"}
+            </Text>
+            {!isEditingSourceText && sourceDraft.trim() ? (
+              <Text style={[styles.wordCountText, { color: colors.textMuted }]}>{wordCount(sourceDraft)} words</Text>
+            ) : null}
+          </View>
           {!isEditingSourceText ? (
             <Pressable
               style={({ pressed }) => [styles.editTextButton, { backgroundColor: colors.accentSoft }, pressed && { opacity: pressedOpacity }]}
@@ -1447,6 +1713,7 @@ export function TopicDetailScreen({ route, navigation }: Props) {
               onChangeText={setSourceDraft}
               placeholder="Nothing was pulled from this source. Paste or type the text you want the AI to use."
               placeholderTextColor={colors.textMuted}
+              maxLength={20000}
               multiline
               textAlignVertical="top"
               autoFocus
@@ -1540,11 +1807,12 @@ const styles = StyleSheet.create({
   sourceTextInput: { height: 200, marginTop: 6 },
   // Its own section, divided from the source actions above, so the Edit pill
   // never reads as part of that button row.
-  sourceTextHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 18, paddingTop: 14, borderTopWidth: StyleSheet.hairlineWidth, marginBottom: 4, minHeight: 30 },
+  sourceTextHeaderRow: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", marginTop: 18, paddingTop: 14, borderTopWidth: StyleSheet.hairlineWidth, marginBottom: 4, minHeight: 30 },
+  wordCountText: { fontSize: 11, fontWeight: "500", marginTop: 2 },
   editTextButton: { flexDirection: "row", alignItems: "center", gap: 4, height: 30, borderRadius: 15, paddingHorizontal: 12 },
   editTextButtonText: { fontSize: 11, fontWeight: "800" },
-  sourceTextView: { maxHeight: 220, minHeight: 90, borderWidth: 1, borderRadius: 12, padding: 12, marginTop: 6 },
-  sourceTextViewBody: { fontSize: 13, lineHeight: 20, fontWeight: "500" },
+  sourceTextView: { maxHeight: 260, minHeight: 90, borderWidth: 1, borderRadius: 14, padding: 16, marginTop: 6 },
+  sourceTextViewBody: { fontSize: 14, lineHeight: 23, fontWeight: "500", letterSpacing: 0.1 },
   sourceEditActionRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 12 },
   sourceSaveButton: { flex: 1, marginTop: 0 },
   tabBar: { flexDirection: "row", borderBottomWidth: 1, marginBottom: 16 },
@@ -1577,8 +1845,8 @@ const styles = StyleSheet.create({
   notePhotoActions: { flexDirection: "row", gap: 10, marginTop: 12 },
   notePhotoAction: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: 1, borderRadius: 12, height: 42 },
   notePhotoActionText: { fontSize: 12, fontWeight: "700" },
-  notePhotoPreviewWrap: { marginTop: 12, position: "relative" },
-  notePhotoPreview: { width: "100%", height: 150, borderRadius: 12 },
+  notePhotoPreviewWrap: { marginTop: 12, position: "relative", borderRadius: 12, overflow: "hidden" },
+  notePhotoPreview: { width: "100%", height: 220, borderRadius: 12 },
   notePhotoRemove: { position: "absolute", top: 8, right: 8 },
   noteDetailPhoto: { marginTop: 14, width: "100%", height: 180, borderRadius: 14 },
   smallButton: { borderRadius: 12, height: 50, alignItems: "center", justifyContent: "center", marginTop: 12 },
@@ -1675,8 +1943,14 @@ const styles = StyleSheet.create({
   contextMethodIcon: { width: 38, height: 38, borderRadius: 12, alignItems: "center", justifyContent: "center" },
   contextMethodTitle: { fontSize: 14, fontWeight: "800" },
   contextMethodDetail: { fontSize: 12, lineHeight: 16, marginTop: 2, fontWeight: "500" },
-  sourceCard: { width: "48%", minHeight: 142, borderWidth: 1, borderRadius: 13, padding: 12, justifyContent: "flex-start" },
-  sourceImageCard: { height: 230 },
+  // Swipeable needs an explicit width on its own outer wrapper - a
+  // percentage width on the Pressable inside it has no definite parent to
+  // resolve against otherwise, which is what let cards of different types
+  // collapse/misalign in a wrapped grid.
+  sourceCardSwipeContainer: { width: "48%" },
+  sourceCardSwipeDeleteAction: { height: "100%" },
+  sourceCard: { width: "100%", height: 190, borderWidth: 1, borderRadius: 13, padding: 12, justifyContent: "flex-start" },
+  sourceCardTitle: { fontSize: 12, lineHeight: 16, fontWeight: "700", marginTop: 8 },
   sourceCardTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 6 },
   typeTag: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill },
   typeTagText: { fontSize: 9, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.2 },
@@ -1699,8 +1973,16 @@ const styles = StyleSheet.create({
   modalSheet: { borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 24, paddingBottom: 28 },
   modalHandle: { width: 42, height: 4, borderRadius: 2, alignSelf: "center", marginTop: 10, marginBottom: 16 },
   modalHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between" },
+  modalTypeIcon: { width: 38, height: 38, borderRadius: 12, alignItems: "center", justifyContent: "center", marginRight: 10, marginTop: 1 },
   modalTitle: { fontSize: 24, lineHeight: 30, fontWeight: "800", letterSpacing: -0.5 },
+  sourceModalTitle: { fontSize: 19, lineHeight: 24 },
   modalSubtitle: { marginTop: 3, maxWidth: 270, fontSize: 13, lineHeight: 19, fontWeight: "500" },
+  metaTable: { marginTop: 16, borderWidth: 1, borderRadius: 13, overflow: "hidden" },
+  metaTableRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 13, paddingVertical: 10, borderBottomWidth: 1 },
+  metaTableRowLast: { borderBottomWidth: 0 },
+  metaTableKey: { fontSize: 12, fontWeight: "700" },
+  metaTableValue: { fontSize: 13, fontWeight: "700", flexShrink: 1, textAlign: "right" },
+  metaTableLinkValue: { flexDirection: "row", alignItems: "center", gap: 5, flexShrink: 1 },
   closeButton: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
   sourceActionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 22 },
   sourceAction: { width: "48%", minHeight: 86, borderWidth: 1, borderRadius: 14, padding: 14, justifyContent: "space-between" },

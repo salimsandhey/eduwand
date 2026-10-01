@@ -11,6 +11,9 @@ import { Screen } from "../../components/Screen";
 import { StudentAvatar } from "../../components/StudentAvatar";
 import { SheetModal } from "../../components/SheetModal";
 import { DatePicker } from "../../components/DatePicker";
+import { FieldError } from "../../components/FieldError";
+import { useFormErrors } from "../../hooks/useForm";
+import { rules, phoneInput } from "../../utils/validation";
 import { api, ClassSection, StudentStub } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
 
@@ -53,6 +56,15 @@ export function StudentsScreen({ navigation }: Props) {
   const [editForm, setEditForm] = useState(EMPTY_MANUAL_FORM);
   const [editClassId, setEditClassId] = useState<string | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+  // Rules mirror backend/src/lib/validation.ts; field names match the API's. An
+  // unchanged date of birth isn't re-checked, so older records stay editable.
+  const editV = useFormErrors(editForm, {
+    fullName: rules.personName("Student name"),
+    dateOfBirth: (v) => (editingStudent && v === editingStudent.dateOfBirth.slice(0, 10) ? null : rules.dateOfBirth("Date of birth")(v)),
+    guardianName: rules.personName("Guardian name"),
+    guardianContact: rules.phone(true, "Guardian phone number"),
+    email: rules.email(true, "Student email"),
+  });
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -136,6 +148,7 @@ export function StudentsScreen({ navigation }: Props) {
   }
 
   function openEdit(student: StudentStub) {
+    editV.clear();
     setEditingStudent(student);
     setEditForm({
       fullName: student.fullName,
@@ -149,13 +162,15 @@ export function StudentsScreen({ navigation }: Props) {
 
   async function saveEdit() {
     if (!accessToken || !editingStudent || !editClassId) return;
-    if (!editForm.fullName.trim() || !editForm.guardianName.trim() || !editForm.guardianContact.trim() || !editForm.email.includes("@")) return;
+    if (!editV.submit()) return;
     setIsSavingEdit(true);
     setError(null);
     try {
       await api.updateStudent(accessToken, editingStudent.id, {
         fullName: editForm.fullName.trim(),
-        dateOfBirth: editForm.dateOfBirth,
+        // Only sent when changed, so an older record with an out-of-range date
+        // of birth can still have its email or phone fixed.
+        ...(editForm.dateOfBirth !== editingStudent.dateOfBirth.slice(0, 10) ? { dateOfBirth: editForm.dateOfBirth } : {}),
         classSectionId: editClassId,
         guardianName: editForm.guardianName.trim(),
         guardianContact: editForm.guardianContact.trim(),
@@ -164,7 +179,7 @@ export function StudentsScreen({ navigation }: Props) {
       setEditingStudent(null);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save changes");
+      if (!editV.applyServerError(err)) setError(err instanceof Error ? err.message : "Failed to save changes");
     } finally {
       setIsSavingEdit(false);
     }
@@ -330,34 +345,58 @@ export function StudentsScreen({ navigation }: Props) {
         <ScrollView keyboardShouldPersistTaps="handled">
           <Text style={[styles.label, { color: colors.textPrimary }]}>Full name</Text>
           <TextInput
-            style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+            style={[styles.input, { color: colors.textPrimary, borderColor: editV.error("fullName") ? colors.danger : colors.border }]}
             value={editForm.fullName}
             onChangeText={(v) => setEditForm((f) => ({ ...f, fullName: v }))}
+            onBlur={() => editV.blur("fullName")}
+            autoCapitalize="words"
+            maxLength={80}
           />
+          <FieldError message={editV.error("fullName")} />
           <Text style={[styles.label, { color: colors.textPrimary }]}>Date of birth</Text>
-          <DatePicker value={editForm.dateOfBirth} onChange={(v) => setEditForm((f) => ({ ...f, dateOfBirth: v }))} />
+          <DatePicker
+            value={editForm.dateOfBirth}
+            onChange={(v) => {
+              setEditForm((f) => ({ ...f, dateOfBirth: v }));
+              editV.blur("dateOfBirth");
+            }}
+          />
+          <FieldError message={editV.error("dateOfBirth")} />
           <Text style={[styles.label, { color: colors.textPrimary }]}>Guardian name</Text>
           <TextInput
-            style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+            style={[styles.input, { color: colors.textPrimary, borderColor: editV.error("guardianName") ? colors.danger : colors.border }]}
             value={editForm.guardianName}
             onChangeText={(v) => setEditForm((f) => ({ ...f, guardianName: v }))}
+            onBlur={() => editV.blur("guardianName")}
+            autoCapitalize="words"
+            maxLength={80}
           />
+          <FieldError message={editV.error("guardianName")} />
           <Text style={[styles.label, { color: colors.textPrimary }]}>Guardian phone (for calls and records)</Text>
           <TextInput
-            style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+            style={[styles.input, { color: colors.textPrimary, borderColor: editV.error("guardianContact") ? colors.danger : colors.border }]}
             value={editForm.guardianContact}
-            onChangeText={(v) => setEditForm((f) => ({ ...f, guardianContact: v }))}
+            onChangeText={(v) => setEditForm((f) => ({ ...f, guardianContact: phoneInput(v) }))}
+            onBlur={() => editV.blur("guardianContact")}
+            placeholder="10-digit mobile number"
+            placeholderTextColor={colors.textMuted}
             keyboardType="phone-pad"
+            autoComplete="tel"
+            maxLength={16}
           />
+          <FieldError message={editV.error("guardianContact")} />
           <Text style={[styles.label, { color: colors.textPrimary }]}>Student email (used to sign in)</Text>
           <TextInput
-            style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+            style={[styles.input, { color: colors.textPrimary, borderColor: editV.error("email") ? colors.danger : colors.border }]}
             value={editForm.email}
             onChangeText={(v) => setEditForm((f) => ({ ...f, email: v }))}
+            onBlur={() => editV.blur("email")}
             keyboardType="email-address"
             autoCapitalize="none"
             autoCorrect={false}
+            maxLength={254}
           />
+          <FieldError message={editV.error("email")} />
           <Text style={[styles.label, { color: colors.textPrimary }]}>Class</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
             {classSections.map((c) => (

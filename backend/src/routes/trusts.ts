@@ -3,6 +3,11 @@ import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { PLATFORM_ADMIN_ROLE } from "../lib/roles";
 import { recordAuditEvent } from "../lib/audit";
+import { Validator } from "../lib/validation";
+
+// An explicitly empty string clears an optional text column; otherwise the
+// validated value (or undefined = leave untouched).
+const orBlank = <T>(raw: unknown, value: T | undefined): T | "" | undefined => (raw === "" ? "" : value);
 
 interface CreateTrustBody {
   name: string;
@@ -54,15 +59,20 @@ export async function trustRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const body = request.body ?? ({} as CreateTrustBody);
 
-      if (!body.name) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: "name is required" },
-        });
-      }
+      const v = new Validator();
+      const name = v.label("name", body.name, "Trust name", true, 120);
+      const legalName = v.label("legalName", body.legalName, "Legal name", false, 160);
+      const contactEmail = v.email("contactEmail", body.contactEmail, false, "Contact email");
+      const contactPersonName = v.personName("contactPersonName", body.contactPersonName, "Contact person name", false);
+      const contactPersonPhone = v.phone("contactPersonPhone", body.contactPersonPhone, false, "Contact person phone number");
+      const registeredAddress = v.note("registeredAddress", body.registeredAddress, "Registered address", { max: 300 });
+      const gstNumber = v.gstin("gstNumber", body.gstNumber);
+      const trustType = v.label("trustType", body.trustType, "Trust type", false, 60);
+      const expectedSchoolCount = v.number("expectedSchoolCount", body.expectedSchoolCount, "Expected school count", { integer: true, min: 0, max: 10000 });
+      if (v.hasErrors || !name) return v.reject(reply);
 
       const duplicate = await prisma.trust.findFirst({
-        where: { name: { equals: body.name.trim(), mode: "insensitive" } },
+        where: { name: { equals: name, mode: "insensitive" } },
       });
       if (duplicate) {
         return reply.code(400).send({
@@ -73,15 +83,15 @@ export async function trustRoutes(app: FastifyInstance) {
 
       const trust = await prisma.trust.create({
         data: {
-          name: body.name.trim(),
-          legalName: body.legalName,
-          contactEmail: body.contactEmail,
-          contactPersonName: body.contactPersonName,
-          contactPersonPhone: body.contactPersonPhone,
-          registeredAddress: body.registeredAddress,
-          gstNumber: body.gstNumber,
-          trustType: body.trustType,
-          expectedSchoolCount: body.expectedSchoolCount,
+          name,
+          legalName,
+          contactEmail,
+          contactPersonName,
+          contactPersonPhone,
+          registeredAddress,
+          gstNumber,
+          trustType,
+          expectedSchoolCount,
           status: "active",
         },
       });
@@ -119,12 +129,18 @@ export async function trustRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const body = request.body ?? ({} as UpdateTrustBody);
 
-      if (body.status && !TRUST_STATUSES.includes(body.status)) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: `status must be one of ${TRUST_STATUSES.join(", ")}` },
-        });
-      }
+      const v = new Validator();
+      const name = body.name !== undefined ? v.label("name", body.name, "Trust name", true, 120) : undefined;
+      const legalName = body.legalName !== undefined ? v.label("legalName", body.legalName, "Legal name", false, 160) : undefined;
+      const contactEmail = body.contactEmail !== undefined ? v.email("contactEmail", body.contactEmail, false, "Contact email") : undefined;
+      const contactPersonName = body.contactPersonName !== undefined ? v.personName("contactPersonName", body.contactPersonName, "Contact person name", false) : undefined;
+      const contactPersonPhone = body.contactPersonPhone !== undefined ? v.phone("contactPersonPhone", body.contactPersonPhone, false, "Contact person phone number") : undefined;
+      const registeredAddress = body.registeredAddress !== undefined ? v.note("registeredAddress", body.registeredAddress, "Registered address", { max: 300 }) : undefined;
+      const gstNumber = body.gstNumber !== undefined ? v.gstin("gstNumber", body.gstNumber) : undefined;
+      const trustType = body.trustType !== undefined ? v.label("trustType", body.trustType, "Trust type", false, 60) : undefined;
+      const expectedSchoolCount = v.number("expectedSchoolCount", body.expectedSchoolCount, "Expected school count", { integer: true, min: 0, max: 10000 });
+      if (body.status && !TRUST_STATUSES.includes(body.status)) v.fail("status", `Status must be one of ${TRUST_STATUSES.join(", ")}`);
+      if (v.hasErrors) return v.reject(reply);
 
       const existing = await prisma.trust.findUnique({ where: { id: request.params.id } });
       if (!existing) {
@@ -138,9 +154,9 @@ export async function trustRoutes(app: FastifyInstance) {
         }
       }
 
-      if (body.name && body.name.trim().toLowerCase() !== existing.name.toLowerCase()) {
+      if (name && name.toLowerCase() !== existing.name.toLowerCase()) {
         const duplicate = await prisma.trust.findFirst({
-          where: { name: { equals: body.name.trim(), mode: "insensitive" }, id: { not: existing.id } },
+          where: { name: { equals: name, mode: "insensitive" }, id: { not: existing.id } },
         });
         if (duplicate) {
           return reply.code(400).send({
@@ -153,15 +169,15 @@ export async function trustRoutes(app: FastifyInstance) {
       const trust = await prisma.trust.update({
         where: { id: request.params.id },
         data: {
-          name: body.name?.trim() ?? undefined,
-          legalName: body.legalName ?? undefined,
-          contactEmail: body.contactEmail ?? undefined,
-          contactPersonName: body.contactPersonName ?? undefined,
-          contactPersonPhone: body.contactPersonPhone ?? undefined,
-          registeredAddress: body.registeredAddress ?? undefined,
-          gstNumber: body.gstNumber ?? undefined,
-          trustType: body.trustType ?? undefined,
-          expectedSchoolCount: body.expectedSchoolCount ?? undefined,
+          name,
+          legalName: orBlank(body.legalName, legalName),
+          contactEmail: orBlank(body.contactEmail, contactEmail),
+          contactPersonName: orBlank(body.contactPersonName, contactPersonName),
+          contactPersonPhone: orBlank(body.contactPersonPhone, contactPersonPhone),
+          registeredAddress: orBlank(body.registeredAddress, registeredAddress),
+          gstNumber: orBlank(body.gstNumber, gstNumber),
+          trustType: orBlank(body.trustType, trustType),
+          expectedSchoolCount,
           status: body.status ?? undefined,
           planId: body.planId !== undefined ? body.planId : undefined,
         },

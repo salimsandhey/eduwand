@@ -177,6 +177,7 @@ export function LogSubmissionScreen({ route, navigation }: Props) {
                     style={[styles.answerInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
                     value={answers[question.id] ?? ""}
                     onChangeText={(text) => setAnswers((prev) => ({ ...prev, [question.id]: text }))}
+                    maxLength={2000}
                     placeholder={question.type === "very_short" ? "One word or short phrase" : question.type === "fill_blank" ? "Fill in the blank" : "Student's answer"}
                     placeholderTextColor={colors.textMuted}
                     multiline

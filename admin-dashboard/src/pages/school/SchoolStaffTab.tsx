@@ -4,8 +4,13 @@ import { api, ApiError } from "../../api/client";
 import type { AppUserSummary, UserRoleGrant } from "../../api/client";
 import { Card } from "../../components/Card";
 import { Modal, ModalFooter } from "../../components/Modal";
+import { RowActions } from "../../components/RowActions";
 import type { SchoolOutletContext } from "./SchoolLayout";
 import { formatEnumLabel } from "../../utils/format";
+import { FieldError, invalidInput } from "../../components/FieldError";
+import { useFormErrors } from "../../hooks/useForm";
+import { rules } from "../../utils/validation";
+import { btn } from "../../components/buttons";
 
 const INVITABLE_ROLES = ["front_desk", "counsellor", "teacher", "admin", "principal"];
 
@@ -16,6 +21,8 @@ export function SchoolStaffTab() {
   const [inviteName, setInviteName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState(INVITABLE_ROLES[0]);
+  // Rules mirror backend/src/lib/validation.ts; field names match the API's.
+  const inviteV = useFormErrors({ fullName: inviteName, email: inviteEmail }, { fullName: rules.personName("Full name"), email: rules.email() });
   const [isInviting, setIsInviting] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteResult, setInviteResult] = useState<{ email: string; tempPassword: string } | null>(null);
@@ -42,6 +49,7 @@ export function SchoolStaffTab() {
   // Credits/billing (Docs/superpowers/plans/2026-09-09-individual-teacher-
   // onboarding-and-credits.md) - manual top-up only in this phase, no
   // payment gateway. Amount input is shown per teacher row.
+  const [topUpTarget, setTopUpTarget] = useState<AppUserSummary | null>(null);
   const [topUpAmount, setTopUpAmount] = useState<Record<string, string>>({});
   const [topUpWorking, setTopUpWorking] = useState<Record<string, boolean>>({});
   const [topUpMessage, setTopUpMessage] = useState<Record<string, string>>({});
@@ -78,7 +86,8 @@ export function SchoolStaffTab() {
   }, [loadStaff]);
 
   async function inviteStaff() {
-    if (!accessToken || !id || !inviteName.trim() || !inviteEmail.trim()) return;
+    if (!accessToken || !id) return;
+    if (!inviteV.submit()) return;
     setIsInviting(true);
     setInviteError(null);
     setInviteResult(null);
@@ -97,7 +106,7 @@ export function SchoolStaffTab() {
       reload();
       loadStaff();
     } catch (err) {
-      setInviteError(err instanceof ApiError ? err.message : "Failed to invite staff member");
+      if (!(err instanceof ApiError && inviteV.applyServerError(err))) setInviteError(err instanceof ApiError ? err.message : "Failed to invite staff member");
     } finally {
       setIsInviting(false);
     }
@@ -110,6 +119,7 @@ export function SchoolStaffTab() {
     setInviteRole(INVITABLE_ROLES[0]);
     setInviteError(null);
     setInviteResult(null);
+    inviteV.clear();
   }
 
   async function changeStaffRole(staffId: string, role: string) {
@@ -196,8 +206,12 @@ export function SchoolStaffTab() {
 
   async function topUpCredits(staffId: string) {
     if (!accessToken) return;
+    const amountProblem = rules.integer("Credits", 1, 10_000_000)(topUpAmount[staffId] ?? "");
+    if (amountProblem) {
+      setStaffRowError((prev) => ({ ...prev, [staffId]: amountProblem }));
+      return;
+    }
     const amount = Number(topUpAmount[staffId]);
-    if (!Number.isFinite(amount) || amount <= 0) return;
     setTopUpWorking((prev) => ({ ...prev, [staffId]: true }));
     setTopUpMessage((prev) => ({ ...prev, [staffId]: "" }));
     setStaffRowError((prev) => ({ ...prev, [staffId]: "" }));
@@ -205,6 +219,7 @@ export function SchoolStaffTab() {
       const res = await api.topUpTeacherCredits(accessToken, staffId, { amount });
       setTopUpMessage((prev) => ({ ...prev, [staffId]: `New balance: ${res.balance}` }));
       setTopUpAmount((prev) => ({ ...prev, [staffId]: "" }));
+      setTopUpTarget(null);
     } catch (err) {
       setStaffRowError((prev) => ({ ...prev, [staffId]: err instanceof Error ? err.message : "Failed to top up credits" }));
     } finally {
@@ -441,54 +456,27 @@ export function SchoolStaffTab() {
                         {u.status}
                       </span>
                     </td>
-                    <td style={styles.td}>
+                    <td style={{ ...styles.td, textAlign: "right", width: 1 }}>
                       {isSelf ? (
                         <span style={{ fontSize: 12, color: "var(--text-muted)" }}>You</span>
                       ) : (
-                        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                          <button
-                            style={styles.smallButton}
-                            disabled={isSaving}
-                            onClick={() => setEditingRoleId(editingRoleId === u.id ? null : u.id)}
-                          >
-                            Change role
-                          </button>
-                          <button
-                            style={u.status === "disabled" ? styles.smallButton : styles.smallDangerButton}
-                            disabled={isSaving}
-                            onClick={() => toggleStaffStatus(u)}
-                          >
-                            {u.status === "disabled" ? "Enable" : "Disable"}
-                          </button>
-                          <button style={styles.smallButton} disabled={isSaving} onClick={() => resetStaffPassword(u)}>
-                            Reset password
-                          </button>
-                        </div>
+                        <RowActions
+                          label={`Actions for ${u.fullName}`}
+                          disabled={isSaving}
+                          actions={[
+                            { label: "Change role", onClick: () => setEditingRoleId(editingRoleId === u.id ? null : u.id) },
+                            ...(u.role === "teacher" ? [{ label: "Add credits", onClick: () => setTopUpTarget(u) }] : []),
+                            { label: "Reset password", onClick: () => resetStaffPassword(u) },
+                            u.status === "disabled"
+                              ? { label: "Enable account", onClick: () => toggleStaffStatus(u) }
+                              : { label: "Disable account", danger: true, onClick: () => toggleStaffStatus(u) },
+                          ]}
+                        />
                       )}
-                      {u.role === "teacher" ? (
-                        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
-                          <input
-                            style={{ ...styles.roleSelect, width: 90 }}
-                            type="number"
-                            min={1}
-                            placeholder="Credits"
-                            value={topUpAmount[u.id] ?? ""}
-                            disabled={!!topUpWorking[u.id]}
-                            onChange={(e) => setTopUpAmount((prev) => ({ ...prev, [u.id]: e.target.value }))}
-                          />
-                          <button
-                            style={styles.smallButton}
-                            disabled={!!topUpWorking[u.id] || !topUpAmount[u.id]}
-                            onClick={() => topUpCredits(u.id)}
-                          >
-                            Top up
-                          </button>
-                          {topUpMessage[u.id] ? (
-                            <span style={{ fontSize: 12, color: "var(--status-good)" }}>{topUpMessage[u.id]}</span>
-                          ) : null}
-                        </div>
+                      {topUpMessage[u.id] ? (
+                        <div style={{ fontSize: 12, color: "var(--status-good)", marginTop: 4 }}>{topUpMessage[u.id]}</div>
                       ) : null}
-                      {staffRowError[u.id] ? (
+                      {staffRowError[u.id] && topUpTarget?.id !== u.id ? (
                         <p style={{ color: "var(--status-critical)", fontSize: 12, margin: "4px 0 0 0" }}>
                           {staffRowError[u.id]}
                         </p>
@@ -502,27 +490,75 @@ export function SchoolStaffTab() {
         </>
       )}
 
+      {topUpTarget ? (
+        <Modal title="Add credits" onClose={() => setTopUpTarget(null)} width={420}>
+          <p style={{ margin: "0 0 14px 0", fontSize: 14, color: "var(--text-secondary)" }}>
+            Add AI credits to <strong>{topUpTarget.fullName}</strong>'s balance.
+          </p>
+          <div style={styles.field}>
+            <label style={styles.label}>Credits</label>
+            <input
+              style={styles.input}
+              type="number"
+              min={1}
+              max={10000000}
+              step={1}
+              autoFocus
+              placeholder="e.g. 500"
+              value={topUpAmount[topUpTarget.id] ?? ""}
+              disabled={!!topUpWorking[topUpTarget.id]}
+              onChange={(e) => setTopUpAmount((prev) => ({ ...prev, [topUpTarget.id]: e.target.value }))}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") topUpCredits(topUpTarget.id);
+              }}
+            />
+          </div>
+          {staffRowError[topUpTarget.id] ? <p style={styles.error}>{staffRowError[topUpTarget.id]}</p> : null}
+          <ModalFooter>
+            <button style={styles.secondaryButton} onClick={() => setTopUpTarget(null)}>
+              Cancel
+            </button>
+            <button
+              style={styles.button}
+              disabled={!!topUpWorking[topUpTarget.id] || !topUpAmount[topUpTarget.id]}
+              onClick={() => topUpCredits(topUpTarget.id)}
+            >
+              {topUpWorking[topUpTarget.id] ? "Adding…" : "Add credits"}
+            </button>
+          </ModalFooter>
+        </Modal>
+      ) : null}
+
       {showInvite ? (
         <Modal title="Invite staff" onClose={closeInviteModal}>
           <div style={styles.formGrid}>
             <div style={styles.field}>
               <label style={styles.label}>Full name</label>
               <input
-                style={styles.input}
+                style={{ ...styles.input, ...invalidInput(!!inviteV.error("fullName")) }}
                 placeholder="e.g. Priya Sharma"
                 value={inviteName}
                 onChange={(e) => setInviteName(e.target.value)}
+                onBlur={() => inviteV.blur("fullName")}
+                maxLength={80}
+                aria-invalid={!!inviteV.error("fullName")}
                 autoFocus
               />
+              <FieldError message={inviteV.error("fullName")} />
             </div>
             <div style={styles.field}>
               <label style={styles.label}>Email</label>
               <input
-                style={styles.input}
+                style={{ ...styles.input, ...invalidInput(!!inviteV.error("email")) }}
+                type="email"
                 placeholder="name@school.example"
                 value={inviteEmail}
                 onChange={(e) => setInviteEmail(e.target.value)}
+                onBlur={() => inviteV.blur("email")}
+                maxLength={254}
+                aria-invalid={!!inviteV.error("email")}
               />
+              <FieldError message={inviteV.error("email")} />
             </div>
             <div style={styles.field}>
               <label style={styles.label}>Role</label>
@@ -552,7 +588,7 @@ export function SchoolStaffTab() {
             <button
               style={styles.button}
               onClick={inviteStaff}
-              disabled={isInviting || !inviteName.trim() || !inviteEmail.trim()}
+              disabled={isInviting}
             >
               {isInviting ? "Inviting…" : "Send invite"}
             </button>
@@ -567,27 +603,8 @@ const styles: Record<string, React.CSSProperties> = {
   field: { display: "flex", flexDirection: "column", gap: 6, flex: 1, minWidth: 200 },
   label: { fontSize: 12, fontWeight: 700, color: "var(--text-muted)" },
   input: { padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 14 },
-  button: {
-    background: "var(--accent)",
-    color: "#fff",
-    border: "none",
-    borderRadius: 8,
-    padding: "10px 16px",
-    fontWeight: 600,
-    cursor: "pointer",
-    fontSize: 14,
-  },
-  secondaryButton: {
-    background: "var(--bg-page)",
-    color: "var(--text-primary)",
-    border: "1px solid var(--border)",
-    borderRadius: 8,
-    padding: "10px 16px",
-    fontWeight: 600,
-    cursor: "pointer",
-    fontSize: 14,
-    textTransform: "capitalize",
-  },
+  button: btn.primary,
+  secondaryButton: btn.secondary,
   error: { color: "var(--status-critical)", fontSize: 13, marginTop: 12, marginBottom: 0 },
   statusBadge: { fontSize: 13, fontWeight: 700, textTransform: "capitalize" },
   tempPasswordBox: {
@@ -599,16 +616,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
   },
   code: { fontFamily: "monospace", fontSize: 15, fontWeight: 700, color: "var(--text-primary)" },
-  smallButton: {
-    padding: "6px 12px",
-    borderRadius: 6,
-    border: "1px solid var(--border)",
-    background: "var(--bg-page)",
-    color: "var(--text-primary)",
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: "pointer",
-  },
+  smallButton: btn.small,
   staffHeader: {
     display: "flex",
     alignItems: "center",
@@ -643,22 +651,15 @@ const styles: Record<string, React.CSSProperties> = {
   },
   td: { padding: "12px 12px 12px 0", borderBottom: "1px solid var(--border)", fontSize: 14 },
   roleSelect: {
-    padding: "4px 8px",
-    borderRadius: 6,
+    height: 32,
+    padding: "0 8px",
+    borderRadius: 8,
+    background: "#fff",
     border: "1px solid var(--border)",
     fontSize: 13,
     textTransform: "capitalize",
   },
-  smallDangerButton: {
-    padding: "6px 12px",
-    borderRadius: 6,
-    border: "1px solid var(--border)",
-    background: "var(--bg-page)",
-    color: "var(--status-critical)",
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: "pointer",
-  },
+  smallDangerButton: btn.smallDanger,
   formGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 },
   roleChip: {
     display: "inline-flex",

@@ -103,6 +103,67 @@ export function parseGenerationContent(outputType: string, raw: string): Structu
 
 const BLOOMS_PREFIX = /^\[(Remember|Understand|Apply|Analyze|Evaluate|Create)\]\s*/i;
 
+// Common words that don't help tell two objectives apart - excluded from the
+// near-duplicate word-overlap check below.
+const OBJECTIVE_STOPWORDS = new Set([
+  "the", "a", "an", "of", "to", "and", "in", "on", "for", "that", "this",
+  "with", "is", "are", "was", "were", "be", "how", "why", "what", "their",
+  "students", "student", "will", "can", "by", "at", "as", "it", "its",
+]);
+
+function significantWords(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 3 && !OBJECTIVE_STOPWORDS.has(w))
+  );
+}
+
+// Two objectives phrased differently ("Explain the causes of X" vs. "Describe
+// why X occurred") but covering the same ground - a plain Jaccard overlap on
+// their significant words is enough to catch this without an extra AI call.
+function isNearDuplicateObjective(a: Set<string>, b: Set<string>): boolean {
+  if (a.size === 0 || b.size === 0) return false;
+  let overlap = 0;
+  for (const word of a) if (b.has(word)) overlap++;
+  const union = a.size + b.size - overlap;
+  return union > 0 && overlap / union >= 0.6;
+}
+
+// "Students will be able to explain X" is a valid SWBAT-style objective, but
+// reads inconsistently next to the app's terse "[Bloom] Explain X" form -
+// normalize it down to just the capability, the same shape everything else
+// is in.
+const SWBAT_PREFIX = /^students?\s+(will|should|shall)\s+be\s+able\s+to\s+/i;
+
+// A model asked for "objectives" sometimes writes an assessment task/prompt
+// into that field instead ("Give an example of...", "Identify at least
+// three... and name..."). Those read as instructions addressed to the
+// student, not statements of what the student will understand or be able to
+// do, and don't belong in this list.
+// These verbs are pure test/quiz-instruction boilerplate ("Choose the
+// correct answer...", "Circle the odd one out...") - essentially never how a
+// real learning objective is phrased, so they're dropped on their own.
+const ALWAYS_TASK_VERB_RE = /^(choose|select|circle|underline|fill\s+in)\b/i;
+// These verbs are also common, legitimate Bloom's-level objective verbs
+// ("Identify the causes of...", "Solve linear equations", "Match each event
+// to its century") - only treated as a task instruction when corroborated by
+// a second signal (direct address, or a "give me N of these" quantifier).
+const SOFT_TASK_VERB_RE = /^(give|identify|list|name|state|provide|find|show|write|draw|complete|solve|calculate|match)\b/i;
+const DIRECT_ADDRESS_RE = /\byou(r)?\b/i;
+// No digit requirement - "at least three" is just as much a quantifier as
+// "at least 3".
+const QUANTIFIER_RE = /\bat least\b/i;
+
+function looksLikeTaskNotObjective(text: string): boolean {
+  if (text.trim().endsWith("?")) return true;
+  if (ALWAYS_TASK_VERB_RE.test(text)) return true;
+  if (!SOFT_TASK_VERB_RE.test(text)) return false;
+  return DIRECT_ADDRESS_RE.test(text) || QUANTIFIER_RE.test(text);
+}
+
 function describeActivity(description: string | string[]): string {
   return Array.isArray(description) ? description.join("; ") : description;
 }
@@ -126,14 +187,40 @@ export function buildTaughtContentText(generations: GenerationForTaughtContent[]
   const blocks: string[] = [];
   const objectives: string[] = [];
   const seenObjective = new Set<string>();
+  const keptObjectiveWords: Set<string>[] = [];
 
   const addObjective = (raw: string) => {
     const trimmed = raw.trim();
     if (!trimmed) return;
-    const key = trimmed.toLowerCase();
+    // Dedup on the text alone, not the raw [Bloom] tag - two generation runs
+    // producing the identical objective under different Bloom levels (e.g.
+    // "[Remember] Explain photosynthesis" and "[Understand] Explain
+    // photosynthesis") must collapse to one, since the tag is stripped
+    // before this ever reaches the teacher anyway (see the return below).
+    let stripped = trimmed.replace(BLOOMS_PREFIX, "").replace(SWBAT_PREFIX, "").trim();
+    if (!stripped) return;
+    // The SWBAT prefix ("Students will be able to ") leaves its verb
+    // lowercase ("...to explain X") - capitalize so the objective reads as
+    // its own sentence once the prefix is gone.
+    stripped = stripped.charAt(0).toUpperCase() + stripped.slice(1);
+    if (looksLikeTaskNotObjective(stripped)) return;
+    const key = stripped.toLowerCase();
     if (seenObjective.has(key)) return;
+
+    // Also catch a paraphrase of an objective already kept from an earlier
+    // (separate) generation run - the model never sees a topic's prior
+    // objectives when writing a new one, so near-duplicates across runs are
+    // otherwise common.
+    const words = significantWords(stripped);
+    if (keptObjectiveWords.some((existing) => isNearDuplicateObjective(words, existing))) return;
+
     seenObjective.add(key);
-    objectives.push(trimmed);
+    keptObjectiveWords.push(words);
+    // Re-attach the Bloom tag (if any) to the normalized text, so the
+    // pushed/returned objective still carries it for the "Objective: ..."
+    // lines in the taught-content text, even though the SWBAT prefix is gone.
+    const bloomTag = trimmed.match(BLOOMS_PREFIX)?.[0] ?? "";
+    objectives.push(`${bloomTag}${stripped}`);
   };
 
   for (const gen of generations) {

@@ -54,11 +54,30 @@ export function getClassJoinLink(joinCode: string): string {
 interface ApiEnvelope<T> {
   data: T | null;
   meta?: Record<string, unknown>;
-  error?: { code: string; message: string };
+  // The structured shape every /api/v1 route sends on failure. A response
+  // that never reached the app's own error handler (a host/CDN 502, a
+  // malformed proxy error page, etc.) won't have this shape - errorMessageFrom
+  // below falls back to whatever text it can find rather than going silently
+  // generic.
+  // `fields` (validation_error only) maps a request field name to its message -
+  // see backend/src/lib/validation.ts.
+  error?: { code: string; message: string; fields?: Record<string, string> };
+  // Fastify's own default error/not-found responses ({statusCode, error:
+  // "<status text>", message}) - only reachable if a request fails before
+  // this app's error handler is registered, or on a route that doesn't exist.
+  message?: string;
+}
+
+function errorMessageFrom<T>(body: ApiEnvelope<T>): string {
+  if (body.error && typeof body.error === "object" && typeof body.error.message === "string" && body.error.message) {
+    return body.error.message;
+  }
+  if (typeof body.message === "string" && body.message) return body.message;
+  return "Request failed";
 }
 
 export class ApiError extends Error {
-  constructor(public code: string, message: string) {
+  constructor(public code: string, message: string, public fields?: Record<string, string>) {
     super(message);
   }
 }
@@ -126,7 +145,7 @@ async function requestEnvelope<T>(path: string, options: RequestInit = {}, token
         return requestEnvelope<T>(path, options, newAccessToken, true);
       }
     }
-    throw new ApiError(body.error?.code ?? "unknown_error", body.error?.message ?? "Request failed");
+    throw new ApiError(body.error?.code ?? "unknown_error", errorMessageFrom(body), body.error?.fields);
   }
 
   return body;
@@ -160,10 +179,10 @@ async function requestText(path: string, token: string, isRetry = false): Promis
 // implementation". XMLHttpRequest is untouched by that override and still
 // goes through React Native's native networking module, which handles that
 // shape correctly.
-function xhrRequest(path: string, formData: FormData, token: string): Promise<{ status: number; text: string }> {
+function xhrRequest(path: string, formData: FormData, token: string, method: string): Promise<{ status: number; text: string }> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${API_URL}${path}`);
+    xhr.open(method, `${API_URL}${path}`);
     xhr.setRequestHeader("Authorization", `Bearer ${token}`);
     xhr.onload = () => resolve({ status: xhr.status, text: xhr.responseText });
     xhr.onerror = () => reject(new ApiError("network_error", "Upload failed"));
@@ -171,8 +190,8 @@ function xhrRequest(path: string, formData: FormData, token: string): Promise<{ 
   });
 }
 
-async function requestMultipart<T>(path: string, formData: FormData, token: string, isRetry = false): Promise<T> {
-  const { status, text } = await xhrRequest(path, formData, token);
+async function requestMultipart<T>(path: string, formData: FormData, token: string, method = "POST", isRetry = false): Promise<T> {
+  const { status, text } = await xhrRequest(path, formData, token, method);
   let body: ApiEnvelope<T>;
   try {
     body = JSON.parse(text);
@@ -183,10 +202,10 @@ async function requestMultipart<T>(path: string, formData: FormData, token: stri
     if (!isRetry && isExpiredAccessToken(token, body)) {
       const newAccessToken = await refreshAccessToken();
       if (newAccessToken) {
-        return requestMultipart<T>(path, formData, newAccessToken, true);
+        return requestMultipart<T>(path, formData, newAccessToken, method, true);
       }
     }
-    throw new ApiError(body.error?.code ?? "unknown_error", body.error?.message ?? "Request failed");
+    throw new ApiError(body.error?.code ?? "unknown_error", errorMessageFrom(body));
   }
   return body.data as T;
 }
@@ -223,6 +242,11 @@ export interface CurrentUser {
   hasSeenOnboardingTour: boolean;
   // True once the user tapped Skip on the "Complete your profile" prompt.
   hasDismissedProfilePrompt: boolean;
+  // False only for a brand-new account that hasn't played the animated
+  // mascot welcome yet - true (including by default for every pre-existing
+  // account) once it has, so it only ever plays the once, for a genuinely
+  // new registration.
+  hasSeenMascotWelcome: boolean;
 }
 
 export interface TeacherOnboardingTask {
@@ -277,6 +301,10 @@ export interface StudentAssignmentView {
   id: string;
   title: string;
   questions: AssignmentQuestion[];
+  // Additional questions generated just for this student (on top of, never
+  // instead of, `questions`) - empty when personalisation is off, the
+  // student has no approved suggestion yet, or they opted out.
+  personalisedQuestions: AssignmentQuestion[];
   publishedAt: string | null;
   submissionStatus: StudentSubmissionStatus;
   grade: { finalScore: number | null; finalFeedback: string | null; releasedAt: string | null } | null;
@@ -442,6 +470,17 @@ export interface AttainmentReportRecord {
   // actually address. Coverage, not performance - see attainment-reports.ts.
   objectiveCoverage: { objective: string; stage: string | null; outputType: string }[];
   stageCoverage: { stage: string; count: number }[];
+  // Real benchmark-vs-actual scoring, built on the topic's materialized
+  // TopicObjective rows - empty for a topic with none yet (falls back to
+  // objectiveCoverage above, unchanged).
+  objectiveAttainment: {
+    id: string;
+    text: string;
+    bloomsStage: string | null;
+    benchmarkPercent: number;
+    classAveragePercent: number | null;
+    met: boolean | null;
+  }[];
 }
 
 export interface SubjectAttainmentReport {
@@ -691,6 +730,21 @@ export interface ClassSection {
   joinCode: string;
 }
 
+// A class in "Recently deleted" - restorable until purgeAt, after which the
+// backend hard-deletes it (backend/src/lib/class-lifecycle.ts).
+export interface DeletedClassSection {
+  id: string;
+  className: string;
+  sectionName: string;
+  academicYearLabel: string;
+  deletedAt: string;
+  purgeAt: string;
+  exportedAt: string | null;
+  studentCount: number;
+  topicCount: number;
+  assignmentCount: number;
+}
+
 // weekday is ISO: 1=Mon ... 7=Sun. startTime/endTime are 24h "HH:mm".
 export interface TimetableSlot {
   id: string;
@@ -753,6 +807,15 @@ export interface SchoolLimits {
   subjectLimit: number;
 }
 
+// The caller's own school/workspace - just enough to show its current name
+// back to the teacher (e.g. before they request a change to it).
+export interface SchoolSummary {
+  id: string;
+  name: string;
+  board: string;
+  accountType: string;
+}
+
 // status is one of: pending, approved, rejected. changeType is one of: add, replace.
 export interface ClassChangeRequest {
   id: string;
@@ -766,6 +829,20 @@ export interface ClassChangeRequest {
   requestedAt: string;
   decidedAt: string | null;
   note: string | null;
+}
+
+// Same request/approval-only shape as ClassChangeRequest - a workspace's
+// display name (School.name) has no self-service edit path either.
+export interface SchoolNameChangeTicket {
+  id: string;
+  schoolId: string;
+  currentName: string;
+  requestedName: string;
+  status: string;
+  raisedByUserId: string;
+  decidedAt: string | null;
+  note: string | null;
+  createdAt: string;
 }
 
 // status is one of: pending, approved, rejected
@@ -913,6 +990,10 @@ export interface ContextSource {
   extractionError: string | null;
   // Credit line for images / PDFs found by AI research (null for uploads).
   attribution: string | null;
+  // A human title for this source when one could be found - an uploaded
+  // file's filename, a scraped page's <title>/og:title, or a YouTube video's
+  // title. Null when nothing better than the raw type/URL is available.
+  citation: string | null;
 }
 
 export interface GenerationSourceSelection {
@@ -1027,6 +1108,11 @@ export interface Generation {
   // only meaningful when classCount > 1. See stages[].sessions in the
   // lesson_plan content and POST /generations/:id/session-progress.
   completedSessions: number[];
+  // Finer-grained, available on every lesson plan regardless of classCount -
+  // opaque keys built as "<stageIndex>.<activityIndex>" for an activity or
+  // "<stageIndex>.<activityIndex>.<lineIndex>" for one of its description
+  // bullets. See POST /generations/:id/lesson-item-progress.
+  completedLessonItems: string[];
   // Presentation flow only - null for every other outputType and for
   // presentations generated before this flow existed (those still render via
   // PresentationView.tsx's legacy layout fallback).
@@ -1082,6 +1168,9 @@ export interface CreateAssignmentDraftInput {
   // Empty/omitted = the AI may use any format.
   questionTypes?: QuestionType[];
   focusPrompt?: string;
+  // Ignored (forced false) for a multi-topic draft - personalisation
+  // requires a single topic.
+  personalisationEnabled?: boolean;
 }
 
 export interface Assignment {
@@ -1111,6 +1200,12 @@ export interface PersonalisationSuggestion {
   status: PersonalisationStatus;
   appliedMix: Record<string, number> | null;
   decidedAt: string | null;
+  // The additional, difficulty-matched questions generated for this student
+  // (on top of, never instead of, the assignment's own question set) -
+  // regenerated to match appliedMix if the teacher overrides the suggested
+  // mix; null once opted out. Each carries its own modelAnswer since there's
+  // no separate per-student AnswerKey row for these.
+  extraQuestions: (AssignmentQuestion & { modelAnswer: string })[] | null;
 }
 
 export interface SubmissionRecord {
@@ -1249,6 +1344,22 @@ export interface ClassAnalytics {
   students: ({ studentStubId: string; fullName: string; averageScore: number; submissionCount: number } & StudentPicture)[];
   struggleAreas: { assignmentId: string; title: string; averageScore: number }[];
   weeklyTrend: { label: string; score: number | null }[];
+  scoreBands: { above80: number; between60And80: number; below60: number };
+}
+
+// Narrows a Performance report to one subject, or one specific topic within
+// it - omit both for the original whole-class-section view.
+export interface AnalyticsScope {
+  subject?: string;
+  topicId?: string;
+}
+
+function scopeQueryString(scope: AnalyticsScope): string {
+  const params = new URLSearchParams();
+  if (scope.topicId) params.set("topicId", scope.topicId);
+  else if (scope.subject) params.set("subject", scope.subject);
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
 }
 
 export interface StudentAnalytics extends StudentPicture {
@@ -1256,6 +1367,18 @@ export interface StudentAnalytics extends StudentPicture {
   fullName: string;
   averageScore: number | null;
   history: { assignmentTitle: string; score: number | null; submittedAt: string }[];
+  insights: {
+    // Each only has entries once a bucket has enough graded questions behind
+    // it - objective needs AI-generated, objective-tagged assignments;
+    // difficulty and topic work for any graded history.
+    byObjective: { text: string; averagePercent: number; questionCount: number }[];
+    byDifficulty: { difficulty: "easy" | "medium" | "hard"; averagePercent: number; questionCount: number }[];
+    byTopic: { topicName: string; averagePercent: number; questionCount: number }[];
+    strongest: { kind: "objective" | "topic" | "difficulty"; label: string; averagePercent: number }[];
+    weakest: { kind: "objective" | "topic" | "difficulty"; label: string; averagePercent: number }[];
+    aiSummary: string;
+    aiNextStep: string;
+  };
 }
 
 export interface TeacherDashboardActivityItem {
@@ -1421,6 +1544,8 @@ export const api = {
     request<{ hasSeenOnboardingTour: boolean }>("/auth/me/onboarding-tour-seen", { method: "POST" }, token),
   dismissProfilePrompt: (token: string) =>
     request<{ hasDismissedProfilePrompt: boolean }>("/auth/me/profile-prompt-dismissed", { method: "POST" }, token),
+  markMascotWelcomeSeen: (token: string) =>
+    request<{ hasSeenMascotWelcome: boolean }>("/auth/me/mascot-welcome-seen", { method: "POST" }, token),
   getOnboardingTasks: (token: string) => request<TeacherOnboardingTasksResult>("/me/onboarding-tasks", {}, token),
   getSchoolLeaderboard: (token: string) => request<SchoolLeaderboardResult>("/me/school-leaderboard", {}, token),
   myPhotoUrl: (token: string) => `${API_URL}/auth/me/photo?token=${encodeURIComponent(token)}`,
@@ -1557,7 +1682,7 @@ export const api = {
   getMyTimetable: (token: string) => request<TimetableSlot[]>("/calendar/timetable", {}, token),
   createCalendarTask: (token: string, input: { title: string; taskDate: string; dueTime?: string | null }) =>
     request<CalendarTask & { taskDate: string }>("/calendar/tasks", { method: "POST", body: JSON.stringify(input) }, token),
-  updateCalendarTask: (token: string, id: string, input: { isDone?: boolean; title?: string }) =>
+  updateCalendarTask: (token: string, id: string, input: { isDone?: boolean; title?: string; dueTime?: string | null; taskDate?: string }) =>
     request<CalendarTask & { taskDate: string }>(`/calendar/tasks/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
   deleteCalendarTask: (token: string, id: string) => request<{ id: string }>(`/calendar/tasks/${id}`, { method: "DELETE" }, token),
   // Individual teachers manage their own timetable through the same school
@@ -1594,8 +1719,34 @@ export const api = {
     request<Subject>(`/schools/${schoolId}/subjects`, { method: "POST", body: JSON.stringify(input) }, token),
   assignTeacherToClassSection: (token: string, schoolId: string, classSectionId: string, teacherUserId: string) =>
     request<{ id: string }>(`/schools/${schoolId}/class-sections/${classSectionId}/teachers`, { method: "POST", body: JSON.stringify({ teacherUserId }) }, token),
+  // Class deletion: export zip -> delete (restorable for 30 days) -> permanent
+  // delete. See backend/src/routes/class-lifecycle.ts.
+  classExportUrl: (schoolId: string, classSectionId: string) =>
+    `${API_URL}/schools/${schoolId}/class-sections/${classSectionId}/export`,
+  listDeletedClassSections: (token: string, schoolId: string) =>
+    request<DeletedClassSection[]>(`/schools/${schoolId}/class-sections/deleted`, {}, token),
+  deleteClassSection: (token: string, schoolId: string, classSectionId: string, confirmName: string) =>
+    request<{ id: string; deletedAt: string; purgeAt: string }>(
+      `/schools/${schoolId}/class-sections/${classSectionId}/delete`,
+      { method: "POST", body: JSON.stringify({ confirmName }) },
+      token
+    ),
+  restoreClassSection: (token: string, schoolId: string, classSectionId: string) =>
+    request<{ id: string }>(`/schools/${schoolId}/class-sections/${classSectionId}/restore`, { method: "POST" }, token),
+  permanentlyDeleteClassSection: (token: string, schoolId: string, classSectionId: string, input: { confirmName: string; skipBackup?: boolean }) =>
+    request<{ deleted: boolean }>(
+      `/schools/${schoolId}/class-sections/${classSectionId}/permanent-delete`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    ),
   getSchoolLimits: (token: string, schoolId: string) =>
     request<SchoolLimits>(`/schools/${schoolId}/limits`, {}, token),
+  // Returns just the caller's own school, wrapped in an array server-side -
+  // see backend/src/routes/schools.ts's GET /schools.
+  getMySchool: async (token: string): Promise<SchoolSummary | null> => {
+    const schools = await request<SchoolSummary[]>("/schools", {}, token);
+    return schools[0] ?? null;
+  },
 
   getFormatTemplates: (token: string, schoolId: string) =>
     request<{ generation: SchoolFormatTemplate | null; attainmentReport: SchoolFormatTemplate | null }>(
@@ -1639,6 +1790,9 @@ export const api = {
     schoolId: string,
     input: { changeType: "add" | "replace"; targetClassSectionId?: string; requestedClassName: string; requestedSectionName: string; note?: string }
   ) => request<ClassChangeRequest>(`/schools/${schoolId}/class-change-requests`, { method: "POST", body: JSON.stringify(input) }, token),
+
+  requestSchoolNameChange: (token: string, schoolId: string, input: { requestedName: string; note?: string }) =>
+    request<SchoolNameChangeTicket>(`/schools/${schoolId}/name-change-tickets`, { method: "POST", body: JSON.stringify(input) }, token),
 
   listClassJoinRequests: (token: string, classSectionId: string, params: { status?: string } = {}) =>
     request<ClassJoinRequest[]>(`/class-sections/${classSectionId}/join-requests${toQueryString(params)}`, {}, token),
@@ -1723,6 +1877,24 @@ export const api = {
     formData.append("body", body);
     formData.append("file", { uri: photo.uri, name: photo.name, type: photo.mimeType } as unknown as Blob);
     return requestMultipart<Observation>(`/topics/${topicId}/observations`, formData, token);
+  },
+  updateTopicObservation: (
+    token: string,
+    topicId: string,
+    observationId: string,
+    input: { body?: string; removePhoto?: boolean; photo?: { uri: string; name: string; mimeType: string } }
+  ) => {
+    if (!input.photo) {
+      return request<Observation>(
+        `/topics/${topicId}/observations/${observationId}`,
+        { method: "PATCH", body: JSON.stringify({ body: input.body, removePhoto: input.removePhoto }) },
+        token
+      );
+    }
+    const formData = new FormData();
+    if (input.body !== undefined) formData.append("body", input.body);
+    formData.append("file", { uri: input.photo.uri, name: input.photo.name, type: input.photo.mimeType } as unknown as Blob);
+    return requestMultipart<Observation>(`/topics/${topicId}/observations/${observationId}`, formData, token, "PATCH");
   },
 
   importTopicContext: (token: string, topicId: string, input: { sourceTopicId: string; contextSourceIds?: string[] }) =>
@@ -1815,6 +1987,8 @@ export const api = {
   retryGeneration: (token: string, id: string) => request<Generation>(`/generations/${id}/retry`, { method: "POST" }, token),
   setSessionProgress: (token: string, id: string, session: number, completed: boolean) =>
     request<Generation>(`/generations/${id}/session-progress`, { method: "POST", body: JSON.stringify({ session, completed }) }, token),
+  setLessonItemProgress: (token: string, id: string, itemKey: string, completed: boolean) =>
+    request<Generation>(`/generations/${id}/lesson-item-progress`, { method: "POST", body: JSON.stringify({ itemKey, completed }) }, token),
   publishGeneration: (token: string, id: string, studentStubIds?: string[]) =>
     request<Generation>(`/generations/${id}/publish`, { method: "POST", body: JSON.stringify({ studentStubIds }) }, token),
   unpublishGeneration: (token: string, id: string) => request<Generation>(`/generations/${id}/unpublish`, { method: "POST" }, token),
@@ -1891,10 +2065,18 @@ export const api = {
     request<AnswerKeyEntry[]>(`/assignments/${assignmentId}/answer-key`, {}, token),
   updateAnswerKeyEntry: (token: string, id: string, input: { teacherVerifiedAnswer: string; marks?: number }) =>
     request<AnswerKeyEntry>(`/answer-key/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
-  getClassAnalytics: (token: string, classSectionId: string) =>
-    request<ClassAnalytics>(`/analytics/ai/class/${classSectionId}`, {}, token),
-  getStudentAnalytics: (token: string, studentStubId: string) =>
-    request<StudentAnalytics>(`/analytics/ai/student/${studentStubId}`, {}, token),
+  getClassAnalytics: (token: string, classSectionId: string, scope: AnalyticsScope = {}) =>
+    request<ClassAnalytics>(`/analytics/ai/class/${classSectionId}${scopeQueryString(scope)}`, {}, token),
+  getStudentAnalytics: (token: string, studentStubId: string, scope: AnalyticsScope = {}) =>
+    request<StudentAnalytics>(`/analytics/ai/student/${studentStubId}${scopeQueryString(scope)}`, {}, token),
+  classPerformancePdfUrl: (classSectionId: string, scope: AnalyticsScope = {}) =>
+    `${API_URL}/analytics/ai/class/${classSectionId}/pdf${scopeQueryString(scope)}`,
+  classPerformanceCsvUrl: (classSectionId: string, scope: AnalyticsScope = {}) =>
+    `${API_URL}/analytics/ai/class/${classSectionId}/csv${scopeQueryString(scope)}`,
+  studentPerformancePdfUrl: (studentStubId: string, scope: AnalyticsScope = {}) =>
+    `${API_URL}/analytics/ai/student/${studentStubId}/pdf${scopeQueryString(scope)}`,
+  updateTopicObjectiveBenchmark: (token: string, objectiveId: string, benchmarkPercent: number) =>
+    request<{ id: string; benchmarkPercent: number }>(`/topic-objectives/${objectiveId}`, { method: "PATCH", body: JSON.stringify({ benchmarkPercent }) }, token),
   getTeacherDashboardSummary: (token: string) =>
     request<TeacherDashboardSummary>("/dashboard/teacher-summary", {}, token),
   // date ("YYYY-MM-DD") and time ("HH:mm") are the device's local wall clock,

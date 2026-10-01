@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
 import { PLATFORM_ADMIN_ROLE } from "../lib/roles";
+import { Validator } from "../lib/validation";
 
 // Billing plans, attached at Trust level (Trust.planId). See
 // Docs/superpowers/plans/2026-09-09-individual-teacher-onboarding-and-
@@ -36,19 +37,11 @@ export async function planRoutes(app: FastifyInstance) {
     { onRequest: [app.authenticate, requireRoles(PLATFORM_ADMIN_ROLE)] },
     async (request, reply) => {
       const body = request.body ?? ({} as CreatePlanBody);
-      const name = body.name?.trim();
-      if (
-        !name ||
-        !Number.isFinite(body.creditsPerTeacherSeat) ||
-        body.creditsPerTeacherSeat < 0 ||
-        !Number.isFinite(body.teacherSeatLimit) ||
-        body.teacherSeatLimit < 1
-      ) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: "name, a non-negative creditsPerTeacherSeat, and a teacherSeatLimit of at least 1 are required" },
-        });
-      }
+      const v = new Validator();
+      const name = v.label("name", body.name, "Plan name", true, 60);
+      const credits = v.number("creditsPerTeacherSeat", body.creditsPerTeacherSeat, "Credits per teacher seat", { required: true, integer: true, min: 0, max: 10_000_000 });
+      const seats = v.number("teacherSeatLimit", body.teacherSeatLimit, "Teacher seat limit", { required: true, integer: true, min: 1, max: 100_000 });
+      if (v.hasErrors || !name || credits === undefined || seats === undefined) return v.reject(reply);
 
       const plan = await prisma.$transaction(async (tx) => {
         if (body.isDefault) {
@@ -57,8 +50,8 @@ export async function planRoutes(app: FastifyInstance) {
         return tx.plan.create({
           data: {
             name,
-            creditsPerTeacherSeat: Math.round(body.creditsPerTeacherSeat),
-            teacherSeatLimit: Math.round(body.teacherSeatLimit),
+            creditsPerTeacherSeat: credits,
+            teacherSeatLimit: seats,
             isDefault: !!body.isDefault,
           },
         });
@@ -78,12 +71,11 @@ export async function planRoutes(app: FastifyInstance) {
       }
 
       const body = request.body ?? ({} as UpdatePlanBody);
-      if (body.creditsPerTeacherSeat !== undefined && (!Number.isFinite(body.creditsPerTeacherSeat) || body.creditsPerTeacherSeat < 0)) {
-        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "creditsPerTeacherSeat must be a non-negative number" } });
-      }
-      if (body.teacherSeatLimit !== undefined && (!Number.isFinite(body.teacherSeatLimit) || body.teacherSeatLimit < 1)) {
-        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "teacherSeatLimit must be at least 1" } });
-      }
+      const v = new Validator();
+      const updatedName = body.name !== undefined ? v.label("name", body.name, "Plan name", true, 60) : undefined;
+      const updatedCredits = body.creditsPerTeacherSeat !== undefined ? v.number("creditsPerTeacherSeat", body.creditsPerTeacherSeat, "Credits per teacher seat", { required: true, integer: true, min: 0, max: 10_000_000 }) : undefined;
+      const updatedSeats = body.teacherSeatLimit !== undefined ? v.number("teacherSeatLimit", body.teacherSeatLimit, "Teacher seat limit", { required: true, integer: true, min: 1, max: 100_000 }) : undefined;
+      if (v.hasErrors) return v.reject(reply);
 
       const plan = await prisma.$transaction(async (tx) => {
         if (body.isDefault) {
@@ -92,9 +84,9 @@ export async function planRoutes(app: FastifyInstance) {
         return tx.plan.update({
           where: { id: existing.id },
           data: {
-            name: body.name?.trim() ?? undefined,
-            creditsPerTeacherSeat: body.creditsPerTeacherSeat !== undefined ? Math.round(body.creditsPerTeacherSeat) : undefined,
-            teacherSeatLimit: body.teacherSeatLimit !== undefined ? Math.round(body.teacherSeatLimit) : undefined,
+            name: updatedName,
+            creditsPerTeacherSeat: updatedCredits,
+            teacherSeatLimit: updatedSeats,
             isDefault: body.isDefault ?? undefined,
           },
         });

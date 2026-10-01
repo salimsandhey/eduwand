@@ -161,6 +161,7 @@ export function StudentHomeScreen({ navigation }: Props) {
     navigation.navigate("StudentAssignmentSubmit", {
       assignmentId: assignment.id,
       questions: assignment.questions,
+      personalisedQuestions: assignment.personalisedQuestions,
       title: assignment.title,
     });
   }

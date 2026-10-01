@@ -50,6 +50,9 @@ import {
   InterviewRecord,
 } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
+import { FieldError } from "../../components/FieldError";
+import { useFormErrors } from "../../hooks/useForm";
+import { rules } from "../../utils/validation";
 
 const ACTIVITY_ICON: Record<ActivityType, keyof typeof Ionicons.glyphMap> = {
   stage_change: "swap-horizontal-outline",
@@ -329,6 +332,24 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
   const [noteBody, setNoteBody] = useState("");
   const [noteFocused, setNoteFocused] = useState(false);
   const [isAddingNote, setIsAddingNote] = useState(false);
+
+  // Rules mirror backend/src/lib/validation.ts. Notes are only length-capped
+  // (an empty one just leaves its button disabled); the lost reason and the
+  // interview scores are checked on submit.
+  const lostV = useFormErrors({ lostReason: lostReasonInput }, { lostReason: rules.note("Reason", true, 500) });
+  const interviewV = useFormErrors(
+    { score: interviewScoreInput, maxScore: interviewMaxScoreInput },
+    {
+      maxScore: rules.number("Maximum score", 1, 10000, false),
+      score: (value) => {
+        const basic = rules.number("Score", 0, 10000, false)(value);
+        if (basic) return basic;
+        const max = Number(interviewMaxScoreInput);
+        if (value.trim() && interviewMaxScoreInput.trim() && Number.isFinite(max) && Number(value) > max) return "Score cannot be more than the maximum";
+        return null;
+      },
+    }
+  );
 
   // Create Task is a popup rather than an inline expanding box - same
   // decoupled backdrop-fade / sheet-slide animation as the Timeline modal
@@ -624,6 +645,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
 
   async function saveInterview() {
     if (!accessToken || !interviewDateInput || !interviewNotesInput.trim()) return;
+    if (!interviewV.submit()) return;
     setIsSavingInterview(true);
     try {
       await api.createInterview(accessToken, enquiryId, {
@@ -636,6 +658,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
       setInterviewScoreInput("");
       setInterviewMaxScoreInput("");
       setInterviewNotesInput("");
+      interviewV.clear();
       setShowInterviewForm(false);
       await load();
     } catch (err) {
@@ -660,7 +683,8 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
   }
 
   async function confirmLostReason() {
-    if (!accessToken || !lostReasonInput.trim()) return;
+    if (!accessToken) return;
+    if (!lostV.submit()) return;
     try {
       await api.updateEnquiry(accessToken, enquiryId, { status: "lost", lostReason: lostReasonInput.trim() });
       setShowLostReasonFor(false);
@@ -887,6 +911,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
               onChangeText={setVisitNote}
               placeholder="Visit outcome / next step…"
               placeholderTextColor={colors.textMuted}
+              maxLength={2000}
               multiline
               editable={!locked}
             />
@@ -1031,26 +1056,32 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
               <TextInput
                 style={[styles.formInput, { flex: 1, backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
                 value={interviewScoreInput}
-                onChangeText={setInterviewScoreInput}
+                onChangeText={(t) => setInterviewScoreInput(t.replace(/[^0-9.]/g, "").slice(0, 7))}
+                onBlur={() => interviewV.blur("score")}
                 placeholder="Score"
                 placeholderTextColor={colors.textMuted}
-                keyboardType="numeric"
+                keyboardType="decimal-pad"
+                maxLength={7}
               />
               <TextInput
                 style={[styles.formInput, { flex: 1, backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
                 value={interviewMaxScoreInput}
-                onChangeText={setInterviewMaxScoreInput}
+                onChangeText={(t) => setInterviewMaxScoreInput(t.replace(/[^0-9.]/g, "").slice(0, 7))}
+                onBlur={() => interviewV.blur("maxScore")}
                 placeholder="Out of"
                 placeholderTextColor={colors.textMuted}
-                keyboardType="numeric"
+                keyboardType="decimal-pad"
+                maxLength={7}
               />
             </View>
+            <FieldError message={interviewV.error("score") ?? interviewV.error("maxScore")} />
             <TextInput
               style={[styles.stepNoteInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
               value={interviewNotesInput}
               onChangeText={setInterviewNotesInput}
               placeholder="Observations…"
               placeholderTextColor={colors.textMuted}
+              maxLength={2000}
               multiline
             />
             <Pressable
@@ -1149,6 +1180,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
               onChangeText={setVisitNote}
               placeholder="Add an update…"
               placeholderTextColor={colors.textMuted}
+              maxLength={2000}
               multiline
               editable={!locked}
             />
@@ -1575,14 +1607,19 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
               <View style={[styles.inlineForm, { backgroundColor: colors.surfaceRaised, borderColor: lostReasonFocused ? colors.accent : colors.border }]}>
                 <Text style={[styles.formLabel, { color: colors.textSecondary }]}>Reason for marking this lead as lost</Text>
                 <TextInput
-                  style={[styles.formInput, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
+                  style={[styles.formInput, { backgroundColor: colors.surface, borderColor: lostV.error("lostReason") ? colors.danger : colors.border, color: colors.textPrimary }]}
                   value={lostReasonInput}
                   onChangeText={setLostReasonInput}
                   placeholder="Add a short reason"
                   placeholderTextColor={colors.textMuted}
+                  maxLength={500}
                   onFocus={() => setLostReasonFocused(true)}
-                  onBlur={() => setLostReasonFocused(false)}
+                  onBlur={() => {
+                    setLostReasonFocused(false);
+                    lostV.blur("lostReason");
+                  }}
                 />
+                <FieldError message={lostV.error("lostReason")} />
                 <Pressable
                   onPress={confirmLostReason}
                   style={({ pressed }) => [styles.smallButton, { backgroundColor: colors.accent, alignSelf: "flex-start" }, pressed && { opacity: pressedOpacity }]}
@@ -1800,6 +1837,7 @@ export function EnquiryDetailScreen({ route, navigation }: Props) {
                   onChangeText={setNoteBody}
                   placeholder="Add an internal note..."
                   placeholderTextColor={colors.textMuted}
+                  maxLength={2000}
                   multiline
                   onFocus={() => setNoteFocused(true)}
                   onBlur={() => setNoteFocused(false)}

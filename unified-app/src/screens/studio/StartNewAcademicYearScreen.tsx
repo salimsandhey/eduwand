@@ -11,6 +11,9 @@ import { Screen } from "../../components/Screen";
 import { DatePicker, parseISODate } from "../../components/DatePicker";
 import { api, AcademicYear, ClassSection } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
+import { FieldError } from "../../components/FieldError";
+import { useFormErrors } from "../../hooks/useForm";
+import { rules } from "../../utils/validation";
 
 // Manual, teacher-triggered rollover to a new academic year - never
 // automatic (no institutional school auto-rolls either, see
@@ -68,10 +71,28 @@ export function StartNewAcademicYearScreen({ navigation }: Props) {
     }, [load])
   );
 
-  const canSave = !!currentYear && label.trim() && startDate && endDate && parseISODate(endDate) > parseISODate(startDate);
+  // Rules mirror backend/src/lib/validation.ts and the academic-year check in
+  // routes/academic-structure.ts; field names match the API's.
+  const v = useFormErrors(
+    { label, startDate, endDate },
+    {
+      label: rules.label("Session label", true, 20),
+      startDate: rules.date("Start date"),
+      endDate: (value) => {
+        const basic = rules.date("End date")(value);
+        if (basic) return basic;
+        if (startDate && !rules.date("")(startDate)) {
+          if (parseISODate(value) <= parseISODate(startDate)) return "End date must be after the start date";
+          if (parseISODate(value).getTime() - parseISODate(startDate).getTime() > 2 * 366 * 24 * 60 * 60 * 1000) return "A session cannot be longer than two years";
+        }
+        return null;
+      },
+    }
+  );
 
   async function submit() {
-    if (!accessToken || !user?.schoolId || !currentYear || !canSave) return;
+    if (!accessToken || !user?.schoolId || !currentYear) return;
+    if (!v.submit()) return;
     setIsSaving(true);
     setError(null);
     try {
@@ -83,7 +104,7 @@ export function StartNewAcademicYearScreen({ navigation }: Props) {
       });
       setSubmitted({ label: label.trim(), carried: currentClasses.length });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start the new academic year");
+      if (!v.applyServerError(err)) setError(err instanceof Error ? err.message : "Failed to start the new academic year");
     } finally {
       setIsSaving(false);
     }
@@ -125,18 +146,38 @@ export function StartNewAcademicYearScreen({ navigation }: Props) {
 
               <Text style={[styles.label, { color: colors.textPrimary }]}>Session label</Text>
               <TextInput
-                style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]}
+                style={[styles.input, { color: colors.textPrimary, borderColor: v.error("label") ? colors.danger : colors.border }]}
                 placeholder="e.g. 2027-2028"
                 placeholderTextColor={colors.textMuted}
                 value={label}
                 onChangeText={setLabel}
+                onBlur={() => v.blur("label")}
+                maxLength={20}
               />
+              <FieldError message={v.error("label")} />
 
               <Text style={[styles.label, { color: colors.textPrimary }]}>Starts</Text>
-              <DatePicker value={startDate} onChange={setStartDate} placeholder="Select start date" />
+              <DatePicker
+                value={startDate}
+                onChange={(d) => {
+                  setStartDate(d);
+                  v.blur("startDate");
+                }}
+                placeholder="Select start date"
+              />
+              <FieldError message={v.error("startDate")} />
 
               <Text style={[styles.label, { color: colors.textPrimary }]}>Ends</Text>
-              <DatePicker value={endDate} onChange={setEndDate} placeholder="Select end date" minimumDate={startDate ? parseISODate(startDate) : undefined} />
+              <DatePicker
+                value={endDate}
+                onChange={(d) => {
+                  setEndDate(d);
+                  v.blur("endDate");
+                }}
+                placeholder="Select end date"
+                minimumDate={startDate ? parseISODate(startDate) : undefined}
+              />
+              <FieldError message={v.error("endDate")} />
 
               <View style={[styles.noticeBox, { backgroundColor: colors.accentSoft }]}>
                 <Ionicons name="information-circle-outline" size={16} color={colors.accent} />
@@ -151,8 +192,8 @@ export function StartNewAcademicYearScreen({ navigation }: Props) {
 
               <Pressable
                 onPress={submit}
-                disabled={!canSave || isSaving}
-                style={[styles.saveButton, { backgroundColor: colors.accent }, (!canSave || isSaving) && { opacity: 0.5 }]}
+                disabled={isSaving}
+                style={[styles.saveButton, { backgroundColor: colors.accent }, isSaving && { opacity: 0.5 }]}
                 accessibilityRole="button"
               >
                 {isSaving ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.saveButtonText, { color: colors.accentOn }]}>Start new session</Text>}

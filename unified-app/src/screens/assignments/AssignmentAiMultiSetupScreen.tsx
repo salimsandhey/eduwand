@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform } from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, Switch } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useAiGenerating } from "../../context/AiAssistantGlowContext";
+import { useTricklingProgress } from "../../hooks/useTricklingProgress";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, ClassSection, Topic, QuestionDifficulty, QuestionType } from "../../api/client";
@@ -37,6 +38,23 @@ function classLabel(c: { className: string; sectionName: string }): string {
   return `${capitalizeFirst(c.className)} ${capitalizeFirst(c.sectionName)}`;
 }
 
+// Proportionally rescales a difficulty split to a new total, preserving
+// whatever easy/medium/hard ratio it implies (rounding drift is absorbed by
+// medium). Shared by the mix's initial default and selectQuestionCount, so
+// both can never disagree about what "rescaled to N" means.
+function scaleMix(prev: Record<QuestionDifficulty, number>, count: number): Record<QuestionDifficulty, number> {
+  const total = prev.easy + prev.medium + prev.hard;
+  if (total === 0) return { easy: 0, medium: count, hard: 0 };
+  const scaled = {
+    easy: Math.round((prev.easy / total) * count),
+    medium: Math.round((prev.medium / total) * count),
+    hard: Math.round((prev.hard / total) * count),
+  };
+  const drift = count - (scaled.easy + scaled.medium + scaled.hard);
+  scaled.medium += drift;
+  return scaled;
+}
+
 export function AssignmentAiMultiSetupScreen({ navigation }: Props) {
   const { accessToken } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
@@ -50,12 +68,16 @@ export function AssignmentAiMultiSetupScreen({ navigation }: Props) {
   const [selectedTopicIds, setSelectedTopicIds] = useState<string[]>([]);
 
   const [questionCount, setQuestionCount] = useState(5);
-  const [mix, setMix] = useState<Record<QuestionDifficulty, number>>({ easy: 1, medium: 1, hard: 1 });
+  // Must always sum to questionCount from the very first render - see
+  // scaleMix above.
+  const [mix, setMix] = useState<Record<QuestionDifficulty, number>>(() => scaleMix({ easy: 1, medium: 1, hard: 1 }, 5));
   const [questionTypes, setQuestionTypes] = useState<QuestionType[]>([]);
   const [focusPrompt, setFocusPrompt] = useState("");
+  const [personalisationEnabled, setPersonalisationEnabled] = useState(false);
 
   const [isGenerating, setIsGenerating] = useState(false);
-  useAiGenerating(isGenerating);
+  const generateProgress = useTricklingProgress(isGenerating, "Writing your assignment questions…");
+  useAiGenerating(isGenerating, undefined, generateProgress);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -94,9 +116,12 @@ export function AssignmentAiMultiSetupScreen({ navigation }: Props) {
 
   function toggleTopic(id: string) {
     setSelectedTopicIds((prev) => {
-      if (prev.includes(id)) return prev.filter((t) => t !== id);
-      if (prev.length >= MAX_TOPICS) return prev;
-      return [...prev, id];
+      const next = prev.includes(id) ? prev.filter((t) => t !== id) : prev.length >= MAX_TOPICS ? prev : [...prev, id];
+      // Personalisation needs a single-topic assignment - drop it the moment
+      // the selection stops being exactly one topic, so it can't silently
+      // stay on and do nothing once more topics get added.
+      if (next.length !== 1) setPersonalisationEnabled(false);
+      return next;
     });
   }
 
@@ -111,18 +136,7 @@ export function AssignmentAiMultiSetupScreen({ navigation }: Props) {
 
   function selectQuestionCount(count: number) {
     setQuestionCount(count);
-    setMix((prev) => {
-      const total = prev.easy + prev.medium + prev.hard;
-      if (total === 0) return { easy: 0, medium: count, hard: 0 };
-      const scaled = {
-        easy: Math.round((prev.easy / total) * count),
-        medium: Math.round((prev.medium / total) * count),
-        hard: Math.round((prev.hard / total) * count),
-      };
-      const drift = count - (scaled.easy + scaled.medium + scaled.hard);
-      scaled.medium += drift;
-      return scaled;
-    });
+    setMix((prev) => scaleMix(prev, count));
   }
 
   function toggleQuestionType(key: QuestionType) {
@@ -144,6 +158,7 @@ export function AssignmentAiMultiSetupScreen({ navigation }: Props) {
         difficultyMix: mix,
         questionTypes,
         focusPrompt: focusPrompt.trim() || undefined,
+        personalisationEnabled: selectedTopicIds.length === 1 ? personalisationEnabled : false,
       });
       navigation.replace("AssignmentDraftReview", { assignmentId: assignment.id });
     } catch (err) {
@@ -314,11 +329,31 @@ export function AssignmentAiMultiSetupScreen({ navigation }: Props) {
                     style={[styles.focusInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
                     value={focusPrompt}
                     onChangeText={setFocusPrompt}
+                    maxLength={500}
                     placeholder="e.g. focus on real-world examples, keep language simple..."
                     placeholderTextColor={colors.textMuted}
                     multiline
                     textAlignVertical="top"
                   />
+                </View>
+
+                <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
+                  <View style={styles.toggleRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.label, { color: colors.textSecondary, marginTop: 0 }]}>Personalise for each student</Text>
+                      <Text style={[styles.meta, { color: colors.textMuted, marginBottom: 0 }]}>
+                        {selectedTopicIds.length === 1
+                          ? "Every student gets all of these questions, unchanged. On publish, this also generates an extra, difficulty-matched section for students with enough grading history to calibrate it - you review and approve each one before it's added."
+                          : "Only available for a single-topic assignment - pick just one topic above to turn this on."}
+                      </Text>
+                    </View>
+                    <Switch
+                      value={personalisationEnabled}
+                      onValueChange={setPersonalisationEnabled}
+                      disabled={selectedTopicIds.length !== 1}
+                      trackColor={{ true: colors.accent }}
+                    />
+                  </View>
                 </View>
 
                 {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
@@ -367,6 +402,7 @@ const styles = StyleSheet.create({
   mixControls: { flexDirection: "row", alignItems: "center", gap: 8 },
   mixValue: { fontSize: 16, fontWeight: "800", minWidth: 18, textAlign: "center" },
   focusInput: { minHeight: 80, borderWidth: 1, borderRadius: 10, padding: 12, fontSize: 14 },
+  toggleRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   error: { textAlign: "center", marginBottom: 12 },
   primaryButton: { flexDirection: "row", gap: 8, borderRadius: 12, height: 52, alignItems: "center", justifyContent: "center" },
   primaryButtonText: { fontSize: 15, fontWeight: "800" },

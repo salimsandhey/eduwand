@@ -106,6 +106,7 @@ model School {
   aiConversations       AiConversation[]
   subjectChangeRequests SubjectChangeRequest[]
   boardChangeTickets    BoardChangeTicket[]
+  nameChangeTickets     SchoolNameChangeTicket[]
   classChangeRequests   ClassChangeRequest[]
   timetableSlots        TimetableSlot[]
   calendarTasks         CalendarTask[]
@@ -169,6 +170,14 @@ model ClassSection {
   updatedAt      DateTime     @updatedAt @map("updated_at")
   createdBy      String?      @map("created_by") @db.Uuid
   updatedBy      String?      @map("updated_by") @db.Uuid
+  // Class deletion is two-step: "delete" only sets deletedAt (and isActive =
+  // false), keeping every row so it can be restored; lib/class-lifecycle.ts's
+  // purge hard-deletes the class and all its data once deletedAt is older than
+  // CLASS_DELETE_GRACE_DAYS, or immediately on "delete permanently". exportedAt
+  // is the last time the full-data zip was downloaded.
+  deletedAt        DateTime? @map("deleted_at")
+  deletedByUserId  String?   @map("deleted_by_user_id") @db.Uuid
+  exportedAt       DateTime? @map("exported_at")
 
   studentStubs          StudentStub[]
   lessonPlans           LessonPlan[]
@@ -180,6 +189,7 @@ model ClassSection {
   joinRequests          ClassJoinRequest[]
   timetableSlots        TimetableSlot[]
 
+  @@index([deletedAt])
   @@map("class_section")
 }
 
@@ -283,6 +293,14 @@ model AppUser {
   // the user taps Skip - never shown again after that. A user who completes
   // their profile simply stops qualifying for the prompt, no flag needed.
   hasDismissedProfilePrompt Boolean @default(false) @map("has_dismissed_profile_prompt")
+  // The animated "Hi, I'm [AI assistant]" mascot intro (mobile). Unlike
+  // hasSeenOnboardingTour, this must NOT play for every already-existing
+  // account - only a brand-new registration should ever see it, once. The
+  // column default is true ("already seen") specifically so the migration
+  // backfills every pre-existing row to skip it; only the two account-
+  // creation routes (auth-signup.ts, users.ts) explicitly set this false on
+  // insert, for a genuinely new account.
+  hasSeenMascotWelcome Boolean @default(true) @map("has_seen_mascot_welcome")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
   createdBy      String?  @map("created_by") @db.Uuid
@@ -319,6 +337,8 @@ model AppUser {
   subjectChangeDecisions     SubjectChangeRequest[]      @relation("SubjectChangeDecider")
   boardChangeTicketsRaised   BoardChangeTicket[]         @relation("BoardChangeRaiser")
   boardChangeTicketDecisions BoardChangeTicket[]         @relation("BoardChangeDecider")
+  nameChangeTicketsRaised    SchoolNameChangeTicket[]    @relation("NameChangeRaiser")
+  nameChangeTicketDecisions  SchoolNameChangeTicket[]    @relation("NameChangeDecider")
   classChangeRequests        ClassChangeRequest[]        @relation("ClassChangeRequester")
   classChangeDecisions       ClassChangeRequest[]        @relation("ClassChangeDecider")
   classJoinDecisions         ClassJoinRequest[]          @relation("ClassJoinDecider")
@@ -755,6 +775,7 @@ model StudentStub {
   assessmentResponses           AssessmentResponse[]
   receivedCommunicationMessages CommunicationMessage[]      @relation("CommunicationRecipientStudent")
   sentCommunicationMessages     CommunicationMessage[]      @relation("CommunicationSenderStudent")
+  insightCache                  StudentInsightCache[]
 
   @@index([schoolId])
   @@index([email])
@@ -820,6 +841,7 @@ model Topic {
   assignments           Assignment[]
   assessments           Assessment[]
   attainmentReport      AttainmentReport?
+  objectives            TopicObjective[]
   communicationMessages CommunicationMessage[]
   researchJobs          ContextResearchJob[]
   savedVideos           SavedVideo[]
@@ -1064,6 +1086,15 @@ model Generation {
   // auto-closed just because every class has been ticked off.
   completedSessions Int[] @default([]) @map("completed_sessions")
 
+  // Finer-grained than completedSessions above - an individual lesson_plan
+  // activity or one of its description bullets, checked off independently.
+  // Each entry is an opaque, position-based string key the client builds
+  // ("<stageIndex>.<activityIndex>" for an activity, "<stageIndex>.
+  // <activityIndex>.<lineIndex>" for one of its bullets) - never parsed
+  // server-side, just stored/toggled as-is. Works on every lesson plan, not
+  // only ones with classCount > 1.
+  completedLessonItems String[] @default([]) @map("completed_lesson_items")
+
   contextSources ContextSource[]
   assessments    Assessment[]
 
@@ -1084,6 +1115,50 @@ model AttainmentReport {
   generatedAt           DateTime @default(now()) @map("generated_at")
 
   @@map("attainment_report")
+}
+
+// Materialized lazily: the first time a single-topic AI assignment is
+// generated for a topic, whatever objectives are currently in play (from
+// collectObjectiveCoverage in attainment-reports.ts) are upserted here by
+// (topicId, text) so a question can reference a stable id and a teacher can
+// set/edit a real benchmark for it. Not populated up front when a lesson
+// plan is generated - see the design spec for why.
+model TopicObjective {
+  id               String   @id @default(uuid()) @db.Uuid
+  topicId          String   @map("topic_id") @db.Uuid
+  topic            Topic    @relation(fields: [topicId], references: [id])
+  text             String
+  bloomsStage      String?  @map("blooms_stage")
+  // Defaulted from the school's ClassBandConfig.level1MinPercent at create
+  // time only - never overwritten by a later regeneration once set/edited.
+  benchmarkPercent Float    @map("benchmark_percent")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@unique([topicId, text])
+  @@map("topic_objective")
+}
+
+// Caches GET /analytics/ai/student/:id's AI-generated summary/next-step per
+// (student, scope) so reopening the same student's detail sheet doesn't
+// re-call the model for identical input. gradedSubmissionCount is the
+// staleness check - a fresh call only happens once that count changes for
+// this scope, not on every view.
+model StudentInsightCache {
+  id                     String   @id @default(uuid()) @db.Uuid
+  studentStubId          String   @map("student_stub_id") @db.Uuid
+  studentStub            StudentStub @relation(fields: [studentStubId], references: [id])
+  // "all" | "subject:<subject>" | "topic:<topicId>" - matches the scope the
+  // Analytics tab's picker sends as subject/topicId query params.
+  scopeKey               String   @map("scope_key")
+  gradedSubmissionCount  Int      @map("graded_submission_count")
+  aiSummary              String   @map("ai_summary")
+  aiNextStep             String   @map("ai_next_step")
+  model                  String
+  computedAt             DateTime @default(now()) @map("computed_at")
+
+  @@unique([studentStubId, scopeKey])
+  @@map("student_insight_cache")
 }
 
 model LessonPlan {
@@ -1187,6 +1262,12 @@ model AnswerKey {
 // Docs/Dev/EduWand_Engineering_PRD.md section 6.4. A fresh row (and fresh
 // teacher decision) is generated per assignment - nothing here persists or
 // auto-applies to a later assignment.
+//
+// suggestedMix/appliedMix describe an ADDITIONAL personalised section
+// (extraQuestions), not a filter over the assignment's own questions - every
+// student always gets every one of the assignment's reviewed/approved
+// questions; personalisation only ever adds more, difficulty-matched
+// questions on top for students with enough grading history to calibrate it.
 model PersonalisationSuggestion {
   id              String      @id @default(uuid()) @db.Uuid
   assignmentId    String      @map("assignment_id") @db.Uuid
@@ -1197,6 +1278,14 @@ model PersonalisationSuggestion {
   reasoning       String
   status          String      @default("pending")
   appliedMix      Json?       @map("applied_mix")
+  // The actual extra, personalised questions (AssignmentQuestion[] shape,
+  // each with an inline modelAnswer - there is no per-student AnswerKey row,
+  // this IS the answer key for these) generated to match suggestedMix.
+  // Regenerated to match appliedMix if the teacher overrides it; cleared to
+  // null on opt-out. Delivered to the student ALONGSIDE the assignment's own
+  // (always-full) question set as a second, clearly separate section - never
+  // a substitute for any of the assignment's own questions.
+  extraQuestions  Json?       @map("extra_questions")
   decidedByUserId String?     @map("decided_by_user_id") @db.Uuid
   decidedBy       AppUser?    @relation(fields: [decidedByUserId], references: [id])
   decidedAt       DateTime?   @map("decided_at")
@@ -1718,6 +1807,29 @@ model BoardChangeTicket {
 
   @@index([schoolId, createdAt])
   @@map("board_change_ticket")
+}
+
+// Same request/approval-only pattern as BoardChangeTicket - a workspace's
+// display name (School.name) has no self-service edit path either, for the
+// same reason (it appears on branded PDFs/emails/reports, so a change should
+// go through a human review, not a silent teacher-initiated edit).
+model SchoolNameChangeTicket {
+  id              String    @id @default(uuid()) @db.Uuid
+  schoolId        String    @map("school_id") @db.Uuid
+  school          School    @relation(fields: [schoolId], references: [id])
+  currentName     String    @map("current_name")
+  requestedName   String    @map("requested_name")
+  status          String    @default("pending")
+  raisedByUserId  String    @map("raised_by_user_id") @db.Uuid
+  raisedBy        AppUser   @relation("NameChangeRaiser", fields: [raisedByUserId], references: [id])
+  decidedAt       DateTime? @map("decided_at")
+  decidedByUserId String?   @map("decided_by_user_id") @db.Uuid
+  decidedBy       AppUser?  @relation("NameChangeDecider", fields: [decidedByUserId], references: [id])
+  note            String?
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  @@index([schoolId, createdAt])
+  @@map("school_name_change_ticket")
 }
 
 // Classes are a fixed set too, same "request only" pattern as subjects -

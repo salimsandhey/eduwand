@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { Prisma } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { prisma } from "../lib/prisma";
+import { Validator } from "../lib/validation";
 import { startTrialForNewTeacher } from "../lib/subscriptions";
 import { BOARDS, isValidBoard } from "../lib/boards";
 import { sendEmail, sendEmailInBackground } from "../lib/email/sender";
@@ -18,7 +19,6 @@ import { generateLoginOtp, isDevOtpMode, hashOtpCode, compareOtpCode, OTP_TTL_MS
 
 const ACCESS_TOKEN_EXPIRY = "15m";
 const REFRESH_TOKEN_EXPIRY = "30d";
-const MIN_PASSWORD_LENGTH = 8;
 
 interface PendingTeacherSignup {
   fullName: string;
@@ -63,37 +63,16 @@ export async function authSignupRoutes(app: FastifyInstance) {
     { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
     async (request, reply) => {
       const body = request.body ?? ({} as SignupTeacherBody);
-      const fullName = body.fullName?.trim();
-      const email = body.email?.trim().toLowerCase();
-      const password = body.password;
-      const board = body.board?.trim();
-      const phone = body.phone?.trim() || undefined;
-      const workspaceName = body.workspaceName?.trim() || undefined;
+      const board = typeof body.board === "string" ? body.board.trim() : undefined;
 
-      if (!fullName || fullName.length < 2) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: "fullName must be at least 2 characters" },
-        });
-      }
-      if (!email || !email.includes("@")) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: "A valid email is required" },
-        });
-      }
-      if (!password || password.length < MIN_PASSWORD_LENGTH) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: `password must be at least ${MIN_PASSWORD_LENGTH} characters` },
-        });
-      }
-      if (!isValidBoard(board)) {
-        return reply.code(400).send({
-          data: null,
-          error: { code: "validation_error", message: `board must be one of ${BOARDS.join(", ")}` },
-        });
-      }
+      const v = new Validator();
+      const fullName = v.personName("fullName", body.fullName, "Full name");
+      const email = v.email("email", body.email);
+      const password = v.password("password", body.password);
+      const phone = v.phone("phone", body.phone, false);
+      const workspaceName = v.label("workspaceName", body.workspaceName, "Workspace name", false, 60);
+      if (!isValidBoard(board)) v.fail("board", `Board must be one of ${BOARDS.join(", ")}`);
+      if (v.hasErrors || !fullName || !email || !password || !board || !isValidBoard(board)) return v.reject(reply);
 
       // Answer identically whether or not the email already has an account, so this
       // form can't be used to find out who is registered. An existing account gets
@@ -225,6 +204,10 @@ export async function authSignupRoutes(app: FastifyInstance) {
             role: "teacher",
             status: "active",
             passwordHash,
+            // A genuinely new registration - the only case that should ever
+            // see the mascot welcome animation (column default is true, i.e.
+            // "already seen", for every other/pre-existing account).
+            hasSeenMascotWelcome: false,
           },
         });
 

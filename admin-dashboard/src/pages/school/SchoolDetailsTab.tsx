@@ -3,6 +3,10 @@ import { useNavigate, useOutletContext } from "react-router-dom";
 import { api } from "../../api/client";
 import { Card } from "../../components/Card";
 import type { SchoolOutletContext } from "./SchoolLayout";
+import { FieldError, invalidInput } from "../../components/FieldError";
+import { useFormErrors } from "../../hooks/useForm";
+import { rules, phoneInput } from "../../utils/validation";
+import { btn } from "../../components/buttons";
 
 // Same board list unified-app's signup screen uses (src/constants/boards.ts)
 // - keep these in sync.
@@ -28,6 +32,20 @@ export function SchoolDetailsTab() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  // Rules mirror backend/src/lib/validation.ts; field names match the API's.
+  const v = useFormErrors(
+    { name, address, principalName, principalPhone, expectedStudentStrength, classLimit, subjectLimit },
+    {
+      name: rules.label("School name", true, 120),
+      address: rules.note("Address", false, 300),
+      principalName: rules.personName("Principal name", false),
+      principalPhone: rules.phone(false, "Principal phone number"),
+      expectedStudentStrength: rules.integer("Expected students", 0, 100000, false),
+      classLimit: rules.integer("Class limit", 0, 200, false),
+      subjectLimit: rules.integer("Subject limit", 0, 200, false),
+    }
+  );
+
   const [showBoardRequest, setShowBoardRequest] = useState(false);
   const [requestedBoard, setRequestedBoard] = useState(school.board);
   const [boardRequestMessage, setBoardRequestMessage] = useState<string | null>(null);
@@ -49,13 +67,18 @@ export function SchoolDetailsTab() {
     if (!accessToken || !id) return;
     setSaveError(null);
     setSaveMessage(null);
+    if (!v.submit()) {
+      setSaveError("Please fix the highlighted fields.");
+      return;
+    }
     setIsSaving(true);
     try {
       await api.updateSchool(accessToken, id, {
-        name,
-        address: address || undefined,
-        principalName: principalName || undefined,
-        principalPhone: principalPhone || undefined,
+        name: name.trim(),
+        // Empty strings clear the saved value on the server.
+        address: address.trim(),
+        principalName: principalName.trim(),
+        principalPhone: principalPhone.trim(),
         expectedStudentStrength: expectedStudentStrength ? Number(expectedStudentStrength) : undefined,
         ...(school.accountType === "individual"
           ? {
@@ -67,7 +90,8 @@ export function SchoolDetailsTab() {
       await reload();
       setSaveMessage("Saved");
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "Failed to save");
+      if (v.applyServerError(err)) setSaveError("Please fix the highlighted fields.");
+      else setSaveError(err instanceof Error ? err.message : "Failed to save");
     } finally {
       setIsSaving(false);
     }
@@ -127,7 +151,16 @@ export function SchoolDetailsTab() {
       <div style={styles.row}>
         <div style={styles.field}>
           <label style={styles.label}>Name</label>
-          <input style={styles.input} value={name} onChange={(e) => setName(e.target.value)} disabled={!canEditSchoolProfile} />
+          <input
+            style={{ ...styles.input, ...invalidInput(!!v.error("name")) }}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => v.blur("name")}
+            maxLength={120}
+            aria-invalid={!!v.error("name")}
+            disabled={!canEditSchoolProfile}
+          />
+          <FieldError message={v.error("name")} />
         </div>
         <div style={styles.field}>
           <label style={styles.label}>Board</label>
@@ -167,36 +200,61 @@ export function SchoolDetailsTab() {
       <div style={{ ...styles.row, marginTop: 12 }}>
         <div style={styles.field}>
           <label style={styles.label}>Address</label>
-          <input style={styles.input} value={address} onChange={(e) => setAddress(e.target.value)} disabled={!canEditSchoolProfile} />
+          <input
+            style={{ ...styles.input, ...invalidInput(!!v.error("address")) }}
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            onBlur={() => v.blur("address")}
+            maxLength={300}
+            aria-invalid={!!v.error("address")}
+            disabled={!canEditSchoolProfile}
+          />
+          <FieldError message={v.error("address")} />
         </div>
         <div style={styles.field}>
           <label style={styles.label}>Principal name</label>
           <input
-            style={styles.input}
+            style={{ ...styles.input, ...invalidInput(!!v.error("principalName")) }}
             value={principalName}
             onChange={(e) => setPrincipalName(e.target.value)}
+            onBlur={() => v.blur("principalName")}
+            maxLength={80}
+            aria-invalid={!!v.error("principalName")}
             disabled={!canEditSchoolProfile}
           />
+          <FieldError message={v.error("principalName")} />
         </div>
         <div style={styles.field}>
           <label style={styles.label}>Principal phone</label>
           <input
-            style={styles.input}
+            style={{ ...styles.input, ...invalidInput(!!v.error("principalPhone")) }}
             value={principalPhone}
-            onChange={(e) => setPrincipalPhone(e.target.value)}
+            onChange={(e) => setPrincipalPhone(phoneInput(e.target.value))}
+            onBlur={() => v.blur("principalPhone")}
+            inputMode="tel"
+            autoComplete="tel"
+            maxLength={16}
+            placeholder="10-digit mobile number"
+            aria-invalid={!!v.error("principalPhone")}
             disabled={!canEditSchoolProfile}
           />
+          <FieldError message={v.error("principalPhone")} />
         </div>
         <div style={{ ...styles.field, maxWidth: 160 }}>
           <label style={styles.label}>Expected students</label>
           <input
-            style={styles.input}
+            style={{ ...styles.input, ...invalidInput(!!v.error("expectedStudentStrength")) }}
             type="number"
             min={0}
+            max={100000}
+            step={1}
             value={expectedStudentStrength}
             onChange={(e) => setExpectedStudentStrength(e.target.value)}
+            onBlur={() => v.blur("expectedStudentStrength")}
+            aria-invalid={!!v.error("expectedStudentStrength")}
             disabled={!canEditSchoolProfile}
           />
+          <FieldError message={v.error("expectedStudentStrength")} />
         </div>
       </div>
 
@@ -205,26 +263,36 @@ export function SchoolDetailsTab() {
           <div style={{ ...styles.field, maxWidth: 200 }}>
             <label style={styles.label}>Class limit override</label>
             <input
-              style={styles.input}
+              style={{ ...styles.input, ...invalidInput(!!v.error("classLimit")) }}
               type="number"
               min={0}
+              max={200}
+              step={1}
               placeholder="Platform default"
               value={classLimit}
               onChange={(e) => setClassLimit(e.target.value)}
+              onBlur={() => v.blur("classLimit")}
+              aria-invalid={!!v.error("classLimit")}
               disabled={!canEditSchoolProfile}
             />
+            <FieldError message={v.error("classLimit")} />
           </div>
           <div style={{ ...styles.field, maxWidth: 200 }}>
             <label style={styles.label}>Subject limit override</label>
             <input
-              style={styles.input}
+              style={{ ...styles.input, ...invalidInput(!!v.error("subjectLimit")) }}
               type="number"
               min={0}
+              max={200}
+              step={1}
               placeholder="Platform default"
               value={subjectLimit}
               onChange={(e) => setSubjectLimit(e.target.value)}
+              onBlur={() => v.blur("subjectLimit")}
+              aria-invalid={!!v.error("subjectLimit")}
               disabled={!canEditSchoolProfile}
             />
+            <FieldError message={v.error("subjectLimit")} />
           </div>
           <p style={{ fontSize: 11, color: "var(--text-muted)", flexBasis: "100%", margin: 0 }}>
             Leave blank to use the platform default (Platform Settings). Overrides only this teacher's account.
@@ -235,7 +303,7 @@ export function SchoolDetailsTab() {
       {canEditSchoolProfile ? (
         <>
           <div style={styles.actionRow}>
-            <button style={styles.button} onClick={saveDetails} disabled={isSaving || !name}>
+            <button style={styles.button} onClick={saveDetails} disabled={isSaving}>
               Save changes
             </button>
             {STATUSES.filter((s) => s !== school.status).map((s) => {
@@ -276,47 +344,11 @@ const styles: Record<string, React.CSSProperties> = {
   field: { display: "flex", flexDirection: "column", gap: 6, flex: 1, minWidth: 200 },
   label: { fontSize: 12, fontWeight: 700, color: "var(--text-muted)" },
   input: { padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 14 },
-  linkButton: {
-    background: "none",
-    border: "none",
-    color: "var(--accent)",
-    fontWeight: 600,
-    fontSize: 13,
-    cursor: "pointer",
-    padding: 0,
-  },
+  linkButton: btn.link,
   actionRow: { display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" },
-  button: {
-    background: "var(--accent)",
-    color: "#fff",
-    border: "none",
-    borderRadius: 8,
-    padding: "10px 16px",
-    fontWeight: 600,
-    cursor: "pointer",
-    fontSize: 14,
-  },
-  secondaryButton: {
-    background: "var(--bg-page)",
-    color: "var(--text-primary)",
-    border: "1px solid var(--border)",
-    borderRadius: 8,
-    padding: "10px 16px",
-    fontWeight: 600,
-    cursor: "pointer",
-    fontSize: 14,
-    textTransform: "capitalize",
-  },
-  dangerButton: {
-    background: "var(--bg-page)",
-    color: "var(--status-critical)",
-    border: "1px solid var(--status-critical)",
-    borderRadius: 8,
-    padding: "10px 16px",
-    fontWeight: 600,
-    cursor: "pointer",
-    fontSize: 14,
-  },
+  button: btn.primary,
+  secondaryButton: btn.secondary,
+  dangerButton: btn.danger,
   success: { color: "var(--status-good)", fontSize: 13, marginTop: 12, marginBottom: 0 },
   error: { color: "var(--status-critical)", fontSize: 13, marginTop: 12, marginBottom: 0 },
 };

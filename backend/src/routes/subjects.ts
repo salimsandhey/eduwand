@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
 import { authorizeForSchool } from "./academic-structure";
 import { resolveSubjectLimit } from "../lib/limits";
+import { Validator } from "../lib/validation";
 
 interface CreateSubjectBody {
   name: string;
@@ -37,10 +38,9 @@ export async function subjectRoutes(app: FastifyInstance) {
       if (!(await authorizeForSchool(request, reply, request.params.schoolId))) return;
 
       const body = request.body ?? ({} as CreateSubjectBody);
-      const name = body.name?.trim();
-      if (!name) {
-        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "name is required" } });
-      }
+      const sv = new Validator();
+      const name = sv.label("name", body.name, "Subject name");
+      if (sv.hasErrors || !name) return sv.reject(reply);
 
       const existing = await prisma.subject.findUnique({
         where: { schoolId_name: { schoolId: request.params.schoolId, name } },

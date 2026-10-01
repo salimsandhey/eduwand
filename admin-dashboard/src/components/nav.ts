@@ -89,8 +89,8 @@ export const NAV_SECTIONS: NavSection[] = [
         to: "/subject-change-requests",
         label: "Approvals",
         icon: "check",
-        hint: "Subject, class and board change requests waiting for a decision",
-        matchPaths: ["/subject-change-requests", "/class-change-requests", "/board-change-tickets"],
+        hint: "Subject, class, board and workspace name change requests waiting for a decision",
+        matchPaths: ["/subject-change-requests", "/class-change-requests", "/board-change-tickets", "/name-change-tickets"],
         badge: "approvals",
       },
     ],
@@ -153,6 +153,7 @@ const TAB_ONLY_ROUTES: Record<string, string[]> = {
   "/ai-usage": PLATFORM,
   "/class-change-requests": PLATFORM,
   "/board-change-tickets": PLATFORM,
+  "/name-change-tickets": PLATFORM,
 };
 
 // Which roles may open each path - the union across every place it appears.
@@ -173,7 +174,7 @@ export interface TabDef {
   to: string;
   label: string;
   // A pending-count badge on the tab, looked up in the admin status.
-  badge?: "subject" | "class" | "board";
+  badge?: "subject" | "class" | "board" | "name";
 }
 
 export const TAB_GROUPS: Record<string, { roles: string[]; tabs: TabDef[] }> = {
@@ -192,6 +193,7 @@ export const TAB_GROUPS: Record<string, { roles: string[]; tabs: TabDef[] }> = {
       { to: "/subject-change-requests", label: "Subject changes", badge: "subject" },
       { to: "/class-change-requests", label: "Class changes", badge: "class" },
       { to: "/board-change-tickets", label: "Board changes", badge: "board" },
+      { to: "/name-change-tickets", label: "Workspace name changes", badge: "name" },
     ],
   },
 };

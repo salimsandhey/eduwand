@@ -3,15 +3,18 @@ const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000/api/v1";
 interface ApiEnvelope<T> {
   data: T | null;
   meta?: Record<string, unknown>;
-  error?: { code: string; message: string };
+  error?: { code: string; message: string; fields?: Record<string, string> };
 }
 
 export class ApiError extends Error {
   code: string;
+  // Per-field messages on a validation_error (field name -> message).
+  fields?: Record<string, string>;
 
-  constructor(code: string, message: string) {
+  constructor(code: string, message: string, fields?: Record<string, string>) {
     super(message);
     this.code = code;
+    this.fields = fields;
   }
 }
 
@@ -44,7 +47,7 @@ async function requestEnvelope<T>(path: string, options: RequestInit = {}, token
   const body: ApiEnvelope<T> = await response.json();
 
   if (!response.ok || body.error) {
-    throw new ApiError(body.error?.code ?? "unknown_error", body.error?.message ?? "Request failed");
+    throw new ApiError(body.error?.code ?? "unknown_error", body.error?.message ?? "Request failed", body.error?.fields);
   }
 
   return body;
@@ -188,6 +191,21 @@ export interface ClassSection {
   className: string;
   sectionName: string;
   teacherAssignments: ClassSectionTeacherAssignment[];
+}
+
+// A class in "Recently deleted" - restorable until purgeAt, then hard-deleted
+// by the backend worker (backend/src/lib/class-lifecycle.ts).
+export interface DeletedClassSection {
+  id: string;
+  className: string;
+  sectionName: string;
+  academicYearLabel: string;
+  deletedAt: string;
+  purgeAt: string;
+  exportedAt: string | null;
+  studentCount: number;
+  topicCount: number;
+  assignmentCount: number;
 }
 
 // weekday is ISO: 1=Mon ... 7=Sun. startTime/endTime are 24h "HH:mm".
@@ -688,7 +706,7 @@ export interface AiCallQuery {
 }
 
 export interface AdminStatus {
-  approvals: { subject: number; class: number; board: number; total: number };
+  approvals: { subject: number; class: number; board: number; name: number; total: number };
   ai: { paused: boolean; spentTodayInr: number; dayLimitInr: number | null };
   payments: {
     mode: "razorpay" | "mock" | "unconfigured";
@@ -863,6 +881,24 @@ export interface BoardChangeTicket {
   schoolId: string;
   currentBoard: string;
   requestedBoard: string;
+  status: string;
+  raisedByUserId: string;
+  decidedAt: string | null;
+  note: string | null;
+  createdAt: string;
+  school: { name: string; accountType: string };
+  raisedBy: { fullName: string; email: string };
+}
+
+// Same request/approval-only shape as BoardChangeTicket - a workspace's
+// display name (School.name) has no self-service edit path for a teacher on
+// an individual account (an admin/leadership user edits it directly on
+// SchoolDetailsTab instead).
+export interface SchoolNameChangeTicket {
+  id: string;
+  schoolId: string;
+  currentName: string;
+  requestedName: string;
   status: string;
   raisedByUserId: string;
   decidedAt: string | null;
@@ -1203,6 +1239,12 @@ export const api = {
     request<BoardChangeTicket>(`/admin/board-change-tickets/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
   createBoardChangeTicket: (token: string, schoolId: string, input: { requestedBoard: string; note?: string }) =>
     request<BoardChangeTicket>(`/schools/${schoolId}/board-change-tickets`, { method: "POST", body: JSON.stringify(input) }, token),
+  listSchoolNameChangeTickets: (token: string, params: { status?: string } = {}) =>
+    request<SchoolNameChangeTicket[]>(`/admin/name-change-tickets${toQueryString(params)}`, {}, token),
+  decideSchoolNameChangeTicket: (token: string, id: string, input: { decision: "approved" | "rejected"; note?: string }) =>
+    request<SchoolNameChangeTicket>(`/admin/name-change-tickets/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
+  createSchoolNameChangeTicket: (token: string, schoolId: string, input: { requestedName: string; note?: string }) =>
+    request<SchoolNameChangeTicket>(`/schools/${schoolId}/name-change-tickets`, { method: "POST", body: JSON.stringify(input) }, token),
 
   listPipelineStages: (token: string, params: { schoolId?: string } = {}) =>
     request<PipelineStage[]>(`/pipeline-stages${toQueryString(params)}`, {}, token),
@@ -1261,6 +1303,35 @@ export const api = {
   bulkCreateClassSections: (token: string, schoolId: string, input: BulkCreateClassSectionsInput) =>
     request<BulkCreateClassSectionsResult>(
       `/schools/${schoolId}/class-sections/bulk`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    ),
+  // Class deletion: export zip -> delete (restorable for 30 days) -> permanent
+  // delete. See backend/src/routes/class-lifecycle.ts.
+  downloadClassExport: async (token: string, schoolId: string, classSectionId: string): Promise<{ blob: Blob; fileName: string }> => {
+    const response = await fetch(`${API_URL}/schools/${schoolId}/class-sections/${classSectionId}/export`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw new ApiError(body?.error?.code ?? "download_failed", body?.error?.message ?? "Could not create the backup");
+    }
+    const match = response.headers.get("Content-Disposition")?.match(/filename="([^"]+)"/);
+    return { blob: await response.blob(), fileName: match?.[1] ?? "class-export.zip" };
+  },
+  listDeletedClassSections: (token: string, schoolId: string) =>
+    request<DeletedClassSection[]>(`/schools/${schoolId}/class-sections/deleted`, {}, token),
+  deleteClassSection: (token: string, schoolId: string, classSectionId: string, confirmName: string) =>
+    request<{ id: string; deletedAt: string; purgeAt: string }>(
+      `/schools/${schoolId}/class-sections/${classSectionId}/delete`,
+      { method: "POST", body: JSON.stringify({ confirmName }) },
+      token
+    ),
+  restoreClassSection: (token: string, schoolId: string, classSectionId: string) =>
+    request<{ id: string }>(`/schools/${schoolId}/class-sections/${classSectionId}/restore`, { method: "POST" }, token),
+  permanentlyDeleteClassSection: (token: string, schoolId: string, classSectionId: string, input: { confirmName: string; skipBackup?: boolean }) =>
+    request<{ deleted: boolean }>(
+      `/schools/${schoolId}/class-sections/${classSectionId}/permanent-delete`,
       { method: "POST", body: JSON.stringify(input) },
       token
     ),

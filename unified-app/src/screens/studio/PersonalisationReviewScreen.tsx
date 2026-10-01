@@ -19,6 +19,30 @@ const DIFFICULTY_DOT_COLOR: Record<"easy" | "medium" | "hard", string> = {
   hard: "#FB5F7E",
 };
 
+// Read-only preview of the actual extra questions generated for a
+// student's mix, so "review" here means genuinely reading what's about to
+// be added, not just approving a bare count.
+function ExtraQuestionsPreview({ questions }: { questions: { id: string; prompt: string }[] | null | undefined }) {
+  const { colors } = useTheme();
+  if (!questions || questions.length === 0) {
+    return (
+      <Text style={[styles.extraQuestionsEmpty, { color: colors.textMuted }]}>
+        No extra questions could be generated (the topic may have no taught content yet) - only the assignment's own
+        questions will be shown.
+      </Text>
+    );
+  }
+  return (
+    <View style={styles.extraQuestionsList}>
+      {questions.map((q, i) => (
+        <Text key={q.id} style={[styles.extraQuestionText, { color: colors.textSecondary }]} numberOfLines={2}>
+          {i + 1}. {q.prompt}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
 function MixDots({ mix }: { mix: Record<string, number> }) {
   const { colors } = useTheme();
   return (
@@ -140,8 +164,9 @@ export function PersonalisationReviewScreen({ route, navigation }: Props) {
             </View>
           </View>
           <Text style={[styles.infoBody, { color: colors.textSecondary }]}>
-            Review the suggested question mix for each student - the mix you approve determines which questions they're
-            actually shown, not just a note on file. You can approve, override, or opt out.
+            Every student gets all of this assignment's own questions, unchanged. The mix below only decides an
+            additional, difficulty-matched section added just for that student - review the actual extra questions
+            generated for each one, then approve, override, or opt out.
           </Text>
         </View>
 
@@ -176,6 +201,7 @@ export function PersonalisationReviewScreen({ route, navigation }: Props) {
 
               <MixDots mix={s.status === "pending" ? s.suggestedMix : s.appliedMix ?? s.suggestedMix} />
               {s.status === "pending" ? <Text style={[styles.reasoning, { color: colors.textMuted }]}>{s.reasoning}</Text> : null}
+              {s.status !== "opted_out" ? <ExtraQuestionsPreview questions={s.extraQuestions} /> : null}
 
               {s.status === "pending" ? (
                 isExpanded ? (
@@ -235,7 +261,7 @@ export function PersonalisationReviewScreen({ route, navigation }: Props) {
                 )
               ) : (
                 <Text style={[styles.appliedText, { color: colors.textMuted }]}>
-                  {s.appliedMix ? "Applied above" : "No mix applied"}
+                  {s.appliedMix ? "Added on top of the assignment's own questions" : "Opted out - only the assignment's own questions"}
                 </Text>
               )}
             </View>
@@ -299,6 +325,9 @@ const styles = StyleSheet.create({
   dot: { width: 8, height: 8, borderRadius: 4 },
   mixDotText: { fontSize: 12, fontWeight: "700" },
   reasoning: { fontSize: 12, marginTop: 8, lineHeight: 17 },
+  extraQuestionsList: { marginTop: 10, gap: 4 },
+  extraQuestionText: { fontSize: 12, lineHeight: 17, fontWeight: "500" },
+  extraQuestionsEmpty: { fontSize: 12, marginTop: 8, lineHeight: 17, fontStyle: "italic" },
   appliedText: { fontSize: 12, marginTop: 10, fontStyle: "italic" },
   rowActions: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 12 },
   approveButton: { flex: 1, borderWidth: 1.5, borderRadius: 8, height: 38, alignItems: "center", justifyContent: "center", marginRight: 12 },

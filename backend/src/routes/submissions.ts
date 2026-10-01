@@ -5,10 +5,11 @@ import { gradeReleasedEmail } from "../lib/email/templates";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { requireRoles } from "../lib/rbac";
+import { Validator } from "../lib/validation";
 import { storage } from "../lib/storage";
 import { aiProvider, logAiUsage, GradingQuestion, AnswerKeyContext, QuestionGradeDetail } from "../lib/ai";
 import { hasSufficientCredits, getFeatureCost } from "../lib/credits";
-import { selectQuestionsForMix, DifficultyTaggedQuestion } from "../lib/personalisation";
+import { DifficultyTaggedQuestion } from "../lib/personalisation";
 
 interface CreateSubmissionBody {
   assignmentId: string;
@@ -34,21 +35,35 @@ async function computePerformanceBand(schoolId: string, scorePercent: number): P
   return "level_3";
 }
 
-// Same subset a personalised student was actually shown (see
-// lib/personalisation.ts) - recomputed at grading time rather than stored,
-// since it's a pure function of the assignment's questions + the student's
-// applied mix and the two call sites (delivery, grading) must always agree.
-async function effectiveQuestions(
+interface ExtraQuestion extends DifficultyTaggedQuestion {
+  modelAnswer: string;
+  marks?: number;
+}
+
+// The exact same set a student was actually shown (see lib/student-portal.ts):
+// the assignment's own questions in full, PLUS this student's approved
+// personalised extra questions, if any. Recomputed at grading time rather
+// than stored, since it's a pure function of the assignment + the student's
+// applied suggestion, and the two call sites (delivery, grading) must always
+// agree. Also returns those extra questions' own answer-key entries, since
+// they have no row in the assignment-wide AnswerKey table (it's keyed per
+// assignment, shared across students) - their generated modelAnswer IS their
+// answer key, same as the base AnswerKey.aiAnswer.
+async function deliveredQuestions(
   assignmentId: string,
   studentStubId: string,
   personalisationEnabled: boolean,
   allQuestions: DifficultyTaggedQuestion[]
-): Promise<DifficultyTaggedQuestion[]> {
-  if (!personalisationEnabled) return allQuestions;
+): Promise<{ questions: DifficultyTaggedQuestion[]; extraAnswerKey: AnswerKeyContext[] }> {
+  if (!personalisationEnabled) return { questions: allQuestions, extraAnswerKey: [] };
   const suggestion = await prisma.personalisationSuggestion.findUnique({
     where: { assignmentId_studentStubId: { assignmentId, studentStubId } },
   });
-  return selectQuestionsForMix(allQuestions, suggestion?.appliedMix as Record<string, number> | null | undefined);
+  const extra = (suggestion?.extraQuestions as unknown as ExtraQuestion[] | null) ?? [];
+  return {
+    questions: [...allQuestions, ...extra],
+    extraAnswerKey: extra.map((q) => ({ questionId: q.id, verifiedAnswer: q.modelAnswer, marks: q.marks ?? 1 })),
+  };
 }
 
 // A photo submission's OCR text is either the new per-question JSON map
@@ -195,7 +210,7 @@ export async function submissionRoutes(app: FastifyInstance) {
     }
 
     const allQuestions = submission.assignment.questions as unknown as GradingQuestion[];
-    const questions = await effectiveQuestions(
+    const { questions, extraAnswerKey } = await deliveredQuestions(
       submission.assignmentId,
       submission.studentStubId,
       submission.assignment.personalisationEnabled,
@@ -206,11 +221,18 @@ export async function submissionRoutes(app: FastifyInstance) {
     const answerKeyRows = await prisma.answerKey.findMany({
       where: { assignmentId: submission.assignmentId, teacherVerifiedAnswer: { not: null } },
     });
-    const answerKey: AnswerKeyContext[] = answerKeyRows.map((k) => ({
-      questionId: k.questionId,
-      verifiedAnswer: k.teacherVerifiedAnswer!,
-      marks: k.marks,
-    }));
+    // Base assignment questions only get graded once the teacher has
+    // verified their answer key entry (existing behaviour, unchanged); a
+    // personalised extra question has no separate verification step, so its
+    // own generated modelAnswer is used directly - see deliveredQuestions.
+    const answerKey: AnswerKeyContext[] = [
+      ...answerKeyRows.map((k) => ({
+        questionId: k.questionId,
+        verifiedAnswer: k.teacherVerifiedAnswer!,
+        marks: k.marks,
+      })),
+      ...extraAnswerKey,
+    ];
 
     if (!(await hasSufficientCredits(request.user.sub, await getFeatureCost("grading")))) {
       return reply.code(400).send({ data: null, error: { code: "insufficient_credits", message: "Not enough credits to grade this submission" } });
@@ -329,11 +351,16 @@ export async function submissionRoutes(app: FastifyInstance) {
     }
 
     const body = request.body ?? {};
+    const v = new Validator();
+    // finalScore is a 0-100 percentage.
+    const finalScore = v.number("finalScore", body.finalScore, "Score", { min: 0, max: 100 });
+    const finalFeedback = v.note("finalFeedback", body.finalFeedback, "Feedback", { max: 1000 });
+    if (v.hasErrors) return v.reject(reply);
     const updated = await prisma.grade.update({
       where: { id: grade.id },
       data: {
-        finalScore: body.finalScore ?? grade.aiScore,
-        finalFeedback: body.finalFeedback ?? grade.aiFeedback,
+        finalScore: finalScore ?? grade.aiScore,
+        finalFeedback: finalFeedback ?? grade.aiFeedback,
         overriddenByUserId: request.user.sub,
       },
     });

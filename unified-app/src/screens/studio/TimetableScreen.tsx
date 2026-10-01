@@ -325,6 +325,7 @@ export function TimetableScreen({ navigation }: Props) {
             onChangeText={(room) => form && setForm({ ...form, room })}
             placeholder="e.g. 204"
             placeholderTextColor={colors.textMuted}
+            maxLength={20}
           />
 
           {formError ? <Text style={[styles.error, { color: colors.danger }]}>{formError}</Text> : null}

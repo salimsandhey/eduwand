@@ -15,6 +15,9 @@ import { decorativeAssets } from "../../theme/decorativeAssets";
 import { useKeyboardHeight } from "../../hooks/useKeyboardHeight";
 import { capitalizeFirst } from "../../utils/text";
 import { getRelativeDateLabel } from "../../utils/date";
+import { FieldError } from "../../components/FieldError";
+import { useFormErrors } from "../../hooks/useForm";
+import { rules } from "../../utils/validation";
 
 type Props = NativeStackScreenProps<RootStackParamList, "TopicList">;
 
@@ -97,8 +100,22 @@ export function TopicListScreen({ navigation, route }: Props) {
     }, [load])
   );
 
+  // Rules mirror backend/src/lib/validation.ts; field names match the API's.
+  const topicV = useFormErrors(
+    { name, subject },
+    {
+      name: (value) =>
+        rules.label("Topic name", true, 120)(value) ??
+        (topics.some((t) => t.subject.trim().toLowerCase() === subject.trim().toLowerCase() && t.name.trim().toLowerCase() === value.trim().toLowerCase())
+          ? "You already have a topic with this name in this subject"
+          : null),
+      subject: rules.required("Subject"),
+    }
+  );
+
   async function createTopic() {
-    if (!accessToken || !name.trim() || !subject.trim()) return;
+    if (!accessToken) return;
+    if (!topicV.submit()) return;
     setIsCreating(true);
     setError(null);
     try {
@@ -107,7 +124,7 @@ export function TopicListScreen({ navigation, route }: Props) {
       setName("");
       navigation.navigate("TopicDetail", { topicId: topic.id });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create topic");
+      if (!topicV.applyServerError(err)) setError(err instanceof Error ? err.message : "Failed to create topic");
     } finally {
       setIsCreating(false);
     }
@@ -157,16 +174,27 @@ export function TopicListScreen({ navigation, route }: Props) {
             <Text style={styles.classContextLabel}>CLASS</Text>
             <Text style={styles.classTitle}>{displayClassName(className, sectionName)}</Text>
             <Text style={styles.classContextSubtitle}>Browse and build lessons for this class.</Text>
-            <Pressable
-              style={({ pressed }) => [styles.subjectFilter, pressed && availableSubjects.length > 0 && { opacity: pressedOpacity }]}
-              onPress={() => availableSubjects.length > 0 && setShowSubjectPicker(true)}
-              disabled={availableSubjects.length === 0}
-              accessibilityRole="button"
-              accessibilityLabel="Filter topics by subject"
-            >
-              <Text style={[styles.subjectText, { color: colors.accent }]}>{subjectFilter ? capitalizeFirst(subjectFilter) : "All subjects"}</Text>
-              {availableSubjects.length > 0 ? <Ionicons name="chevron-down" size={16} color={colors.accent} /> : null}
-            </Pressable>
+            <View style={styles.classContextRow}>
+              <Pressable
+                style={({ pressed }) => [styles.subjectFilter, pressed && availableSubjects.length > 0 && { opacity: pressedOpacity }]}
+                onPress={() => availableSubjects.length > 0 && setShowSubjectPicker(true)}
+                disabled={availableSubjects.length === 0}
+                accessibilityRole="button"
+                accessibilityLabel="Filter topics by subject"
+              >
+                <Text style={[styles.subjectText, { color: colors.accent }]}>{subjectFilter ? capitalizeFirst(subjectFilter) : "All subjects"}</Text>
+                {availableSubjects.length > 0 ? <Ionicons name="chevron-down" size={16} color={colors.accent} /> : null}
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.subjectFilter, pressed && { opacity: pressedOpacity }]}
+                onPress={() => navigation.navigate("AddStudent", { classSectionId })}
+                accessibilityRole="button"
+                accessibilityLabel="Add a student to this class"
+              >
+                <Ionicons name="person-add-outline" size={14} color={colors.accent} />
+                <Text style={[styles.subjectText, { color: colors.accent }]}>Add student</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
 
@@ -358,13 +386,16 @@ export function TopicListScreen({ navigation, route }: Props) {
           <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Topic name</Text>
           <TextInput
             ref={nameInputRef}
-            style={[styles.topicInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
+            style={[styles.topicInput, { backgroundColor: colors.surfaceRaised, borderColor: topicV.error("name") ? colors.danger : colors.border, color: colors.textPrimary }]}
             value={name}
             onChangeText={setName}
+            onBlur={() => topicV.blur("name")}
             placeholder="Enter topic name"
             placeholderTextColor={colors.textMuted}
+            maxLength={120}
             autoFocus
           />
+          <FieldError message={topicV.error("name")} />
 
           <View style={styles.formRow}>
             <View style={styles.subjectField}>
@@ -380,13 +411,14 @@ export function TopicListScreen({ navigation, route }: Props) {
                 </Text>
                 <Ionicons name="chevron-forward" size={18} color={colors.accent} />
               </Pressable>
+              <FieldError message={topicV.error("subject")} />
             </View>
           </View>
 
           <Pressable
-            style={({ pressed }) => [styles.startButton, { backgroundColor: colors.accent }, (isCreating || !name.trim() || !subject.trim() || pressed) && { opacity: pressedOpacity }]}
+            style={({ pressed }) => [styles.startButton, { backgroundColor: colors.accent }, (isCreating || pressed) && { opacity: pressedOpacity }]}
             onPress={createTopic}
-            disabled={isCreating || !name.trim() || !subject.trim()}
+            disabled={isCreating}
             accessibilityRole="button"
           >
             {isCreating ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.startButtonText, { color: colors.accentOn }]}>Start topic</Text>}
@@ -448,7 +480,8 @@ const styles = StyleSheet.create({
   classContextLabel: { color: "rgba(255,255,255,0.76)", fontSize: 10, fontWeight: "800", letterSpacing: 0.8 },
   classTitle: { marginTop: 2, color: "#FFFFFF", fontSize: 20, lineHeight: 25, fontWeight: "800", letterSpacing: -0.4 },
   classContextSubtitle: { marginTop: 2, color: "rgba(255,255,255,0.82)", fontSize: 11, lineHeight: 16, fontWeight: "600" },
-  subjectFilter: { alignSelf: "flex-start", height: 30, flexDirection: "row", alignItems: "center", gap: 4, marginTop: 9, borderRadius: 15, paddingHorizontal: 10, backgroundColor: "rgba(255,255,255,0.94)" },
+  classContextRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 16 },
+  subjectFilter: { alignSelf: "flex-start", height: 30, flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 15, paddingHorizontal: 10, backgroundColor: "rgba(255,255,255,0.94)" },
   subjectText: { fontSize: 12, fontWeight: "700" },
   topicCountRow: { marginTop: 18, marginBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   topicCount: { fontSize: 12, fontWeight: "700", letterSpacing: 0.2, textTransform: "uppercase" },
@@ -478,7 +511,12 @@ const styles = StyleSheet.create({
   formRow: { flexDirection: "row", gap: 16 },
   subjectField: { flex: 1 },
   subjectInputWrap: { height: 44, flexDirection: "row", alignItems: "center", borderWidth: 1, borderRadius: 12, paddingLeft: 14, paddingRight: 12 },
-  subjectInput: { flex: 1, height: "100%", fontSize: 14, fontWeight: "500", textAlignVertical: "center" },
+  // No explicit height/textAlignVertical here - textAlignVertical is
+  // Android-only (iOS silently ignores it), so stretching this Text to fill
+  // the row's height left it top-aligned on iOS while Android centered it.
+  // Letting the Text size itself and centering it via subjectInputWrap's own
+  // alignItems: "center" works identically on both platforms.
+  subjectInput: { flex: 1, fontSize: 14, fontWeight: "500" },
   startButton: { height: 56, alignItems: "center", justifyContent: "center", borderRadius: 12, marginTop: 20 },
   startButtonText: { fontSize: 16, fontWeight: "800" },
   hiddenLaidOut: { position: "absolute", top: 0, left: 0, right: 0, opacity: 0 },

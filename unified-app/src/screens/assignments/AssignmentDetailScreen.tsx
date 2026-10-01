@@ -6,12 +6,14 @@ import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useAiGenerating } from "../../context/AiAssistantGlowContext";
+import { useTricklingProgress } from "../../hooks/useTricklingProgress";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { ConfirmModal } from "../../components/ConfirmModal";
 import { SlideToPublishButton } from "../../components/SlideToPublishButton";
 import { api, ApiError, AssignmentDetail, ClassSection, StudentStub } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
+import { FormattedText } from "../studio/generation/richText";
 import { decorativeAssets } from "../../theme/decorativeAssets";
 import { softCardShadow } from "../../theme/tokens";
 
@@ -33,7 +35,8 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
   const [isUnpublishing, setIsUnpublishing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
-  useAiGenerating(isGeneratingSuggestions);
+  const suggestionsProgress = useTricklingProgress(isGeneratingSuggestions, "Personalizing question suggestions…");
+  useAiGenerating(isGeneratingSuggestions, undefined, suggestionsProgress);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [publishWarning, setPublishWarning] = useState<string | null>(null);
   const [completionKind, setCompletionKind] = useState<"publish" | "unpublish" | null>(null);
@@ -348,7 +351,7 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
             >
               <Text style={[styles.questionIndex, { color: colors.accent }]}>{String(index + 1).padStart(2, "0")}</Text>
               <View style={{ flex: 1 }}>
-                <Text style={[styles.questionText, { color: colors.textSecondary }]}>{question.prompt}</Text>
+                <FormattedText style={[styles.questionText, { color: colors.textSecondary }]}>{question.prompt}</FormattedText>
                 {(question.type === "mcq" || question.type === "true_false") && question.options ? (
                   <View style={styles.mcqOptionList}>
                     {question.options.map((option, optionIndex) => (
@@ -360,7 +363,7 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
                         ]}
                       >
                         {optionIndex === question.correctOptionIndex ? "✓ " : "• "}
-                        {option}
+                        <FormattedText>{option}</FormattedText>
                       </Text>
                     ))}
                   </View>
@@ -368,7 +371,7 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
                   <View style={styles.mcqOptionList}>
                     {question.pairs.map((pair, pairIndex) => (
                       <Text key={pairIndex} style={[styles.mcqOptionText, { color: colors.textMuted }]}>
-                        {pair.left} → {pair.right}
+                        <FormattedText>{pair.left}</FormattedText> → <FormattedText>{pair.right}</FormattedText>
                       </Text>
                     ))}
                   </View>
@@ -376,7 +379,7 @@ export function AssignmentDetailScreen({ route, navigation }: Props) {
                   <View style={styles.mcqOptionList}>
                     {question.items.map((item, itemIndex) => (
                       <Text key={itemIndex} style={[styles.mcqOptionText, { color: colors.textMuted }]}>
-                        {itemIndex + 1}. {item}
+                        {itemIndex + 1}. <FormattedText>{item}</FormattedText>
                       </Text>
                     ))}
                   </View>

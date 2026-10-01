@@ -110,7 +110,9 @@ async function fetchValidated(rawUrl: string): Promise<Response> {
   throw new Error("Too many redirects");
 }
 
-export async function extractUrlText(rawUrl: string): Promise<{ text: string } | null> {
+const MAX_TITLE_CHARS = 200;
+
+export async function extractUrlText(rawUrl: string): Promise<{ text: string; title: string | null } | null> {
   const response = await fetchValidated(rawUrl);
 
   if (!response.ok) {
@@ -133,6 +135,11 @@ export async function extractUrlText(rawUrl: string): Promise<{ text: string } |
   }
 
   const $ = cheerio.load(html);
+  // Best-effort page title, read before boilerplate is stripped - og:title
+  // is usually cleaner ("Photosynthesis - Wikipedia" vs a raw <title> tag
+  // stuffed with a site name/breadcrumbs), so it's preferred when present.
+  const title = ($('meta[property="og:title"]').attr("content") || $("title").first().text() || "").replace(/\s+/g, " ").trim().slice(0, MAX_TITLE_CHARS) || null;
+
   $("script, style, nav, header, footer, aside, iframe, noscript, form").remove();
   const raw = $("body").text().replace(/\s+/g, " ").trim();
 
@@ -140,7 +147,7 @@ export async function extractUrlText(rawUrl: string): Promise<{ text: string } |
     return null;
   }
 
-  return { text: raw.slice(0, MAX_EXTRACTED_CHARS) };
+  return { text: raw.slice(0, MAX_EXTRACTED_CHARS), title };
 }
 
 const NOT_FOUND_PHRASES = [
@@ -173,25 +180,39 @@ export interface ReachableUrlResult {
   contentType: string;
 }
 
+async function resolveReachableUrlAttempt(rawUrl: string): Promise<ReachableUrlResult | null> {
+  const response = await fetchValidated(rawUrl);
+  if (!response.ok) return null;
+  const finalUrl = response.url || rawUrl;
+  const contentType = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+
+  if (!contentType.includes("text/html") && !contentType.includes("application/xhtml")) {
+    return { finalUrl, contentType };
+  }
+
+  const contentLength = response.headers.get("content-length");
+  if (contentLength && Number(contentLength) > URL_MAX_RESPONSE_BYTES) return { finalUrl, contentType };
+
+  const html = await response.text();
+  const sample = html.slice(0, 5000).toLowerCase();
+  return NOT_FOUND_PHRASES.some((phrase) => sample.includes(phrase)) ? null : { finalUrl, contentType };
+}
+
+// A candidate URL found by AI research is verified with a single 10s fetch -
+// a genuinely dead/404 page should stay dropped, but a slow or momentarily
+// flaky host (timeout, DNS blip, connection reset - anything that throws
+// rather than answering with a real HTTP response) gets one retry before
+// we give up on it, so a transient hiccup doesn't cost a teacher a real
+// result that would have resolved fine a second later.
 export async function resolveReachableUrlDetailed(rawUrl: string): Promise<ReachableUrlResult | null> {
   try {
-    const response = await fetchValidated(rawUrl);
-    if (!response.ok) return null;
-    const finalUrl = response.url || rawUrl;
-    const contentType = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-
-    if (!contentType.includes("text/html") && !contentType.includes("application/xhtml")) {
-      return { finalUrl, contentType };
-    }
-
-    const contentLength = response.headers.get("content-length");
-    if (contentLength && Number(contentLength) > URL_MAX_RESPONSE_BYTES) return { finalUrl, contentType };
-
-    const html = await response.text();
-    const sample = html.slice(0, 5000).toLowerCase();
-    return NOT_FOUND_PHRASES.some((phrase) => sample.includes(phrase)) ? null : { finalUrl, contentType };
+    return await resolveReachableUrlAttempt(rawUrl);
   } catch {
-    return null;
+    try {
+      return await resolveReachableUrlAttempt(rawUrl);
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -200,9 +221,15 @@ const DOWNLOAD_TIMEOUT_MS = 30_000;
 // Downloads a remote file (a PDF or image found by AI research) with the same
 // private-address / redirect protection as URL extraction, plus a hard size
 // cap enforced while streaming - a Content-Length header can lie or be absent.
+// timeoutMs defaults to the generous 30s used when the download itself is the
+// point (an "Add image"/"Add PDF" the teacher is waiting on) - a caller doing
+// a background check that just excludes the file on failure (e.g. the AI
+// Research image relevance check) can pass a much shorter one so a single
+// stalled host can't hold up the whole request.
 export async function downloadRemoteFile(
   rawUrl: string,
-  maxBytes: number
+  maxBytes: number,
+  timeoutMs: number = DOWNLOAD_TIMEOUT_MS
 ): Promise<{ buffer: Buffer; contentType: string; finalUrl: string }> {
   const response = await fetchValidated(rawUrl);
   if (!response.ok) throw new Error(`Download failed (${response.status})`);
@@ -212,7 +239,7 @@ export async function downloadRemoteFile(
   if (!response.body) throw new Error("Download returned no data");
 
   const reader = response.body.getReader();
-  const stall = setTimeout(() => void reader.cancel().catch(() => {}), DOWNLOAD_TIMEOUT_MS);
+  const stall = setTimeout(() => void reader.cancel().catch(() => {}), timeoutMs);
   const chunks: Buffer[] = [];
   let total = 0;
   try {

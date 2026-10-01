@@ -6,7 +6,6 @@ import { useTheme } from "../theme/ThemeContext";
 import { decorativeAssets } from "../theme/decorativeAssets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useKeyboardOverlap } from "../hooks/useKeyboardOverlap";
-import { useWelcomeMascot } from "../context/WelcomeMascotContext";
 import { useAuth } from "../context/AuthContext";
 import { BlinkingMascot } from "./BlinkingMascot";
 import { api, AssistantAction, AssistantLink, AssistantMessage } from "../api/client";
@@ -191,7 +190,6 @@ export function AiAssistChatModal({ visible, onClose }: { visible: boolean; onCl
   const [rootHeight, setRootHeight] = useState(windowHeight);
   const lift = keyboard.keyboardVisible ? keyboard.overlap : 0;
   const sheetHeight = Math.min(windowHeight * 0.82, Math.max(0, rootHeight - lift - insets.top - 8));
-  const { startWelcome } = useWelcomeMascot();
   const [messages, setMessages] = useState<AssistantMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [isTyping, setIsTyping] = useState(false);
@@ -428,20 +426,6 @@ export function AiAssistChatModal({ visible, onClose }: { visible: boolean; onCl
                   <Ionicons name="trash-outline" size={18} color={colors.textMuted} />
                 </Pressable>
               ) : null}
-              <Pressable
-                style={({ pressed }) => [styles.closeButton, { backgroundColor: colors.surfaceRaised }, pressed && { opacity: pressedOpacity }]}
-                onPress={() => {
-                  animateAndClose(() => {
-                    setTimeout(() => {
-                      startWelcome();
-                    }, 200);
-                  });
-                }}
-                accessibilityRole="button"
-                accessibilityLabel="Replay welcome animation"
-              >
-                <Ionicons name="sparkles-outline" size={18} color={colors.accent} />
-              </Pressable>
               <Pressable
                 style={({ pressed }) => [styles.closeButton, { backgroundColor: colors.surfaceRaised }, pressed && { opacity: pressedOpacity }]}
                 onPress={() => animateAndClose()}

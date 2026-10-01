@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { api } from "../../api/client";
-import type { AcademicYear, AppUserSummary } from "../../api/client";
+import type { AcademicYear, AppUserSummary, ClassSection } from "../../api/client";
 import { Card } from "../../components/Card";
 import { Modal, ModalFooter } from "../../components/Modal";
 import type { SchoolOutletContext } from "./SchoolLayout";
+import { DeleteClassModal, DeletedClassesCard, downloadClassBackup } from "./ClassDeleteDialogs";
+import { btn } from "../../components/buttons";
 
 function parseListInput(value: string): string[] {
   const parts = value.split(/[,\n]/).map((p) => p.trim()).filter((p) => p.length > 0);
@@ -45,6 +47,24 @@ export function SchoolAcademicsTab() {
   const [selectedTeacherId, setSelectedTeacherId] = useState("");
   const [isAssigning, setIsAssigning] = useState(false);
   const [assignError, setAssignError] = useState<string | null>(null);
+
+  // Class deletion (backup zip -> delete -> "Recently deleted" for 30 days).
+  const [deleteTarget, setDeleteTarget] = useState<ClassSection | null>(null);
+  const [backingUpId, setBackingUpId] = useState<string | null>(null);
+  const [deletedReloadKey, setDeletedReloadKey] = useState(0);
+
+  async function backUpClass(cs: ClassSection) {
+    if (!accessToken || !id) return;
+    setBackingUpId(cs.id);
+    setClassesError(null);
+    try {
+      await downloadClassBackup(accessToken, id, cs);
+    } catch (err) {
+      setClassesError(err instanceof Error ? err.message : "Could not create the backup");
+    } finally {
+      setBackingUpId(null);
+    }
+  }
 
   const loadClasses = useCallback(async () => {
     if (!accessToken || !id) return;
@@ -190,6 +210,7 @@ export function SchoolAcademicsTab() {
   }
 
   return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
     <Card title="Academic Years & Classes">
       {classesError ? <p style={styles.error}>{classesError}</p> : null}
 
@@ -226,6 +247,16 @@ export function SchoolAcademicsTab() {
                           <span style={styles.chip}>
                             {cs.className} {cs.sectionName}
                           </span>
+                          {canManageAcademics ? (
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <button style={styles.smallButton} onClick={() => backUpClass(cs)} disabled={backingUpId === cs.id}>
+                                {backingUpId === cs.id ? "Preparing…" : "Download data"}
+                              </button>
+                              <button style={{ ...styles.smallButton, color: "var(--status-critical)" }} onClick={() => setDeleteTarget(cs)}>
+                                Delete
+                              </button>
+                            </div>
+                          ) : null}
                         </div>
                         <div style={{ ...styles.sectionChips, marginTop: 8 }}>
                           {cs.teacherAssignments.length === 0 ? (
@@ -439,7 +470,34 @@ export function SchoolAcademicsTab() {
           </ModalFooter>
         </Modal>
       ) : null}
+
+      {deleteTarget && accessToken && id ? (
+        <DeleteClassModal
+          classSection={deleteTarget}
+          schoolId={id}
+          accessToken={accessToken}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={() => {
+            setDeleteTarget(null);
+            setDeletedReloadKey((k) => k + 1);
+            loadClasses();
+            reload();
+          }}
+        />
+      ) : null}
     </Card>
+    {canManageAcademics && accessToken && id ? (
+      <DeletedClassesCard
+        schoolId={id}
+        accessToken={accessToken}
+        reloadKey={deletedReloadKey}
+        onRestored={() => {
+          loadClasses();
+          reload();
+        }}
+      />
+    ) : null}
+    </div>
   );
 }
 
@@ -458,39 +516,11 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 8,
     fontSize: 13,
   },
-  button: {
-    background: "var(--accent)",
-    color: "#fff",
-    border: "none",
-    borderRadius: 8,
-    padding: "10px 16px",
-    fontWeight: 600,
-    cursor: "pointer",
-    fontSize: 14,
-  },
-  secondaryButton: {
-    background: "var(--bg-page)",
-    color: "var(--text-primary)",
-    border: "1px solid var(--border)",
-    borderRadius: 8,
-    padding: "10px 16px",
-    fontWeight: 600,
-    cursor: "pointer",
-    fontSize: 14,
-    textTransform: "capitalize",
-  },
+  button: btn.primary,
+  secondaryButton: btn.secondary,
   error: { color: "var(--status-critical)", fontSize: 13, marginTop: 12, marginBottom: 0 },
   statusBadge: { fontSize: 13, fontWeight: 700, textTransform: "capitalize" },
-  smallButton: {
-    padding: "6px 12px",
-    borderRadius: 6,
-    border: "1px solid var(--border)",
-    background: "var(--bg-page)",
-    color: "var(--text-primary)",
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: "pointer",
-  },
+  smallButton: btn.small,
   yearBox: { border: "1px solid var(--border)", borderRadius: 10, padding: 14 },
   yearHeader: { display: "flex", alignItems: "center", gap: 10, marginBottom: 6 },
   classSectionBox: { border: "1px solid var(--border)", borderRadius: 8, padding: 10, background: "var(--bg-page)" },

@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Image } from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Image } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import type { CompositeScreenProps } from "@react-navigation/native";
 import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
@@ -10,7 +10,12 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../theme/ThemeContext";
 import { spacing, radius, softCardShadow } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
-import { api, ClassSection } from "../../api/client";
+import { SheetModal } from "../../components/SheetModal";
+import { ClassOptionsSheet, DeletedClassesSheet } from "../../components/ClassDeleteSheets";
+import { FieldError } from "../../components/FieldError";
+import { useFormErrors } from "../../hooks/useForm";
+import { rules } from "../../utils/validation";
+import { api, ClassSection, Subject } from "../../api/client";
 import { decorativeAssets } from "../../theme/decorativeAssets";
 import { getRelativeDateLabel } from "../../utils/date";
 import { capitalizeFirst } from "../../utils/text";
@@ -53,6 +58,59 @@ export function MyClassesScreen({ navigation }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [expandedClassName, setExpandedClassName] = useState<string | null>(null);
 
+  // Individual accounts get a fixed number of free class slots (default 2 -
+  // see backend/src/lib/limits.ts). Onboarding's CreateFirstClassScreen only
+  // ever shows once (MyClassesScreen's own empty-state below), so a teacher
+  // who created just 1 of their 2 slots had no way back in to claim the
+  // 2nd - this modal is that way back in, shown only while still under limit.
+  const [classLimit, setClassLimit] = useState<number | null>(null);
+  const [showAddClass, setShowAddClass] = useState(false);
+  const [newClassName, setNewClassName] = useState("");
+  const [newSectionName, setNewSectionName] = useState("");
+  const [isCreatingClass, setIsCreatingClass] = useState(false);
+  const [addClassError, setAddClassError] = useState<string | null>(null);
+  // Rules mirror backend/src/lib/validation.ts. The duplicate check covers the
+  // classes already loaded on this screen; the server re-checks it.
+  const addClassV = useFormErrors(
+    { className: newClassName, sectionName: newSectionName },
+    {
+      className: rules.label("Class name"),
+      sectionName: (value) =>
+        rules.label("Section name")(value) ??
+        (classSections.some(
+          (c) =>
+            c.className.trim().toLowerCase() === newClassName.trim().toLowerCase() && c.sectionName.trim().toLowerCase() === value.trim().toLowerCase()
+        )
+          ? `${newClassName.trim()} ${value.trim()} already exists`
+          : null),
+    }
+  );
+
+  // Same gap, same fix, for subjects - CreateFirstClassScreen sets up both
+  // classes and subjects together, but is just as unreachable a second time,
+  // so a teacher who added only 1 of their subject slots was equally stuck.
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [subjectLimit, setSubjectLimit] = useState<number | null>(null);
+  const [showAddSubject, setShowAddSubject] = useState(false);
+  const [newSubjectName, setNewSubjectName] = useState("");
+  const [isCreatingSubject, setIsCreatingSubject] = useState(false);
+  const [addSubjectError, setAddSubjectError] = useState<string | null>(null);
+  const addSubjectV = useFormErrors(
+    { name: newSubjectName },
+    {
+      name: (value) =>
+        rules.label("Subject name")(value) ??
+        (subjects.some((s) => s.name.trim().toLowerCase() === value.trim().toLowerCase()) ? "You already have this subject" : null),
+    }
+  );
+
+  // Individual teachers own their workspace, so they can back up and delete
+  // their own classes (backend: class-lifecycle.ts). Institutional teachers
+  // can't - their school admin manages classes in the admin dashboard.
+  const canManageClasses = user?.accountType === "individual" && !!user.schoolId;
+  const [optionsClass, setOptionsClass] = useState<ClassSection | null>(null);
+  const [showDeleted, setShowDeleted] = useState(false);
+
   const groupedClasses = useMemo(() => {
     const map = new Map<string, ClassSection[]>();
     for (const cs of classSections) {
@@ -63,6 +121,15 @@ export function MyClassesScreen({ navigation }: Props) {
     return Array.from(map.entries()).map(([className, sections]) => ({ className, sections }));
   }, [classSections]);
 
+  // Only shown once the teacher already has at least 1 class - the true
+  // first-ever class goes through CreateFirstClassScreen's empty-state
+  // button below instead (it also sets up subjects, which this shortcut
+  // deliberately skips since those are already configured by this point).
+  const canAddAnotherClass =
+    user?.accountType === "individual" && !isLoading && classSections.length > 0 && classLimit !== null && classSections.length < classLimit;
+  const canAddAnotherSubject =
+    user?.accountType === "individual" && !isLoading && subjects.length > 0 && subjectLimit !== null && subjects.length < subjectLimit;
+
   const load = useCallback(async () => {
     if (!accessToken) return;
     setIsLoading(true);
@@ -70,6 +137,17 @@ export function MyClassesScreen({ navigation }: Props) {
     try {
       const sections = await api.listClassSections(accessToken);
       setClassSections(sections);
+
+      if (user?.accountType === "individual" && user.schoolId) {
+        api
+          .getSchoolLimits(accessToken, user.schoolId)
+          .then((limits) => {
+            setClassLimit(limits.classLimit);
+            setSubjectLimit(limits.subjectLimit);
+          })
+          .catch(() => {});
+        api.listSubjects(accessToken).then(setSubjects).catch(() => {});
+      }
 
       const statsEntries = await Promise.all(
         sections.map(async (cs) => {
@@ -91,13 +169,73 @@ export function MyClassesScreen({ navigation }: Props) {
     } finally {
       setIsLoading(false);
     }
-  }, [accessToken]);
+  }, [accessToken, user?.accountType, user?.schoolId]);
 
   useFocusEffect(
     useCallback(() => {
       load();
     }, [load])
   );
+
+  function openAddClass() {
+    setNewClassName("");
+    setNewSectionName("");
+    setAddClassError(null);
+    addClassV.clear();
+    setShowAddClass(true);
+  }
+
+  async function createAnotherClass() {
+    if (!accessToken || !user?.schoolId) return;
+    const className = newClassName.trim();
+    const sectionName = newSectionName.trim();
+    if (!addClassV.submit()) return;
+    setIsCreatingClass(true);
+    setAddClassError(null);
+    try {
+      const academicYears = await api.listAcademicYears(accessToken);
+      const currentYear = academicYears.find((y) => y.isCurrent) ?? academicYears[0];
+      if (!currentYear) throw new Error("No academic year found for this workspace");
+
+      const classSection = await api.createClassSection(accessToken, user.schoolId, {
+        academicYearId: currentYear.id,
+        className,
+        sectionName,
+      });
+      await api.assignTeacherToClassSection(accessToken, user.schoolId, classSection.id, user.id);
+
+      setShowAddClass(false);
+      load();
+    } catch (err) {
+      if (!addClassV.applyServerError(err)) setAddClassError(err instanceof Error ? err.message : "Failed to create class");
+    } finally {
+      setIsCreatingClass(false);
+    }
+  }
+
+  function openAddSubject() {
+    setNewSubjectName("");
+    setAddSubjectError(null);
+    addSubjectV.clear();
+    setShowAddSubject(true);
+  }
+
+  async function createAnotherSubject() {
+    if (!accessToken || !user?.schoolId) return;
+    const name = newSubjectName.trim();
+    if (!addSubjectV.submit()) return;
+    setIsCreatingSubject(true);
+    setAddSubjectError(null);
+    try {
+      await api.createSubject(accessToken, user.schoolId, { name });
+      setShowAddSubject(false);
+      load();
+    } catch (err) {
+      if (!addSubjectV.applyServerError(err)) setAddSubjectError(err instanceof Error ? err.message : "Failed to create subject");
+    } finally {
+      setIsCreatingSubject(false);
+    }
+  }
 
   return (
     <Screen>
@@ -126,12 +264,50 @@ export function MyClassesScreen({ navigation }: Props) {
           <Text style={[styles.topBarTitle, { color: colors.textPrimary }]}>My Classes</Text>
           <View style={[styles.topBarAccent, { backgroundColor: colors.accent }]} />
 
+          {canManageClasses ? (
+            <Pressable
+              onPress={() => setShowDeleted(true)}
+              hitSlop={8}
+              style={({ pressed }) => [styles.circleButton, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow, pressed && { opacity: pressedOpacity }]}
+              accessibilityRole="button"
+              accessibilityLabel="Recently deleted classes"
+            >
+              <Ionicons name="trash-bin-outline" size={18} color={colors.textMuted} />
+            </Pressable>
+          ) : null}
+
         </View>
 
         <View style={styles.classListHeader}>
           <Text style={[styles.classListLabelText, { color: colors.textMuted }]}>Class Folders</Text>
           <Text style={[styles.classCount, { color: colors.textMuted }]}>{groupedClasses.length} class{groupedClasses.length === 1 ? "" : "es"}</Text>
         </View>
+
+        {canAddAnotherClass ? (
+          <Pressable
+            onPress={openAddClass}
+            style={({ pressed }) => [styles.addClassRow, { borderColor: colors.border, backgroundColor: colors.surface }, pressed && { opacity: pressedOpacity }]}
+            accessibilityRole="button"
+          >
+            <Ionicons name="add-circle-outline" size={18} color={colors.accent} />
+            <Text style={[styles.addClassRowText, { color: colors.accent }]}>
+              Add another class ({classSections.length} of {classLimit} used)
+            </Text>
+          </Pressable>
+        ) : null}
+
+        {canAddAnotherSubject ? (
+          <Pressable
+            onPress={openAddSubject}
+            style={({ pressed }) => [styles.addClassRow, { borderColor: colors.border, backgroundColor: colors.surface }, pressed && { opacity: pressedOpacity }]}
+            accessibilityRole="button"
+          >
+            <Ionicons name="add-circle-outline" size={18} color={colors.accent} />
+            <Text style={[styles.addClassRowText, { color: colors.accent }]}>
+              Add another subject ({subjects.length} of {subjectLimit} used)
+            </Text>
+          </Pressable>
+        ) : null}
 
         {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
@@ -199,6 +375,17 @@ export function MyClassesScreen({ navigation }: Props) {
                         </Text>
                       </View>
                     </View>
+                    {canManageClasses && !isMultiSection ? (
+                      <Pressable
+                        onPress={() => setOptionsClass(singleSection)}
+                        hitSlop={8}
+                        style={({ pressed }) => [styles.moreButton, pressed && { opacity: pressedOpacity }]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Options for ${singleSection.className} ${singleSection.sectionName}`}
+                      >
+                        <Ionicons name="ellipsis-horizontal" size={20} color={colors.textMuted} />
+                      </Pressable>
+                    ) : null}
                     <View style={[styles.folderAction, { backgroundColor: colors.accent }]}>
                       <Ionicons name={isMultiSection ? (isExpanded ? "chevron-up" : "chevron-down") : "arrow-forward"} size={15} color={colors.accentOn} />
                     </View>
@@ -226,6 +413,17 @@ export function MyClassesScreen({ navigation }: Props) {
                                 {stats ? `${stats.studentCount} student${stats.studentCount === 1 ? "" : "s"} · ${stats.topicCount} topic${stats.topicCount === 1 ? "" : "s"}` : "Loading…"}
                               </Text>
                             </View>
+                            {canManageClasses ? (
+                              <Pressable
+                                onPress={() => setOptionsClass(section)}
+                                hitSlop={8}
+                                style={({ pressed }) => [styles.moreButton, pressed && { opacity: pressedOpacity }]}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Options for ${section.className} ${section.sectionName}`}
+                              >
+                                <Ionicons name="ellipsis-horizontal" size={20} color={colors.textMuted} />
+                              </Pressable>
+                            ) : null}
                             <Ionicons name="arrow-forward" size={16} color={colors.accent} />
                           </Pressable>
                         );
@@ -267,6 +465,108 @@ export function MyClassesScreen({ navigation }: Props) {
         ) : null}
       </ScrollView>
 
+      {canManageClasses && accessToken && user?.schoolId ? (
+        <>
+          <ClassOptionsSheet
+            classSection={optionsClass}
+            schoolId={user.schoolId}
+            accessToken={accessToken}
+            onClose={() => setOptionsClass(null)}
+            onDeleted={() => {
+              setOptionsClass(null);
+              load();
+            }}
+          />
+          <DeletedClassesSheet
+            visible={showDeleted}
+            schoolId={user.schoolId}
+            accessToken={accessToken}
+            onClose={() => setShowDeleted(false)}
+            onRestored={load}
+          />
+        </>
+      ) : null}
+
+      <SheetModal visible={showAddClass} onClose={() => setShowAddClass(false)} closeLabel="Close add class">
+        <View style={styles.modalHeader}>
+          <View>
+            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Add another class</Text>
+            <Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>
+              {classLimit !== null ? `${classSections.length} of ${classLimit} used` : "Set up your next class."}
+            </Text>
+          </View>
+          <Pressable style={[styles.modalCloseButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setShowAddClass(false)} accessibilityRole="button">
+            <Ionicons name="close" size={20} color={colors.textPrimary} />
+          </Pressable>
+        </View>
+        <Text style={[styles.label, { color: colors.textPrimary }]}>Class</Text>
+        <TextInput
+          style={[styles.input, { color: colors.textPrimary, borderColor: addClassV.error("className") ? colors.danger : colors.border }]}
+          placeholder="e.g. Grade 5"
+          placeholderTextColor={colors.textMuted}
+          value={newClassName}
+          onChangeText={setNewClassName}
+          onBlur={() => addClassV.blur("className")}
+          maxLength={40}
+          autoFocus
+        />
+        <FieldError message={addClassV.error("className")} />
+        <Text style={[styles.label, { color: colors.textPrimary }]}>Section</Text>
+        <TextInput
+          style={[styles.input, { color: colors.textPrimary, borderColor: addClassV.error("sectionName") ? colors.danger : colors.border }]}
+          placeholder="e.g. A"
+          placeholderTextColor={colors.textMuted}
+          value={newSectionName}
+          onChangeText={setNewSectionName}
+          onBlur={() => addClassV.blur("sectionName")}
+          maxLength={40}
+        />
+        <FieldError message={addClassV.error("sectionName")} />
+        {addClassError ? <Text style={[styles.error, { color: colors.danger, textAlign: "left" }]}>{addClassError}</Text> : null}
+        <Pressable
+          onPress={createAnotherClass}
+          disabled={isCreatingClass}
+          style={[styles.saveButton, { backgroundColor: colors.accent }, isCreatingClass && { opacity: 0.5 }]}
+          accessibilityRole="button"
+        >
+          {isCreatingClass ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.saveButtonText, { color: colors.accentOn }]}>Create class</Text>}
+        </Pressable>
+      </SheetModal>
+
+      <SheetModal visible={showAddSubject} onClose={() => setShowAddSubject(false)} closeLabel="Close add subject">
+        <View style={styles.modalHeader}>
+          <View>
+            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Add another subject</Text>
+            <Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>
+              {subjectLimit !== null ? `${subjects.length} of ${subjectLimit} used` : "Set up your next subject."}
+            </Text>
+          </View>
+          <Pressable style={[styles.modalCloseButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setShowAddSubject(false)} accessibilityRole="button">
+            <Ionicons name="close" size={20} color={colors.textPrimary} />
+          </Pressable>
+        </View>
+        <Text style={[styles.label, { color: colors.textPrimary }]}>Subject</Text>
+        <TextInput
+          style={[styles.input, { color: colors.textPrimary, borderColor: addSubjectV.error("name") ? colors.danger : colors.border }]}
+          placeholder="e.g. Mathematics"
+          placeholderTextColor={colors.textMuted}
+          value={newSubjectName}
+          onChangeText={setNewSubjectName}
+          onBlur={() => addSubjectV.blur("name")}
+          maxLength={40}
+          autoFocus
+        />
+        <FieldError message={addSubjectV.error("name")} />
+        {addSubjectError ? <Text style={[styles.error, { color: colors.danger, textAlign: "left" }]}>{addSubjectError}</Text> : null}
+        <Pressable
+          onPress={createAnotherSubject}
+          disabled={isCreatingSubject}
+          style={[styles.saveButton, { backgroundColor: colors.accent }, isCreatingSubject && { opacity: 0.5 }]}
+          accessibilityRole="button"
+        >
+          {isCreatingSubject ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.saveButtonText, { color: colors.accentOn }]}>Create subject</Text>}
+        </Pressable>
+      </SheetModal>
     </Screen>
   );
 }
@@ -274,6 +574,68 @@ export function MyClassesScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  addClassRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginBottom: 14,
+  },
+  addClassRowText: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 8,
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: "800",
+  },
+  modalSubtitle: {
+    marginTop: 3,
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  modalCloseButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  label: {
+    fontSize: 13,
+    fontWeight: "700",
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  input: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+  },
+  saveButton: {
+    marginTop: 20,
+    borderRadius: 14,
+    height: 52,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  saveButtonText: {
+    fontSize: 15,
+    fontWeight: "700",
   },
   content: {
     paddingHorizontal: spacing.lg,
@@ -403,6 +765,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
   },
+  moreButton: { padding: 6, marginRight: 4 },
   folderAction: {
     width: 28,
     height: 28,

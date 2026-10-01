@@ -6,6 +6,9 @@ import type { TrustDetail, School, Plan } from "../api/client";
 import { Card } from "../components/Card";
 import { PageHeader } from "../components/PageHeader";
 import { Modal, ModalFooter } from "../components/Modal";
+import { FieldError, invalidInput } from "../components/FieldError";
+import { useFormErrors } from "../hooks/useForm";
+import { rules, phoneInput } from "../utils/validation";
 
 const BOARDS = ["CBSE", "ICSE", "State"];
 
@@ -48,6 +51,32 @@ export function TrustDetailPage() {
   const [schoolError, setSchoolError] = useState<string | null>(null);
   const [createdSchool, setCreatedSchool] = useState<School | null>(null);
 
+  // Rules mirror backend/src/lib/validation.ts; field names match the API's.
+  const v = useFormErrors(
+    { name, legalName, contactPersonName, contactPersonPhone, contactEmail, registeredAddress, gstNumber, expectedSchoolCount },
+    {
+      name: rules.label("Trust name", true, 120),
+      legalName: rules.label("Legal name", false, 160),
+      contactPersonName: rules.personName("Contact person name", false),
+      contactPersonPhone: rules.phone(false, "Contact person phone number"),
+      contactEmail: rules.email(false, "Contact email"),
+      registeredAddress: rules.note("Registered address", false, 300),
+      gstNumber: rules.gstin(false),
+      expectedSchoolCount: rules.integer("Expected schools", 0, 10000, false),
+    }
+  );
+  const sv = useFormErrors(
+    { name: schoolName, timezone: schoolTimezone, expectedStudentStrength, address: schoolAddress, principalName, principalPhone },
+    {
+      name: rules.label("School name", true, 120),
+      timezone: rules.timezone(),
+      expectedStudentStrength: rules.integer("Expected student strength", 0, 100000, false),
+      address: rules.note("Address", false, 300),
+      principalName: rules.personName("Principal name", false),
+      principalPhone: rules.phone(false, "Principal phone number"),
+    }
+  );
+
   const load = useCallback(async () => {
     if (!accessToken || !id) return;
     setError(null);
@@ -81,30 +110,40 @@ export function TrustDetailPage() {
     if (!accessToken || !id) return;
     setSaveError(null);
     setSaveMessage(null);
+    if (!v.submit()) {
+      setSaveError("Please fix the highlighted fields.");
+      return;
+    }
     setIsSaving(true);
     try {
       const updated = await api.updateTrust(accessToken, id, {
-        name,
-        legalName: legalName || undefined,
+        name: name.trim(),
+        // Empty strings clear the saved value on the server.
+        legalName: legalName.trim(),
         trustType: trustType || undefined,
-        contactPersonName: contactPersonName || undefined,
-        contactPersonPhone: contactPersonPhone || undefined,
-        contactEmail: contactEmail || undefined,
-        registeredAddress: registeredAddress || undefined,
-        gstNumber: gstNumber || undefined,
+        contactPersonName: contactPersonName.trim(),
+        contactPersonPhone: contactPersonPhone.trim(),
+        contactEmail: contactEmail.trim(),
+        registeredAddress: registeredAddress.trim(),
+        gstNumber: gstNumber.trim().toUpperCase(),
         expectedSchoolCount: expectedSchoolCount ? Number(expectedSchoolCount) : undefined,
       });
       setTrust((prev) => (prev ? { ...prev, ...updated } : prev));
       setSaveMessage("Saved");
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "Failed to save");
+      if (v.applyServerError(err)) setSaveError("Please fix the highlighted fields.");
+      else setSaveError(err instanceof Error ? err.message : "Failed to save");
     } finally {
       setIsSaving(false);
     }
   }
 
   async function createSchool() {
-    if (!accessToken || !id || !schoolName.trim()) return;
+    if (!accessToken || !id) return;
+    if (!sv.submit()) {
+      setSchoolError("Please fix the highlighted fields.");
+      return;
+    }
     setIsCreatingSchool(true);
     setSchoolError(null);
     try {
@@ -127,7 +166,8 @@ export function TrustDetailPage() {
       setShowAddSchool(false);
       load();
     } catch (err) {
-      setSchoolError(err instanceof Error ? err.message : "Failed to add school");
+      if (sv.applyServerError(err)) setSchoolError("Please fix the highlighted fields.");
+      else setSchoolError(err instanceof Error ? err.message : "Failed to add school");
     } finally {
       setIsCreatingSchool(false);
     }
@@ -218,11 +258,29 @@ export function TrustDetailPage() {
         <div style={styles.row}>
           <div style={styles.field}>
             <label style={styles.label}>Display name</label>
-            <input style={styles.input} value={name} onChange={(e) => setName(e.target.value)} disabled={!canEdit} />
+            <input
+              style={{ ...styles.input, ...invalidInput(!!v.error("name")) }}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={() => v.blur("name")}
+              maxLength={120}
+              aria-invalid={!!v.error("name")}
+              disabled={!canEdit}
+            />
+            <FieldError message={v.error("name")} />
           </div>
           <div style={styles.field}>
             <label style={styles.label}>Legal / registered name</label>
-            <input style={styles.input} value={legalName} onChange={(e) => setLegalName(e.target.value)} disabled={!canEdit} />
+            <input
+              style={{ ...styles.input, ...invalidInput(!!v.error("legalName")) }}
+              value={legalName}
+              onChange={(e) => setLegalName(e.target.value)}
+              onBlur={() => v.blur("legalName")}
+              maxLength={160}
+              aria-invalid={!!v.error("legalName")}
+              disabled={!canEdit}
+            />
+            <FieldError message={v.error("legalName")} />
           </div>
           <div style={styles.field}>
             <label style={styles.label}>Trust type</label>
@@ -240,56 +298,90 @@ export function TrustDetailPage() {
           <div style={styles.field}>
             <label style={styles.label}>Contact person</label>
             <input
-              style={styles.input}
+              style={{ ...styles.input, ...invalidInput(!!v.error("contactPersonName")) }}
               value={contactPersonName}
               onChange={(e) => setContactPersonName(e.target.value)}
+              onBlur={() => v.blur("contactPersonName")}
+              maxLength={80}
+              aria-invalid={!!v.error("contactPersonName")}
               disabled={!canEdit}
               placeholder="Name"
             />
+            <FieldError message={v.error("contactPersonName")} />
           </div>
           <div style={styles.field}>
             <label style={styles.label}>Contact person phone</label>
             <input
-              style={styles.input}
+              style={{ ...styles.input, ...invalidInput(!!v.error("contactPersonPhone")) }}
               value={contactPersonPhone}
-              onChange={(e) => setContactPersonPhone(e.target.value)}
+              onChange={(e) => setContactPersonPhone(phoneInput(e.target.value))}
+              onBlur={() => v.blur("contactPersonPhone")}
+              inputMode="tel"
+              autoComplete="tel"
+              maxLength={16}
+              placeholder="10-digit mobile number"
+              aria-invalid={!!v.error("contactPersonPhone")}
               disabled={!canEdit}
             />
+            <FieldError message={v.error("contactPersonPhone")} />
           </div>
           <div style={styles.field}>
             <label style={styles.label}>Contact email</label>
             <input
-              style={styles.input}
+              style={{ ...styles.input, ...invalidInput(!!v.error("contactEmail")) }}
+              type="email"
               value={contactEmail}
               onChange={(e) => setContactEmail(e.target.value)}
+              onBlur={() => v.blur("contactEmail")}
+              maxLength={254}
+              aria-invalid={!!v.error("contactEmail")}
               disabled={!canEdit}
             />
+            <FieldError message={v.error("contactEmail")} />
           </div>
         </div>
         <div style={{ ...styles.row, marginTop: 16 }}>
           <div style={styles.field}>
             <label style={styles.label}>Registered address</label>
             <input
-              style={styles.input}
+              style={{ ...styles.input, ...invalidInput(!!v.error("registeredAddress")) }}
               value={registeredAddress}
               onChange={(e) => setRegisteredAddress(e.target.value)}
+              onBlur={() => v.blur("registeredAddress")}
+              maxLength={300}
+              aria-invalid={!!v.error("registeredAddress")}
               disabled={!canEdit}
             />
+            <FieldError message={v.error("registeredAddress")} />
           </div>
           <div style={styles.field}>
             <label style={styles.label}>GST number</label>
-            <input style={styles.input} value={gstNumber} onChange={(e) => setGstNumber(e.target.value)} disabled={!canEdit} />
+            <input
+              style={{ ...styles.input, ...invalidInput(!!v.error("gstNumber")) }}
+              value={gstNumber}
+              onChange={(e) => setGstNumber(e.target.value.toUpperCase())}
+              onBlur={() => v.blur("gstNumber")}
+              maxLength={15}
+              aria-invalid={!!v.error("gstNumber")}
+              disabled={!canEdit}
+            />
+            <FieldError message={v.error("gstNumber")} />
           </div>
           <div style={{ ...styles.field, maxWidth: 160 }}>
             <label style={styles.label}>Expected schools</label>
             <input
-              style={styles.input}
+              style={{ ...styles.input, ...invalidInput(!!v.error("expectedSchoolCount")) }}
               type="number"
               min={0}
+              max={10000}
+              step={1}
               value={expectedSchoolCount}
               onChange={(e) => setExpectedSchoolCount(e.target.value)}
+              onBlur={() => v.blur("expectedSchoolCount")}
+              aria-invalid={!!v.error("expectedSchoolCount")}
               disabled={!canEdit}
             />
+            <FieldError message={v.error("expectedSchoolCount")} />
           </div>
         </div>
 
@@ -362,12 +454,16 @@ export function TrustDetailPage() {
                   <div style={styles.field}>
                     <label style={styles.label}>School name</label>
                     <input
-                      style={styles.input}
+                      style={{ ...styles.input, ...invalidInput(!!sv.error("name")) }}
                       placeholder="e.g. Sunrise Public School"
                       value={schoolName}
                       onChange={(e) => setSchoolName(e.target.value)}
+                      onBlur={() => sv.blur("name")}
+                      maxLength={120}
+                      aria-invalid={!!sv.error("name")}
                       autoFocus
                     />
+                    <FieldError message={sv.error("name")} />
                   </div>
                   <div style={styles.field}>
                     <label style={styles.label}>Board</label>
@@ -382,49 +478,72 @@ export function TrustDetailPage() {
                   <div style={styles.field}>
                     <label style={styles.label}>Timezone</label>
                     <input
-                      style={styles.input}
+                      style={{ ...styles.input, ...invalidInput(!!sv.error("timezone")) }}
                       placeholder="e.g. Asia/Kolkata"
                       value={schoolTimezone}
                       onChange={(e) => setSchoolTimezone(e.target.value)}
+                      onBlur={() => sv.blur("timezone")}
+                      maxLength={64}
+                      aria-invalid={!!sv.error("timezone")}
                     />
+                    <FieldError message={sv.error("timezone")} />
                   </div>
                   <div style={styles.field}>
                     <label style={styles.label}>Expected student strength</label>
                     <input
-                      style={styles.input}
+                      style={{ ...styles.input, ...invalidInput(!!sv.error("expectedStudentStrength")) }}
                       placeholder="Optional"
                       type="number"
                       min={0}
+                      max={100000}
+                      step={1}
                       value={expectedStudentStrength}
                       onChange={(e) => setExpectedStudentStrength(e.target.value)}
+                      onBlur={() => sv.blur("expectedStudentStrength")}
+                      aria-invalid={!!sv.error("expectedStudentStrength")}
                     />
+                    <FieldError message={sv.error("expectedStudentStrength")} />
                   </div>
                   <div style={{ ...styles.field, ...styles.fieldFull }}>
                     <label style={styles.label}>Address</label>
                     <input
-                      style={styles.input}
+                      style={{ ...styles.input, ...invalidInput(!!sv.error("address")) }}
                       placeholder="Optional"
                       value={schoolAddress}
                       onChange={(e) => setSchoolAddress(e.target.value)}
+                      onBlur={() => sv.blur("address")}
+                      maxLength={300}
+                      aria-invalid={!!sv.error("address")}
                     />
+                    <FieldError message={sv.error("address")} />
                   </div>
                   <div style={styles.field}>
                     <label style={styles.label}>Principal name</label>
                     <input
-                      style={styles.input}
+                      style={{ ...styles.input, ...invalidInput(!!sv.error("principalName")) }}
                       placeholder="Optional"
                       value={principalName}
                       onChange={(e) => setPrincipalName(e.target.value)}
+                      onBlur={() => sv.blur("principalName")}
+                      maxLength={80}
+                      aria-invalid={!!sv.error("principalName")}
                     />
+                    <FieldError message={sv.error("principalName")} />
                   </div>
                   <div style={styles.field}>
                     <label style={styles.label}>Principal phone</label>
                     <input
-                      style={styles.input}
-                      placeholder="Optional"
+                      style={{ ...styles.input, ...invalidInput(!!sv.error("principalPhone")) }}
+                      placeholder="Optional - 10-digit mobile number"
                       value={principalPhone}
-                      onChange={(e) => setPrincipalPhone(e.target.value)}
+                      onChange={(e) => setPrincipalPhone(phoneInput(e.target.value))}
+                      onBlur={() => sv.blur("principalPhone")}
+                      inputMode="tel"
+                      autoComplete="tel"
+                      maxLength={16}
+                      aria-invalid={!!sv.error("principalPhone")}
                     />
+                    <FieldError message={sv.error("principalPhone")} />
                   </div>
                 </div>
                 {schoolError ? <p style={styles.error}>{schoolError}</p> : null}
@@ -432,7 +551,7 @@ export function TrustDetailPage() {
                   <button style={styles.secondaryButton} onClick={() => setShowAddSchool(false)}>
                     Cancel
                   </button>
-                  <button style={styles.button} onClick={createSchool} disabled={isCreatingSchool || !schoolName.trim()}>
+                  <button style={styles.button} onClick={createSchool} disabled={isCreatingSchool}>
                     {isCreatingSchool ? "Adding…" : "Add school"}
                   </button>
                 </ModalFooter>

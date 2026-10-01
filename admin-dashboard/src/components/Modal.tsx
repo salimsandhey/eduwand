@@ -22,21 +22,22 @@ export function Modal({
   }, [onClose]);
 
   return createPortal(
-    <div style={styles.backdrop} onClick={onClose}>
+    <div className="ui-modal-backdrop" style={styles.backdrop} onClick={onClose}>
       <div
+        className="ui-modal"
         style={{ ...styles.dialog, maxWidth: width }}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label={title}
       >
-        <div style={styles.header}>
+        <div className="ui-modal-header" style={styles.header}>
           <h2 style={styles.title}>{title}</h2>
           <button style={styles.closeButton} onClick={onClose} aria-label="Close" type="button">
             ×
           </button>
         </div>
-        <div style={styles.content}>{children}</div>
+        <div className="ui-modal-body" style={styles.content}>{children}</div>
       </div>
     </div>,
     document.body
@@ -44,7 +45,7 @@ export function Modal({
 }
 
 export function ModalFooter({ children }: { children: ReactNode }) {
-  return <div style={styles.footer}>{children}</div>;
+  return <div className="ui-modal-footer" style={styles.footer}>{children}</div>;
 }
 
 const styles: Record<string, CSSProperties> = {

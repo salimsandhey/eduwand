@@ -154,6 +154,7 @@ export function FormatTemplateScreen({ navigation }: Props) {
                 placeholderTextColor={colors.textMuted}
                 value={templateBody}
                 onChangeText={setTemplateBody}
+                maxLength={4000}
                 multiline
                 textAlignVertical="top"
               />

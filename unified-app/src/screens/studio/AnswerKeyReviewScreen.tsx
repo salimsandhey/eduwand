@@ -6,9 +6,11 @@ import { Ionicons } from "@expo/vector-icons";
 import { RootStackParamList } from "../../navigation/types";
 import { useAuth } from "../../context/AuthContext";
 import { useAiGenerating } from "../../context/AiAssistantGlowContext";
+import { useTricklingProgress } from "../../hooks/useTricklingProgress";
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { api, AssignmentDetail, AnswerKeyEntry } from "../../api/client";
+import { FormattedText, stripBoldMarkers } from "./generation/richText";
 
 type Props = NativeStackScreenProps<RootStackParamList, "AnswerKeyReview">;
 
@@ -23,7 +25,8 @@ export function AnswerKeyReviewScreen({ route, navigation }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
-  useAiGenerating(isGenerating);
+  const generateProgress = useTricklingProgress(isGenerating, "Generating the answer key…");
+  useAiGenerating(isGenerating, undefined, generateProgress);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,7 +38,7 @@ export function AnswerKeyReviewScreen({ route, navigation }: Props) {
       const [a, keys] = await Promise.all([api.getAssignment(accessToken, assignmentId), api.getAnswerKey(accessToken, assignmentId)]);
       setAssignment(a);
       setEntries(keys);
-      setDrafts(Object.fromEntries(keys.map((k) => [k.id, k.teacherVerifiedAnswer ?? k.aiAnswer])));
+      setDrafts(Object.fromEntries(keys.map((k) => [k.id, stripBoldMarkers(k.teacherVerifiedAnswer ?? k.aiAnswer)])));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load answer key");
     } finally {
@@ -56,7 +59,7 @@ export function AnswerKeyReviewScreen({ route, navigation }: Props) {
     try {
       const keys = await api.generateAnswerKey(accessToken, assignmentId);
       setEntries(keys);
-      setDrafts(Object.fromEntries(keys.map((k) => [k.id, k.teacherVerifiedAnswer ?? k.aiAnswer])));
+      setDrafts(Object.fromEntries(keys.map((k) => [k.id, stripBoldMarkers(k.teacherVerifiedAnswer ?? k.aiAnswer)])));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate answer key");
     } finally {
@@ -149,7 +152,7 @@ export function AnswerKeyReviewScreen({ route, navigation }: Props) {
             <View key={entry.id} style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
               <View style={styles.cardHeader}>
                 <Text style={[styles.questionText, { color: colors.textPrimary }]}>
-                  {entry.questionIndex + 1}. {question?.prompt ?? "Question"}
+                  {entry.questionIndex + 1}. <FormattedText>{question?.prompt ?? "Question"}</FormattedText>
                 </Text>
                 <Pressable
                   style={({ pressed }) => [styles.editButton, { borderColor: colors.accent }, pressed && { opacity: pressedOpacity }]}
@@ -178,6 +181,7 @@ export function AnswerKeyReviewScreen({ route, navigation }: Props) {
                     style={[styles.answerInput, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
                     value={drafts[entry.id] ?? ""}
                     onChangeText={(text) => setDrafts((prev) => ({ ...prev, [entry.id]: text }))}
+                    maxLength={2000}
                     multiline
                     autoFocus
                   />
@@ -191,7 +195,7 @@ export function AnswerKeyReviewScreen({ route, navigation }: Props) {
                   </Pressable>
                 </>
               ) : (
-                <Text style={[styles.answerText, { color: colors.textSecondary }]}>{drafts[entry.id] ?? entry.aiAnswer}</Text>
+                <FormattedText style={[styles.answerText, { color: colors.textSecondary }]}>{drafts[entry.id] ?? entry.aiAnswer}</FormattedText>
               )}
             </View>
           );

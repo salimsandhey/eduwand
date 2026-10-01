@@ -42,7 +42,13 @@ const TYPE_COLORS: Record<ContextSource["sourceType"], string> = {
 const EXCERPT_CHARS = 1500;
 
 function sourceTitle(source: ContextSource): string {
-  return source.originalFilename?.replace(/^\d{10,}-/, "") ?? source.sourceUrl ?? source.idreamK12ReferenceId ?? TYPE_LABELS[source.sourceType];
+  return (
+    source.citation ||
+    source.originalFilename?.replace(/^\d{10,}-/, "") ||
+    source.idreamK12ReferenceId ||
+    (source.sourceUrl ? hostOf(source.sourceUrl) : null) ||
+    TYPE_LABELS[source.sourceType]
+  );
 }
 
 function hostOf(url: string | null): string | null {

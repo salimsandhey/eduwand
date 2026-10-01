@@ -2,7 +2,7 @@ import { prisma } from "./prisma";
 import { aiProvider, logAiUsage, MODEL_GEMINI_FLASH, ResearchCandidateType } from "./ai";
 import { resolveReachableUrlDetailed } from "./extraction";
 import { getSchoolBoard } from "./boards";
-import { searchImages, ImageHit } from "./image-search";
+import { searchImages, filterImagesUsableForTopic, ImageHit } from "./image-search";
 import { searchYoutubeVideos, VideoHit } from "./youtube-search";
 
 export interface ResearchCandidate {
@@ -30,9 +30,12 @@ const VIDEO_CANDIDATE_LIMIT = 8;
 
 // Two searches (the plain topic, and "diagram") give a better mix than one:
 // a topic name alone tends to return photos, a diagram is usually what a
-// teacher actually wants on a slide.
-async function findImageCandidates(topicName: string): Promise<ImageHit[]> {
-  const settled = await Promise.allSettled([searchImages(topicName, 5), searchImages(`${topicName} diagram`, 5)]);
+// teacher actually wants on a slide. Both are subject-qualified for the same
+// reason findVideoCandidates below already is - a bare topic name is often
+// ambiguous ("Cells", "Waves", "Force") and pulls same-word-different-sense
+// results from a plain keyword image search.
+async function findImageCandidates(topicName: string, subject: string, classLabel: string): Promise<ImageHit[]> {
+  const settled = await Promise.allSettled([searchImages(`${topicName} ${subject}`, 5), searchImages(`${topicName} ${subject} diagram`, 5)]);
   const seen = new Set<string>();
   const merged: ImageHit[] = [];
   for (const result of settled) {
@@ -43,14 +46,19 @@ async function findImageCandidates(topicName: string): Promise<ImageHit[]> {
       merged.push(hit);
     }
   }
-  return merged.slice(0, IMAGE_CANDIDATE_LIMIT);
+  // Deduped across both query variants BEFORE vision-checking - the two
+  // queries often surface the same image, and checking per-query (like
+  // before) meant vision-checking that same image twice.
+  const capped = merged.slice(0, IMAGE_CANDIDATE_LIMIT);
+  return filterImagesUsableForTopic(capped, topicName, subject, classLabel);
 }
 
-// A subject-qualified query ("Photosynthesis Science") does better than the
-// bare topic name, which can be ambiguous or pull in unrelated results.
-async function findVideoCandidates(topicName: string, subject: string): Promise<VideoHit[]> {
+// A subject-and-grade-qualified query ("Photosynthesis Science Class 7") does
+// better than the bare topic name, which can be ambiguous, pull in unrelated
+// results, or return material pitched at the wrong grade entirely.
+async function findVideoCandidates(topicName: string, subject: string, classLabel: string): Promise<VideoHit[]> {
   try {
-    return await searchYoutubeVideos(`${topicName} ${subject}`, VIDEO_CANDIDATE_LIMIT);
+    return await searchYoutubeVideos(`${topicName} ${subject} ${classLabel}`, VIDEO_CANDIDATE_LIMIT);
   } catch (err) {
     console.error("[context-research] YouTube search failed:", err);
     return [];
@@ -70,8 +78,9 @@ export async function runContextResearch(jobId: string, charge?: { schoolId: str
   try {
     const job = await prisma.contextResearchJob.findUniqueOrThrow({
       where: { id: jobId },
-      include: { topic: true },
+      include: { topic: { include: { classSection: true } } },
     });
+    const classLabel = `${job.topic.classSection.className} ${job.topic.classSection.sectionName}`;
 
     await prisma.contextResearchJob.update({ where: { id: jobId }, data: { stage: "searching" } });
 
@@ -83,9 +92,10 @@ export async function runContextResearch(jobId: string, charge?: { schoolId: str
         topicName: job.topic.name,
         subject: job.topic.subject,
         board: await getSchoolBoard(job.topic.schoolId),
+        classLabel,
       }),
-      findImageCandidates(job.topic.name),
-      findVideoCandidates(job.topic.name, job.topic.subject),
+      findImageCandidates(job.topic.name, job.topic.subject, classLabel),
+      findVideoCandidates(job.topic.name, job.topic.subject, classLabel),
     ]);
     if (webResult.status === "rejected" && imageResult.status === "rejected" && videoResult.status === "rejected") throw webResult.reason;
     if (webResult.status === "rejected") console.error(`[context-research] job ${jobId} web search failed:`, webResult.reason);

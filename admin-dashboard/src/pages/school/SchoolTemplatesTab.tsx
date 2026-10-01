@@ -4,6 +4,7 @@ import { api } from "../../api/client";
 import type { SchoolFormatTemplateAppliesTo, SchoolFormatTemplates } from "../../api/client";
 import { Card } from "../../components/Card";
 import type { SchoolOutletContext } from "./SchoolLayout";
+import { btn } from "../../components/buttons";
 
 interface FieldConfig {
   appliesTo: SchoolFormatTemplateAppliesTo;
@@ -176,26 +177,8 @@ const styles: Record<string, React.CSSProperties> = {
     boxSizing: "border-box",
   },
   actionRow: { display: "flex", gap: 8, marginTop: 8 },
-  button: {
-    background: "var(--accent)",
-    color: "#fff",
-    border: "none",
-    borderRadius: 8,
-    padding: "10px 16px",
-    fontWeight: 600,
-    cursor: "pointer",
-    fontSize: 14,
-  },
-  secondaryButton: {
-    background: "var(--bg-page)",
-    color: "var(--text-primary)",
-    border: "1px solid var(--border)",
-    borderRadius: 8,
-    padding: "10px 16px",
-    fontWeight: 600,
-    cursor: "pointer",
-    fontSize: 14,
-  },
+  button: btn.primary,
+  secondaryButton: btn.secondary,
   success: { color: "var(--status-good)", fontSize: 13, marginTop: 8, marginBottom: 0 },
   error: { color: "var(--status-critical)", fontSize: 13, marginTop: 8, marginBottom: 0 },
 };

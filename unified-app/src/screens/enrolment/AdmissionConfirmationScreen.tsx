@@ -9,6 +9,10 @@ import { Screen } from "../../components/Screen";
 import { StageRail } from "../../components/StageRail";
 import { DocumentChecklist, requiredDocumentCompletion, ChecklistItem, FALLBACK_DOCUMENT_CHECKLIST } from "../../components/DocumentChecklist";
 import { DynamicFormFields } from "../../components/DynamicFormFields";
+import { DatePicker } from "../../components/DatePicker";
+import { FieldError } from "../../components/FieldError";
+import { useFormErrors } from "../../hooks/useForm";
+import { rules, phoneInput } from "../../utils/validation";
 import { api, ClassSection, EnquiryDocument, AdmissionInfo, DocumentType, PipelineStage, FormField } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
 
@@ -66,10 +70,27 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
   const [docError, setDocError] = useState<string | null>(null);
 
   const [fullNameFocused, setFullNameFocused] = useState(false);
-  const [dobFocused, setDobFocused] = useState(false);
   const [guardianNameFocused, setGuardianNameFocused] = useState(false);
   const [guardianContactFocused, setGuardianContactFocused] = useState(false);
-  const [admissionDateFocused, setAdmissionDateFocused] = useState(false);
+
+  // Rules mirror backend/src/lib/validation.ts; field names match the API's.
+  // Name / guardian fall back to the enquiry's own values when left empty, so
+  // they are only checked when filled in.
+  const v = useFormErrors(
+    { fullName, dateOfBirth, guardianName, guardianContact, admissionDate },
+    {
+      fullName: rules.personName("Student name", false),
+      dateOfBirth: rules.dateOfBirth("Date of birth"),
+      guardianName: rules.personName("Guardian name", false),
+      guardianContact: rules.phone(false, "Guardian phone number"),
+      admissionDate: (value) => {
+        const basic = rules.date("Admission date")(value);
+        if (basic) return basic;
+        if (dateOfBirth && !rules.date("")(dateOfBirth) && value < dateOfBirth) return "Admission date cannot be before the date of birth";
+        return null;
+      },
+    }
+  );
 
   const buttonScale = useRef(new Animated.Value(1)).current;
   const isHydrated = useRef(false);
@@ -184,9 +205,11 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
 
   async function submit() {
     if (!accessToken) return;
-    if (!dateOfBirth || !classSectionId || !admissionDate) {
-      setError("Date of birth, class/section, and admission date are required");
-      setStep(!dateOfBirth || !classSectionId ? "student" : "guardian");
+    const valid = v.submit();
+    if (!valid || !classSectionId) {
+      setError(!classSectionId ? "Choose a class / section" : "Please fix the highlighted fields");
+      const studentStepBad = !!v.errors.fullName || !!v.errors.dateOfBirth || !classSectionId;
+      setStep(studentStepBad ? "student" : "guardian");
       return;
     }
     setIsSaving(true);
@@ -202,7 +225,12 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
       });
       navigation.replace("EnquiryDetail", { enquiryId });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to confirm admission");
+      if (v.applyServerError(err)) {
+        setError("Please fix the highlighted fields");
+        setStep(err && typeof err === "object" && "fields" in err && ((err as { fields?: Record<string, string> }).fields?.fullName || (err as { fields?: Record<string, string> }).fields?.dateOfBirth) ? "student" : "guardian");
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to confirm admission");
+      }
     } finally {
       setIsSaving(false);
     }
@@ -296,7 +324,7 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
             <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Student Details</Text>
 
             <Text style={[styles.label, { color: colors.textSecondary }]}>Full name</Text>
-            <View style={[styles.inputRow, { backgroundColor: colors.surfaceRaised, borderColor: fullNameFocused ? colors.accent : colors.border }]}>
+            <View style={[styles.inputRow, { backgroundColor: colors.surfaceRaised, borderColor: v.error("fullName") ? colors.danger : fullNameFocused ? colors.accent : colors.border }]}>
               <Ionicons name="person-outline" size={16} color={fullNameFocused ? colors.accent : colors.textMuted} style={styles.inputIcon} />
               <TextInput
                 style={[styles.input, { color: colors.textPrimary }]}
@@ -304,24 +332,27 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
                 onChangeText={setFullName}
                 placeholder="Student's full name"
                 placeholderTextColor={colors.textMuted}
+                autoCapitalize="words"
+                maxLength={80}
                 onFocus={() => setFullNameFocused(true)}
-                onBlur={() => setFullNameFocused(false)}
+                onBlur={() => {
+                  setFullNameFocused(false);
+                  v.blur("fullName");
+                }}
               />
             </View>
+            <FieldError message={v.error("fullName")} />
 
-            <Text style={[styles.label, { color: colors.textSecondary }]}>Date of birth (YYYY-MM-DD)</Text>
-            <View style={[styles.inputRow, { backgroundColor: colors.surfaceRaised, borderColor: dobFocused ? colors.accent : colors.border }]}>
-              <Ionicons name="calendar-outline" size={16} color={dobFocused ? colors.accent : colors.textMuted} style={styles.inputIcon} />
-              <TextInput
-                style={[styles.input, { color: colors.textPrimary }]}
-                value={dateOfBirth}
-                onChangeText={setDateOfBirth}
-                placeholder="2016-04-12"
-                placeholderTextColor={colors.textMuted}
-                onFocus={() => setDobFocused(true)}
-                onBlur={() => setDobFocused(false)}
-              />
-            </View>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Date of birth</Text>
+            <DatePicker
+              value={dateOfBirth}
+              onChange={(d) => {
+                setDateOfBirth(d);
+                v.blur("dateOfBirth");
+              }}
+              placeholder="Select date of birth"
+            />
+            <FieldError message={v.error("dateOfBirth")} />
 
             <Text style={[styles.label, { color: colors.textSecondary }]}>Class / section</Text>
             {classSections.length === 0 ? (
@@ -359,7 +390,7 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
             <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Guardian Details</Text>
 
             <Text style={[styles.label, { color: colors.textSecondary }]}>Guardian name</Text>
-            <View style={[styles.inputRow, { backgroundColor: colors.surfaceRaised, borderColor: guardianNameFocused ? colors.accent : colors.border }]}>
+            <View style={[styles.inputRow, { backgroundColor: colors.surfaceRaised, borderColor: v.error("guardianName") ? colors.danger : guardianNameFocused ? colors.accent : colors.border }]}>
               <Ionicons name="people-outline" size={16} color={guardianNameFocused ? colors.accent : colors.textMuted} style={styles.inputIcon} />
               <TextInput
                 style={[styles.input, { color: colors.textPrimary }]}
@@ -367,36 +398,47 @@ export function AdmissionConfirmationScreen({ route, navigation }: Props) {
                 onChangeText={setGuardianName}
                 placeholder="Guardian's name"
                 placeholderTextColor={colors.textMuted}
+                autoCapitalize="words"
+                maxLength={80}
                 onFocus={() => setGuardianNameFocused(true)}
-                onBlur={() => setGuardianNameFocused(false)}
+                onBlur={() => {
+                  setGuardianNameFocused(false);
+                  v.blur("guardianName");
+                }}
               />
             </View>
+            <FieldError message={v.error("guardianName")} />
 
             <Text style={[styles.label, { color: colors.textSecondary }]}>Guardian contact</Text>
-            <View style={[styles.inputRow, { backgroundColor: colors.surfaceRaised, borderColor: guardianContactFocused ? colors.accent : colors.border }]}>
+            <View style={[styles.inputRow, { backgroundColor: colors.surfaceRaised, borderColor: v.error("guardianContact") ? colors.danger : guardianContactFocused ? colors.accent : colors.border }]}>
               <Ionicons name="call-outline" size={16} color={guardianContactFocused ? colors.accent : colors.textMuted} style={styles.inputIcon} />
               <TextInput
                 style={[styles.input, { color: colors.textPrimary }]}
                 value={guardianContact}
-                onChangeText={setGuardianContact}
-                placeholder="Guardian's contact number"
+                onChangeText={(t) => setGuardianContact(phoneInput(t))}
+                placeholder="10-digit mobile number"
                 placeholderTextColor={colors.textMuted}
+                keyboardType="phone-pad"
+                autoComplete="tel"
+                maxLength={16}
                 onFocus={() => setGuardianContactFocused(true)}
-                onBlur={() => setGuardianContactFocused(false)}
+                onBlur={() => {
+                  setGuardianContactFocused(false);
+                  v.blur("guardianContact");
+                }}
               />
             </View>
+            <FieldError message={v.error("guardianContact")} />
 
-            <Text style={[styles.label, { color: colors.textSecondary }]}>Admission date (YYYY-MM-DD)</Text>
-            <View style={[styles.inputRow, { backgroundColor: colors.surfaceRaised, borderColor: admissionDateFocused ? colors.accent : colors.border }]}>
-              <Ionicons name="calendar-outline" size={16} color={admissionDateFocused ? colors.accent : colors.textMuted} style={styles.inputIcon} />
-              <TextInput
-                style={[styles.input, { color: colors.textPrimary }]}
-                value={admissionDate}
-                onChangeText={setAdmissionDate}
-                onFocus={() => setAdmissionDateFocused(true)}
-                onBlur={() => setAdmissionDateFocused(false)}
-              />
-            </View>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Admission date</Text>
+            <DatePicker
+              value={admissionDate}
+              onChange={(d) => {
+                setAdmissionDate(d);
+                v.blur("admissionDate");
+              }}
+            />
+            <FieldError message={v.error("admissionDate")} />
 
             <StepNavRow onBack={() => setStep("student")} onNext={() => setStep(detailFields.length > 0 ? "details" : "documents")} colors={colors} pressedOpacity={pressedOpacity} />
           </View>

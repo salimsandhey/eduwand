@@ -2,7 +2,7 @@ import type { ReactNode, CSSProperties } from "react";
 
 export function Card({ title, children, style }: { title?: string; children: ReactNode; style?: CSSProperties }) {
   return (
-    <div style={{ ...cardStyle, ...style }}>
+    <div className="ui-card" style={{ ...cardStyle, ...style }}>
       {title ? <h3 style={titleStyle}>{title}</h3> : null}
       {children}
     </div>

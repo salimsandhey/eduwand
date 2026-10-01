@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { prisma } from "../lib/prisma";
+import { Validator } from "../lib/validation";
 import { PLATFORM_ADMIN_ROLE } from "../lib/roles";
 import { getEntitlement } from "../lib/subscriptions";
 
@@ -178,13 +179,12 @@ export async function teacherCreditRoutes(app: FastifyInstance) {
     async (request, reply) => {
       if (!(await authorizeForTeacher(request, reply, request.params.teacherUserId))) return;
 
-      const amount = request.body?.amount;
-      if (!amount || !Number.isFinite(amount) || amount <= 0) {
-        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "amount must be a positive number" } });
-      }
+      const v = new Validator();
+      const amount = v.number("amount", request.body?.amount, "Credits", { required: true, integer: true, min: 1, max: 10_000_000 });
+      const note = v.note("note", request.body?.note, "Note", { max: 200 });
+      if (v.hasErrors || amount === undefined) return v.reject(reply);
 
       const { teacherUserId } = request.params;
-      const note = request.body?.note?.trim() || undefined;
 
       const updated = await prisma.$transaction(async (tx) => {
         const account = await tx.teacherCreditAccount.upsert({

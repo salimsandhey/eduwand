@@ -1,8 +1,8 @@
 import { prisma } from "./prisma";
 import { storage } from "./storage";
-import { MAX_EXTRACTED_CHARS } from "./extraction";
+import { MAX_EXTRACTED_CHARS, downloadRemoteFile } from "./extraction";
 import { getFeatureCost, deductCredits } from "./credits";
-import type { MediaItem } from "./media";
+import { MAX_IMAGE_BYTES, type MediaItem } from "./media";
 import { jsonrepair } from "jsonrepair";
 import {
   CLAUDE_MODEL_LABELS,
@@ -19,29 +19,29 @@ import { aiRequestContext } from "./llm/context";
 
 // Labels stored on AiUsageLog / generations - the Bedrock inference-profile
 // ids live in llm/bedrock.ts.
-export const MODEL_SONNET = CLAUDE_MODEL_LABELS.sonnet;
 export const MODEL_HAIKU = CLAUDE_MODEL_LABELS.haiku;
 // Web research only - the one call that still uses Gemini (Google Search grounding).
 export const MODEL_GEMINI_FLASH = "gemini-2.5-flash";
 
-// Which Claude model does which job. Sonnet for anything a teacher reads as
-// finished material; Haiku for high-volume, structured or short tasks.
+// Every job runs on Haiku - Sonnet is no longer used.
 const MODEL_TIER = {
-  generateContent: "sonnet",
-  presentationOutline: "sonnet",
-  presentationFill: "sonnet",
-  assignment: "sonnet",
-  handwritingOcr: "sonnet",
+  generateContent: "haiku",
+  presentationOutline: "haiku",
+  presentationFill: "haiku",
+  assignment: "haiku",
+  handwritingOcr: "haiku",
   grading: "haiku",
   answerKey: "haiku",
   personalisation: "haiku",
   assessmentRecommendation: "haiku",
   imageContext: "haiku",
+  imageModeration: "haiku",
   articleCleanup: "haiku",
   assistant: "haiku",
+  studentInsight: "haiku",
 } as const satisfies Record<string, ClaudeTier>;
 
-const tierLabel = (tier: ClaudeTier) => (tier === "sonnet" ? MODEL_SONNET : MODEL_HAIKU);
+const tierLabel = (_tier: ClaudeTier) => MODEL_HAIKU;
 
 export type GenerationOutputType =
   | "lesson_plan"
@@ -478,6 +478,12 @@ export interface AssignmentGenInput {
   // topic's lesson generations, or its context sources as a fallback).
   taughtContent: string;
   objectives: string[];
+  // Single-topic AI generation only (assignments.ts's POST
+  // /topics/:id/assignment-draft) - the topic's materialized TopicObjective
+  // rows, given with stable ids so the model can tag which one each question
+  // assesses. Omitted for multi-topic generation and personalisation's extra
+  // questions, which don't tag objectives.
+  objectiveOptions?: { id: string; text: string }[];
   questionCount: number;
   difficultyMix: { easy: number; medium: number; hard: number };
   // Which format(s) to use - empty means "the model may use any of them".
@@ -510,6 +516,10 @@ export interface GeneratedAssignmentQuestion {
   // for sequencing, the items joined in order; otherwise the expected
   // written answer. Seeds the answer key.
   modelAnswer: string;
+  // Only ever set when the caller passed AssignmentGenInput.objectiveOptions
+  // - the id of the TopicObjective this question assesses, or omitted for a
+  // general-revision question not tied to one.
+  objectiveId?: string;
 }
 
 export interface OcrInput {
@@ -538,6 +548,12 @@ export interface ContextResearchInput {
   topicName: string;
   subject: string;
   board: string;
+  // e.g. "Class 2 A" - the grade this material must be pitched at. The same
+  // topic name means very different content at different grades (a Class 2
+  // "Solar System" lesson is about naming the planets; a Class 9 one is
+  // about formation and chemical composition) - without this, research had
+  // no way to tell those apart and could return either for both.
+  classLabel: string;
 }
 
 export type ResearchCandidateType = "pdf" | "video" | "presentation" | "article" | "image";
@@ -562,6 +578,19 @@ export interface PersonalisationInput {
   // should sum to roughly this, not a fixed number, so every question in
   // the assignment can plausibly appear in some student's delivered subset.
   questionCount: number;
+}
+
+export interface StudentInsightInput {
+  studentName: string;
+  averageScore: number | null;
+  submissionCount: number;
+  // Each bucket only appears when it has enough graded questions behind it
+  // (see ai-analytics.ts) - objective/topic buckets need the newer
+  // objective-tagging or just any graded history respectively; difficulty
+  // works for every graded question ever asked.
+  byObjective: { text: string; averagePercent: number; questionCount: number }[];
+  byDifficulty: { difficulty: "easy" | "medium" | "hard"; averagePercent: number; questionCount: number }[];
+  byTopic: { topicName: string; averagePercent: number; questionCount: number }[];
 }
 
 export interface AssessmentInsightInput {
@@ -783,7 +812,11 @@ export function heuristicAssignmentQuestions(input: AssignmentGenInput): Generat
 export function normaliseGeneratedQuestions(
   rows: any[],
   difficultyByIndex: ("easy" | "medium" | "hard")[],
-  allowedTypes: AssignmentQuestionType[]
+  allowedTypes: AssignmentQuestionType[],
+  // Single-topic AI generation only - when given, a row's objectiveId is
+  // kept only if it names one of these (a hallucinated/unrecognized id is
+  // dropped silently, same as an untagged question).
+  validObjectiveIds?: Set<string>
 ): GeneratedAssignmentQuestion[] {
   const allowed = allowedTypes.length > 0 ? allowedTypes : ALL_QUESTION_TYPES;
   const forcedType = allowedTypes.length === 1 ? allowedTypes[0] : null;
@@ -796,6 +829,10 @@ export function normaliseGeneratedQuestions(
     const difficulty = difficultyByIndex[i] ?? "medium";
     const modelAnswerRaw = String(row?.modelAnswer ?? "").trim();
     const type: AssignmentQuestionType = forcedType ?? (allowed.includes(row?.type) ? row.type : allowed[0]);
+    const objectiveId =
+      validObjectiveIds && typeof row?.objectiveId === "string" && validObjectiveIds.has(row.objectiveId)
+        ? { objectiveId: row.objectiveId as string }
+        : {};
 
     if (type === "mcq" || type === "true_false") {
       const rawOptions =
@@ -811,7 +848,7 @@ export function normaliseGeneratedQuestions(
           const byText = options.findIndex((o: string) => o.toLowerCase() === modelAnswerRaw.toLowerCase());
           correctOptionIndex = byText >= 0 ? byText : 0;
         }
-        out.push({ prompt, type, difficulty, options, correctOptionIndex, modelAnswer: modelAnswerRaw || options[correctOptionIndex] });
+        out.push({ prompt, type, difficulty, options, correctOptionIndex, modelAnswer: modelAnswerRaw || options[correctOptionIndex], ...objectiveId });
         return;
       }
       // Not enough options to be a real mcq/true_false - fall through to short_answer below.
@@ -824,7 +861,7 @@ export function normaliseGeneratedQuestions(
             .filter((p: { left: string; right: string }) => p.left && p.right)
         : [];
       if (pairs.length >= 2) {
-        out.push({ prompt, type, difficulty, pairs, modelAnswer: modelAnswerRaw || pairs.map((p: { left: string; right: string }) => `${p.left} - ${p.right}`).join("; ") });
+        out.push({ prompt, type, difficulty, pairs, modelAnswer: modelAnswerRaw || pairs.map((p: { left: string; right: string }) => `${p.left} - ${p.right}`).join("; "), ...objectiveId });
         return;
       }
     }
@@ -832,7 +869,7 @@ export function normaliseGeneratedQuestions(
     if (type === "sequencing") {
       const items = Array.isArray(row?.items) ? row.items.map((it: any) => String(it ?? "").trim()).filter(Boolean) : [];
       if (items.length >= 2) {
-        out.push({ prompt, type, difficulty, items, modelAnswer: modelAnswerRaw || items.join(" -> ") });
+        out.push({ prompt, type, difficulty, items, modelAnswer: modelAnswerRaw || items.join(" -> "), ...objectiveId });
         return;
       }
     }
@@ -843,6 +880,7 @@ export function normaliseGeneratedQuestions(
       type: type === "mcq" || type === "true_false" || type === "match_following" || type === "sequencing" ? "short_answer" : type,
       difficulty,
       modelAnswer: modelAnswerRaw || "Teacher review required before use.",
+      ...objectiveId,
     });
   });
   return out;
@@ -937,6 +975,12 @@ export interface AiProvider {
   // suggestedActions strings assignments' class-insight uses with a
   // recommendation grounded in this specific quiz's actual bands/item data.
   generateAssessmentRecommendation(input: AssessmentInsightInput): Promise<{ recommendation: string; model: string }>;
+  // Used only by GET /analytics/ai/student/:id - a short qualitative read of
+  // one student's strengths/weaknesses across whatever scope was selected,
+  // grounded in the same objective/difficulty/topic aggregates the client
+  // shows as "strongest"/"weakest" tags (not a fresh reread of raw feedback
+  // text, so it stays fast and cheap).
+  generateStudentInsight(input: StudentInsightInput): Promise<{ summary: string; nextStep: string; model: string }>;
   gradeSubmission(input: GradingInput): Promise<{
     score: number;
     feedback: string;
@@ -1026,7 +1070,7 @@ class StubAiProvider implements AiProvider {
             "Exit ticket responses and worksheet accuracy indicate readiness for the next lesson.",
           ].join("\n");
 
-    return { content, model: MODEL_SONNET };
+    return { content, model: MODEL_HAIKU };
   }
 
   async generateResearchReport({ topic, board }: ResearchReportInput) {
@@ -1049,7 +1093,7 @@ class StubAiProvider implements AiProvider {
       `Generated summary — verify against the ${board} prescribed textbook before distributing to students.`,
     ].join("\n");
 
-    return { content, model: MODEL_SONNET };
+    return { content, model: MODEL_HAIKU };
   }
 
   async researchContextSources({ topicName, board }: ContextResearchInput) {
@@ -1097,6 +1141,32 @@ class StubAiProvider implements AiProvider {
     return {
       suggestedMix,
       reasoning: `${studentName} has ${basis}. This is a recommendation only — review before applying.`,
+      model: MODEL_HAIKU,
+    };
+  }
+
+  async generateStudentInsight({ studentName, averageScore, byObjective, byDifficulty, byTopic }: StudentInsightInput) {
+    const buckets = [
+      ...byObjective.map((o) => ({ label: o.text, averagePercent: o.averagePercent })),
+      ...byTopic.map((t) => ({ label: t.topicName, averagePercent: t.averagePercent })),
+    ];
+    if (buckets.length === 0) {
+      return {
+        summary: averageScore === null ? `${studentName} has no graded work yet in this scope.` : `${studentName} is averaging ${Math.round(averageScore)}% so far.`,
+        nextStep: "Not enough graded, tagged questions yet to break this down further.",
+        model: MODEL_HAIKU,
+      };
+    }
+    const sorted = [...buckets].sort((a, b) => b.averagePercent - a.averagePercent);
+    const best = sorted[0];
+    const worst = sorted[sorted.length - 1];
+    const hardBucket = byDifficulty.find((d) => d.difficulty === "hard");
+    return {
+      summary:
+        `${studentName} is strongest on "${best.label}" (${Math.round(best.averagePercent)}%) and weakest on "${worst.label}" ` +
+        `(${Math.round(worst.averagePercent)}%).` +
+        (hardBucket ? ` On hard questions specifically, they're averaging ${Math.round(hardBucket.averagePercent)}%.` : ""),
+      nextStep: `Revisit "${worst.label}" with ${studentName} before moving on.`,
       model: MODEL_HAIKU,
     };
   }
@@ -1328,7 +1398,7 @@ class StubAiProvider implements AiProvider {
       }
     }
 
-    return { content: JSON.stringify(content), model: MODEL_SONNET };
+    return { content: JSON.stringify(content), model: MODEL_HAIKU };
   }
 
   async generatePresentationOutline({ topicName, roleSequence }: PresentationOutlineInput): Promise<PresentationOutlineEntry[]> {
@@ -1372,7 +1442,7 @@ class StubAiProvider implements AiProvider {
   }
 
   async generateAssignmentFromTopic(input: AssignmentGenInput) {
-    return { questions: heuristicAssignmentQuestions(input), model: MODEL_SONNET };
+    return { questions: heuristicAssignmentQuestions(input), model: MODEL_HAIKU };
   }
 
   // No OCR model without a Gemini key. Return genuinely empty text (not a
@@ -1451,6 +1521,58 @@ async function loadImageBlock(fileLocation: string): Promise<ConverseContentBloc
   return imageBlockForClaude(buffer, fileLocation.split(".").pop() ?? "");
 }
 
+/**
+ * Combined safety + relevance check for an image AI Research is about to
+ * offer a teacher - one download, one vision call, two questions:
+ *
+ * 1. Safety - Wikimedia Commons in particular is uncensored (it hosts real
+ *    anatomical/nude images, so a search for something like "human body
+ *    system" can surface one), and a search result's title/filename is
+ *    usually too generic for a text filter to catch that.
+ * 2. Relevance - the image search itself has no ranking/relevance signal of
+ *    its own (see image-search.ts) - it returns whatever a keyword search
+ *    against the open web/Wikimedia Commons turns up, so a short or
+ *    ambiguous topic name (e.g. "Cells", "Waves", "Force") reliably pulls
+ *    same-word-different-meaning results. Safety alone can't catch this: an
+ *    irrelevant stock photo is still perfectly "safe."
+ *
+ * Fails closed: any error (fetch, model, parsing) is treated as
+ * unsafe/irrelevant so a check that couldn't run never silently lets an
+ * image through.
+ */
+// A stalled/slow thumbnail host shouldn't hold up the whole AI Research
+// "searching" stage for a check that just excludes the image on failure -
+// much shorter than downloadRemoteFile's default 30s, which is sized for a
+// download the teacher is actually waiting on ("Add image"/"Add PDF").
+const IMAGE_CHECK_DOWNLOAD_TIMEOUT_MS = 6_000;
+
+export async function isImageUsableForTopic(imageUrl: string, topicName: string, subject: string, classLabel: string): Promise<boolean> {
+  if (!isClaudeConfigured()) return true;
+  try {
+    const downloaded = await downloadRemoteFile(imageUrl, MAX_IMAGE_BYTES, IMAGE_CHECK_DOWNLOAD_TIMEOUT_MS);
+    const ext = downloaded.contentType.split("/").pop() ?? "jpeg";
+    const image = await imageBlockForClaude(downloaded.buffer, ext);
+    const prompt =
+      "You are reviewing an image an automated web/image search found for a K-12 classroom teaching tool, " +
+      `for the topic "${topicName}" in ${subject}, ${classLabel}. It may be shown to a teacher as reference ` +
+      "material. Answer three questions:\n" +
+      "1. Is it inappropriate for students - nudity, exposed genitals or breasts (including in anatomical/medical " +
+      "diagrams), sexual content, or graphic violence/gore?\n" +
+      `2. Does it actually depict or illustrate "${topicName}" as taught in ${subject} - not just a same-word, ` +
+      "different-meaning result (e.g. a search for a topic could wrongly surface an unrelated everyday object, " +
+      "place, or event that just happens to share the word)?\n" +
+      `3. Is its level of detail/complexity actually appropriate for ${classLabel} - not a simplified cartoon ` +
+      "version of a concept an older grade needs precisely, and not an advanced technical diagram (e.g. chemical " +
+      "structures, internal mechanisms) that a younger grade isn't ready for?\n" +
+      "Respond with exactly one word: USABLE if it is appropriate, relevant, AND grade-appropriate, or REJECT if any of those is false.";
+    const result = await claudeText({ tier: MODEL_TIER.imageModeration, purpose: "imageModeration", prompt, image, maxTokens: 10 });
+    return result.text.trim().toUpperCase().startsWith("USABLE");
+  } catch (err) {
+    console.error("[ai] image usability check failed, excluding image:", err);
+    return false;
+  }
+}
+
 const OCR_NO_TEXT_SENTINEL = "NO_TEXT_FOUND";
 
 export const DEFAULT_OUTPUT_TYPE_INSTRUCTIONS: Record<GenerationOutputType, string> = {
@@ -1462,7 +1584,12 @@ export const DEFAULT_OUTPUT_TYPE_INSTRUCTIONS: Record<GenerationOutputType, stri
     'Respond with ONLY a JSON object of this exact shape (no prose, no markdown fences): ' +
     '{"overview": string (2-3 sentences summarising the lesson), ' +
     '"durationMinutes": number, ' +
-    '"objectives": string[] (each labelled with its Bloom\'s Taxonomy level in square brackets, e.g. "[Understand] ..."), ' +
+    '"objectives": string[] (each labelled with its Bloom\'s Taxonomy level in square brackets, e.g. "[Understand] ..."; ' +
+    'each objective must cover distinct ground - never restate the same outcome twice with different wording or a ' +
+    'different Bloom\'s level; phrase each as a statement of what the student will understand or be able to do ' +
+    '(e.g. "[Understand] Explain how the digestive system breaks down food"), never as a question, an instruction ' +
+    'addressed to the student, or an assessment task (e.g. NOT "Give an example of..." or "Identify at least three ' +
+    '..." - those belong in the assessment, not here)), ' +
     '"stages": {"stage": "Engage"|"Explore"|"Explain"|"Elaborate"|"Evaluate", "durationMinutes": number, ' +
     '"summary": string (one sentence on the purpose of this stage), ' +
     '"activities": {"title": string, "description": string[] (2-4 short, concrete steps of the activity, ' +
@@ -1482,7 +1609,11 @@ export const DEFAULT_OUTPUT_TYPE_INSTRUCTIONS: Record<GenerationOutputType, stri
   custom_activity_report:
     'Respond with ONLY a JSON object of this exact shape (no prose, no markdown fences): ' +
     '{"objectives": string[] (one or more, each labelled with its Bloom\'s Taxonomy level in square brackets, ' +
-    'e.g. "[Understand] ..." - see "Learning stage(s) to target" below if given), ' +
+    'e.g. "[Understand] ..." - see "Learning stage(s) to target" below if given; each objective must cover ' +
+    'distinct ground - never restate the same outcome twice with different wording or a different Bloom\'s level; ' +
+    'phrase each as a statement of what the student will understand or be able to do, never as a question, an ' +
+    'instruction addressed to the student, or an assessment task (e.g. NOT "Give an example of..." or "Identify ' +
+    'at least three ..." - those belong in the activities/report, not here)), ' +
     '"activities": {"title": string, "description": string[] (2-4 short, concrete steps of the activity, in the ' +
     'order a teacher would run them - each its own bullet, not one long sentence), "durationMinutes": number, ' +
     '"materials": string[]}[] (sized to fit the given minutes per class; between them, cover every objective above), ' +
@@ -1494,7 +1625,9 @@ export const DEFAULT_OUTPUT_TYPE_INSTRUCTIONS: Record<GenerationOutputType, stri
     "key concepts of the topic. \"keyTerms\" is 2-3 short words or short phrases (1-2 words each, not full " +
     "sentences) pulled directly from that card's answer, in the order they matter to the answer - e.g. for an " +
     'answer about photosynthesis: ["Sunlight", "Chlorophyll", "Energy"]. Every card needs keyTerms, even if ' +
-    "it's just repeating the most important word or two from the answer.",
+    "it's just repeating the most important word or two from the answer. front and back are shown as plain " +
+    "text on a physical-looking card - do not use markdown formatting (no **bold**, no bullet/numbered lists, " +
+    "no headings) inside them; write plain sentences instead.",
   presentation:
     'Respond with ONLY a JSON object of this exact shape (no prose, no markdown fences): ' +
     '{"slides": {"layout": "title"|"bullets"|"stat"|"quote"|"divider"|"stat-grid"|"timeline"|"icon-grid", ' +
@@ -1654,13 +1787,37 @@ class LlmAiProvider implements AiProvider {
   generateLessonPlan = stubProvider.generateLessonPlan.bind(stubProvider);
   generateResearchReport = stubProvider.generateResearchReport.bind(stubProvider);
 
-  async researchContextSources({ topicName, subject, board }: ContextResearchInput) {
-    if (!process.env.GEMINI_API_KEY) return stubProvider.researchContextSources({ topicName, subject, board });
+  async researchContextSources(input: ContextResearchInput) {
+    if (!process.env.GEMINI_API_KEY) return stubProvider.researchContextSources(input);
 
+    try {
+      return await this.researchContextSourcesAttempt(input);
+    } catch (err) {
+      if (err instanceof AiLimitError) throw err;
+      // Gemini's search grounding is non-deterministic - a run that came back
+      // with zero usable candidates (or hit a transient network error) often
+      // succeeds on a second try, so this is worth one retry before we give
+      // up and fall back to the canned stub links.
+      console.error("[ai] researchContextSources attempt failed, retrying once:", err);
+      try {
+        return await this.researchContextSourcesAttempt(input);
+      } catch (retryErr) {
+        if (retryErr instanceof AiLimitError) throw retryErr;
+        console.error("[ai] researchContextSources fell back to stub after retry:", retryErr);
+        return stubProvider.researchContextSources(input);
+      }
+    }
+  }
+
+  private async researchContextSourcesAttempt({ topicName, subject, board, classLabel }: ContextResearchInput) {
     // Video/YouTube candidates are deferred to a later phase - no reliable
     // way yet to verify or pull real content from a video link.
     const prompt = [
       `Find real, currently-accessible web resources a school teacher could use as reference material to teach "${topicName}" (${subject}, ${board} curriculum) — PDFs, articles, and presentations.`,
+      `This is for ${classLabel} students - match the complexity and depth of every result to that grade, not just ` +
+        "the topic name. The same topic name means very different content at different grades (e.g. for a young " +
+        "grade, \"Solar System\" is about identifying the planets; for an older grade, it's about formation and " +
+        "chemical composition) - only return resources genuinely pitched at this grade.",
       "Use web search extensively to find actual pages, not invented ones.",
       "",
       'Respond with ONLY a JSON object of this exact shape (no prose, no markdown fences): ' +
@@ -1670,99 +1827,96 @@ class LlmAiProvider implements AiProvider {
         "Return as many directly relevant candidates as your search turned up.",
     ].join("\n");
 
+    // Reserved against the spend limits like every Claude call - a grounded
+    // search is billed per prompt, so one search is reserved up front.
+    const reservation = await reserveAiSpend({
+      provider: "gemini",
+      model: MODEL_GEMINI_FLASH,
+      purpose: "researchContextSources",
+      estInputTokens: estimateTokens(prompt),
+      maxOutputTokens: 8192,
+      searches: 1,
+    });
+    const started = Date.now();
+    let data: {
+      candidates?: {
+        content?: { parts?: { text?: string }[] };
+        groundingMetadata?: { groundingChunks?: { web?: { uri?: string; title?: string } }[]; webSearchQueries?: string[] };
+      }[];
+      usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number };
+    };
     try {
-      // Reserved against the spend limits like every Claude call - a grounded
-      // search is billed per prompt, so one search is reserved up front.
-      const reservation = await reserveAiSpend({
-        provider: "gemini",
-        model: MODEL_GEMINI_FLASH,
-        purpose: "researchContextSources",
-        estInputTokens: estimateTokens(prompt),
-        maxOutputTokens: 8192,
-        searches: 1,
+      const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          tools: [{ google_search: {} }],
+          generationConfig: { maxOutputTokens: reservation.maxOutputTokens },
+        }),
+        // A grounded search normally finishes well under this - trimmed from
+        // 120s so a stalled attempt (which researchContextSources retries
+        // once) can't silently cost the whole AI Research job up to ~240s.
+        signal: AbortSignal.timeout(60_000),
       });
-      const started = Date.now();
-      let data: {
-        candidates?: {
-          content?: { parts?: { text?: string }[] };
-          groundingMetadata?: { groundingChunks?: { web?: { uri?: string; title?: string } }[]; webSearchQueries?: string[] };
-        }[];
-        usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number };
-      };
-      try {
-        const response = await fetch(`${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            tools: [{ google_search: {} }],
-            generationConfig: { maxOutputTokens: reservation.maxOutputTokens },
-          }),
-          signal: AbortSignal.timeout(120_000),
-        });
-        if (!response.ok) throw Object.assign(new Error(`Gemini request failed (${response.status})`), { rejected: true });
-        data = (await response.json()) as typeof data;
-      } catch (err) {
-        await settleAiSpend(reservation, {
-          status: (err as { rejected?: boolean }).rejected ? "error" : "timeout",
-          latencyMs: Date.now() - started,
-          error: err instanceof Error ? err.message : String(err),
-        });
-        throw err;
-      }
-      await settleAiSpend(reservation, {
-        status: "success",
-        latencyMs: Date.now() - started,
-        usage: {
-          inputTokens: data.usageMetadata?.promptTokenCount ?? 0,
-          // Thinking tokens are billed as output.
-          outputTokens: (data.usageMetadata?.candidatesTokenCount ?? 0) + (data.usageMetadata?.thoughtsTokenCount ?? 0),
-          searches: data.candidates?.[0]?.groundingMetadata?.webSearchQueries?.length ? 1 : 0,
-        },
-      });
-      const first = data.candidates?.[0];
-      const text = first?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
-      if (!text) throw new Error("Gemini returned no text");
-      const parsed = JSON.parse(stripJsonFence(text)) as { candidates?: ResearchCandidateDraft[] };
-
-      // Grounding chunks are the URLs Gemini's search tool actually
-      // retrieved - the real source of truth. The model's own "url" field in
-      // its JSON is free-form text it typed itself, which it will
-      // confidently fabricate to match a well-known site's URL pattern even
-      // when it never saw that exact page (that's the bug this guards
-      // against) - so a candidate only survives if its URL matches a real
-      // grounding chunk, normalized to ignore trivial formatting diffs.
-      const groundedChunks = first?.groundingMetadata?.groundingChunks ?? [];
-      const groundedByNormalizedUrl = new Map<string, { url: string; title?: string }>();
-      for (const chunk of groundedChunks) {
-        if (chunk.web?.uri) groundedByNormalizedUrl.set(normalizeUrlForMatch(chunk.web.uri), { url: chunk.web.uri, title: chunk.web.title });
-      }
-
-      const draftByNormalizedUrl = new Map<string, ResearchCandidateDraft>();
-      for (const draft of parsed.candidates ?? []) {
-        if (draft.url) draftByNormalizedUrl.set(normalizeUrlForMatch(draft.url), draft);
-      }
-
-      const validTypes = new Set<ResearchCandidateType>(["pdf", "presentation", "article"]);
-      const candidates: ResearchCandidateDraft[] = Array.from(groundedByNormalizedUrl.entries())
-        .slice(0, 14)
-        .map(([normalized, grounded]) => {
-          const draft = draftByNormalizedUrl.get(normalized);
-          return {
-            title: draft?.title || grounded.title || grounded.url,
-            url: grounded.url,
-            type: draft && validTypes.has(draft.type) ? draft.type : ("article" as ResearchCandidateType),
-            snippet: draft?.snippet ?? "",
-          };
-        });
-
-      if (candidates.length === 0) throw new Error("No grounded candidates in research response");
-      return { candidates, live: true };
+      if (!response.ok) throw Object.assign(new Error(`Gemini request failed (${response.status})`), { rejected: true });
+      data = (await response.json()) as typeof data;
     } catch (err) {
-      if (err instanceof AiLimitError) throw err;
-      console.error("[ai] researchContextSources fell back to stub:", err);
-      return stubProvider.researchContextSources({ topicName, subject, board });
+      await settleAiSpend(reservation, {
+        status: (err as { rejected?: boolean }).rejected ? "error" : "timeout",
+        latencyMs: Date.now() - started,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
     }
+    await settleAiSpend(reservation, {
+      status: "success",
+      latencyMs: Date.now() - started,
+      usage: {
+        inputTokens: data.usageMetadata?.promptTokenCount ?? 0,
+        // Thinking tokens are billed as output.
+        outputTokens: (data.usageMetadata?.candidatesTokenCount ?? 0) + (data.usageMetadata?.thoughtsTokenCount ?? 0),
+        searches: data.candidates?.[0]?.groundingMetadata?.webSearchQueries?.length ? 1 : 0,
+      },
+    });
+    const first = data.candidates?.[0];
+    const text = first?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+    if (!text) throw new Error("Gemini returned no text");
+    const parsed = JSON.parse(stripJsonFence(text)) as { candidates?: ResearchCandidateDraft[] };
+
+    // Grounding chunks are the URLs Gemini's search tool actually
+    // retrieved - the real source of truth. The model's own "url" field in
+    // its JSON is free-form text it typed itself, which it will
+    // confidently fabricate to match a well-known site's URL pattern even
+    // when it never saw that exact page (that's the bug this guards
+    // against) - so a candidate only survives if its URL matches a real
+    // grounding chunk, normalized to ignore trivial formatting diffs.
+    const groundedChunks = first?.groundingMetadata?.groundingChunks ?? [];
+    const groundedByNormalizedUrl = new Map<string, { url: string; title?: string }>();
+    for (const chunk of groundedChunks) {
+      if (chunk.web?.uri) groundedByNormalizedUrl.set(normalizeUrlForMatch(chunk.web.uri), { url: chunk.web.uri, title: chunk.web.title });
+    }
+
+    const draftByNormalizedUrl = new Map<string, ResearchCandidateDraft>();
+    for (const draft of parsed.candidates ?? []) {
+      if (draft.url) draftByNormalizedUrl.set(normalizeUrlForMatch(draft.url), draft);
+    }
+
+    const validTypes = new Set<ResearchCandidateType>(["pdf", "presentation", "article"]);
+    const candidates: ResearchCandidateDraft[] = Array.from(groundedByNormalizedUrl.entries())
+      .slice(0, 14)
+      .map(([normalized, grounded]) => {
+        const draft = draftByNormalizedUrl.get(normalized);
+        return {
+          title: draft?.title || grounded.title || grounded.url,
+          url: grounded.url,
+          type: draft && validTypes.has(draft.type) ? draft.type : ("article" as ResearchCandidateType),
+          snippet: draft?.snippet ?? "",
+        };
+      });
+
+    if (candidates.length === 0) throw new Error("No grounded candidates in research response");
+    return { candidates, live: true };
   }
 
   async generatePersonalisationSuggestion(input: PersonalisationInput) {
@@ -1800,6 +1954,45 @@ class LlmAiProvider implements AiProvider {
       // publish flow over a single malformed/failed model response.
       console.error("[ai] generatePersonalisationSuggestion fell back to heuristic:", err);
       return stubProvider.generatePersonalisationSuggestion(input);
+    }
+  }
+
+  async generateStudentInsight(input: StudentInsightInput) {
+    const { studentName, averageScore, submissionCount, byObjective, byDifficulty, byTopic } = input;
+    if (byObjective.length === 0 && byDifficulty.length === 0 && byTopic.length === 0) {
+      return stubProvider.generateStudentInsight(input);
+    }
+    const prompt = [
+      `Write a short, specific insight for a teacher about one student, ${studentName}, based on their graded work in this scope.`,
+      averageScore !== null ? `Overall average: ${Math.round(averageScore)}% across ${submissionCount} graded submission(s).` : "No overall average yet.",
+      byObjective.length > 0
+        ? "By learning objective:\n" + byObjective.map((o) => `- "${o.text}": ${Math.round(o.averagePercent)}% (${o.questionCount} question(s))`).join("\n")
+        : "",
+      byDifficulty.length > 0
+        ? "By difficulty:\n" + byDifficulty.map((d) => `- ${d.difficulty}: ${Math.round(d.averagePercent)}% (${d.questionCount} question(s))`).join("\n")
+        : "",
+      byTopic.length > 0
+        ? "By topic:\n" + byTopic.map((t) => `- "${t.topicName}": ${Math.round(t.averagePercent)}% (${t.questionCount} question(s))`).join("\n")
+        : "",
+      "",
+      'Respond with ONLY a JSON object of this exact shape (no prose, no markdown fences): ' +
+        '{"summary": string (2-3 sentences, addressed to the teacher, naming the specific objective/topic/difficulty ' +
+        "the student is strongest and weakest on - not vague praise), " +
+        '"nextStep": string (one concrete, actionable suggestion for what to do with this student next)}.',
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    try {
+      const { text } = await claudeText({ tier: MODEL_TIER.studentInsight, purpose: "studentInsight", prompt, maxTokens: 600 });
+      if (!text) throw new Error("Claude returned no text");
+      const parsed = parseModelJson(text) as { summary?: string; nextStep?: string };
+      if (!parsed.summary || !parsed.nextStep) throw new Error("Malformed student-insight response");
+      return { summary: parsed.summary, nextStep: parsed.nextStep, model: tierLabel(MODEL_TIER.studentInsight) };
+    } catch (err) {
+      if (err instanceof AiLimitError) throw err;
+      console.error("[ai] generateStudentInsight fell back to heuristic:", err);
+      return stubProvider.generateStudentInsight(input);
     }
   }
 
@@ -1954,7 +2147,8 @@ class LlmAiProvider implements AiProvider {
       questionBlock,
       "",
       'Respond with ONLY a JSON object of this exact shape (no prose, no markdown fences): ' +
-        '{"answers": {"<questionId>": string}} - one entry per question id given above.',
+        '{"answers": {"<questionId>": string}} - one entry per question id given above. Each answer is plain text ' +
+        "shown as-is to the teacher - do not use markdown formatting (no **bold**, no bullet/numbered lists) inside it.",
     ].join("\n");
 
     try {
@@ -1982,6 +2176,7 @@ class LlmAiProvider implements AiProvider {
       allowedTypes.length === 1
         ? `Every question MUST be of type "${allowedTypes[0]}" (${QUESTION_TYPE_LABELS[allowedTypes[0]]}).`
         : `Use a mix of these question types, never any other: ${allowedTypes.map((t) => `"${t}" (${QUESTION_TYPE_LABELS[t]})`).join(", ")}.`;
+    const objectiveOptions = input.objectiveOptions ?? [];
 
     const prompt = [
       `You are an experienced ${input.board} curriculum teacher writing an assignment for ${input.classLabel} students in ${input.subject}.`,
@@ -1991,6 +2186,11 @@ class LlmAiProvider implements AiProvider {
       input.objectives.length > 0
         ? `Assess these learning objectives: ${input.objectives.map((o) => `"${o}"`).join("; ")}.`
         : "Assess the core understanding a student should have after this topic.",
+      objectiveOptions.length > 0
+        ? "For each question, name which one of these objective ids it mainly assesses (or null if it's general " +
+          "revision not tied to a single one): " +
+          objectiveOptions.map((o) => `${o.id} = "${o.text}"`).join("; ") + "."
+        : "",
       input.focusPrompt ? `Additional instructions from the teacher: ${input.focusPrompt}` : "",
       "",
       "Base every question strictly on the following record of what was taught for this topic. " +
@@ -2008,8 +2208,11 @@ class LlmAiProvider implements AiProvider {
         '"pairs": {"left": string, "right": string}[] (ONLY for "match_following": 3-5 correct pairs - the app shuffles the right column for the student), ' +
         '"items": string[] (ONLY for "sequencing": 3-5 steps already in their correct order - the app shuffles them for the student), ' +
         '"modelAnswer": string (for "mcq"/"true_false" the exact correct option text; for "fill_blank" the exact word/phrase that fills the blank - phrase the prompt with a literal "___" for the blank; ' +
-        'for "very_short" one word or a very short phrase; for "match_following"/"sequencing" a readable summary of the correct answer; otherwise the expected written answer)}[]} ' +
-        `- exactly ${count} entries, in the difficulty order given above.`,
+        'for "very_short" one word or a very short phrase; for "match_following"/"sequencing" a readable summary of the correct answer; otherwise the expected written answer)' +
+        (objectiveOptions.length > 0 ? ', "objectiveId": string | null (one of the objective ids given above, or null)' : "") +
+        `}[]} - exactly ${count} entries, in the difficulty order given above. Every prompt, option, pair, item and ` +
+        "modelAnswer is plain text shown as-is on a printed/on-screen assignment - do not use markdown formatting " +
+        "(no **bold**, no bullet/numbered lists, no headings) anywhere in them.",
     ]
       .filter(Boolean)
       .join("\n");
@@ -2021,7 +2224,8 @@ class LlmAiProvider implements AiProvider {
       const rows = Array.isArray(parsed.questions) ? parsed.questions : Array.isArray(parsed) ? parsed : null;
       if (!rows || rows.length === 0) throw new Error("Malformed assignment-generation response");
 
-      const questions = normaliseGeneratedQuestions(rows, mix, input.questionTypes);
+      const validObjectiveIds = objectiveOptions.length > 0 ? new Set(objectiveOptions.map((o) => o.id)) : undefined;
+      const questions = normaliseGeneratedQuestions(rows, mix, input.questionTypes, validObjectiveIds);
       if (questions.length === 0) throw new Error("No usable questions in response");
       return { questions, model: tierLabel(MODEL_TIER.assignment) };
     } catch (err) {

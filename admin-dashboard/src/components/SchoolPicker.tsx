@@ -8,7 +8,7 @@ export function SchoolPicker() {
   if (schools.length === 0) return null;
 
   return (
-    <div style={styles.wrap}>
+    <div className="ui-school-picker" style={styles.wrap}>
       <span style={styles.label}>Viewing</span>
       <select
         style={styles.select}

@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useRef, useState } from "react";
 import {
   Animated,
   Easing,
+  Keyboard,
   Modal,
   Pressable,
   StyleProp,
@@ -81,6 +82,18 @@ export function SheetModal({
     }
   }, [visible, windowHeight]);
 
+  // A tap outside while the keyboard is up should just dismiss the keyboard
+  // first (the field's edit is still in progress) - only close the sheet on
+  // an outside tap once the keyboard is already down, matching how a tap
+  // outside a focused text field behaves everywhere else in the app.
+  function handleBackdropPress() {
+    if (keyboard.keyboardVisible) {
+      Keyboard.dismiss();
+      return;
+    }
+    animateAndClose();
+  }
+
   function animateAndClose() {
     if (isClosingRef.current) return;
     isClosingRef.current = true;
@@ -144,7 +157,7 @@ export function SheetModal({
         >
           <Pressable
             style={StyleSheet.absoluteFill}
-            onPress={animateAndClose}
+            onPress={handleBackdropPress}
             accessibilityRole="button"
             accessibilityLabel={closeLabel}
           />

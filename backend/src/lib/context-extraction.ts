@@ -27,6 +27,12 @@ export interface ContextExtractionResult {
   extractionError: string | null;
   extractionStatus: ExtractionStatus;
   pageCount?: number;
+  // A human title for this source, when one could be found (a URL's page
+  // title, a YouTube video's title) - stored as the source's citation so the
+  // teacher sees "Photosynthesis - Wikipedia" instead of a raw link.
+  // Undefined (not null) when nothing was found, so it never overwrites an
+  // already-set citation (e.g. a file upload's filename).
+  title?: string;
 }
 
 /**
@@ -49,6 +55,7 @@ export async function runContextExtraction(params: {
   let extractedText: string | null = null;
   let extractionError: string | null = null;
   let pageCount: number | undefined;
+  let title: string | undefined;
 
   try {
     if (params.sourceType === "image") {
@@ -66,14 +73,18 @@ export async function runContextExtraction(params: {
           // the substantive content instead of adding a DOM-heuristics library.
           const cleaned = await aiProvider.cleanScrapedArticleText({ rawText: result.text, sourceUrl: params.sourceUrl });
           extractedText = cleaned.text || result.text;
+          if (result.title) title = result.title;
         }
       }
     } else if (params.sourceType === "youtube") {
       // No transcript extraction - just a best-effort title as light context,
       // via fetchYoutubeTitle's public oEmbed lookup (no API key needed).
       if (params.sourceUrl) {
-        const title = await fetchYoutubeTitle(params.sourceUrl);
-        if (title) extractedText = `YouTube video: ${title}`;
+        const videoTitle = await fetchYoutubeTitle(params.sourceUrl);
+        if (videoTitle) {
+          extractedText = `YouTube video: ${videoTitle}`;
+          title = videoTitle;
+        }
       }
     } else if (params.sourceType === "idream_k12") {
       // No local extraction path yet - treated as ready by extractionStatusFor.
@@ -101,5 +112,6 @@ export async function runContextExtraction(params: {
       extractedText,
     }),
     pageCount,
+    title,
   };
 }
