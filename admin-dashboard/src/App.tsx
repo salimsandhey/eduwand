@@ -46,6 +46,7 @@ import { MySchoolRedirect } from "./pages/MySchoolRedirect";
 import { hasWebsite, websiteUrl, WEBSITE_PATHS } from "./utils/website";
 import { ContentPagesEditor } from "./pages/ContentPagesEditor";
 import { WebsiteEnquiriesPage } from "./pages/WebsiteEnquiriesPage";
+import { EmailTemplatesPage } from "./pages/EmailTemplatesPage";
 
 // Privacy Policy, Terms, About and Contact live on the public website now.
 // Old links to them on this domain (store listings, emails) are forwarded.
@@ -138,6 +139,7 @@ function Root() {
         <Route path="/billing" element={<RequireRole path="/billing"><BillingPage /></RequireRole>} />
         <Route path="/ai-calls" element={<RequireRole path="/ai-calls"><AiCallLogPage /></RequireRole>} />
         <Route path="/platform-settings" element={<RequireRole path="/platform-settings"><PlatformSettingsPage /></RequireRole>} />
+        <Route path="/email-templates" element={<RequireRole path="/email-templates"><EmailTemplatesPage /></RequireRole>} />
         <Route path="/website-enquiries" element={<RequireRole path="/website-enquiries"><WebsiteEnquiriesPage /></RequireRole>} />
         <Route path="/content-pages" element={<RequireRole path="/content-pages"><ContentPagesEditor /></RequireRole>} />
         <Route path="/subject-change-requests" element={<RequireRole path="/subject-change-requests"><SubjectChangeRequestsPage /></RequireRole>} />

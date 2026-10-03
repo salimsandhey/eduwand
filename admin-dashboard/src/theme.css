@@ -348,3 +348,13 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .ui-menu-item:not(:disabled):hover { background: var(--accent-wash) !important; filter: none; }
+
+/* ---- Email templates page: template list beside the editor; a dropdown on small screens ---- */
+
+.et-layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 24px; align-items: start; }
+
+.et-list { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; padding-right: 4px; }
+
+.et-picker { display: none; }
+
+@media (max-width: 900px) { .et-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; } .et-list { display: none; } .et-picker { display: block; } }

@@ -2141,3 +2141,17 @@ model WebsiteEnquiry {
   @@index([status, createdAt])
   @@map("website_enquiry")
 }
+
+// The wording of a transactional email as edited in the admin dashboard
+// (Email templates). One row per template key; no row means the default
+// wording written in src/lib/email/templates.ts is used. copy is the full
+// EmailCopy (subject, preheader, heading, paragraphs, note, ctaLabel) with
+// {{placeholders}} - see src/lib/email/registry.ts.
+model EmailTemplateOverride {
+  key       String   @id
+  copy      Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  @@map("email_template_override")
+}

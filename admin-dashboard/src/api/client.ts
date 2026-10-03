@@ -335,6 +335,36 @@ export interface Subject {
   createdAt: string;
 }
 
+// The wording of one email, with {{placeholders}} (EmailTemplateOverride in schema.prisma).
+export interface EmailCopy {
+  subject: string;
+  preheader: string;
+  heading: string;
+  paragraphs: string[];
+  note: string;
+  ctaLabel: string;
+}
+
+export interface EmailTemplateItem {
+  key: string;
+  label: string;
+  group: string;
+  description: string;
+  vars: { name: string; description: string }[];
+  canHaveButton: boolean;
+  defaults: EmailCopy;
+  // The wording in use: what was saved, or the default.
+  copy: EmailCopy;
+  customised: boolean;
+  updatedAt: string | null;
+}
+
+export interface EmailPreview {
+  subject: string;
+  html: string;
+  text: string;
+}
+
 export type WebsiteEnquiryStatus = "new" | "in_progress" | "resolved" | "spam";
 
 // A message from the public website's Contact form (WebsiteEnquiry in schema.prisma).
@@ -1406,6 +1436,16 @@ export const api = {
     request<Subject>(`/schools/${schoolId}/subjects`, { method: "POST", body: JSON.stringify({ name }) }, token),
   deleteSubject: (token: string, schoolId: string, subjectId: string) =>
     request<{ deleted: boolean }>(`/schools/${schoolId}/subjects/${subjectId}`, { method: "DELETE" }, token),
+
+  listEmailTemplates: (token: string) => request<EmailTemplateItem[]>("/email-templates", {}, token),
+  previewEmailTemplate: (token: string, key: string, copy?: EmailCopy) =>
+    request<EmailPreview>(`/email-templates/${key}/preview`, { method: "POST", body: JSON.stringify({ copy }) }, token),
+  saveEmailTemplate: (token: string, key: string, copy: EmailCopy) =>
+    request<{ key: string; copy: EmailCopy }>(`/email-templates/${key}`, { method: "PUT", body: JSON.stringify({ copy }) }, token),
+  resetEmailTemplate: (token: string, key: string) =>
+    request<{ key: string; copy: EmailCopy }>(`/email-templates/${key}`, { method: "DELETE" }, token),
+  sendTestEmail: (token: string, key: string, copy?: EmailCopy) =>
+    request<{ sentTo: string }>(`/email-templates/${key}/test`, { method: "POST", body: JSON.stringify({ copy }) }, token),
 
   listWebsiteEnquiries: (token: string, params: { kind?: string; status?: string; q?: string; page?: number; pageSize?: number } = {}) =>
     requestEnvelope<WebsiteEnquiry[]>(

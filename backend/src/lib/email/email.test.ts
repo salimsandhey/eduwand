@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { renderEmail } from "./layout";
+import { getTemplateDef, listTemplateDefs, placeholdersIn, renderTemplateSample, setEmailOverrides } from "./registry";
 import { loginCodeEmail, materialSharedEmail, gradeReleasedEmail, staffInviteEmail, planEndingEmail } from "./templates";
 
 test("login code email greets by first name and shows the code in both parts", () => {
@@ -86,6 +87,39 @@ test("the tone colours the accent bar", () => {
   assert.match(good.html, /width:44px;background:#0CA30C/);
   assert.match(bad.html, /width:44px;background:#D03B3B/);
   assert.match(plain.html, /width:44px;background:#FBAA0A/);
+});
+
+test("a saved wording replaces the default, fills placeholders and drops empty paragraphs", () => {
+  const def = getTemplateDef("grade_released");
+  assert.ok(def);
+  setEmailOverrides(new Map([["grade_released", { ...def.copy, heading: "Result for {{title}}", paragraphs: ["{{teacher}} marked it.", "{{feedbackLine}}"] }]]));
+  try {
+    const withoutFeedback = gradeReleasedEmail({ studentName: "Meera", assignmentTitle: "Unit test", score: 9, teacherName: "Ms. Iyer" });
+    assert.match(withoutFeedback.html, /Result for Unit test/);
+    assert.match(withoutFeedback.html, /Ms\. Iyer marked it\./);
+    assert.doesNotMatch(withoutFeedback.html, /Feedback:/);
+    const withFeedback = gradeReleasedEmail({ studentName: "Meera", assignmentTitle: "Unit test", score: 9, feedback: "Well done" });
+    assert.match(withFeedback.html, /Feedback: Well done/);
+  } finally {
+    setEmailOverrides(new Map());
+  }
+  assert.match(gradeReleasedEmail({ studentName: "Meera", assignmentTitle: "Unit test", score: 9 }).html, /Your assignment has been graded/);
+});
+
+test("every template renders its example with its own default wording", () => {
+  const defs = listTemplateDefs();
+  assert.ok(defs.length >= 25);
+  for (const def of defs) {
+    const mail = renderTemplateSample(def.key);
+    assert.ok(mail, def.key);
+    assert.ok(mail.subject.trim(), `${def.key} has no subject`);
+    assert.doesNotMatch(mail.html, /\{\{/, `${def.key} left a placeholder unfilled`);
+    // Every placeholder written in the default wording is one the template documents.
+    const allowed = new Set(def.vars.map((x) => x.name));
+    for (const text of [def.copy.subject, def.copy.preheader, def.copy.heading, def.copy.note, ...def.copy.paragraphs]) {
+      for (const name of placeholdersIn(text)) assert.ok(allowed.has(name), `${def.key} uses undocumented {{${name}}}`);
+    }
+  }
 });
 
 test("a plan-ending email links to the billing page on the website", () => {

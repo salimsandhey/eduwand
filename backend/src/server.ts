@@ -22,6 +22,8 @@ import { exportRoutes } from "./routes/exports";
 import { analyticsRoutes } from "./routes/analytics";
 import { publicEnquiryRoutes } from "./routes/public-enquiries";
 import { websiteEnquiryRoutes } from "./routes/website-enquiries";
+import { emailTemplateRoutes } from "./routes/email-templates";
+import { startEmailOverrideRefresh } from "./lib/email/override-store";
 import { classSectionRoutes } from "./routes/class-sections";
 import { classLifecycleRoutes } from "./routes/class-lifecycle";
 import { subjectRoutes } from "./routes/subjects";
@@ -141,6 +143,7 @@ app.register(exportRoutes, { prefix: "/api/v1" });
 app.register(analyticsRoutes, { prefix: "/api/v1" });
 app.register(publicEnquiryRoutes, { prefix: "/api/v1" });
 app.register(websiteEnquiryRoutes, { prefix: "/api/v1" });
+app.register(emailTemplateRoutes, { prefix: "/api/v1" });
 app.register(classSectionRoutes, { prefix: "/api/v1" });
 app.register(classLifecycleRoutes, { prefix: "/api/v1" });
 app.register(subjectRoutes, { prefix: "/api/v1" });
@@ -231,6 +234,7 @@ if (isDevOtpMode()) {
 }
 
 startPlanReminderJob();
+startEmailOverrideRefresh();
 
 app.listen({ port, host: "0.0.0.0" }).catch((err) => {
   app.log.error(err);
