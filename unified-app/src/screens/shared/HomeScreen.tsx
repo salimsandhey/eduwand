@@ -259,7 +259,18 @@ export function HomeScreen() {
   const profileRingRevealed = !profilePromptEligible;
   // Bumped when the popup's orb lands on the avatar - the avatar "catches" it.
   const [avatarCatchSignal, setAvatarCatchSignal] = useState(0);
-  const profilePromptReady = profilePromptEligible && splashDone && isWelcomeSequenceComplete && !showTour;
+  // Both the tour and the profile prompt are native Modals. If the prompt opens
+  // while the tour is still animating out, iOS has two modals mid-transition
+  // and the home screen stops responding - so the prompt waits until the tour
+  // has fully gone, plus a beat for the native dismissal to finish.
+  const [tourClosing, setTourClosing] = useState(false);
+  useEffect(() => {
+    if (showTour) setTourClosing(true);
+  }, [showTour]);
+  const handleTourExited = useCallback(() => {
+    setTimeout(() => setTourClosing(false), 350);
+  }, []);
+  const profilePromptReady = profilePromptEligible && splashDone && isWelcomeSequenceComplete && !showTour && !tourClosing;
 
   useEffect(() => {
     if (!profilePromptReady) {
@@ -1129,7 +1140,7 @@ export function HomeScreen() {
         animation a zero point in the app's coordinate space to measure the
         avatar and the AI button against (see CompleteProfileModal's hostOriginRef). */}
     <View ref={screenOriginRef} collapsable={false} pointerEvents="none" style={styles.screenOriginMarker} />
-    <TeacherTourModal visible={showTour} onDone={markOnboardingTourSeen} />
+    <TeacherTourModal visible={showTour} onDone={markOnboardingTourSeen} onExited={handleTourExited} />
     {teacherProfileImage ? (
       <CompleteProfileModal
         visible={showProfilePrompt}

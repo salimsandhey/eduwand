@@ -9,7 +9,7 @@ import { AiGenerationProgress, useAiGenerating } from "../../context/AiAssistant
 import { useTheme } from "../../theme/ThemeContext";
 import { Screen } from "../../components/Screen";
 import { VideoPlayerModal } from "../../components/VideoPlayerModal";
-import { api, ContextResearchJob, ResearchCandidate, ResearchCandidateType, TopicDetail } from "../../api/client";
+import { api, ContextResearchJob, ResearchCandidate, ResearchCandidateType, SavedVideo, TopicDetail } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
 
 // Kept small - "did I already save this exact video" is all this screen
@@ -114,7 +114,9 @@ export function ContextResearchScreen({ route, navigation }: Props) {
   const [watching, setWatching] = useState<ResearchCandidate | null>(null);
   // Which videos are already saved (see backend's SavedVideo) - drives the
   // filled/outline bookmark state per card.
-  const [savedVideoIds, setSavedVideoIds] = useState<Set<string>>(new Set());
+  // Keyed by YouTube videoId, holding the saved row so its share flag can be toggled.
+  const [savedVideos, setSavedVideos] = useState<Record<string, SavedVideo>>({});
+  const [sharingVideoIds, setSharingVideoIds] = useState<Set<string>>(new Set());
   const [savingVideoIds, setSavingVideoIds] = useState<Set<string>>(new Set());
   const [isStarting, setIsStarting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -182,7 +184,7 @@ export function ContextResearchScreen({ route, navigation }: Props) {
       });
     api
       .listSavedVideos(accessToken, topicId)
-      .then((videos) => setSavedVideoIds(new Set(videos.map((v) => v.videoId))))
+      .then((videos) => setSavedVideos(Object.fromEntries(videos.map((v) => [v.videoId, v]))))
       .catch(() => {});
     api.getTopic(accessToken, topicId).then(setTopic).catch(() => {});
     return () => {
@@ -192,19 +194,39 @@ export function ContextResearchScreen({ route, navigation }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken, topicId]);
 
+  async function toggleShareVideo(videoId: string) {
+    const row = savedVideos[videoId];
+    if (!accessToken || !row) return;
+    const next = !row.sharedWithStudents;
+    setSharingVideoIds((prev) => new Set(prev).add(videoId));
+    setError(null);
+    try {
+      const updated = await api.setSavedVideoShared(accessToken, topicId, row.id, next);
+      setSavedVideos((prev) => ({ ...prev, [videoId]: updated }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update sharing");
+    } finally {
+      setSharingVideoIds((prev) => {
+        const copy = new Set(prev);
+        copy.delete(videoId);
+        return copy;
+      });
+    }
+  }
+
   async function saveVideo(candidate: ResearchCandidate) {
     if (!accessToken || !candidate.videoId || !candidate.thumbnailUrl) return;
     setSavingVideoIds((prev) => new Set(prev).add(candidate.videoId!));
     setError(null);
     try {
-      await api.saveVideo(accessToken, topicId, {
+      const saved = await api.saveVideo(accessToken, topicId, {
         videoId: candidate.videoId,
         title: candidate.title,
         channelTitle: candidate.channelTitle ?? "",
         thumbnailUrl: candidate.thumbnailUrl,
         duration: candidate.duration,
       });
-      setSavedVideoIds((prev) => new Set(prev).add(candidate.videoId!));
+      setSavedVideos((prev) => ({ ...prev, [candidate.videoId!]: saved }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save video");
     } finally {
@@ -419,22 +441,47 @@ export function ContextResearchScreen({ route, navigation }: Props) {
                         {busy ? <ActivityIndicator color={colors.textSecondary} size="small" /> : <Text style={[styles.ghostButtonText, { color: colors.textSecondary }]}>Dismiss</Text>}
                       </Pressable>
                       {(() => {
-                        const isSaved = !!candidate.videoId && savedVideoIds.has(candidate.videoId);
+                        const savedRow = candidate.videoId ? savedVideos[candidate.videoId] : undefined;
+                        const isSaved = !!savedRow;
                         const isSaving = !!candidate.videoId && savingVideoIds.has(candidate.videoId);
+                        const isSharing = !!candidate.videoId && sharingVideoIds.has(candidate.videoId);
+                        const isShared = !!savedRow?.sharedWithStudents;
                         return (
-                          <Pressable
-                            style={({ pressed }) => [styles.iconButton, { borderColor: colors.border }, (isSaving || pressed) && { opacity: pressedOpacity }]}
-                            onPress={() => saveVideo(candidate)}
-                            disabled={isSaved || isSaving}
-                            accessibilityRole="button"
-                            accessibilityLabel={isSaved ? "Saved" : `Save ${candidate.title}`}
-                          >
-                            {isSaving ? (
-                              <ActivityIndicator color={colors.accent} size="small" />
-                            ) : (
-                              <Ionicons name={isSaved ? "bookmark" : "bookmark-outline"} size={18} color={colors.accent} />
-                            )}
-                          </Pressable>
+                          <>
+                            <Pressable
+                              style={({ pressed }) => [styles.iconButton, { borderColor: colors.border }, (isSaving || pressed) && { opacity: pressedOpacity }]}
+                              onPress={() => saveVideo(candidate)}
+                              disabled={isSaved || isSaving}
+                              accessibilityRole="button"
+                              accessibilityLabel={isSaved ? "Saved" : `Save ${candidate.title}`}
+                            >
+                              {isSaving ? (
+                                <ActivityIndicator color={colors.accent} size="small" />
+                              ) : (
+                                <Ionicons name={isSaved ? "bookmark" : "bookmark-outline"} size={18} color={colors.accent} />
+                              )}
+                            </Pressable>
+                            {isSaved && candidate.videoId ? (
+                              <Pressable
+                                style={({ pressed }) => [
+                                  styles.iconButton,
+                                  { borderColor: isShared ? colors.accent : colors.border, backgroundColor: isShared ? colors.accentSoft : "transparent" },
+                                  (isSharing || pressed) && { opacity: pressedOpacity },
+                                ]}
+                                onPress={() => toggleShareVideo(candidate.videoId!)}
+                                disabled={isSharing}
+                                accessibilityRole="switch"
+                                accessibilityState={{ checked: isShared }}
+                                accessibilityLabel={isShared ? "Shared with students - tap to stop sharing" : "Share with students"}
+                              >
+                                {isSharing ? (
+                                  <ActivityIndicator color={colors.accent} size="small" />
+                                ) : (
+                                  <Ionicons name={isShared ? "people" : "people-outline"} size={18} color={colors.accent} />
+                                )}
+                              </Pressable>
+                            ) : null}
+                          </>
                         );
                       })()}
                       <Pressable

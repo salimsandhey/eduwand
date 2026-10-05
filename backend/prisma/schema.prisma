@@ -943,6 +943,10 @@ model SavedVideo {
   channelTitle  String   @map("channel_title")
   thumbnailUrl  String   @map("thumbnail_url")
   duration      String
+  // Teacher opt-in: when true, the video shows up on the Materials screen of
+  // every student in the topic's class (see /student/videos). Off by default -
+  // a saved reference video is teacher-only until explicitly shared.
+  sharedWithStudents Boolean @default(false) @map("shared_with_students")
   createdAt     DateTime @default(now()) @map("created_at")
 
   @@unique([topicId, videoId])

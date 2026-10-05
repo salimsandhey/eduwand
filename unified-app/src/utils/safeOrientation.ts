@@ -23,3 +23,9 @@ export function lockLandscape() {
 export function lockPortrait() {
   safeLock(ScreenOrientation.OrientationLock.PORTRAIT_UP);
 }
+
+// Lets the screen follow the device again (portrait or landscape), for screens
+// that should rotate freely instead of being forced one way.
+export function unlockOrientation() {
+  safeLock(ScreenOrientation.OrientationLock.DEFAULT);
+}

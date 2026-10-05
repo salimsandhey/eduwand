@@ -89,6 +89,9 @@ export function MoreMenuScreen() {
         { title: "Getting started", caption: setupCaption, icon: "checkmark-circle-outline", onPress: () => root?.navigate("GettingStarted") },
         { title: "Leaderboard", caption: "See how you rank in your school this month", icon: "trophy-outline", onPress: () => root?.navigate("Leaderboard") },
         ...(isIndividualTeacher
+          ? [{ title: "School branding", caption: "Logo and colors on your slides and reports", icon: "options-outline" as const, onPress: () => root?.navigate("FormatTemplate") }]
+          : []),
+        ...(isIndividualTeacher
           ? [{ title: "Academic year", caption: "Start a new session when this one ends", icon: "calendar-outline" as const, onPress: () => root?.navigate("StartNewAcademicYear") }]
           : []),
       ]

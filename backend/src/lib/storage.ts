@@ -66,6 +66,15 @@ class CloudinaryStorage implements Storage {
         { public_id: publicId, resource_type: resourceType, overwrite: true, invalidate: true },
         (error, response) => {
           if (error || !response) {
+            // Cloudinary's "File size too large. Got N. Maximum is M." is for the account's
+            // own plan limit - say it plainly instead of passing the raw text through.
+            const text = String((error as { message?: string } | undefined)?.message ?? "");
+            if (/file size too large|too large/i.test(text)) {
+              const max = text.match(/maximum is (d+)/i)?.[1];
+              const maxMb = max ? Math.floor(Number(max) / (1024 * 1024)) : null;
+              reject(Object.assign(new Error(`That file is too large for storage${maxMb ? ` (the limit is ${maxMb} MB)` : ""}. Try a smaller file.`), { statusCode: 413 }));
+              return;
+            }
             reject(error ?? new Error("Cloudinary upload returned no result"));
             return;
           }

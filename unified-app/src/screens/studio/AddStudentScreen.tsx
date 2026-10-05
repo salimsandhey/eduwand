@@ -18,7 +18,7 @@ import { rules, phoneInput } from "../../utils/validation";
 import { api, ClassSection, ClassJoinRequest, getClassJoinLink } from "../../api/client";
 import { capitalizeFirst } from "../../utils/text";
 import { getRelativeDateLabel } from "../../utils/date";
-import { parseCsv, rowsToStudentRows, STUDENT_CSV_TEMPLATE } from "../../utils/studentCsv";
+import { parseCsv, rowsToStudentRows, normaliseClassName, STUDENT_CSV_TEMPLATE } from "../../utils/studentCsv";
 
 // Every way to add a student, in one page: manual entry, bulk CSV upload,
 // and invite-by-link (which stays class-level, not universal - generating
@@ -170,12 +170,37 @@ export function AddStudentScreen({ navigation, route }: Props) {
         setError("No student rows found in that file - check it matches the template columns.");
         return;
       }
-      const res = await api.bulkAddStudents(accessToken, classId, rows);
-      setUploadResult({
-        created: res.created,
-        skipped: res.skipped.length,
-        reasons: res.skipped.slice(0, 5).map((s) => `Row ${s.row}: ${s.reason}`),
+      // A row with a class column goes to that class; a blank one goes to the class
+      // chosen above. One request per class, since the server takes one class at a time.
+      const byClass = new Map<string, { row: number; data: Omit<(typeof rows)[number], "className"> }[]>();
+      const reasons: string[] = [];
+      let skipped = 0;
+      rows.forEach((row, index) => {
+        const { className, ...data } = row;
+        let targetId: string | null = classId;
+        if (className) {
+          const wanted = normaliseClassName(className);
+          const match = classSections.find((c) => normaliseClassName(`${c.className}${c.sectionName}`) === wanted);
+          if (!match) {
+            skipped += 1;
+            reasons.push(`Row ${index + 1}: no class called "${className}"`);
+            return;
+          }
+          targetId = match.id;
+        }
+        if (!targetId) return;
+        byClass.set(targetId, [...(byClass.get(targetId) ?? []), { row: index + 1, data }]);
       });
+
+      let created = 0;
+      for (const [targetId, items] of byClass) {
+        const res = await api.bulkAddStudents(accessToken, targetId, items.map((i) => i.data));
+        created += res.created;
+        skipped += res.skipped.length;
+        // The server numbers rows within the batch it received; map back to the file's row.
+        res.skipped.forEach((s) => reasons.push(`Row ${items[s.row - 1]?.row ?? s.row}: ${s.reason}`));
+      }
+      setUploadResult({ created, skipped, reasons: reasons.slice(0, 5) });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to upload students");
     } finally {
@@ -334,6 +359,8 @@ export function AddStudentScreen({ navigation, route }: Props) {
             <View style={[styles.card, { backgroundColor: colors.surface, borderWidth: 0 }, cardShadow]}>
               <Text style={[styles.hint, { color: colors.textMuted }]}>
                 Upload a CSV (opens fine in Excel) with columns: full_name, date_of_birth, guardian_name, guardian_contact, email (the student's sign-in email).
+                {"\n\n"}Add a "class" column (for example "Class 5 A") to put students in different classes from one file. Rows with no class go to the class selected above:{" "}
+                <Text style={{ fontWeight: "700", color: colors.textPrimary }}>{classLabel(classSections.find((c) => c.id === classId)) || "none selected"}</Text>.
               </Text>
               <View style={{ flexDirection: "row", gap: 10, marginTop: 14 }}>
                 <Pressable onPress={shareCsvTemplate} style={[styles.saveButton, styles.saveButtonSecondary, { borderColor: colors.border, flex: 1, marginTop: 0 }]}>

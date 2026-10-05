@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, Modal, useWindowDimensions, Image, ImageBackground } from "react-native";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { View, Text, TextInput, Pressable, StyleSheet, Modal, useWindowDimensions, Image, ImageBackground, LayoutChangeEvent } from "react-native";
 import PagerView from "react-native-pager-view";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../../../theme/ThemeContext";
 import { radius, spacing, typography } from "../../../theme/tokens";
-import { lockLandscape, lockPortrait } from "../../../utils/safeOrientation";
+import { lockLandscape, lockPortrait, unlockOrientation } from "../../../utils/safeOrientation";
 import { PresentationContent, PresentationColorScheme, PresentationSlideLayout, MediaItem } from "./content";
 import { NumberedEditCard, EditActionRow } from "./NumberedEditCard";
 import { pickIconForText } from "./topicIcons";
@@ -183,6 +183,7 @@ export function PresentationView({ content, editable, onChange, mediaUrl, onRege
   // animation yet - see the Modal's onShow below for why this gates the
   // orientation lock.
   const [presentingShown, setPresentingShown] = useState(false);
+  const [listWidth, setListWidth] = useState(0);
   function closePresenting() {
     setPresentingIndex(null);
     setPresentingShown(false);
@@ -267,71 +268,46 @@ export function PresentationView({ content, editable, onChange, mediaUrl, onRege
 
   return (
     <View>
-      <View style={styles.grid}>
-        {content.slides.map((slide, i) => {
-          const layout = resolveLayout(slide);
-          const media = layout === "image" ? mediaFor(slide) : null;
-          const tileImageUrl = media?.url ?? (layout === "image-left" || layout === "image-right" ? slide.imageUrl : undefined);
-          const hasImage = !!tileImageUrl;
-          const previewLine = slide.bullets[0] ?? slide.items?.[0]?.title ?? "";
-          // Only the image layouts still need the single caption line under
-          // the title - "bullets" now gets its own mini bullet-list visual
-          // instead (see TileVisual), so repeating bullets[0] again below
-          // the title would just be redundant.
-          const showCaption = layout === "image-left" || layout === "image-right";
-          const tileInner = (
-            <>
-              <View style={styles.tileTopRow}>
-                {isInstructional ? (
-                  <View style={[styles.stepBadge, { backgroundColor: scheme.accent }]}>
-                    <Text style={styles.stepBadgeText}>STEP {i + 1}</Text>
-                  </View>
-                ) : (
-                  <Text style={[styles.tileNumber, { color: hasImage ? "#FFFFFF" : scheme.mutedText }]}>{i + 1}</Text>
-                )}
-                {logoUrl ? <Image source={{ uri: logoUrl }} style={styles.tileLogo} resizeMode="contain" /> : null}
-              </View>
-              {!hasImage ? <TileVisual layout={layout} slide={slide} scheme={scheme} /> : <View style={{ flex: 1 }} />}
-              <View>
-                <Text style={[styles.tileTitle, { color: hasImage ? "#FFFFFF" : scheme.text }]} numberOfLines={2}>
-                  {displayTitle(slide.title, isInstructional)}
-                </Text>
-                {showCaption ? (
-                  <Text style={[styles.tileBullet, { color: hasImage ? "#EDEDED" : scheme.mutedText }]} numberOfLines={2}>
-                    {previewLine}
+      {/* Every slide drawn in full (the same slide the slideshow shows), one per row at the screen's width, so nothing is hidden behind a preview. Tap one to open the slideshow there. */}
+      <View style={styles.grid} onLayout={(e) => setListWidth(e.nativeEvent.layout.width)}>
+        {listWidth > 0
+          ? content.slides.map((slide, i) => {
+              const layout = resolveLayout(slide);
+              const boxHeight = listWidth * (9 / 16);
+              const slideScale = boxScale(listWidth);
+              return (
+                <View key={i}>
+                  <Text style={[styles.slideRowLabel, { color: colors.textMuted }]}>
+                    {isInstructional ? `Step ${i + 1}` : `Slide ${i + 1}`}
                   </Text>
-                ) : null}
-              </View>
-            </>
-          );
-          return hasImage ? (
-            <Pressable key={i} style={({ pressed }) => [styles.tile, pressed && { opacity: 0.85 }]} onPress={() => setPresentingIndex(i)} accessibilityRole="button" accessibilityLabel={`Open slide ${i + 1}`}>
-              <ImageBackground source={{ uri: tileImageUrl }} style={StyleSheet.absoluteFill} imageStyle={styles.tileImageRadius}>
-                <View style={[StyleSheet.absoluteFill, styles.tileImageOverlay, styles.tileImageRadius]} />
-              </ImageBackground>
-              {tileInner}
-            </Pressable>
-          ) : (
-            <Pressable
-              key={i}
-              style={({ pressed }) => [
-                styles.tile,
-                { backgroundColor: layout === "divider" ? scheme.accent : scheme.background },
-                pressed && { opacity: 0.85 },
-              ]}
-              onPress={() => setPresentingIndex(i)}
-              accessibilityRole="button"
-              accessibilityLabel={`Open slide ${i + 1}`}
-            >
-              {tileInner}
-            </Pressable>
-          );
-        })}
+                  <Pressable
+                    onPress={() => setPresentingIndex(i)}
+                    style={({ pressed }) => [
+                      styles.slideRowBox,
+                      { width: listWidth, height: boxHeight, backgroundColor: layout === "divider" ? scheme.accent : scheme.background },
+                      pressed && { opacity: 0.9 },
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open slide ${i + 1} full screen`}
+                  >
+                    <FitSlide boxHeight={boxHeight} scale={slideScale}>
+                      {(fitScale) => (
+                        <SlideContent slide={slide} scheme={scheme} logoUrl={logoUrl} isInstructional={isInstructional} index={i} scale={fitScale} media={mediaFor(slide)} />
+                      )}
+                    </FitSlide>
+                  </Pressable>
+                </View>
+              );
+            })
+          : null}
       </View>
 
       <Modal
         visible={presentingIndex !== null}
         animationType="fade"
+        // iOS only allows portrait inside a Modal unless told otherwise, which
+        // would block the landscape lock the slideshow asks for.
+        supportedOrientations={["portrait", "landscape", "landscape-left", "landscape-right"]}
         onRequestClose={closePresenting}
         onShow={() => setPresentingShown(true)}
       >
@@ -351,137 +327,6 @@ export function PresentationView({ content, editable, onChange, mediaUrl, onRege
           ) : null}
         </GestureHandlerRootView>
       </Modal>
-    </View>
-  );
-}
-
-// Fills the middle of a tile with something that actually represents the
-// slide's layout, instead of a plain text line - a stat-grid slide gets
-// mini boxes, a timeline gets mini dots, etc., matching what the full-screen
-// view shows for that layout, just shrunk down. "bullets"/image layouts are
-// left alone (the caption line under the title already represents them).
-function TileVisual({
-  layout,
-  slide,
-  scheme,
-}: {
-  layout: RenderLayout;
-  slide: PresentationContent["slides"][number];
-  scheme: Scheme;
-}) {
-  const items = slide.items ?? [];
-
-  if (layout === "stat") {
-    return (
-      <View style={styles.tileVisual}>
-        <Text style={[styles.tileStatValue, { color: scheme.accent }]} numberOfLines={1}>{splitBloomTag(slide.title).title}</Text>
-      </View>
-    );
-  }
-
-  if (layout === "quote") {
-    return (
-      <View style={styles.tileVisual}>
-        <Text style={[styles.tileQuoteMark, { color: scheme.accent, opacity: 0.5 }]}>"</Text>
-      </View>
-    );
-  }
-
-  if (layout === "stat-grid") {
-    return (
-      <View style={styles.tileVisual}>
-        <View style={styles.tileGridRow}>
-          {items.slice(0, 3).map((item, ii) => (
-            <View key={ii} style={[styles.tileGridBox, { borderColor: scheme.accent }]}>
-              <Text style={[styles.tileGridBoxText, { color: scheme.accent }]} numberOfLines={1}>{item.title}</Text>
-            </View>
-          ))}
-        </View>
-      </View>
-    );
-  }
-
-  if (layout === "timeline") {
-    const steps = items.slice(0, 4);
-    return (
-      <View style={styles.tileVisual}>
-        <View style={styles.tileGridRow}>
-          {steps.map((_, ii) => (
-            <View key={ii} style={styles.tileGridRow}>
-              <View style={[styles.tileTimelineDot, { backgroundColor: scheme.accent }]}>
-                <Text style={{ fontSize: 8, fontFamily: typography.bold, color: "#FFFFFF" }}>{ii + 1}</Text>
-              </View>
-              {ii < steps.length - 1 ? <View style={[styles.tileTimelineLine, { backgroundColor: scheme.accent }]} /> : null}
-            </View>
-          ))}
-        </View>
-      </View>
-    );
-  }
-
-  if (layout === "icon-grid") {
-    const cards = items.slice(0, 3);
-    return (
-      <View style={styles.tileVisual}>
-        <View style={styles.tileGridRow}>
-          {cards.map((card, ii) => (
-            <View key={ii} style={[styles.tileIconCircle, { backgroundColor: scheme.accent }]}>
-              <Image source={pickIconForText(card.title)} style={styles.tileIconImage} resizeMode="contain" />
-            </View>
-          ))}
-        </View>
-      </View>
-    );
-  }
-
-  if (layout === "title" || layout === "divider") {
-    return (
-      <View style={styles.tileVisual}>
-        <View style={[styles.tileAccentBar, { backgroundColor: layout === "divider" ? "#FFFFFF" : scheme.accent }]} />
-      </View>
-    );
-  }
-
-  if (layout === "card_grid" || layout === "process_flow") {
-    return (
-      <View style={styles.tileVisual}>
-        <View style={styles.tileGridRow}>
-          {items.slice(0, 3).map((item, ii) => (
-            <View key={ii} style={[styles.tileGridBox, { borderColor: scheme.accent }]}>
-              <Text style={[styles.tileGridBoxText, { color: scheme.accent }]} numberOfLines={1}>{item.title}</Text>
-            </View>
-          ))}
-        </View>
-      </View>
-    );
-  }
-
-  if (layout === "table" && slide.table) {
-    return (
-      <View style={styles.tileVisual}>
-        <View style={styles.tileGridRow}>
-          {slide.table.headers.slice(0, 3).map((h, ii) => (
-            <View key={ii} style={[styles.tileGridBox, { borderColor: scheme.accent }]}>
-              <Text style={[styles.tileGridBoxText, { color: scheme.accent }]} numberOfLines={1}>{h}</Text>
-            </View>
-          ))}
-        </View>
-      </View>
-    );
-  }
-
-  // "bullets" (the default/fallback layout too) - a mini version of the
-  // actual bullet list instead of one truncated caption line.
-  const bullets = slide.bullets.slice(0, 3);
-  if (bullets.length === 0) return null;
-  return (
-    <View style={[styles.tileVisual, styles.tileBulletMiniList]}>
-      {bullets.map((b, ii) => (
-        <View key={ii} style={styles.tileBulletMiniRow}>
-          <View style={[styles.tileBulletMiniDot, { backgroundColor: scheme.accent }]} />
-          <Text style={[styles.tileBulletMiniText, { color: scheme.mutedText }]} numberOfLines={1}>{b}</Text>
-        </View>
-      ))}
     </View>
   );
 }
@@ -881,6 +726,40 @@ function SlideContent({
   );
 }
 
+// A slide's text is sized from the box's width alone, so a slide with a lot of
+// text on a small screen is taller than the box and gets cut off. This renders
+// the slide, measures how tall it really is, and if it is taller than the box
+// re-renders it with a smaller scale until it fits (a few quick passes, usually
+// one). The wrapper's minHeight keeps short slides laid out exactly as before.
+const FIT_FLOOR = 0.4;
+const FIT_MAX_PASSES = 6;
+function FitSlide({ boxHeight, scale, children }: { boxHeight: number; scale: number; children: (scale: number) => React.ReactNode }) {
+  const [fit, setFit] = useState(1);
+  const passes = useRef(0);
+  // Leave a strip at the bottom for the footer label.
+  const limit = boxHeight - Math.round(14 * scale);
+
+  useEffect(() => {
+    setFit(1);
+    passes.current = 0;
+  }, [scale, boxHeight]);
+
+  function onLayout(e: LayoutChangeEvent) {
+    const height = e.nativeEvent.layout.height;
+    if (height <= limit + 1 || fit <= FIT_FLOOR || passes.current >= FIT_MAX_PASSES) return;
+    passes.current += 1;
+    setFit(Math.max(FIT_FLOOR, fit * (limit / height) * 0.97));
+  }
+
+  return (
+    <View style={{ flex: 1, overflow: "hidden" }}>
+      <View style={{ minHeight: boxHeight }} onLayout={onLayout}>
+        {children(scale * fit)}
+      </View>
+    </View>
+  );
+}
+
 function Slideshow({
   slides,
   initialIndex,
@@ -907,12 +786,9 @@ function Slideshow({
   const [index, setIndex] = useState(initialIndex);
   const pagerRef = useRef<PagerView>(null);
 
-  // Lock to landscape while presenting - a 16:9 box letterboxed inside a
-  // portrait phone screen comes out tiny (and, worse, its content overflows
-  // the box and gets clipped by the box's overflow:"hidden"), since a
-  // widescreen box is always short when width-constrained by a narrow
-  // portrait screen. Rotating the device view itself gives the box the full
-  // screen to work with, matching how a real presentation viewer behaves.
+  // The slideshow rotates freely with the device. Landscape gives the 16:9 box
+  // the most room (in portrait it is short and slides shrink their text to fit,
+  // see FitSlide), so the rotate button lets the viewer pin either orientation.
   //
   // This waits for the Modal to actually finish presenting first
   // (readyForOrientationLock) rather than firing on mount - Slideshow mounts
@@ -923,7 +799,9 @@ function Slideshow({
   // it, which is why this only ever crashed on iOS.
   useEffect(() => {
     if (!readyForOrientationLock) return;
-    lockLandscape();
+    // Free rotation: the slideshow follows the device, and the rotate button
+    // below pins it to one orientation if the viewer prefers.
+    unlockOrientation();
     return () => {
       lockPortrait();
     };
@@ -956,7 +834,9 @@ function Slideshow({
           <PagerView ref={pagerRef} style={{ flex: 1 }} initialPage={initialIndex} onPageSelected={(e) => setIndex(e.nativeEvent.position)}>
             {slides.map((slide, i) => (
               <View key={i} style={styles.slidePageOuter}>
-                <SlideContent slide={slide} scheme={scheme} logoUrl={logoUrl} isInstructional={isInstructional} index={i} scale={scale} media={mediaFor(slide)} />
+                <FitSlide boxHeight={boxHeight} scale={scale}>
+                  {(fitScale) => <SlideContent slide={slide} scheme={scheme} logoUrl={logoUrl} isInstructional={isInstructional} index={i} scale={fitScale} media={mediaFor(slide)} />}
+                </FitSlide>
                 {/* Tap zones live inside each page (not overlaid on top of the
                     whole PagerView) so a plain tap navigates without stealing
                     the native pager's own swipe-gesture recognition. */}
@@ -971,6 +851,14 @@ function Slideshow({
         </View>
       </View>
 
+      <Pressable
+        style={styles.rotateButton}
+        onPress={() => (screenWidth > screenHeight ? lockPortrait() : lockLandscape())}
+        accessibilityRole="button"
+        accessibilityLabel={screenWidth > screenHeight ? "Switch to portrait view" : "Switch to landscape view"}
+      >
+        <Ionicons name="phone-landscape-outline" size={20} color="#FFFFFF" style={screenWidth > screenHeight ? undefined : { transform: [{ rotate: "90deg" }] }} />
+      </Pressable>
       <Pressable style={styles.closeButton} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close presentation">
         <Ionicons name="close" size={22} color="#FFFFFF" />
       </Pressable>
@@ -1065,7 +953,9 @@ const styles = StyleSheet.create({
   layoutPickerButton: { width: 34, height: 34, borderRadius: 10, borderWidth: 1, alignItems: "center", justifyContent: "center" },
 
   // Landscape (16:9) tiles, one per row - matches the exported deck's aspect ratio.
-  grid: { gap: 10 },
+  grid: { gap: 14 },
+  slideRowLabel: { fontSize: 12, fontFamily: typography.semiBold, marginBottom: 6 },
+  slideRowBox: { borderRadius: 12, overflow: "hidden" },
   // justifyContent no longer "flex-end" - a mini visual (see TileVisual) now
   // fills the middle of the tile instead of leaving it blank, with the
   // top badge row and bottom title/caption as normal flex children around it.
@@ -1176,6 +1066,7 @@ const styles = StyleSheet.create({
   tapZoneLeft: { position: "absolute", top: 0, bottom: 0, left: 0, width: "30%" },
   tapZoneRight: { position: "absolute", top: 0, bottom: 0, right: 0, width: "30%" },
   closeButton: { position: "absolute", top: 50, right: 20, width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center" },
+  rotateButton: { position: "absolute", top: 50, right: 70, width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center" },
   slideshowFooter: { position: "absolute", bottom: 20, alignSelf: "center" },
   slideCounter: { fontSize: 13, fontFamily: typography.semiBold, color: "#C7C4F5" },
 });

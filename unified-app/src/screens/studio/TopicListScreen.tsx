@@ -187,12 +187,12 @@ export function TopicListScreen({ navigation, route }: Props) {
               </Pressable>
               <Pressable
                 style={({ pressed }) => [styles.subjectFilter, pressed && { opacity: pressedOpacity }]}
-                onPress={() => navigation.navigate("AddStudent", { classSectionId })}
+                onPress={() => navigation.navigate("Students", { classSectionId })}
                 accessibilityRole="button"
-                accessibilityLabel="Add a student to this class"
+                accessibilityLabel="See the students in this class"
               >
-                <Ionicons name="person-add-outline" size={14} color={colors.accent} />
-                <Text style={[styles.subjectText, { color: colors.accent }]}>Add student</Text>
+                <Ionicons name="people-outline" size={14} color={colors.accent} />
+                <Text style={[styles.subjectText, { color: colors.accent }]}>Students</Text>
               </Pressable>
             </View>
           </View>

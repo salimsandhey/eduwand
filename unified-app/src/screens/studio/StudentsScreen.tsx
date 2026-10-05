@@ -35,7 +35,7 @@ function classLabel(section: { className: string; sectionName: string } | undefi
 
 const EMPTY_MANUAL_FORM = { fullName: "", dateOfBirth: "", guardianName: "", guardianContact: "", email: "" };
 
-export function StudentsScreen({ navigation }: Props) {
+export function StudentsScreen({ navigation, route }: Props) {
   const { accessToken, user } = useAuth();
   const { colors, cardShadow, pressedOpacity } = useTheme();
 
@@ -43,7 +43,7 @@ export function StudentsScreen({ navigation }: Props) {
   const [students, setStudents] = useState<StudentStub[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [classFilter, setClassFilter] = useState<string | null>(null);
+  const [classFilter, setClassFilter] = useState<string | null>(route.params?.classSectionId ?? null);
   const [search, setSearch] = useState("");
 
   const [selectionMode, setSelectionMode] = useState(false);

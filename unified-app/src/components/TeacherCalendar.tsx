@@ -884,7 +884,7 @@ export function TeacherCalendar({
             <Pressable
               onPress={() => {
                 setShowAgenda(false);
-                navigation.navigate(isIndividual ? "MyClasses" : "Timetable");
+                navigation.navigate("Timetable");
               }}
               style={styles.footerAction}
               accessibilityRole="button"

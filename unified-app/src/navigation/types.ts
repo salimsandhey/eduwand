@@ -60,7 +60,8 @@ export type RootStackParamList = {
   RequestSubjectChange: undefined;
   RequestClassChange: undefined;
   RequestWorkspaceNameChange: undefined;
-  Students: undefined;
+  // classSectionId opens the roster already filtered to that class (still switchable).
+  Students: { classSectionId?: string } | undefined;
   // classSectionId preselects that class's chip (still switchable) when
   // reached from a specific class (e.g. TopicListScreen's "Add student"
   // button) rather than the general Students roster's "+".

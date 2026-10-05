@@ -179,19 +179,26 @@ async function requestText(path: string, token: string, isRetry = false): Promis
 // implementation". XMLHttpRequest is untouched by that override and still
 // goes through React Native's native networking module, which handles that
 // shape correctly.
-function xhrRequest(path: string, formData: FormData, token: string, method: string): Promise<{ status: number; text: string }> {
+function xhrRequest(path: string, formData: FormData, token: string, method: string, onProgress?: (fraction: number) => void): Promise<{ status: number; text: string }> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open(method, `${API_URL}${path}`);
     xhr.setRequestHeader("Authorization", `Bearer ${token}`);
     xhr.onload = () => resolve({ status: xhr.status, text: xhr.responseText });
-    xhr.onerror = () => reject(new ApiError("network_error", "Upload failed"));
+    xhr.onerror = () => reject(new ApiError("network_error", "Upload failed - the connection dropped. Check your internet and try again. If the file is large, try a smaller one."));
+    xhr.ontimeout = () => reject(new ApiError("network_error", "Upload timed out. Check your internet and try again."));
+    xhr.timeout = 180_000;
+    if (onProgress) {
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && event.total > 0) onProgress(Math.min(1, event.loaded / event.total));
+      };
+    }
     xhr.send(formData);
   });
 }
 
-async function requestMultipart<T>(path: string, formData: FormData, token: string, method = "POST", isRetry = false): Promise<T> {
-  const { status, text } = await xhrRequest(path, formData, token, method);
+async function requestMultipart<T>(path: string, formData: FormData, token: string, method = "POST", isRetry = false, onProgress?: (fraction: number) => void): Promise<T> {
+  const { status, text } = await xhrRequest(path, formData, token, method, onProgress);
   let body: ApiEnvelope<T>;
   try {
     body = JSON.parse(text);
@@ -202,7 +209,7 @@ async function requestMultipart<T>(path: string, formData: FormData, token: stri
     if (!isRetry && isExpiredAccessToken(token, body)) {
       const newAccessToken = await refreshAccessToken();
       if (newAccessToken) {
-        return requestMultipart<T>(path, formData, newAccessToken, method, true);
+        return requestMultipart<T>(path, formData, newAccessToken, method, true, onProgress);
       }
     }
     throw new ApiError(body.error?.code ?? "unknown_error", errorMessageFrom(body));
@@ -1043,7 +1050,13 @@ export interface SavedVideo {
   channelTitle: string;
   thumbnailUrl: string;
   duration: string;
+  // Teacher opt-in - shown on the class's students' Materials screen when true.
+  sharedWithStudents: boolean;
   createdAt: string;
+}
+
+export interface StudentVideo extends SavedVideo {
+  topic: { id: string; name: string; subject: string };
 }
 
 export interface Observation {
@@ -1845,10 +1858,10 @@ export const api = {
   getTopic: (token: string, id: string) => request<TopicDetail>(`/topics/${id}`, {}, token),
   addTopicContextUrl: (token: string, topicId: string, input: { sourceType: "url" | "idream_k12"; sourceUrl?: string; idreamK12ReferenceId?: string }) =>
     request<ContextSource>(`/topics/${topicId}/context`, { method: "POST", body: JSON.stringify(input) }, token),
-  addTopicContextFile: (token: string, topicId: string, file: { uri: string; name: string; mimeType: string }) => {
+  addTopicContextFile: (token: string, topicId: string, file: { uri: string; name: string; mimeType: string }, onProgress?: (fraction: number) => void) => {
     const formData = new FormData();
     formData.append("file", { uri: file.uri, name: file.name, type: file.mimeType } as unknown as Blob);
-    return requestMultipart<ContextSource>(`/topics/${topicId}/context`, formData, token);
+    return requestMultipart<ContextSource>(`/topics/${topicId}/context`, formData, token, "POST", false, onProgress);
   },
   // An image source, or one rendered page of a PDF source, as an inline image.
   contextMediaUrl: (topicId: string, contextSourceId: string, token: string, opts: { page?: number; width?: number } = {}) =>
@@ -1928,6 +1941,15 @@ export const api = {
     request<SavedVideo>(`/topics/${topicId}/videos`, { method: "POST", body: JSON.stringify(input) }, token),
   deleteSavedVideo: (token: string, topicId: string, savedVideoId: string) =>
     request<{ id: string }>(`/topics/${topicId}/videos/${savedVideoId}`, { method: "DELETE" }, token),
+  updateTopic: (token: string, topicId: string, input: { name?: string; subject?: string }) =>
+    request<Topic>(`/topics/${topicId}`, { method: "PATCH", body: JSON.stringify(input) }, token),
+  deleteTopic: (token: string, topicId: string) =>
+    request<{ id: string }>(`/topics/${topicId}`, { method: "DELETE" }, token),
+  deleteTopicObservation: (token: string, topicId: string, observationId: string) =>
+    request<{ id: string }>(`/topics/${topicId}/observations/${observationId}`, { method: "DELETE" }, token),
+  setSavedVideoShared: (token: string, topicId: string, savedVideoId: string, sharedWithStudents: boolean) =>
+    request<SavedVideo>(`/topics/${topicId}/videos/${savedVideoId}`, { method: "PATCH", body: JSON.stringify({ sharedWithStudents }) }, token),
+  listStudentVideos: (token: string) => request<StudentVideo[]>("/student/videos", {}, token),
 
   createGeneration: (
     token: string,
@@ -2033,8 +2055,26 @@ export const api = {
     id: string,
     input: { status: "approved" | "overridden" | "opted_out"; appliedMix?: Record<string, number> }
   ) => request<PersonalisationSuggestion>(`/personalisation-suggestions/${id}`, { method: "PATCH", body: JSON.stringify(input) }, token),
-  listStudents: (token: string, classSectionId?: string) =>
-    requestEnvelope<StudentStub[]>(`/students${toQueryString({ classSectionId })}`, {}, token),
+  // The server returns students a page at a time (20 by default, 100 at most).
+  // Every caller wants the whole roster, so this reads all the pages - otherwise
+  // a class with more than 20 students looks like it only has 20.
+  listStudents: async (token: string, classSectionId?: string) => {
+    const pageSize = 100;
+    const all: StudentStub[] = [];
+    let totalCount = 0;
+    for (let page = 1; page <= 100; page++) {
+      const res = await requestEnvelope<StudentStub[]>(
+        `/students${toQueryString({ classSectionId, page: String(page), pageSize: String(pageSize) })}`,
+        {},
+        token
+      );
+      const items = res.data ?? [];
+      all.push(...items);
+      totalCount = (res.meta?.totalCount as number | undefined) ?? all.length;
+      if (items.length < pageSize || all.length >= totalCount) break;
+    }
+    return { data: all, meta: { totalCount } } as ApiEnvelope<StudentStub[]>;
+  },
   createSubmission: (token: string, input: { assignmentId: string; studentStubId: string; answers: Record<string, string> }) =>
     request<SubmissionRecord>("/submissions", { method: "POST", body: JSON.stringify(input) }, token),
   gradeSubmission: (token: string, submissionId: string) =>

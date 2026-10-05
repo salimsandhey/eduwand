@@ -148,6 +148,82 @@ export async function topicRoutes(app: FastifyInstance) {
     return reply.code(201).send({ data: topic, meta: {} });
   });
 
+  // Edit a topic's name and/or subject. Class is fixed once created - moving a
+  // topic to another class would strand its assignments and attainment history.
+  app.patch<{ Params: { id: string }; Body: { name?: string; subject?: string } }>(
+    "/topics/:id",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const topic = await prisma.topic.findFirst({ where: { id: request.params.id, schoolId: request.schoolId } });
+      if (!topic) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Topic not found" } });
+      }
+      const body = request.body ?? {};
+      const name = body.name !== undefined ? body.name.trim() : undefined;
+      const subject = body.subject !== undefined ? body.subject.trim() : undefined;
+      if (name !== undefined && !name) {
+        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "Topic name can't be empty" } });
+      }
+      if (subject !== undefined && !subject) {
+        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "Subject can't be empty" } });
+      }
+      const updated = await prisma.topic.update({
+        where: { id: topic.id },
+        data: { ...(name !== undefined ? { name } : {}), ...(subject !== undefined ? { subject } : {}) },
+      });
+      return { data: updated, meta: {} };
+    }
+  );
+
+  // Deleting a topic removes its lesson content, sources, notes and reference
+  // videos. It's refused once students have real work attached (a published
+  // assignment, any submission, or an assessment with responses) - that data
+  // belongs to students and to attainment history, so it can't just vanish.
+  app.delete<{ Params: { id: string } }>("/topics/:id", { onRequest: scoped(app) }, async (request, reply) => {
+    const topic = await prisma.topic.findFirst({
+      where: { id: request.params.id, schoolId: request.schoolId },
+      include: {
+        assignments: { select: { id: true, status: true, _count: { select: { submissions: true } } } },
+        assessments: { select: { id: true, _count: { select: { responses: true } } } },
+      },
+    });
+    if (!topic) {
+      return reply.code(404).send({ data: null, error: { code: "not_found", message: "Topic not found" } });
+    }
+    const hasPublished = topic.assignments.some((a) => a.status !== "draft");
+    const hasSubmissions = topic.assignments.some((a) => a._count.submissions > 0);
+    const hasResponses = topic.assessments.some((a) => a._count.responses > 0);
+    if (hasPublished || hasSubmissions || hasResponses) {
+      return reply.code(400).send({
+        data: null,
+        error: {
+          code: "topic_has_student_work",
+          message: "This topic has published assignments or student work, so it can't be deleted. Delete the topic's assignments first.",
+        },
+      });
+    }
+
+    const draftIds = topic.assignments.map((a) => a.id);
+    const assessmentIds = topic.assessments.map((a) => a.id);
+    await prisma.$transaction(async (tx) => {
+      await tx.answerKey.deleteMany({ where: { assignmentId: { in: draftIds } } });
+      await tx.personalisationSuggestion.deleteMany({ where: { assignmentId: { in: draftIds } } });
+      await tx.assignment.deleteMany({ where: { id: { in: draftIds } } });
+      await tx.assessment.deleteMany({ where: { id: { in: assessmentIds } } });
+      await tx.communicationMessage.deleteMany({ where: { topicId: topic.id } });
+      await tx.contextSource.deleteMany({ where: { topicId: topic.id } });
+      await tx.contextResearchJob.deleteMany({ where: { topicId: topic.id } });
+      await tx.savedVideo.deleteMany({ where: { topicId: topic.id } });
+      await tx.observation.deleteMany({ where: { topicId: topic.id } });
+      await tx.attainmentReport.deleteMany({ where: { topicId: topic.id } });
+      await tx.topicObjective.deleteMany({ where: { topicId: topic.id } });
+      await tx.generation.deleteMany({ where: { topicId: topic.id } });
+      await tx.topic.delete({ where: { id: topic.id } });
+    });
+
+    return { data: { id: topic.id }, meta: {} };
+  });
+
   app.get<{ Params: { id: string } }>("/topics/:id", { onRequest: scoped(app) }, async (request, reply) => {
     const topic = await prisma.topic.findFirst({
       where: { id: request.params.id, schoolId: request.schoolId },
@@ -197,6 +273,13 @@ export async function topicRoutes(app: FastifyInstance) {
           : "image";
         originalFilename = file.filename;
         fileBuffer = await file.toBuffer();
+        const sizeLimit = sourceType === "image" ? MAX_IMAGE_BYTES : MAX_PDF_BYTES;
+        if (fileBuffer.length > sizeLimit) {
+          return reply.code(413).send({
+            data: null,
+            error: { code: "file_too_large", message: `That file is too large. ${sourceType === "image" ? "Images" : "Documents"} can be up to ${Math.round(sizeLimit / (1024 * 1024))} MB.` },
+          });
+        }
         const { location } = await storage.save(uploadKey(`context-sources/${topic.id}`, file.filename), fileBuffer);
         fileLocation = location;
       } else {
@@ -810,6 +893,25 @@ export async function topicRoutes(app: FastifyInstance) {
     }
   );
 
+  app.patch<{ Params: { id: string; savedVideoId: string }; Body: { sharedWithStudents?: boolean } }>(
+    "/topics/:id/videos/:savedVideoId",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const sharedWithStudents = request.body?.sharedWithStudents;
+      if (typeof sharedWithStudents !== "boolean") {
+        return reply.code(400).send({ data: null, error: { code: "validation_error", message: "sharedWithStudents (boolean) is required" } });
+      }
+      const video = await prisma.savedVideo.findFirst({
+        where: { id: request.params.savedVideoId, topicId: request.params.id, topic: { schoolId: request.schoolId } },
+      });
+      if (!video) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Saved video not found" } });
+      }
+      const updated = await prisma.savedVideo.update({ where: { id: video.id }, data: { sharedWithStudents } });
+      return { data: updated, meta: {} };
+    }
+  );
+
   app.get("/content-library/idream-k12/search", { onRequest: scoped(app) }, async (request) => {
     const query = (request.query ?? {}) as { topic?: string };
     app.log.info({ topic: query.topic }, "iDream K12 search requested, no integration configured yet");
@@ -910,6 +1012,21 @@ export async function topicRoutes(app: FastifyInstance) {
       });
 
       return { data: updated, meta: {} };
+    }
+  );
+
+  app.delete<{ Params: { id: string; observationId: string } }>(
+    "/topics/:id/observations/:observationId",
+    { onRequest: scoped(app) },
+    async (request, reply) => {
+      const existing = await prisma.observation.findFirst({
+        where: { id: request.params.observationId, topicId: request.params.id, topic: { schoolId: request.schoolId } },
+      });
+      if (!existing) {
+        return reply.code(404).send({ data: null, error: { code: "not_found", message: "Note not found" } });
+      }
+      await prisma.observation.delete({ where: { id: existing.id } });
+      return { data: { id: existing.id }, meta: {} };
     }
   );
 }

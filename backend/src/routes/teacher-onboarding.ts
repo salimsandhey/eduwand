@@ -1,6 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma";
-import { TEACHER_ONBOARDING_TASKS } from "../lib/onboarding";
+import { TEACHER_ONBOARDING_TASKS, markOnboardingTaskComplete } from "../lib/onboarding";
 
 // Teacher "getting started" checklist + school usage leaderboard. Mobile,
 // teacher role only for now. See markOnboardingTaskComplete call sites
@@ -17,6 +17,12 @@ export async function teacherOnboardingRoutes(app: FastifyInstance) {
   app.get("/me/onboarding-tasks", { onRequest: scoped(app) }, async (request, reply) => {
     if (!requireTeacher(request)) {
       return reply.code(403).send({ data: null, error: { code: "forbidden", message: "Requires role: teacher" } });
+    }
+
+    // Teachers who made an assignment before every creation route recorded this
+    // task would otherwise stay stuck on "not completed" - catch them up here.
+    if (await prisma.assignment.findFirst({ where: { teacherUserId: request.user.sub }, select: { id: true } })) {
+      await markOnboardingTaskComplete(request.user.sub, "first_assignment");
     }
 
     const completed = await prisma.teacherOnboardingTask.findMany({

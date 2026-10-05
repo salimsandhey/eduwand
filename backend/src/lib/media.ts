@@ -5,8 +5,12 @@ import { storage } from "./storage";
 // Media = images and PDF pages a teacher picked to use as-is in generated
 // content, instead of (or alongside) AI-written material.
 
+// Files are kept in Cloudinary, whose free plan refuses anything over 10 MB, so 10 MB
+// is the default for every upload. On a plan with a higher limit, set UPLOAD_MAX_MB
+// to match it and documents (PDF, Word, PowerPoint) can be that big; images stay at 10 MB.
+export const MAX_UPLOAD_MB = Math.max(1, Number(process.env.UPLOAD_MAX_MB) || 10);
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-export const MAX_PDF_BYTES = 25 * 1024 * 1024;
+export const MAX_PDF_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
 // Guard rails on one generation - every embedded PDF page is a render.
 export const MAX_MEDIA_ITEMS = 30;
 export const DEFAULT_PAGE_WIDTH = 1280;

@@ -629,13 +629,10 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
               <Text style={[styles.shareButtonText, { color: colors.textPrimary }]}>Quick check</Text>
             </Pressable>
           ) : null}
-          {/* Presentations are export/present-only - decks are meant to be
-              shown in class or shared as a .pptx file, not handed to each
-              student individually through the Materials tab. Every other
-              output type keeps the generic publish/unpublish flow below,
-              which is the same mechanism behind /student/materials for all
-              of them - this is the one deliberate exception. */}
-          {generation.outputType !== "presentation" ? (
+          {/* Every output type, presentations included, is shared through the
+              same publish/unpublish flow, which feeds the students' Materials
+              tab (/student/materials). */}
+          {(
             <>
               <Pressable
                 style={({ pressed }) => [styles.shareButton, { backgroundColor: generation.shareStatus === "published" ? colors.surfaceRaised : colors.accent, borderColor: generation.shareStatus === "published" ? colors.border : colors.accent }, (isPublishing || pressed) && { opacity: pressedOpacity }]}
@@ -660,7 +657,7 @@ export function GenerationReviewScreen({ route, navigation }: Props) {
                 <Text style={[styles.footerNote, { color: colors.textMuted }]}>Review before students receive it.</Text>
               )}
             </>
-          ) : null}
+          )}
         </View>
       </ScrollView>
       </KeyboardAvoidingView>

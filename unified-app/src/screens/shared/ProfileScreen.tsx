@@ -412,12 +412,6 @@ export function ProfileScreen() {
                 </Pressable>
               </Animated.View>
             </Animated.View>
-
-            {isIndividualTeacher ? (
-              <View style={[styles.rowDivider, { borderTopColor: colors.border }]}>
-                <SettingsRow icon="options-outline" title="School branding" caption="Logo and colors on your slides and reports" onPress={() => navigation.navigate("FormatTemplate")} />
-              </View>
-            ) : null}
           </View>
 
           <View style={styles.dangerZone}>

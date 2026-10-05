@@ -40,6 +40,8 @@ const STEPS: TourStep[] = [
 interface TeacherTourModalProps {
   visible: boolean;
   onDone: () => void;
+  // Fired once the modal has fully left the screen (exit animation finished and the native Modal unmounted).
+  onExited?: () => void;
 }
 
 // Entrance/exit spring shape, shared so the dismiss reads as the entrance
@@ -54,7 +56,7 @@ interface TeacherTourModalProps {
 const REST_SCALE = 0.86;
 const CARD_SPRING = { damping: 11, stiffness: 200, mass: 0.9 };
 
-export function TeacherTourModal({ visible, onDone }: TeacherTourModalProps) {
+export function TeacherTourModal({ visible, onDone, onExited }: TeacherTourModalProps) {
   const { colors, cardShadow, pressedOpacity } = useTheme();
   const [stepIndex, setStepIndex] = useState(0);
   const isLast = stepIndex === STEPS.length - 1;
@@ -124,6 +126,7 @@ export function TeacherTourModal({ visible, onDone }: TeacherTourModalProps) {
         setStepIndex(0);
         setIsHeightControlled(false);
         contentFade.setValue(1);
+        onExited?.();
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

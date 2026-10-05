@@ -10,6 +10,7 @@ import {
   View,
 } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme/ThemeContext";
 
 interface ConfirmModalProps {
@@ -17,6 +18,8 @@ interface ConfirmModalProps {
   title: string;
   message: string;
   confirmLabel?: string;
+  // Red confirm button + warning icon - for anything that deletes.
+  destructive?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -26,6 +29,7 @@ export function ConfirmModal({
   title,
   message,
   confirmLabel = "Confirm",
+  destructive = false,
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
@@ -141,6 +145,11 @@ export function ConfirmModal({
               cardShadow,
             ]}
           >
+            {destructive ? (
+              <View style={[styles.iconCircle, { backgroundColor: `${colors.danger}1F` }]}>
+                <Ionicons name="trash-outline" size={20} color={colors.danger} />
+              </View>
+            ) : null}
             <Text style={[styles.title, { color: colors.textPrimary }]}>{title}</Text>
             <Text style={[styles.message, { color: colors.textSecondary }]}>{message}</Text>
             <View style={styles.actions}>
@@ -158,7 +167,9 @@ export function ConfirmModal({
               <Pressable
                 style={({ pressed }) => [
                   styles.button,
-                  { backgroundColor: colors.accent, borderColor: colors.accent },
+                  destructive
+                    ? { backgroundColor: colors.danger, borderColor: colors.danger }
+                    : { backgroundColor: colors.accent, borderColor: colors.accent },
                   pressed && { opacity: pressedOpacity },
                 ]}
                 onPress={() => animateAndClose(onConfirm)}
@@ -191,6 +202,7 @@ const styles = StyleSheet.create({
     padding: 22,
     elevation: 12,
   },
+  iconCircle: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", marginBottom: 12 },
   title: { fontSize: 17, fontWeight: "800", marginBottom: 8 },
   message: { fontSize: 14, lineHeight: 20 },
   actions: { flexDirection: "row", justifyContent: "flex-end", gap: 8, marginTop: 22 },

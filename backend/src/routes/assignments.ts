@@ -914,6 +914,7 @@ export async function assignmentRoutes(app: FastifyInstance) {
         durationMs: Date.now() - start,
       });
 
+      await markOnboardingTaskComplete(request.user.sub, "first_assignment");
       return reply.code(201).send({ data: assignment, meta: {} });
     }
   );
@@ -1092,6 +1093,7 @@ export async function assignmentRoutes(app: FastifyInstance) {
         durationMs: Date.now() - start,
       });
 
+      await markOnboardingTaskComplete(request.user.sub, "first_assignment");
       return reply.code(201).send({ data: assignment, meta: {} });
     }
   );

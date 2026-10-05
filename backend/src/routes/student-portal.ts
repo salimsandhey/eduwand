@@ -301,6 +301,29 @@ export async function studentPortalRoutes(app: FastifyInstance) {
     return { data, meta: {} };
   });
 
+  // Reference videos a teacher explicitly shared with the class (see
+  // SavedVideo.sharedWithStudents). Scoped to the student's own class, same
+  // as /student/materials.
+  app.get("/student/videos", { onRequest: scoped(app) }, async (request, reply) => {
+    const student = await prisma.studentStub.findFirst({
+      where: { id: request.user.sub, schoolId: request.schoolId },
+    });
+    if (!student) {
+      return reply.code(404).send({ data: null, error: { code: "not_found", message: "Student not found" } });
+    }
+
+    const videos = await prisma.savedVideo.findMany({
+      where: {
+        sharedWithStudents: true,
+        topic: { schoolId: request.schoolId, classSectionId: student.classSectionId },
+      },
+      include: { topic: { select: { id: true, name: true, subject: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+
+    return { data: videos, meta: {} };
+  });
+
   app.get("/student/communications", { onRequest: scoped(app) }, async (request, reply) => {
     const student = await prisma.studentStub.findFirst({
       where: { id: request.user.sub, schoolId: request.schoolId },

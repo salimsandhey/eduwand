@@ -22,6 +22,11 @@ export const aiContextPlugin = fp(async (app: FastifyInstance) => {
       request.log.warn({ reason: error.reason, limit: error.limitKey }, "AI call refused by spend guard");
       return reply.code(503).send({ data: null, error: { code: "ai_unavailable", message: error.message } });
     }
+    // A file over the multipart size limit: say so plainly instead of the raw
+    // "request file too large" text.
+    if ((error as { code?: string }).code === "FST_REQ_FILE_TOO_LARGE") {
+      return reply.code(413).send({ data: null, error: { code: "file_too_large", message: `That file is too large. The most you can upload is ${Math.max(10, Number(process.env.UPLOAD_MAX_MB) || 10)} MB.` } });
+    }
     // Any other uncaught error (a bug, a Prisma failure, etc.) would
     // otherwise fall through to Fastify's own default handler, whose
     // response shape ({statusCode, error: "<status text>", message}) doesn't

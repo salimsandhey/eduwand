@@ -124,7 +124,9 @@ app.register(cors, {
   methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
 });
 app.register(rateLimit, { global: true, max: 1000, timeWindow: "1 minute" });
-app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024 } });
+// The largest accepted file (see UPLOAD_MAX_MB in lib/media.ts); routes that take
+// smaller files (images, photos) check their own tighter limit.
+app.register(multipart, { limits: { fileSize: Math.max(10, Number(process.env.UPLOAD_MAX_MB) || 10) * 1024 * 1024 } });
 app.register(authPlugin);
 app.register(securityPlugin);
 app.register(scopePlugin);

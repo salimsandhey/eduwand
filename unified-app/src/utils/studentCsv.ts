@@ -6,7 +6,7 @@
 // credits.md.
 
 export const STUDENT_CSV_TEMPLATE =
-  "full_name,date_of_birth,guardian_name,guardian_contact,email\nJohn Doe,2015-04-12,Jane Doe,+911234567890,john@example.com\n";
+  "full_name,date_of_birth,guardian_name,guardian_contact,email,class\nJohn Doe,2015-04-12,Jane Doe,+911234567890,john@example.com,Class 5 A\n";
 
 export function parseCsv(text: string): string[][] {
   const rows: string[][] = [];
@@ -65,6 +65,8 @@ export interface StudentCsvRow {
   guardianName: string;
   guardianContact: string;
   email: string;
+  // Optional "class" column, e.g. "Class 5 A". Blank means the class chosen on screen.
+  className: string;
 }
 
 export function rowsToStudentRows(csvRows: string[][]): StudentCsvRow[] {
@@ -76,6 +78,7 @@ export function rowsToStudentRows(csvRows: string[][]): StudentCsvRow[] {
   const guardianNameIdx = col("guardian_name");
   const guardianContactIdx = col("guardian_contact");
   const emailIdx = col("email");
+  const classIdx = col("class");
 
   return csvRows.slice(1).map((r) => ({
     fullName: r[nameIdx]?.trim() ?? "",
@@ -83,5 +86,11 @@ export function rowsToStudentRows(csvRows: string[][]): StudentCsvRow[] {
     guardianName: r[guardianNameIdx]?.trim() ?? "",
     guardianContact: r[guardianContactIdx]?.trim() ?? "",
     email: r[emailIdx]?.trim() ?? "",
+    className: classIdx >= 0 ? r[classIdx]?.trim() ?? "" : "",
   }));
+}
+
+// "Class 5 A", "class 5a" and "5-A" all compare equal.
+export function normaliseClassName(value: string): string {
+  return value.toLowerCase().replace(/^class/, "").replace(/[^a-z0-9]/g, "");
 }

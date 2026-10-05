@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Easing, View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Linking, Image, RefreshControl, Modal, LayoutAnimation, Alert } from "react-native";
+import { Animated, Easing, View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Linking, Image, RefreshControl, Modal, LayoutAnimation } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import * as WebBrowser from "expo-web-browser";
@@ -14,7 +14,8 @@ import { useTheme } from "../../theme/ThemeContext";
 import { spacing, radius } from "../../theme/tokens";
 import { Screen } from "../../components/Screen";
 import { SheetModal } from "../../components/SheetModal";
-import { api, TopicDetail, ContextSource, Generation, GenerationOutputType, Observation, Assignment, SavedVideo } from "../../api/client";
+import { ConfirmModal } from "../../components/ConfirmModal";
+import { api, TopicDetail, ContextSource, Generation, GenerationOutputType, Observation, Assignment, SavedVideo, Subject } from "../../api/client";
 import { VideoPlayerModal } from "../../components/VideoPlayerModal";
 import { parseGenerationContent } from "./generation/content";
 import { OUTPUT_TYPE_LABELS, OUTPUT_TYPE_ICONS, OUTPUT_TYPE_ORDER } from "./generation/outputTypeMeta";
@@ -250,6 +251,15 @@ export function TopicDetailScreen({ route, navigation }: Props) {
   const [contextUrlError, setContextUrlError] = useState<string | null>(null);
   const [showAddContextMethod, setShowAddContextMethod] = useState(false);
   const [showAddContext, setShowAddContext] = useState(false);
+  // One shared, app-styled confirmation for every destructive action on this
+  // screen (replaces the system Alert so it matches the rest of the app).
+  const [pendingConfirm, setPendingConfirm] = useState<{ title: string; message: string; confirmLabel: string; onConfirm: () => void } | null>(null);
+  const [showEditTopic, setShowEditTopic] = useState(false);
+  const [editTopicName, setEditTopicName] = useState("");
+  const [editTopicSubject, setEditTopicSubject] = useState("");
+  const [editTopicError, setEditTopicError] = useState<string | null>(null);
+  const [isSavingTopic, setIsSavingTopic] = useState(false);
+  const [schoolSubjects, setSchoolSubjects] = useState<Subject[]>([]);
   const [showUrlInput, setShowUrlInput] = useState(false);
   // Set true right before closing the method sheet so its onClose (fired
   // only once its close animation actually finishes) can open the upload
@@ -258,6 +268,8 @@ export function TopicDetailScreen({ route, navigation }: Props) {
   // wrong one and the new sheet looks stuck.
   const openAddContextAfterMethodCloseRef = useRef(false);
   const [isAddingContext, setIsAddingContext] = useState(false);
+  // 0 to 1 while a file is going up; null when nothing is being uploaded.
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
 
   // A source that was just added or retried and whose extraction (reading a
@@ -391,31 +403,28 @@ export function TopicDetailScreen({ route, navigation }: Props) {
 
   function confirmDeleteVideo(video: SavedVideo) {
     if (!accessToken) return;
-    Alert.alert("Remove this video?", "It will no longer show under Reference videos for this topic.", [
-      { text: "Cancel", style: "cancel", onPress: () => videoSwipeRefs.current.get(video.id)?.close() },
-      {
-        text: "Remove",
-        style: "destructive",
-        onPress: async () => {
-          setDeletingVideoIds((prev) => new Set(prev).add(video.id));
-          setError(null);
-          try {
-            await api.deleteSavedVideo(accessToken, topicId, video.id);
-            videoSwipeRefs.current.delete(video.id);
-            setSavedVideos((prev) => prev.filter((v) => v.id !== video.id));
-          } catch (err) {
-            setError(err instanceof Error ? err.message : "Failed to remove video");
-            videoSwipeRefs.current.get(video.id)?.close();
-          } finally {
-            setDeletingVideoIds((prev) => {
-              const next = new Set(prev);
-              next.delete(video.id);
-              return next;
-            });
-          }
-        },
+    setPendingConfirm({
+      title: "Remove this video?",
+      message: "It will no longer show under Reference videos for this topic.",
+      confirmLabel: "Remove",
+      onConfirm: async () => {
+        setDeletingVideoIds((prev) => new Set(prev).add(video.id));
+        setError(null);
+        try {
+          await api.deleteSavedVideo(accessToken, topicId, video.id);
+          videoSwipeRefs.current.delete(video.id);
+          setSavedVideos((prev) => prev.filter((v) => v.id !== video.id));
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to remove video");
+        } finally {
+          setDeletingVideoIds((prev) => {
+            const next = new Set(prev);
+            next.delete(video.id);
+            return next;
+          });
+        }
       },
-    ]);
+    });
   }
 
   function renderVideoRow(v: SavedVideo) {
@@ -455,6 +464,20 @@ export function TopicDetailScreen({ route, navigation }: Props) {
               {v.channelTitle}{v.duration ? ` · ${v.duration}` : ""}
             </Text>
           </View>
+          <Pressable
+            onPress={() => confirmDeleteVideo(v)}
+            hitSlop={8}
+            disabled={busy}
+            style={({ pressed }) => [styles.removePill, { backgroundColor: `${colors.danger}14` }, pressed && { opacity: pressedOpacity }]}
+            accessibilityRole="button"
+            accessibilityLabel={`Remove ${v.title}`}
+          >
+            {busy ? (
+              <ActivityIndicator color={colors.danger} size="small" />
+            ) : (
+              <Ionicons name="trash-outline" size={15} color={colors.danger} />
+            )}
+          </Pressable>
         </Pressable>
       </Swipeable>
     );
@@ -490,15 +513,17 @@ export function TopicDetailScreen({ route, navigation }: Props) {
   async function addContextFile(file: { uri: string; name: string; mimeType: string }) {
     if (!accessToken) return;
     setIsAddingContext(true);
+    setUploadProgress(0);
     setError(null);
     try {
-      const created = await api.addTopicContextFile(accessToken, topicId, file);
+      const created = await api.addTopicContextFile(accessToken, topicId, file, setUploadProgress);
       setShowAddContext(false);
       load();
       watchSourceProcessing(created);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to upload file");
     } finally {
+      setUploadProgress(null);
       setIsAddingContext(false);
     }
   }
@@ -592,38 +617,98 @@ export function TopicDetailScreen({ route, navigation }: Props) {
     }
   }
 
+  function confirmDeleteObservation(observation: Observation) {
+    setPendingConfirm({
+      title: "Delete this note?",
+      message: "It will be removed from this topic and its report.",
+      confirmLabel: "Delete",
+      onConfirm: async () => {
+        if (!accessToken) return;
+        try {
+          await api.deleteTopicObservation(accessToken, topicId, observation.id);
+          setOpenObservation(null);
+          setIsEditingObservation(false);
+          load();
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to delete note");
+        }
+      },
+    });
+  }
+
   function confirmDeleteSource(source: ContextSource) {
     if (!accessToken) return;
-    Alert.alert("Delete this source?", "It will be removed from this topic and won't be usable in any future generation.", [
-      {
-        text: "Cancel",
-        style: "cancel",
-        onPress: () => sourceSwipeRefs.current.get(source.id)?.close(),
+    setPendingConfirm({
+      title: "Delete this source?",
+      message: "It will be removed from this topic and won't be usable in any future generation.",
+      confirmLabel: "Delete",
+      onConfirm: async () => {
+        setDeletingSourceIds((prev) => new Set(prev).add(source.id));
+        setError(null);
+        try {
+          await api.deleteTopicContext(accessToken, topicId, source.id);
+          if (openSource?.id === source.id) setOpenSource(null);
+          sourceSwipeRefs.current.delete(source.id);
+          load();
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to delete source");
+        } finally {
+          setDeletingSourceIds((prev) => {
+            const next = new Set(prev);
+            next.delete(source.id);
+            return next;
+          });
+        }
       },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          setDeletingSourceIds((prev) => new Set(prev).add(source.id));
-          setError(null);
-          try {
-            await api.deleteTopicContext(accessToken, topicId, source.id);
-            if (openSource?.id === source.id) setOpenSource(null);
-            sourceSwipeRefs.current.delete(source.id);
-            load();
-          } catch (err) {
-            setError(err instanceof Error ? err.message : "Failed to delete source");
-            sourceSwipeRefs.current.get(source.id)?.close();
-          } finally {
-            setDeletingSourceIds((prev) => {
-              const next = new Set(prev);
-              next.delete(source.id);
-              return next;
-            });
-          }
-        },
+    });
+  }
+
+  // Edit / delete the topic itself. Editing reuses the same SheetModal pattern
+  // as the rest of the screen; deleting goes through the shared confirm modal.
+  function openEditTopic() {
+    setEditTopicName(topic?.name ?? "");
+    setEditTopicSubject(topic?.subject ?? "");
+    setEditTopicError(null);
+    setShowEditTopic(true);
+    if (accessToken) api.listSubjects(accessToken).then(setSchoolSubjects).catch(() => {});
+  }
+
+  async function saveTopicEdits() {
+    if (!accessToken || !topic) return;
+    const name = editTopicName.trim();
+    const subject = editTopicSubject.trim();
+    if (!name || !subject) {
+      setEditTopicError("Name and subject are both required.");
+      return;
+    }
+    setIsSavingTopic(true);
+    setEditTopicError(null);
+    try {
+      await api.updateTopic(accessToken, topicId, { name, subject });
+      setShowEditTopic(false);
+      load();
+    } catch (err) {
+      setEditTopicError(err instanceof Error ? err.message : "Failed to save topic");
+    } finally {
+      setIsSavingTopic(false);
+    }
+  }
+
+  function confirmDeleteTopic() {
+    setPendingConfirm({
+      title: "Delete this topic?",
+      message: "Its lesson plans, sources, notes and reference videos will be removed. Topics with published assignments or student work can't be deleted.",
+      confirmLabel: "Delete topic",
+      onConfirm: async () => {
+        if (!accessToken) return;
+        try {
+          await api.deleteTopic(accessToken, topicId);
+          navigation.goBack();
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to delete topic");
+        }
       },
-    ]);
+    });
   }
 
   async function addObservation() {
@@ -836,6 +921,15 @@ export function TopicDetailScreen({ route, navigation }: Props) {
             <View style={[styles.statusBadge, { backgroundColor: colors.surfaceRaised }]}>
               <Text style={[styles.statusBadgeText, { color: statusColor }]}>{statusLabel}</Text>
             </View>
+            <Pressable
+              onPress={() => confirmDeleteSource(c)}
+              hitSlop={8}
+              style={({ pressed }) => [styles.removePill, { backgroundColor: `${colors.danger}14` }, pressed && { opacity: pressedOpacity }]}
+              accessibilityRole="button"
+              accessibilityLabel={`Delete ${label}`}
+            >
+              <Ionicons name="trash-outline" size={15} color={colors.danger} />
+            </Pressable>
           </View>
           <View style={[styles.sourcePreview, { backgroundColor: colors.surfaceRaised }]}>
             {c.sourceType === "image" ? (
@@ -897,6 +991,8 @@ export function TopicDetailScreen({ route, navigation }: Props) {
               </Pressable>
               <Pressable style={({ pressed }) => [styles.heroIconAction, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.navigate("AssignmentAiSetup", { topicId })} accessibilityRole="button" accessibilityLabel="Generate assignment with AI"><Ionicons name="document-text-outline" size={18} color="#FFFFFF" /></Pressable>
               <Pressable style={({ pressed }) => [styles.heroIconAction, pressed && { opacity: pressedOpacity }]} onPress={() => navigation.navigate("AttainmentReport", { topicId })} accessibilityRole="button" accessibilityLabel="View attainment report"><Ionicons name="bar-chart-outline" size={18} color="#FFFFFF" /></Pressable>
+              <Pressable style={({ pressed }) => [styles.heroIconAction, pressed && { opacity: pressedOpacity }]} onPress={openEditTopic} accessibilityRole="button" accessibilityLabel="Edit topic"><Ionicons name="create-outline" size={18} color="#FFFFFF" /></Pressable>
+              <Pressable style={({ pressed }) => [styles.heroIconAction, pressed && { opacity: pressedOpacity }]} onPress={confirmDeleteTopic} accessibilityRole="button" accessibilityLabel="Delete topic"><Ionicons name="trash-outline" size={18} color="#FFFFFF" /></Pressable>
             </View>
           </View>
         </View>
@@ -1319,7 +1415,20 @@ export function TopicDetailScreen({ route, navigation }: Props) {
             </Pressable>
           </View>
         )}
-        {isAddingContext && !showUrlInput ? <ActivityIndicator color={colors.accent} style={styles.modalLoader} /> : null}
+        {isAddingContext && !showUrlInput ? (
+          uploadProgress !== null ? (
+            <View style={styles.uploadProgress}>
+              <Text style={[styles.uploadProgressLabel, { color: colors.textPrimary }]}>
+                {uploadProgress >= 1 ? "Processing file…" : `Uploading… ${Math.round(uploadProgress * 100)}%`}
+              </Text>
+              <View style={[styles.uploadProgressTrack, { backgroundColor: colors.border }]}>
+                <View style={[styles.uploadProgressFill, { backgroundColor: colors.accent, width: `${Math.round(uploadProgress * 100)}%` }]} />
+              </View>
+            </View>
+          ) : (
+            <ActivityIndicator color={colors.accent} style={styles.modalLoader} />
+          )
+        ) : null}
       </SheetModal>
 
       <SheetModal
@@ -1556,6 +1665,17 @@ export function TopicDetailScreen({ route, navigation }: Props) {
                 <Image source={{ uri: openObservation.photoUrl }} style={styles.noteDetailPhoto} resizeMode="cover" />
               </Pressable>
             ) : null}
+            {openObservation ? (
+              <Pressable
+                onPress={() => confirmDeleteObservation(openObservation)}
+                style={({ pressed }) => [styles.sourceGhostButton, { borderColor: colors.danger, marginTop: 16 }, pressed && { opacity: pressedOpacity }]}
+                accessibilityRole="button"
+                accessibilityLabel="Delete note"
+              >
+                <Ionicons name="trash-outline" size={15} color={colors.danger} />
+                <Text style={[styles.sourceGhostButtonText, { color: colors.danger }]}>Delete note</Text>
+              </Pressable>
+            ) : null}
           </ScrollView>
         )}
       </SheetModal>
@@ -1747,6 +1867,75 @@ export function TopicDetailScreen({ route, navigation }: Props) {
           </ScrollView>
         )}
       </SheetModal>
+
+      <SheetModal visible={showEditTopic} onClose={() => setShowEditTopic(false)} closeLabel="Close edit topic">
+        <View style={styles.modalHeader}>
+          <View>
+            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Edit topic</Text>
+            <Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>Rename it or move it to a different subject.</Text>
+          </View>
+          <Pressable style={[styles.closeButton, { backgroundColor: colors.surfaceRaised }]} onPress={() => setShowEditTopic(false)} accessibilityRole="button">
+            <Ionicons name="close" size={20} color={colors.textPrimary} />
+          </Pressable>
+        </View>
+        <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Topic name</Text>
+        <TextInput
+          style={[styles.input, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
+          value={editTopicName}
+          onChangeText={setEditTopicName}
+          placeholder="Topic name"
+          placeholderTextColor={colors.textMuted}
+        />
+        <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Subject</Text>
+        <TextInput
+          style={[styles.input, { backgroundColor: colors.surfaceRaised, borderColor: colors.border, color: colors.textPrimary }]}
+          value={editTopicSubject}
+          onChangeText={setEditTopicSubject}
+          placeholder="e.g. Science"
+          placeholderTextColor={colors.textMuted}
+        />
+        {schoolSubjects.length > 0 ? (
+          <View style={styles.subjectChipRow}>
+            {schoolSubjects.map((s) => {
+              const active = editTopicSubject.trim().toLowerCase() === s.name.toLowerCase();
+              return (
+                <Pressable
+                  key={s.id}
+                  onPress={() => setEditTopicSubject(s.name)}
+                  style={[styles.subjectChip, { backgroundColor: active ? colors.accent : colors.surfaceRaised, borderColor: active ? colors.accent : colors.border }]}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                >
+                  <Text style={[styles.subjectChipText, { color: active ? colors.accentOn : colors.textSecondary }]}>{capitalizeFirst(s.name)}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
+        {editTopicError ? <Text style={[styles.error, { color: colors.danger, textAlign: "left" }]}>{editTopicError}</Text> : null}
+        <Pressable
+          onPress={saveTopicEdits}
+          disabled={isSavingTopic}
+          style={({ pressed }) => [styles.primaryButton, { backgroundColor: colors.accent, marginTop: 16 }, (isSavingTopic || pressed) && { opacity: pressedOpacity }]}
+          accessibilityRole="button"
+        >
+          {isSavingTopic ? <ActivityIndicator color={colors.accentOn} /> : <Text style={[styles.primaryButtonText, { color: colors.accentOn }]}>Save changes</Text>}
+        </Pressable>
+      </SheetModal>
+
+      <ConfirmModal
+        visible={pendingConfirm !== null}
+        title={pendingConfirm?.title ?? ""}
+        message={pendingConfirm?.message ?? ""}
+        confirmLabel={pendingConfirm?.confirmLabel ?? "Confirm"}
+        destructive
+        onConfirm={() => {
+          const action = pendingConfirm?.onConfirm;
+          setPendingConfirm(null);
+          action?.();
+        }}
+        onCancel={() => setPendingConfirm(null)}
+      />
     </Screen>
   );
 }
@@ -1957,6 +2146,12 @@ const styles = StyleSheet.create({
   sourceList: { gap: 8 },
   sourceListRow: { flexDirection: "row", alignItems: "center", gap: 10, borderWidth: 1, borderRadius: 13, paddingVertical: 10, paddingHorizontal: 12, minHeight: 56 },
   swipeDeleteAction: { width: 72, alignItems: "center", justifyContent: "center", borderRadius: 13, marginLeft: 8 },
+  removePill: { width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center" },
+  subjectChipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
+  subjectChip: { borderWidth: 1, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 7 },
+  subjectChipText: { fontSize: 12, fontWeight: "700" },
+  primaryButton: { height: 48, borderRadius: 14, alignItems: "center", justifyContent: "center" },
+  primaryButtonText: { fontSize: 15, fontWeight: "800" },
   sourceListIcon: { width: 34, height: 34, borderRadius: 11, alignItems: "center", justifyContent: "center" },
   sourceListCopy: { flex: 1 },
   sourceListMetaRow: { flexDirection: "row", alignItems: "center", marginTop: 2 },
@@ -1991,6 +2186,10 @@ const styles = StyleSheet.create({
   backToSourcesText: { fontSize: 13, fontWeight: "700" },
   fieldLabel: { marginTop: 18, marginBottom: 6, fontSize: 13, fontWeight: "600" },
   modalLoader: { marginTop: 18 },
+  uploadProgress: { marginTop: 18 },
+  uploadProgressLabel: { fontSize: 13, fontWeight: "700", marginBottom: 8 },
+  uploadProgressTrack: { height: 8, borderRadius: 4, overflow: "hidden" },
+  uploadProgressFill: { height: 8, borderRadius: 4 },
   lightboxBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.92)", alignItems: "center", justifyContent: "center" },
   lightboxImage: { width: "100%", height: "80%" },
   lightboxClose: { position: "absolute", top: 50, right: 20, width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.15)" },
