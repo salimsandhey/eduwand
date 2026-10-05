@@ -3,6 +3,7 @@ import { MessageSquare } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import logoColor from '../assets/brand/EduWand-Logo.png'
 import { useContentPage } from '../lib/useContentPage'
+import { AppDownloadButtons } from './AppDownloadButtons'
 
 export const Footer: React.FC = () => {
   // Same contact details as the Contact page, edited in the admin dashboard.
@@ -20,6 +21,7 @@ export const Footer: React.FC = () => {
             <p className="text-[#5C5358] text-sm max-w-sm leading-relaxed font-normal">
               EduWand is an all-in-one AI module and enrolment growth platform empowering schools, teachers, and students to reach new heights.
             </p>
+            <AppDownloadButtons className="pt-1" />
             <div className="flex items-center gap-3 pt-2">
               <a
                 href="https://twitter.com"

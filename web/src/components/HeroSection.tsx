@@ -3,6 +3,7 @@ import confetti from 'canvas-confetti'
 import { CheckCircle2, ArrowRight, ChevronDown, GraduationCap, School, Users, Check } from 'lucide-react'
 import { CatMascotWeb } from './CatMascotWeb'
 import { joinWaitlist } from '../lib/api'
+import { AppDownloadButtons } from './AppDownloadButtons'
 
 export const HeroSection: React.FC = () => {
   const [role, setRole] = useState<'teacher' | 'leadership' | 'parent'>('teacher')
@@ -178,6 +179,8 @@ export const HeroSection: React.FC = () => {
                 </div>
               )}
             </div>
+
+            <AppDownloadButtons />
           </div>
 
           {/* Right Column: Hero Cat Mascot */}

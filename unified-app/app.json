@@ -2,7 +2,7 @@
   "expo": {
     "name": "EduWand",
     "slug": "eduwand",
-    "version": "1.0.7",
+    "version": "1.0.8",
     "orientation": "default",
     "icon": "./assets/brand/eduwand-icon.png",
     "assetBundlePatterns": [
@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.eduwand.app",
-      "buildNumber": "10",
+      "buildNumber": "11",
       "icon": "./assets/brand/eduwand-icon.png",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
@@ -32,7 +32,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.eduwand.app",
-      "versionCode": 10,
+      "versionCode": 11,
       "permissions": [
         "android.permission.RECORD_AUDIO"
       ]

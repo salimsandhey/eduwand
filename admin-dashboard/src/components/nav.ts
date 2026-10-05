@@ -100,6 +100,7 @@ export const NAV_SECTIONS: NavSection[] = [
     title: "Settings",
     roles: PLATFORM,
     items: [
+      { to: "/app-links", label: "App download links", icon: "download", hint: "Play Store and App Store links shown on the website" },
       { to: "/email-templates", label: "Email templates", icon: "mail", hint: "Preview and edit the emails EduWand sends" },
       { to: "/website-enquiries", label: "Website enquiries", icon: "mail", hint: "Messages people sent from the website contact form" },
       { to: "/content-pages", label: "Website pages", icon: "globe", hint: "Privacy policy, terms, about and contact pages" },

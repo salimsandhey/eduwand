@@ -63,6 +63,15 @@ export function getContentPage(key: string): Promise<ContentPage> {
   return pending
 }
 
+export interface AppLinks {
+  playStoreUrl: string
+  appStoreUrl: string
+}
+
+export function getAppLinks(): Promise<AppLinks> {
+  return request<AppLinks>('/public/app-links')
+}
+
 export function joinWaitlist(input: { email: string; role: string }): Promise<{ received: boolean }> {
   return request('/public/waitlist', { method: 'POST', body: JSON.stringify(input) })
 }

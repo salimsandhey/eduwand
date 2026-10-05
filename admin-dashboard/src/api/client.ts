@@ -1437,6 +1437,9 @@ export const api = {
   deleteSubject: (token: string, schoolId: string, subjectId: string) =>
     request<{ deleted: boolean }>(`/schools/${schoolId}/subjects/${subjectId}`, { method: "DELETE" }, token),
 
+  getAppLinks: () => request<{ playStoreUrl: string; appStoreUrl: string }>("/public/app-links"),
+  updateAppLinks: (token: string, input: { playStoreUrl: string; appStoreUrl: string }) =>
+    request<{ playStoreUrl: string; appStoreUrl: string }>("/app-links", { method: "PUT", body: JSON.stringify(input) }, token),
   listEmailTemplates: (token: string) => request<EmailTemplateItem[]>("/email-templates", {}, token),
   previewEmailTemplate: (token: string, key: string, copy?: EmailCopy) =>
     request<EmailPreview>(`/email-templates/${key}/preview`, { method: "POST", body: JSON.stringify({ copy }) }, token),
